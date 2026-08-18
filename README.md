@@ -1,0 +1,66 @@
+# Virtual Percussionist
+
+Live virtual percussionist for **iPadOS**. The app listens to an acoustic drummer and plays a shaker that follows tempo and phase — accelerando, rallentando, no loop restart.
+
+Not a DAW. Not a BPM meter. Not a web app.
+
+## MVP 1
+
+Microphone → neural beat / tempo / phase → AUTO lock → adaptive shaker.
+
+## Build (Mac host tests)
+
+```bash
+./scripts/setup-ai.sh   # ONNX Runtime + Assets/Models/beatnet.onnx
+./scripts/run-tests.sh
+```
+
+Without AI assets, CMake still builds and TAP tests pass (`StubBeatModel`). Neural lock needs the setup step.
+
+```bash
+cmake -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-host --target VPTests
+./build-host/VPTests_artefacts/Release/VPTests
+```
+
+## iPad (iPad Air M1)
+
+```bash
+./scripts/setup-ai.sh          # ORT host+iOS + beatnet.onnx (skip se già presenti)
+./scripts/configure-ios.sh
+open build-ios/VirtualPercussionist.xcodeproj
+```
+
+In Xcode: Development Team, iPad, microfono, Run. Stato attuale e limiti del modello: [docs/STATUS.md](docs/STATUS.md).
+
+Simulator (no device signing):
+
+```bash
+./scripts/build-simulator.sh
+```
+
+## Live use
+
+1. USB-C audio interface + kit mic into the iPad, or play a track from the iPad speakers (Spotify, etc.)
+2. Mode **SPEAKER** (default on iPad) follows the sound in the room and ignores the shaker leaking back into the mic. **KIT MIC** is for a close kit microphone.
+3. Play time — the app is already analysing, but the shaker stays muted until START
+4. When the state shows **FOLLOWING**, press START; the shaker enters on the next downbeat
+5. Speed up / slow down — it should follow without a restart
+6. STOP mutes the shaker; it keeps listening. START arms it again and waits for the next downbeat — it does not start at the instant you tap the button.
+
+**CLICK TEST** (debug) injects an internal 120 BPM kit so you can verify the engine without drums.
+
+## Docs
+
+- [App status (install / AI / device)](docs/STATUS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Neural beat tracking (ONNX)](docs/AI_BEAT_TRACKING.md)
+- [Technical decisions](docs/TECHNICAL_DECISIONS.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Audio engine](docs/AUDIO_ENGINE.md)
+- [Beat tracking](docs/BEAT_TRACKING.md)
+- [Platform](docs/PLATFORM.md)
+- [Test plan](docs/TEST_PLAN.md)
+- [Licenses](docs/LICENSES.md)
+
+JUCE is AGPLv3 or commercial. A closed-source App Store build needs a **JUCE commercial license**.

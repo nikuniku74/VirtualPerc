@@ -1,0 +1,104 @@
+diff --git a/modules/juce_audio_devices/native/juce_Audio_ios.cpp b/modules/juce_audio_devices/native/juce_Audio_ios.cpp
+index c9857b2d78..c0e317c7ce 100644
+--- a/modules/juce_audio_devices/native/juce_Audio_ios.cpp
++++ b/modules/juce_audio_devices/native/juce_Audio_ios.cpp
+@@ -40,7 +40,7 @@ class iOSAudioIODevice;
+ constexpr const char* const iOSAudioDeviceName = "iOS Audio";
+ 
+ #ifndef JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES
+- #define JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES
++ #define JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES 44100.0, 48000.0
+ #endif
+ 
+ constexpr std::initializer_list<double> iOSExplicitSampleRates { JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES };
+@@ -220,10 +220,7 @@ namespace juce {
+ static void logNSError (NSError* e)
+ {
+     if (e != nil)
+-    {
+-        JUCE_IOS_AUDIO_LOG ("iOS Audio error: " << [e.localizedDescription UTF8String]);
+-        jassertfalse;
+-    }
++        JUCE_IOS_AUDIO_LOG ("iOS Audio error: " << nsStringToJuce ([e localizedDescription]));
+ }
+ 
+ #define JUCE_NSERROR_CHECK(X)     { NSError* error = nil; X; logNSError (error); }
+@@ -371,16 +368,11 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         if (category == AVAudioSessionCategoryPlayAndRecord)
+         {
+-           #if JUCE_IOS_API_VERSION_CAN_BE_BUILT (26, 0)
+-            constexpr auto bluetoothOption = AVAudioSessionCategoryOptionAllowBluetoothHFP;
+-           #else
+-            constexpr auto bluetoothOption = AVAudioSessionCategoryOptionAllowBluetooth;
+-           #endif
+-
++            // No HFP (AllowBluetooth): that locks the session to 8–16 kHz and
++            // makes all mixed audio sound slow and distorted.
+             options |= AVAudioSessionCategoryOptionDefaultToSpeaker
+                      | AVAudioSessionCategoryOptionAllowAirPlay
+-                     | AVAudioSessionCategoryOptionAllowBluetoothA2DP
+-                     | bluetoothOption;
++                     | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+         }
+ 
+         JUCE_NSERROR_CHECK ([[AVAudioSession sharedInstance] setCategory: category
+@@ -399,7 +391,11 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+             {
+                 SubstituteAudioUnit au;
+                 [[maybe_unused]] const auto success = au.waitForAudioCallback();
+-                jassert (success);
++                // Timeout is not fatal. On iOS 18+ this probe can miss the first
++                // callback (especially if the session was already touched), and
++                // jassert (success) stops Xcode with SIGTRAP on the message thread.
++                if (! success)
++                    JUCE_IOS_AUDIO_LOG ("SubstituteAudioUnit waitForAudioCallback timed out");
+             }
+         }
+     }
+@@ -508,10 +504,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                                               &audioQueue);
+ 
+         if (err != noErr || audioQueue == nullptr)
+-        {
+-            jassertfalse;
+             return {};
+-        }
+ 
+         const ScopeGuard disposeAudioQueueOnReturn { [&]
+         {
+@@ -527,33 +520,14 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                                                     &size);
+ 
+         if (propErr != noErr || size != sizeof (result))
+-        {
+-            jassertfalse;
+             return {};
+-        }
+ 
+         return result;
+     }
+ 
+     double getSampleRate() const
+     {
+-        const auto session = [AVAudioSession sharedInstance];
+-
+-        // On iOS 18 the AVAudioSession sample rate is not always accurate but
+-        // probing the sample rate via an AudioQueue seems to work reliably
+-        if (@available (iOS 18, *))
+-        {
+-            // We could verify that things seem to work as expected again
+-            // from 18.7.3 and up, so avoid creating an AudioQueue. We
+-            // have no way of testing the minor versions 18.7.0 to 18.7.2,
+-            // as currently no simulator is available for 18.7.
+-            if (@available (iOS 18.7.3, *))
+-                return session.sampleRate;
+-
+-            return getSampleRateFromAudioQueue().value_or (session.sampleRate);
+-        }
+-
+-        return session.sampleRate;
++        return [AVAudioSession sharedInstance].sampleRate;
+     }
+ 
+     double trySampleRate (double rate)
