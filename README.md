@@ -65,3 +65,5 @@ Simulator (no device signing):
 - [Licenses](docs/LICENSES.md)
 
 JUCE is AGPLv3 or commercial. A closed-source App Store build needs a **JUCE commercial license**.
+
+The percussion recordings in `Assets/Percussion/` are from the OLPC Berklee Sound Library under **CC BY 3.0**. That is fine commercially, but the attribution is a licence condition: it has to appear on a Credits screen in the shipped app. See [Assets/Percussion/ATTRIBUTION.md](Assets/Percussion/ATTRIBUTION.md).

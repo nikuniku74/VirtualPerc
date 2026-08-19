@@ -8,6 +8,43 @@
 namespace vp
 {
 
+namespace
+{
+    // Where the analysis signal is held for the network, and it is not a free
+    // parameter. BeatNet's features are log10(magnitude + 1): the +1 knee means
+    // the level is part of the model's input rather than something the
+    // normalisation removes, and madmom feeds the network integer-scaled audio,
+    // several orders of magnitude above float [-1, 1]. Too quiet and the whole
+    // filterbank sits on the linear part of that knee, where the network was
+    // never trained.
+    //
+    // Measured end to end - 30 songs, 60 to 176 BPM, four styles, counting how
+    // often the tracker settles on the wrong metrical level:
+    //
+    //     target peak   0.04  0.06  0.09  0.12  0.16  0.20  0.28  0.40  0.60
+    //     wrong octave     7    13    13     8     4     2     2     4     7
+    //
+    // 0.12 sat on the near side of the optimum, and its failures were the
+    // half-tempo readings above 150 BPM and the double-tempo readings below 72.
+    constexpr float kMakeupTargetPeak = 0.20f;
+
+    // Below this there is nothing to normalise, only noise to amplify. Room and
+    // iPad-speaker-to-mic material commonly sits around 0.001-0.008, well above
+    // it, which is the case this stage exists for.
+    constexpr float kMakeupFloor = 0.0004f;
+    constexpr float kMakeupMaxGain = 24.0f;
+
+    // Seconds. Slow in both directions on purpose: this sets the network's
+    // operating point, so it must not follow the music's dynamics. The gain
+    // then follows the envelope quickly - the slowness belongs in one place,
+    // and stacking a second multi-second smoother on top only means the first
+    // seconds of a song are analysed at the wrong level, which is when the
+    // metrical level is being decided.
+    constexpr double kMakeupAttackSec = 0.8;
+    constexpr double kMakeupReleaseSec = 4.0;
+    constexpr double kMakeupGlideSec = 0.25;
+}
+
 void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChannels) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
@@ -24,6 +61,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
 
     tracker.prepare (sampleRate);
     percussion.prepare (sampleRate);
+    styleDetector.prepare (sampleRate);
     percussion.setSeed (0x51A4E1u);
     stretcher.prepare (sampleRate, maxBlock);
     stretch.prepare (120.0f, sampleRate);
@@ -35,6 +73,7 @@ void VirtualPercussionEngine::reset() noexcept
 {
     tracker.reset();
     percussion.reset();
+    styleDetector.reset();
     stretcher.reset();
     stretch.reset();
     clickPhase = 0.0;
@@ -42,6 +81,7 @@ void VirtualPercussionEngine::reset() noexcept
     ringWrite = 0;
     leakLp = 0.0f;
     peakEnv = 0.0f;
+    makeupGain = 1.0f;
     tapWrite.store (0, std::memory_order_relaxed);
     tapRead = 0;
 }
@@ -211,21 +251,44 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak) noexcept
 {
-    const float tau = static_cast<float> (sampleRate * 0.55);
-    const float release = 1.0f - std::exp (-static_cast<float> (numSamples) / std::max (1.0f, tau));
-    if (rawPeak > peakEnv)
-        peakEnv = rawPeak;
+    // BeatNet's features are log10(magnitude + 1), which is not scale
+    // invariant: the +1 knee means the level the analysis signal arrives at is
+    // part of the model's input, not a detail the normalisation removes.
+    // So this stage has two jobs, and the second one used to be missing: put the
+    // signal at the level the network was validated at, and then hold it there.
+    //
+    // It used to take the peak instantly and release over half a second, so
+    // every drum hit dropped the gain and the next half second crept back up -
+    // moving the network's operating point on every beat, which is exactly the
+    // input a beat tracker should never have. The envelope is slow in both
+    // directions now, and the gain itself is smoothed again on top and ramped
+    // across the block, so the analysis level is effectively constant over the
+    // seconds the tempo estimator looks at.
+    const float attack = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                          / std::max (1.0f, static_cast<float> (sampleRate * kMakeupAttackSec)));
+    const float release = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                           / std::max (1.0f, static_cast<float> (sampleRate * kMakeupReleaseSec)));
+    if (peakEnv < kMakeupFloor && rawPeak >= kMakeupFloor)
+        peakEnv = rawPeak;   // first audio: start at the level, do not crawl up to it
     else
-        peakEnv += (rawPeak - peakEnv) * release;
-    // Room / iPad-speaker → mic often sits ~0.001–0.008. Boost into BeatNet's working range.
-    if (peakEnv < 0.0005f || peakEnv > 0.22f)
+        peakEnv += (rawPeak - peakEnv) * (rawPeak > peakEnv ? attack : release);
+
+    float wanted = 1.0f;
+    if (peakEnv >= kMakeupFloor)
+        wanted = std::clamp (kMakeupTargetPeak / std::max (peakEnv, 1.0e-5f), 1.0f, kMakeupMaxGain);
+
+    const float smooth = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                          / std::max (1.0f, static_cast<float> (sampleRate * kMakeupGlideSec)));
+    const float from = makeupGain;
+    makeupGain += (wanted - makeupGain) * smooth;
+    if (from <= 1.0001f && makeupGain <= 1.0001f)
         return;
 
-    const float gain = std::min (16.0f, 0.12f / std::max (peakEnv, 1.0e-4f));
-    if (gain <= 1.05f)
-        return;
+    // Ramp within the block: a gain that steps between callbacks puts an edge
+    // into the analysis signal, and the network hears edges.
+    const float step = (makeupGain - from) / static_cast<float> (numSamples);
     for (int i = 0; i < numSamples; ++i)
-        mono[static_cast<size_t> (i)] *= gain;
+        mono[static_cast<size_t> (i)] *= from + step * static_cast<float> (i);
 }
 
 void VirtualPercussionEngine::pushOutputToRing (int numSamples) noexcept
@@ -263,6 +326,10 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
     percussion.setEnabled (cfg.shakerEnabled.load (std::memory_order_relaxed));
+    percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
+    percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
+    percussion.setCongasEnabled (cfg.congasEnabled.load (std::memory_order_relaxed));
+    // The manual setting is the override; on auto the music decides.
 
     mixInputs (inputs, numInputs, numSamples);
     float peak = 0.0f;
@@ -284,15 +351,28 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     }
 
     const auto tr = tracker.process (mono.data(), numSamples);
-    int pulses = 2;
-    switch (tr.subdivision)
+    // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
+    // until the tracker has locked and reads 0 before then, so the percussion
+    // was being told 120 while the clock ran at whatever it had actually found.
+    percussion.setGroove (tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
+                                                    : (tr.bpm > 40.0f ? tr.bpm : 120.0f),
+                          tr.clockPulsesPerBeat);
+    percussion.setShakerSubdivision (tr.subdivision);
+
+    // Fold the analysis signal onto the bar to see which part the music is
+    // asking for. Only while the clock is actually on the song: folding audio
+    // onto a bar the tracker has not found yet just smears every bin.
+    const bool autoStyle = cfg.grooveAuto.load (std::memory_order_relaxed);
+    if (autoStyle)
     {
-        case Subdivision::quarter:   pulses = 1; break;
-        case Subdivision::eighth:    pulses = 2; break;
-        case Subdivision::sixteenth: pulses = 4; break;
-        case Subdivision::autoDetect: pulses = 2; break;
+        const bool clockStable = tr.state == TrackingState::following
+                                 && tr.clock.tempoBpm > 40.0f;
+        styleDetector.process (mono.data(), numSamples, tr.barPhase, clockStable);
     }
-    percussion.setGroove (tr.bpm > 40.0f ? tr.bpm : 120.0f, pulses);
+    const GrooveStyle chosen = autoStyle
+                                   ? styleDetector.style()
+                                   : static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed));
+    percussion.setGrooveStyle (chosen);
 
     if (stretcher.hasLoop())
     {
@@ -351,6 +431,8 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastPBeat.store (tr.pBeat, std::memory_order_relaxed);
     lastLeadMs.store (tr.leadMs, std::memory_order_relaxed);
     lastRegime.store (static_cast<int> (tr.regime), std::memory_order_relaxed);
+    lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
+    lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
 
     const auto t1 = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli> (t1 - t0).count();
@@ -389,6 +471,14 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
+    s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
+    s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
+    const auto f = styleDetector.features();
+    s.styleEvenKick = f.evenKick;
+    s.styleBackbeat = f.alternation;
+    s.styleOffHigh = f.offHigh;
+    s.styleSync = f.syncopation;
+    s.styleOccupancy = f.occupancy;
     return s;
 }
 

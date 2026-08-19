@@ -2,6 +2,7 @@
 
 #include "Core/Types.h"
 #include "Percussion/PercussionEngine.h"
+#include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
@@ -53,6 +54,7 @@ private:
 
     BeatTracker tracker;
     PercussionEngine percussion;
+    StyleDetector styleDetector;
     StretchFactor stretch;
     TimeStretchEngine stretcher;
     EngineSettings cfg;
@@ -92,12 +94,15 @@ private:
     std::atomic<float> lastAnalysisPeak { 0.0f };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };
+    std::atomic<int>   lastStyle { 0 };
+    std::atomic<float> lastStyleConf { 0.0f };
 
     std::atomic<float> clickBpm { 120.0f };
     std::atomic<bool>  clickEnabled { false };
     double clickPhase = 0.0;
     float leakLp = 0.0f;
     float peakEnv = 0.0f;
+    float makeupGain = 1.0f;
     int ringWrite = 0;
     static constexpr int ringSize = 32768;
 

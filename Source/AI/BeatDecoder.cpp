@@ -58,9 +58,9 @@ namespace
     // enough to overturn two bars of agreement on a record cut to a click.
     constexpr float kOctaveThreshold = 0.25f;
     constexpr int   kOctaveSnapBeats = 4;
-    constexpr int   kOctaveSnapBeatsLive = 8;
-    constexpr int   kOctaveSnapBeatsFixed = 16;
-    constexpr float kOctaveSnapClarity = 0.18f;
+    constexpr int   kOctaveSnapBeatsLive = 6;
+    constexpr int   kOctaveSnapBeatsFixed = 8;
+    constexpr int   kOctaveSnapBeatsHealthy = 4;
     constexpr float kOctaveSnapSalience = 0.22f;
 
     // Once a tempo is established, a peak has to land on the grid to count as a
@@ -87,6 +87,12 @@ namespace
     // those, so agreeing with the comb is not on its own a reason to move.
     constexpr float kGridHealthyResidual = 0.035f;
     constexpr float kGridHealthyCoverage = 0.80f;
+
+    // How long the fold gets to name a level before the decoder is allowed to
+    // establish one from beat times alone. TempoEstimator needs a few seconds
+    // of buffer before it can even see the slow half of its range, and a level
+    // established before then is established from subdivisions.
+    constexpr double kPeakOnlyGraceSec = 6.0;
 }
 
 void BeatDecoder::prepare (double framesPerSecond)
@@ -311,10 +317,14 @@ void BeatDecoder::updateTempo() noexcept
             bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
             established = true;
         }
-        else if (beatFilled >= 4)
+        else if (beatFilled >= 4 && timeSec > kPeakOnlyGraceSec)
         {
             // No usable fold - a very sparse or very noisy activation curve.
-            // Fall back to the beat times alone.
+            // Fall back to the beat times alone, but only once the fold has had
+            // its chance. Beat times alone cannot tell a beat from its own
+            // subdivision: a hi-hat on the eighths fits the peaks perfectly at
+            // twice the tempo, and a level established that way then has to be
+            // argued back out of, one bad octave at a time.
             float period = 0.0f, residual = 0.0f, coverage = 0.0f;
             if (fitPeriod (kShortFit, period, residual, coverage) && residual < 0.06f)
             {
@@ -336,17 +346,36 @@ void BeatDecoder::updateTempo() noexcept
     const bool combDisagrees = combReady && bpm > kMinBpm
                                && std::fabs (std::log2 (bpm / combBpm)) > kOctaveThreshold;
 
-    if (combDisagrees
-        && tempo.clarity() > kOctaveSnapClarity
-        && tempo.salience() > kOctaveSnapSalience
-        && ! (tempoRegime == TempoRegime::fixed && gridHealthy))
+    int snapBeats = tempoRegime == TempoRegime::fixed ? kOctaveSnapBeatsFixed
+                  : tempoRegime == TempoRegime::live  ? kOctaveSnapBeatsLive
+                                                      : kOctaveSnapBeats;
+
+    // A grid that still lands tightly on the beats being detected has earned
+    // patience - but not a veto, and not an unbounded one. How well the grid
+    // fits says nothing about whether it is on the right metrical level: the
+    // double of the true tempo lands on every detected peak too, so it is
+    // *always* one of the healthy ones. Charging a fixed number of extra beats
+    // keeps a glitching comb from costing a good grid without letting a bad
+    // level defend itself forever.
+    if (gridHealthy)
+        snapBeats += kOctaveSnapBeatsHealthy;
+
+    // Clarity is deliberately *not* a condition. Clarity measures how far the
+    // winning period stands above its best rival, and when the current grid is
+    // an octave out, that grid *is* the rival - so clarity is low exactly when
+    // the disagreement is real, and requiring it made the octave error the
+    // thing protecting the octave error.
+    //
+    // And this is a vote over the last few bars, not a run of consecutive
+    // beats. When the level is genuinely ambiguous the comb does not disagree
+    // on every single beat, it disagrees on most of them; a counter that reset
+    // on the first agreeing beat never got anywhere against that, which is how
+    // a level chosen in the first seconds outlived every correction.
+    if (combDisagrees && tempo.salience() > kOctaveSnapSalience)
         ++octaveMismatchBeats;
     else
-        octaveMismatchBeats = 0;
-
-    const int snapBeats = tempoRegime == TempoRegime::fixed ? kOctaveSnapBeatsFixed
-                        : tempoRegime == TempoRegime::live  ? kOctaveSnapBeatsLive
-                                                            : kOctaveSnapBeats;
+        --octaveMismatchBeats;
+    octaveMismatchBeats = std::clamp (octaveMismatchBeats, 0, 3 * snapBeats);
 
     if (octaveMismatchBeats >= snapBeats)
     {

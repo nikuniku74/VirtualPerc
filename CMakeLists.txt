@@ -1,6 +1,13 @@
 cmake_minimum_required (VERSION 3.22)
 
-project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+# Objective-C/C++ exists only on Apple platforms. Declaring it unconditionally
+# fails configure on a Linux host, where the console test target is the only
+# thing that can be built anyway.
+if (APPLE)
+    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+else()
+    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX)
+endif()
 
 set (CMAKE_CXX_STANDARD 20)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,6 +22,8 @@ set (VP_CORE_SOURCES
     Source/Tracking/TempoFollower.cpp
     Source/Tracking/BeatTracker.cpp
     Source/Percussion/PercussionEngine.cpp
+    Source/Percussion/GrooveEngine.cpp
+    Source/Percussion/StyleDetector.cpp
     Source/Audio/VirtualPercussionEngine.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp
@@ -88,6 +97,19 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 juce_generate_juce_header (VirtualPercussionist)
+
+file (GLOB VP_PERC_SAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Percussion/*.wav")
+if (VP_PERC_SAMPLES)
+    juce_add_binary_data (VpPercussionSamples
+        HEADER_NAME VpPercussionData.h
+        NAMESPACE VpPercussionData
+        SOURCES ${VP_PERC_SAMPLES}
+    )
+    set (VP_HAS_PERC_SAMPLES TRUE)
+else()
+    set (VP_HAS_PERC_SAMPLES FALSE)
+    message (STATUS "No Assets/Percussion/*.wav - percussion falls back to synthesis")
+endif()
 
 if (VP_HAS_BEAT_MODEL_FILE)
     juce_add_binary_data (VpBeatModel
@@ -200,6 +222,10 @@ function (vp_apply_ai_options target)
         target_compile_definitions (${target} PRIVATE VP_HAS_BEAT_MODEL=1)
         target_link_libraries (${target} PRIVATE VpBeatModel)
     endif()
+    if (VP_HAS_PERC_SAMPLES)
+        target_compile_definitions (${target} PRIVATE VP_HAS_PERC_SAMPLES=1)
+        target_link_libraries (${target} PRIVATE VpPercussionSamples juce::juce_audio_formats)
+    endif()
     if (VP_USE_SIGNALSMITH)
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=1)
         target_include_directories (${target} PRIVATE
@@ -234,4 +260,14 @@ if (APPLE AND VP_USE_ONNX AND ONNXRUNTIME_ROOT AND NOT VP_ORT_IOS)
                     "$<TARGET_FILE_DIR:${vp_ai_target}>")
         endif()
     endforeach()
+endif()
+
+if (EXISTS "$ENV{VP_STYLE_SRC}")
+    juce_add_console_app (VPStyle PRODUCT_NAME "VPStyle" NEEDS_WEB_BROWSER FALSE NEEDS_CURL FALSE)
+    target_sources (VPStyle PRIVATE ${VP_CORE_SOURCES} "$ENV{VP_STYLE_SRC}")
+    target_include_directories (VPStyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "$ENV{VP_PROBE_DIR}")
+    target_compile_definitions (VPStyle PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPStyle PRIVATE juce::juce_dsp juce::juce_audio_basics juce::juce_audio_formats
+                           juce::juce_core PUBLIC juce::juce_recommended_config_flags)
+    vp_apply_ai_options (VPStyle)
 endif()

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "Core/DeterministicRng.h"
+#include "Percussion/GrooveEngine.h"
 #include "Tracking/TempoFollower.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <cstdint>
 #include <vector>
 
 namespace vp
@@ -16,85 +18,110 @@ public:
     void prepare (double sampleRate) noexcept;
     void reset() noexcept;
 
-    void setHumanization (float amount) noexcept { humanization = clamp01 (amount); }
+    void setHumanization (float amount) noexcept;
+    void setSwing (float amount) noexcept;
+    void setIntensity (float amount) noexcept;
     void setVolume (float v) noexcept { volume = clamp01 (v); }
     void setReverbAmount (float amount) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }
+    void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
-    void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); }
+    void setShakerSubdivision (Subdivision s) noexcept { groove.setShakerSubdivision (s); }
+    void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
+    void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
     void silence() noexcept;
 
     int  render (float* left, float* right, int numSamples, const ClockTick& tick, bool audible) noexcept;
 
-    int  hitsFired() const noexcept { return totalHits; }
+    /** How many articulations are sounding from a recording rather than from
+        the synthesis fallback. Worth asserting on: a missing or unreadable
+        asset would otherwise degrade silently back to the synthetic bank. */
+    int  recordedStrokeCount() const noexcept;
 
-    /** Shaker notes only. `hitsFired` counts every voice started, congas
-        included, so it moves when the pattern changes; this one measures the
-        density of the grid being played and nothing else. */
-    int  shakerHitsFired() const noexcept { return shakerHits; }
+    int  hitsFired() const noexcept { return totalHits; }
     int  activeVoices() const noexcept { return lastActive; }
 
-    /** Times a note had to take a slot from a voice that was still sounding,
-        instead of an idle one. Same-kind retriggers do not count: those release
-        their predecessor over a short ramp. A non-zero value here means the
-        pool is too small for the grid being played, so it is asserted on in the
-        tests rather than left to be discovered by ear. */
+    /** Times a stroke had to take a slot from a voice that was still sounding,
+        because none was idle. A same-stroke retrigger does not count: that one
+        releases its predecessor over a ramp. Non-zero means the pool is too
+        small for the grid being played, so the tests assert on it rather than
+        leaving it to be found by ear. */
     int  hardSteals() const noexcept { return hardStealCount; }
 
+    /** Voices currently inside their release ramp, i.e. taken over by a newer
+        stroke of the same kind and on their way out rather than switched off.
+        Zero throughout a dense run would mean the ramp is not happening. */
+    int  releasingVoices() const noexcept { return lastReleasing; }
+
 private:
-    enum class Kind : int { shaker = 0, tumba, open, slap };
+    // A stroke is not one sound played louder or softer. A conga slapped hard
+    // is brighter and shorter than one slapped softly, not the same recording
+    // with more gain on it, so each articulation is synthesised at several
+    // dynamic layers - and each layer a few times over, because a percussion
+    // part where every stroke is bit-identical reads as a machine no matter how
+    // good the timing is.
+    static constexpr int kLayers = 3;
+    static constexpr int kRoundRobin = 3;
+    static constexpr int kStrokes = static_cast<int> (Stroke::count);
+    static constexpr int kVoices = 16;
+
+    struct Sample
+    {
+        std::vector<float> left, right;
+    };
 
     struct Voice
     {
         int   pos = 0;
         int   length = 0;
-        int   take = 0;
-        Kind  kind = Kind::shaker;
+        const Sample* sample = nullptr;
+        Stroke stroke = Stroke::shakerDown;
         float gainL = 0.0f;
         float gainR = 0.0f;
         bool  active = false;
-        /** Release ramp for a voice that has been retriggered. Cutting the
-            sample dead mid-cycle put a step in the output on every single hit;
-            `fadeStep` > 0 means this voice is on its way out, and `fadeDelay`
-            holds it at full level until the sample offset the new note starts
-            at, so the ramp begins where the overlap actually begins. */
+        // A voice being taken over is faded out over a few milliseconds rather
+        // than switched off. Cutting a sounding grain at whatever sample it had
+        // reached is a step in the output, and a step is a click.
         float fade = 1.0f;
         float fadeStep = 0.0f;
-        int   fadeDelay = 0;
+        std::uint32_t age = 0;
     };
 
-    void triggerShaker (int sampleOffset) noexcept;
-    void triggerConga (Kind kind, int sampleOffset, float pan) noexcept;
-    void releaseKind (Kind kind, int sampleOffset) noexcept;
-    int  allocateVoice() noexcept;
-    void synthesizeShaker() noexcept;
-    void synthesizeCongas() noexcept;
-    void applyReverbParams() noexcept;
-    const std::vector<float>& sampleL (const Voice& v) const noexcept;
-    const std::vector<float>& sampleR (const Voice& v) const noexcept;
+    bool   loadRecordedStroke (Stroke stroke, std::vector<float>& mono) noexcept;
+    void   buildBank() noexcept;
+    void   layerFromRecording (Sample& dest, const std::vector<float>& src,
+                               Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    Voice& allocateVoice() noexcept;
+    void   trigger (Stroke stroke, float velocity, int sampleOffset) noexcept;
+    void   releaseStroke (Stroke stroke) noexcept;
+    void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    void   applyReverbParams() noexcept;
+    const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
 
-    static constexpr int kTakes = 4;
-    static constexpr int kNumVoices = 12;
-    std::vector<float> shakerL[kTakes];
-    std::vector<float> shakerR[kTakes];
-    std::vector<float> tumbaL, tumbaR, openL, openR, slapL, slapR;
-    Voice voices[kNumVoices] {};
+    Sample bank[kStrokes][kLayers][kRoundRobin];
+    bool   recorded[kStrokes] {};   // which strokes came from a recording
+    int    rrCursor[kStrokes] {};
+    Voice  voices[kVoices] {};
+    GrooveEngine groove;
     DeterministicRng rng { 0x51A4E1u };
     juce::Reverb reverb;
     double sampleRate = 48000.0;
-    float humanization = 0.00f;
+    float humanization = 0.35f;
     float volume = 0.8f;
     float reverbAmount = 0.30f;
     float grooveBpm = 120.0f;
-    int groovePulses = 2;
+    int groovePulses = 4;
     bool enabled = true;
     int totalHits = 0;
-    int shakerHits = 0;
+    int hardStealCount = 0;
     int samplesSinceHit = 1000000;
     int lastActive = 0;
-    int hardStealCount = 0;
-    float voiceFadeStep = 0.0f;
+    int lastReleasing = 0;
+    int barCounter = 0;
+    int lastBarBeat = -1;
+    std::uint32_t voiceClock = 0;
 };
 
 } // namespace vp

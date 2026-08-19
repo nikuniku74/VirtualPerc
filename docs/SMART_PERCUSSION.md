@@ -13,9 +13,16 @@ severità, e per ogni voce il criterio di accettazione che la chiude.
 
 Data: 19 agosto 2026 · albero: `0.1.0` · ~6.000 righe in `Source/`
 
-**Stato: la Fase 1 è fatta.** I cinque difetti B1–B5 sono corretti su `main`,
-ognuno con il test che lo avrebbe intercettato; la suite host è passata da 25 a
-32 casi, 0 falliti. Restano aperti X1 e X3, e tutto il resto del documento.
+**Stato al 19 agosto 2026, dopo l'unione delle due linee di sviluppo.**
+Questo documento è stato scritto contro il `main` di allora. Nel frattempo un
+secondo ramo aveva sviluppato in parallelo il livello musicale — `GrooveEngine`,
+`StyleDetector`, campioni registrati — ed è stato unito qui. Le due linee erano
+arrivate **indipendentemente alla stessa correzione** per B1, B2 e B3.
+
+Fatto: **B1–B5**, più P1, P5 e parte di M2 dal ramo unito. La suite host è a
+**56 casi, 0 falliti**. Restano aperti X1 e X3 e tutto il resto del documento.
+Le sezioni sotto sono state aggiornate dove il ramo unito le ha superate; dove
+non lo dicono, descrivono ancora lo stato reale.
 
 ---
 
@@ -69,15 +76,15 @@ intelligente".
 | **B5** | Analisi | drop della FIFO non resettava feature/decoder → onset fantasma | ✅ fatto | R1 |
 | **B6** | Doc/codice | `AUTO` = ottavi nel codice, sedicesimi nella doc (aperto); "steal quietest" ora è vero | 🟡 parziale | — |
 | **M1** | Metrica | 4/4 cablato ovunque: niente 3/4, 6/8, 12/8 | 🔴 | R3 |
-| **M2** | Metrica | nessun decoder di battuta: il "1" arriva da una soglia su un frame | 🔴 | R3 |
-| **M3** | Feel | nessun rilevamento di swing/terzine: su uno shuffle lo shaker va contro | 🟠 | R4 |
+| **M2** | Metrica | nessun decoder di battuta: il "1" arriva da una soglia su un frame | 🟠 parziale: voto su 3 downbeat all'ingresso, non ancora continuo | R3 |
+| **M3** | Feel | swing ora *riproducibile* (parametro), ma non ancora *rilevato* dal brano | 🟠 | R4 |
 | **M4** | Feel | nessuna scelta half-time / double-time | 🟠 | R4 |
-| **P1** | Performance | pattern unico cablato, nessuna libreria di groove | 🔴 | R4 |
+| **P1** | Performance | pattern unico cablato, nessuna libreria di groove | ✅ `GrooveEngine` + 4 stili | R4 |
 | **P2** | Performance | nessuna dinamica: velocity non segue né accenti né intensità del brano | 🔴 | R4 |
-| **P3** | Performance | nessuna struttura: niente fill, niente stop, niente intro/outro | 🟠 | R4 |
+| **P3** | Performance | fill ogni 8ª battuta e frase di 2 battute ✅; niente stop/intro/outro né sezioni | 🟠 | R4 |
 | **P4** | Performance | continua a suonare nel silenzio e nei breakdown | 🟠 | R4 |
-| **P5** | Suono | 4 take di shaker, 1 sola take per conga → effetto mitragliatrice | 🟠 | R4 |
-| **P6** | Performance | `humanization` agisce solo sul volume, mai sul tempo | 🟡 | R4 |
+| **P5** | Suono | 4 take di shaker, 1 sola take per conga → effetto mitragliatrice | ✅ campioni registrati, layer dinamici, round-robin | R4 |
+| **P6** | Performance | `humanization` agisce solo sul volume, mai sul tempo | ✅ peso e timing, default 0.35 | R4 |
 | **I1** | Ingresso | su iPad non esiste presa digitale dell'audio di Spotify: solo microfono | 🔵 vincolo | R1 |
 | **I2** | Ingresso | un solo bus mono; niente analisi per strumento, niente mid/side | 🟠 | R1 |
 | **I3** | Ingresso | cancellazione del rientro a 1 tap e ritardo fisso | 🟠 | R1 |
@@ -649,9 +656,16 @@ le cose che rendono misurabile tutto il resto.
 ### Fase 1 — Chiudere i difetti (nessuna funzione nuova) — **fatta per B1–B5**
 B4 → B2 → B1 → B3 → B5 ✅ · X1 → X3 ancora aperti.
 
-*Uscita*: raggiunta per i cinque difetti — suite host da 25 a 32 casi, 0 falliti,
-e ogni nuovo test verificato in entrambe le direzioni (fallisce sul codice
-precedente, passa su quello corretto).
+*Uscita*: raggiunta. Suite host a 56 casi, 0 falliti, deterministica. Ogni test
+aggiunto è stato verificato in entrambe le direzioni: fallisce sul codice
+precedente, passa su quello corretto.
+
+Nell'unione, i test di densità della griglia (B1) e di etichetta di battuta (B2)
+sono stati **tolti** perché `perc-grid` e `perc-grid-label` del ramo unito
+coprono già gli stessi due difetti: duplicarli darebbe solo due posti da
+aggiornare. Restano di questa linea i test su rampa di release e allocazione
+delle voci (B3), rientro speaker (B4) e buco della FIFO (B5), che non avevano
+copertura da nessuna delle due parti.
 
 ### Fase 2 — Ingresso affidabile
 I1 (riproduzione interna del file), I4 (condizionamento), I3 (NLMS), I2 (mid/side).
@@ -704,8 +718,14 @@ codice cresce.
 
 L'app **sente** già bene: BeatNet, il decoder a tre sorgenti e il PLL sono la parte
 difficile ed è fatta. I cinque difetti che potevano sabotare qualunque
-miglioramento (B1–B5) sono chiusi, ognuno con il test che lo blocca. Quello che
-manca ora è **capire la battuta** (M1, M2) e **suonare come un percussionista
-invece che come una drum machine** (P1–P6), su una base di ingresso più solida
-(I1–I4). Con la CI e il banco di prova della Fase 0 — ancora da fare — tutto
-questo diventa sviluppo misurabile invece che sviluppo a orecchio.
+miglioramento (B1–B5) sono chiusi, ognuno con il test che lo blocca, e con
+l'unione del ramo parallelo la percussione ha smesso di essere una drum machine:
+quattro parti, campioni veri, frasi di due battute, fill, swing e umanizzazione.
+
+Quello che manca ora, in ordine di peso: **capire la battuta** — M1, la metrica è
+ancora 4/4 cablata, e M2, il "1" si allinea all'ingresso ma non è ancora difeso
+durante il brano; **l'ingresso** (I1–I4), dove la riproduzione interna di un file
+è l'unica via per avere il PCM digitale su iPad; e **la Fase 0**, che resta tutta
+da fare. Senza CI e senza il banco di prova con una metrica unica, due linee di
+sviluppo si sono già trovate a correggere gli stessi difetti in parallelo: è
+esattamente il costo che la Fase 0 esiste per evitare.

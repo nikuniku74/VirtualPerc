@@ -115,7 +115,12 @@ MainComponent::MainComponent()
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
     sourceButton.setButtonText ("MIXER");
    #endif
-    engine.settings().humanization.store (0.00f);
+    // 0.00 is a sequencer: dead on the grid, every stroke the same weight.
+    // A percussionist is neither, and this is the single setting that decides
+    // which of the two the app sounds like.
+    engine.settings().humanization.store (0.35f);
+    engine.settings().intensity.store (0.50f);
+    engine.settings().swing.store (0.00f);
     engine.settings().masterVolume.store (0.90f);
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));

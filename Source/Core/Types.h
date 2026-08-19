@@ -32,6 +32,18 @@ enum class Subdivision : int
     sixteenth
 };
 
+/** Which part the percussionist plays. A player does not bring a marcha to a
+    rock track, so this is not a set of variations on one pattern - each has its
+    own conga figure and its own shaker. */
+enum class GrooveStyle : int
+{
+    marcha = 0,   // latin: tumbao, the paired open tones closing the bar
+    rock,         // sparse, locked to the backbeat, pushing into the one
+    dance,        // busy sixteenths, syncopated, offbeat-accented
+    pop,          // tasteful and out of the way
+    count
+};
+
 enum class FollowSource : int
 {
     kitMic = 0,
@@ -106,7 +118,7 @@ struct EngineSnapshot
     float latencyMs            = 0.0f;
     float inputPeak            = 0.0f;
     float callbackMs           = 0.0f;
-    float humanization         = 0.00f;
+    float humanization         = 0.35f;
     float reverbAmount         = 0.30f;
     bool  shakerEnabled        = true;
     bool  percussionAudible    = false;
@@ -127,6 +139,13 @@ struct EngineSnapshot
     /** Whether the analysis is treating the tempo as a fixed one to hold or a
         live one to follow. */
     int   tempoRegime          = 0;
+    int   grooveStyle          = 0;
+    float grooveStyleConfidence = 0.0f;
+    float styleEvenKick        = 0.0f;
+    float styleBackbeat        = 0.0f;
+    float styleOffHigh         = 0.0f;
+    float styleSync            = 0.0f;
+    float styleOccupancy       = 0.0f;
 };
 
 struct EngineSettings
@@ -134,10 +153,20 @@ struct EngineSettings
     std::atomic<float> masterVolume    { 0.90f };
     std::atomic<float> percussionVolume{ 1.00f };
     std::atomic<float> reverbAmount    { 0.30f };
-    std::atomic<float> humanization    { 0.00f };
+    // A percussionist is not on the grid and is not evenly loud. 0 is a
+    // sequencer; the default is a player who is not trying to be one.
+    std::atomic<float> humanization    { 0.35f };
+    std::atomic<float> swing           { 0.00f };
+    std::atomic<float> intensity       { 0.50f };
     std::atomic<int>   followStrength  { static_cast<int> (FollowStrength::high) };
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
     std::atomic<bool>  shakerEnabled   { true };
+    std::atomic<bool>  congasEnabled   { true };
+    std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::marcha) };
+    // Let the music choose the part. Off by default: measured at 3 cases in 9
+    // against material whose style is known, which is no better than always
+    // guessing the same style. See docs/AUDIO_ENGINE.md.
+    std::atomic<bool>  grooveAuto      { false };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };
