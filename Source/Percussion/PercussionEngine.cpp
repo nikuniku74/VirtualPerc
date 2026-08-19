@@ -10,6 +10,36 @@ namespace
 {
     constexpr float kPi = 3.14159265358979323846f;
 
+    // Seconds of raised-cosine fade welded onto the end of every synthesised
+    // sample. Each one is an exponential decay cut off at a fixed length, and
+    // none of them has decayed anywhere near far enough by then: the shaker
+    // stops at 21% of its peak, the open conga at 11%, the slap at 8%. That
+    // step is a click on *every* hit - not a rare glitch, the normal case - and
+    // it is the first thing to fix when the percussion sounds broken up.
+    constexpr double kTailFadeSec = 0.012;
+
+    // Milliseconds of fade when a voice is taken over by a new hit of the same
+    // kind. Long enough not to click, short enough that the new hit is not
+    // muddied by the old one.
+    constexpr double kStealFadeSec = 0.004;
+
+    // Shortest gap between two percussion hits. A 32nd note at 200 BPM is 37 ms,
+    // so anything closer than this is the clock stuttering, not the groove.
+    constexpr double kRetriggerGuardSec = 0.020;
+
+    void fadeTail (std::vector<float>& L, std::vector<float>& R, double sampleRate) noexcept
+    {
+        const int n = static_cast<int> (std::min (L.size(), R.size()));
+        const int fade = std::min (n, std::max (1, static_cast<int> (sampleRate * kTailFadeSec)));
+        for (int i = 0; i < fade; ++i)
+        {
+            const float t = static_cast<float> (i) / static_cast<float> (fade);
+            const float g = 0.5f * (1.0f + std::cos (kPi * t));
+            L[static_cast<size_t> (n - fade + i)] *= g;
+            R[static_cast<size_t> (n - fade + i)] *= g;
+        }
+    }
+
     struct Svf
     {
         float low = 0.0f;
@@ -133,6 +163,7 @@ void PercussionEngine::synthesizeShaker() noexcept
             L[static_cast<size_t> (n)] *= g;
             R[static_cast<size_t> (n)] *= g;
         }
+        fadeTail (L, R, sampleRate);
     }
 }
 
@@ -210,6 +241,7 @@ void PercussionEngine::synthesizeCongas() noexcept
             L[static_cast<size_t> (i)] *= g;
             R[static_cast<size_t> (i)] *= g;
         }
+        fadeTail (L, R, sampleRate);
     };
 
     synth (tumbaL, tumbaR, 82.0f, 0.12f, 9.5f, 0.28f, -0.28f);
@@ -217,21 +249,25 @@ void PercussionEngine::synthesizeCongas() noexcept
     synth (slapL, slapR, 320.0f, 0.55f, 28.0f, 0.09f, 0.38f);
 }
 
-void PercussionEngine::stealKind (Kind kind) noexcept
+void PercussionEngine::releaseKind (Kind kind) noexcept
 {
+    // Fade the outgoing voice instead of switching it off mid-sample.
+    const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
     for (auto& v : voices)
     {
-        if (v.active && v.kind == kind)
-            v.active = false;
+        if (v.active && v.kind == kind && v.fadeStep <= 0.0f)
+            v.fadeStep = step;
     }
 }
 
-void PercussionEngine::triggerShaker (int sampleOffset) noexcept
+PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
 {
-    stealKind (Kind::shaker);
-
-    int slot = 0;
-    for (int i = 0; i < 12; ++i)
+    // A free slot if there is one, otherwise the oldest voice - which is the
+    // one furthest into its decay, so it is the least missed. Falling back to
+    // slot 0 the way this used to meant a busy bar overwrote whichever voice
+    // happened to be first, part-way through, at full amplitude.
+    int slot = -1;
+    for (int i = 0; i < kVoices; ++i)
     {
         if (! voices[i].active)
         {
@@ -239,11 +275,26 @@ void PercussionEngine::triggerShaker (int sampleOffset) noexcept
             break;
         }
     }
+    if (slot < 0)
+    {
+        slot = 0;
+        for (int i = 1; i < kVoices; ++i)
+            if (voices[i].age < voices[slot].age)
+                slot = i;
+    }
+    voices[slot] = {};
+    voices[slot].age = ++voiceClock;
+    return voices[slot];
+}
+
+void PercussionEngine::triggerShaker (int sampleOffset) noexcept
+{
+    releaseKind (Kind::shaker);
 
     const float hum = humanization;
     const float vel = 0.78f + 0.14f * (1.0f - hum) + 0.08f * hum * rng.nextFloat();
     const float pan = 0.03f * rng.nextSigned();
-    auto& v = voices[slot];
+    auto& v = allocateVoice();
     v.kind = Kind::shaker;
     v.pos = -sampleOffset;
     v.take = static_cast<int> (rng.nextU32() % static_cast<std::uint32_t> (kTakes));
@@ -256,20 +307,10 @@ void PercussionEngine::triggerShaker (int sampleOffset) noexcept
 
 void PercussionEngine::triggerConga (Kind kind, int sampleOffset, float pan) noexcept
 {
-    stealKind (kind);
-
-    int slot = 0;
-    for (int i = 0; i < 12; ++i)
-    {
-        if (! voices[i].active)
-        {
-            slot = i;
-            break;
-        }
-    }
+    releaseKind (kind);
 
     const float vel = 0.82f + 0.12f * rng.nextFloat();
-    auto& v = voices[slot];
+    auto& v = allocateVoice();
     v.kind = kind;
     v.pos = -sampleOffset;
     v.take = 0;
@@ -329,9 +370,15 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
 
     if (enabled && audible)
     {
-        const float pulseSec = 60.0f / std::max (40.0f, grooveBpm)
-                               / static_cast<float> (std::max (1, groovePulses));
-        const int minGap = static_cast<int> (sampleRate * pulseSec * 0.82);
+        // A guard against firing the same grid position twice - which the clock
+        // can do when a phase correction steps the grid backwards - and nothing
+        // more. It used to be 82% of the nominal pulse derived from `grooveBpm`,
+        // which is the *displayed* BPM: before a lock that is 120 whatever the
+        // clock is really doing, so at any real tempo above ~145 the guard was
+        // longer than the actual pulse and swallowed every second hit. Dropped
+        // notes are exactly the symptom this had to stop causing, so the guard
+        // is now a short fixed one that no musical subdivision can reach.
+        const int minGap = static_cast<int> (sampleRate * kRetriggerGuardSec);
         for (int i = 0; i < tick.pulsesFired; ++i)
         {
             int offset = tick.pulseOffset[i];
@@ -395,8 +442,19 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                 v.active = false;
                 break;
             }
-            left[n]  += bL[static_cast<size_t> (p)] * v.gainL * g;
-            right[n] += bR[static_cast<size_t> (p)] * v.gainR * g;
+            if (v.fadeStep > 0.0f)
+            {
+                v.fade -= v.fadeStep;
+                if (v.fade <= 0.0f)
+                {
+                    v.fade = 0.0f;
+                    v.active = false;
+                    break;
+                }
+            }
+            const float a = v.fade * g;
+            left[n]  += bL[static_cast<size_t> (p)] * v.gainL * a;
+            right[n] += bR[static_cast<size_t> (p)] * v.gainR * a;
         }
         if (v.active)
         {

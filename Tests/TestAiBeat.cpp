@@ -2,6 +2,7 @@
 
 #include "AI/AudioFifo.h"
 #include "AI/BeatDecoder.h"
+#include "AI/TempoEstimator.h"
 #include "AI/BeatModelConfig.h"
 #include "AI/LogSpectFeatures.h"
 #include "AI/NeuralBeatTracker.h"
@@ -10,6 +11,7 @@
 #include "AI/OnnxSession.h"
 #include "AI/StubBeatModel.h"
 #include "Audio/VirtualPercussionEngine.h"
+#include "Percussion/PercussionEngine.h"
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
@@ -254,6 +256,211 @@ void vpRunAiBeatTests (int& passed, int& failed)
         for (float s : L)
             e2 += s * s;
         expect (e2 > 1.0e-4f, "WSOLA still produces energy at ratio 1.25");
+    }
+
+    // Metrical level. The reported symptom was a BPM that read double and would
+    // not hold still, and a hi-hat on the eighths is what causes it: it puts an
+    // activation peak halfway between every pair of beats, and the
+    // autocorrelation of a beat train is almost as strong at twice the period
+    // as at the period.
+    {
+        struct Case { float bpm; float offbeat; const char* name; };
+        const Case cases[] = {
+            {  90.0f, 0.55f, "octave holds at 90 BPM with loud eighths" },
+            {  76.0f, 0.60f, "octave holds at 76 BPM with loud eighths" },
+            { 120.0f, 0.35f, "octave holds at 120 BPM" },
+        };
+
+        for (const Case& c : cases)
+        {
+            vp::TempoEstimator te;
+            vp::BeatDecoder dec;
+            te.prepare (50.0);
+            dec.prepare (50.0);
+
+            const double period = 60.0 / static_cast<double> (c.bpm) * 50.0;
+            auto toGrid = [] (double f, double p)
+            {
+                const double m = std::fmod (f, p);
+                return std::min (m, p - m);
+            };
+            auto bump = [] (double d, float h)
+            {
+                return h * static_cast<float> (std::exp (-0.5 * (d / 1.6) * (d / 1.6)));
+            };
+
+            vp::BeatHypothesis h {};
+            float prev = 0.0f;
+            int flips = 0;
+            for (int i = 0; i < 50 * 40; ++i)   // 40 s
+            {
+                const float onBeat = bump (toGrid (static_cast<double> (i), period), 0.95f);
+                const float offBeat = bump (toGrid (static_cast<double> (i) - period * 0.5, period),
+                                            0.95f * c.offbeat);
+                const float act = std::max (std::max (onBeat, offBeat), 0.03f);
+                const int beatNo = static_cast<int> (std::floor (static_cast<double> (i) / period + 0.5));
+                te.push (act);
+                h = dec.observe (act, (beatNo % 4) == 0 ? onBeat * 0.9f : 0.05f, 1.0f - act);
+                if (te.ready())
+                {
+                    if (prev > 0.0f && std::fabs (te.bpm() - prev) / prev > 0.08f)
+                        ++flips;
+                    prev = te.bpm();
+                }
+            }
+
+            const float err = std::fabs (h.bpm - c.bpm) / c.bpm;
+            std::printf ("octave  true=%5.1f  est=%6.1f  dec=%6.1f  levelFlips=%d\n",
+                         static_cast<double> (c.bpm), static_cast<double> (te.bpm()),
+                         static_cast<double> (h.bpm), flips);
+            // Zero flips, not "few": the level is what every other guard is
+            // anchored to, so one flip is a clock that restarts.
+            expect (err < 0.04f && flips == 0, c.name);
+        }
+    }
+
+    // Percussion continuity. All of these are about the same complaint - the
+    // shaker and the congas breaking up - and all of them used to fail.
+    {
+        // Every synthesised sample was an exponential decay cut off at a fixed
+        // length: the shaker still at 21% of its peak, the open conga at 11%,
+        // the slap at 8%. That step is a click on every single hit, so the two
+        // instruments are checked apart - mixed together the conga's longer
+        // tail hides the shaker's.
+        auto tailOf = [] (int pulseIndex, int barPulse, float& peakOut) -> float
+        {
+            vp::PercussionEngine perc;
+            perc.prepare (48000.0);
+            perc.setReverbAmount (0.0f);
+            perc.setVolume (1.0f);
+            perc.setGroove (120.0f, 2);
+
+            vp::ClockTick hit;
+            hit.tempoBpm = 120.0f;
+            hit.pulsesFired = 1;
+            hit.pulseOffset[0] = 0;
+            hit.pulseIndex[0] = pulseIndex;
+            hit.pulseBeatInBar[0] = barPulse / 2;
+            hit.barPulse[0] = barPulse;
+            vp::ClockTick idle;
+            idle.tempoBpm = 120.0f;
+
+            const int block = 256;
+            std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+            float peak = 0.0f, endLevel = 0.0f;
+            for (int b = 0; b < 120; ++b)   // 0.64 s, past the longest conga
+            {
+                perc.render (L.data(), R.data(), block, b == 0 ? hit : idle, true);
+                for (int i = 0; i < block; ++i)
+                {
+                    const float a = std::fabs (L[static_cast<size_t> (i)])
+                                    + std::fabs (R[static_cast<size_t> (i)]);
+                    peak = std::max (peak, a);
+                    if (a > 1.0e-6f)
+                        endLevel = a;
+                }
+            }
+            peakOut = peak;
+            return endLevel;
+        };
+
+        // barPulse 1 -> the tumbao plays no conga there, so this is the shaker
+        // alone; barPulse 0 -> shaker plus tumba, whose tail outlasts it.
+        float shakerPeak = 0.0f, congaPeak = 0.0f;
+        const float shakerEnd = tailOf (1, 1, shakerPeak);
+        const float congaEnd = tailOf (0, 0, congaPeak);
+        std::printf ("perc-tail  shaker end=%.2f%% of peak   conga end=%.2f%% of peak\n",
+                     shakerPeak > 0.0f ? 100.0 * static_cast<double> (shakerEnd / shakerPeak) : 0.0,
+                     congaPeak > 0.0f ? 100.0 * static_cast<double> (congaEnd / congaPeak) : 0.0);
+        expect (shakerPeak > 0.05f && congaPeak > 0.05f
+                    && shakerEnd < 0.005f * shakerPeak
+                    && congaEnd < 0.005f * congaPeak,
+                "percussion samples decay to silence instead of being cut off");
+    }
+
+    {
+        // The retrigger guard used to be 82% of a pulse derived from the
+        // *displayed* BPM, which reads 120 until the tracker locks. At any real
+        // tempo above ~145 that guard was longer than the pulse itself, so every
+        // second hit was thrown away - a shaker that stutters exactly when the
+        // song is quick.
+        vp::TempoFollower clock;
+        clock.prepare (48000.0);
+        clock.forceTempo (168.0f);
+        clock.setPulsesPerBeat (2);
+        clock.setLocked (true);
+
+        vp::PercussionEngine perc;
+        perc.prepare (48000.0);
+        perc.setReverbAmount (0.0f);
+        perc.setGroove (120.0f, 2);   // stale, exactly as before a lock
+
+        const int block = 256;
+        const int blocks = 8 * 48000 / block;   // 8 seconds
+        std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+        int longestGapSamples = 0, sinceHit = 0, hits = 0;
+        for (int b = 0; b < blocks; ++b)
+        {
+            const auto tick = clock.advance (block);
+            const int before = perc.hitsFired();
+            perc.render (L.data(), R.data(), block, tick, true);
+            const int fired = perc.hitsFired() - before;
+            if (fired > 0)
+            {
+                if (hits > 0)
+                    longestGapSamples = std::max (longestGapSamples, sinceHit);
+                sinceHit = 0;
+                ++hits;
+            }
+            sinceHit += block;
+        }
+        // Shaker and congas share the hit counter, so count blocks that fired.
+        const double pulseSec = 60.0 / 168.0 / 2.0;
+        const double expected = 8.0 / pulseSec;
+        const double gapPulses = static_cast<double> (longestGapSamples) / (pulseSec * 48000.0);
+        std::printf ("perc-grid  pulses=%d expected=%.0f  longest gap=%.2f pulses\n",
+                     hits, expected, gapPulses);
+        expect (static_cast<double> (hits) > expected * 0.95 && gapPulses < 1.5,
+                "percussion fires every pulse at a fast tempo, with no dropped hits");
+    }
+
+    {
+        // One buffer can hold a downbeat and the pulses after it. Those used to
+        // be labelled with the *previous* beat of the bar, and the tumbao picks
+        // its drum from that label, so the pattern played the wrong conga
+        // whenever a block spanned a beat. Sixteenths at 200 BPM in a large
+        // buffer put two to three pulses in every block, beat crossings
+        // included.
+        vp::TempoFollower clock;
+        clock.prepare (48000.0);
+        clock.forceTempo (200.0f);
+        clock.setPulsesPerBeat (4);
+        clock.setLocked (true);
+
+        bool consistent = true;
+        bool sawMultiPulseBlock = false;
+        int seen = 0;
+        int expectBar = -1, expectIdx = -1;
+        for (int b = 0; b < 200; ++b)
+        {
+            const auto tick = clock.advance (8192);   // 0.17 s
+            if (tick.pulsesFired > 1)
+                sawMultiPulseBlock = true;
+            for (int i = 0; i < tick.pulsesFired; ++i)
+            {
+                const int bar = tick.pulseBeatInBar[i];
+                const int idx = tick.pulseIndex[i];
+                if (expectIdx >= 0 && (bar != expectBar || idx != expectIdx))
+                    consistent = false;
+                expectIdx = (idx + 1) % 4;
+                expectBar = expectIdx == 0 ? (bar + 1) & 3 : bar;
+                ++seen;
+            }
+        }
+        std::printf ("perc-grid-label  pulses=%d  multiPulseBlocks=%d  consistent=%d\n",
+                     seen, sawMultiPulseBlock ? 1 : 0, consistent ? 1 : 0);
+        expect (seen > 400 && sawMultiPulseBlock && consistent,
+                "every pulse is labelled with the beat of the bar it falls in");
     }
 
     {

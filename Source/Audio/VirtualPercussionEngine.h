@@ -97,6 +97,7 @@ private:
     double clickPhase = 0.0;
     float leakLp = 0.0f;
     float peakEnv = 0.0f;
+    float makeupGain = 1.0f;
     int ringWrite = 0;
     static constexpr int ringSize = 32768;
 

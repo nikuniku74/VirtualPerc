@@ -304,12 +304,16 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         if (offset < 0) offset = 0;
         if (offset >= numSamples) offset = numSamples - 1;
 
+        // Which beat of the bar this pulse belongs to, read off the pulse index
+        // itself. The old form asked only whether the block had crossed a beat
+        // at all, so a block containing the downbeat *and* the offbeat after it
+        // - one buffer at a fast tempo, or any large buffer - labelled that
+        // offbeat with the previous beat. PercussionEngine picks the conga from
+        // that label, so the tumbao played the wrong drum on the way past.
         const int idx = ((p % pulsesPerBeat) + pulsesPerBeat) % pulsesPerBeat;
-        int barBeat = beatAtStart;
-        if (tick.wrappedBeat && idx == 0)
-            barBeat = beatInBar;
-        else if (tick.wrappedBeat && idx != 0)
-            barBeat = beatAtStart;
+        const int beatOffset = static_cast<int> (std::floor (static_cast<double> (p)
+                                                             / static_cast<double> (pulsesPerBeat)));
+        const int barBeat = (beatAtStart + beatOffset) & 3;
 
         tick.pulseIndex[tick.pulsesFired] = idx;
         tick.pulseOffset[tick.pulsesFired] = offset;
@@ -319,6 +323,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     }
 
     lastPulsePhase = phase;
+    tick.tempoBpm = tempo;
     return tick;
 }
 

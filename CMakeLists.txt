@@ -1,6 +1,13 @@
 cmake_minimum_required (VERSION 3.22)
 
-project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+# Objective-C/C++ exists only on Apple platforms. Declaring it unconditionally
+# fails configure on a Linux host, where the console test target is the only
+# thing that can be built anyway.
+if (APPLE)
+    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+else()
+    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX)
+endif()
 
 set (CMAKE_CXX_STANDARD 20)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)

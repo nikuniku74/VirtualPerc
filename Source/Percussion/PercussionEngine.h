@@ -5,6 +5,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <cstdint>
 #include <vector>
 
 namespace vp
@@ -42,11 +43,19 @@ private:
         float gainL = 0.0f;
         float gainR = 0.0f;
         bool  active = false;
+        // A voice being taken over is faded out over a few milliseconds rather
+        // than switched off. Cutting a sounding grain at whatever sample it had
+        // reached is a step in the output, and a step is a click - which is
+        // what "the shaker breaks up" sounds like.
+        float fade = 1.0f;
+        float fadeStep = 0.0f;
+        std::uint32_t age = 0;
     };
 
+    Voice& allocateVoice() noexcept;
     void triggerShaker (int sampleOffset) noexcept;
     void triggerConga (Kind kind, int sampleOffset, float pan) noexcept;
-    void stealKind (Kind kind) noexcept;
+    void releaseKind (Kind kind) noexcept;
     void synthesizeShaker() noexcept;
     void synthesizeCongas() noexcept;
     void applyReverbParams() noexcept;
@@ -54,10 +63,11 @@ private:
     const std::vector<float>& sampleR (const Voice& v) const noexcept;
 
     static constexpr int kTakes = 4;
+    static constexpr int kVoices = 16;
     std::vector<float> shakerL[kTakes];
     std::vector<float> shakerR[kTakes];
     std::vector<float> tumbaL, tumbaR, openL, openR, slapL, slapR;
-    Voice voices[12] {};
+    Voice voices[kVoices] {};
     DeterministicRng rng { 0x51A4E1u };
     juce::Reverb reverb;
     double sampleRate = 48000.0;
@@ -70,6 +80,7 @@ private:
     int totalHits = 0;
     int samplesSinceHit = 1000000;
     int lastActive = 0;
+    std::uint32_t voiceClock = 0;
 };
 
 } // namespace vp

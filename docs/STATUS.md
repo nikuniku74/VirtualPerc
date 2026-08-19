@@ -16,7 +16,7 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | 30 passed: kit/CLICK/quiet SPEAKER 120.0 stabile; sincopi forti senza oscillazione; START esce da ATTENDO BATTUTA |
+| Host `VPTests` | 42 passed: kit/CLICK/quiet SPEAKER 120.0 stabile; sincopi forti senza oscillazione; START esce da ATTENDO BATTUTA |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -64,6 +64,43 @@ Evidenza diagnostica sul file ufficiale a 120 BPM:
 - test host finale: **30 passed, 0 failed**.
 
 Nota onesta: non è ancora incluso il particle filter Monte Carlo completo del progetto Python BeatNet. La rete ONNX è quella ufficiale; il decoder C++ è causale e stabilizzato per mobile.
+
+## BPM al doppio e instabile (19 agosto)
+
+Il sintomo — BPM riconosciuto al doppio, e comunque mai fermo — era reale e riproducibile. Misurato end to end su 120 brani sintetici (60–176 BPM, quattro stili, percorso SPEAKER con simulazione cassa→stanza→microfono):
+
+| | prima | dopo |
+|---|---|---|
+| Ottava sbagliata | 41/120 | **25–26/120** |
+| BPM instabile (span > 4 BPM nello stesso brano) | 39/120 | **24–29/120** |
+| Cambi di livello metrico (52 tracce di attivazione) | 1590 | **15** |
+| Test host | 36 | **42** (6 nuovi, ognuno verificato che fallisce sul codice vecchio) |
+
+I due valori «dopo» sono due esecuzioni della **stessa** build: la sonda pilota il motore più veloce del tempo reale e il worker neurale gira su un altro thread, quindi lo scheduling sposta qualche caso da un run all'altro. Vanno letti come ordine di grandezza, non come cifre esatte. Le due colonne sono un run ciascuna.
+
+Cause, tutte verificate con misure e non per ipotesi:
+
+1. **L'autocorrelazione non sa scegliere l'ottava.** Sulle attivazioni BeatNet reali la correlazione a 1, 2, 3 e 4 battiti sta fra 0.78 e 0.97 per tutte: un treno di battiti correla con sé stesso a qualsiasi multiplo. A decidere il livello restava quindi il *prior* gaussiano su 120 BPM, che regala al doppio un vantaggio del 46 % a 60 BPM — cioè esattamente «lento → doppio, veloce → metà».
+2. **Il livello si decide sull'ampiezza, non sulla correlazione.** Ripiegando l'attivazione sul periodo candidato, l'altezza a mezzo periodo dal picco vale ~0.13 sul battito vero e ~0.80 sul doppio. È una decisione, non un pareggio.
+3. **Il livello ballava fra un refresh e l'altro.** Ora cambia solo se un rivale vince di un margine e lo mantiene per ~2 s.
+4. **Il decoder non seguiva la correzione.** Il re-anchor era condizionato alla *clarity* del comb — che è bassa proprio quando la griglia sbagliata è il rivale — e vietato del tutto finché la griglia «stava bene», cosa sempre vera per il doppio del tempo giusto.
+5. **Il livello di analisi era parte del problema.** Le feature sono `log10(mag + 1)`, quindi il guadagno conta. Il target era 0.12; l'ottimo misurato è **0.20**. E il guadagno inseguiva il picco istantaneamente, spostando il punto di lavoro della rete a ogni colpo di batteria.
+
+## Shaker e congas interrotti (19 agosto)
+
+Cinque difetti distinti, tutti nel percorso di riproduzione:
+
+1. Ogni campione sintetizzato era un decadimento **troncato**: shaker al 21 % del picco, conga aperta all'11 %, slap all'8 %. Un click a **ogni** colpo. Ora ogni campione ha una dissolvenza finale di 12 ms.
+2. Una voce sostituita dal colpo successivo veniva spenta a metà campione — ora sfuma in 4 ms.
+3. Con tutte le voci occupate l'allocazione ripiegava sullo **slot 0**, sovrascrivendo una voce in suono. Ora prende la più vecchia; le voci sono 16.
+4. La guardia anti-ritrigger era l'82 % di un impulso calcolato sul BPM **visualizzato** (120 finché non c'è lock): sopra ~145 BPM reali era più lunga dell'impulso vero e **buttava via un colpo su due**. Ora è una guardia fissa di 20 ms, e il groove prende il tempo dal clock.
+5. `pulseBeatInBar` era sbagliato per gli impulsi dopo un confine di battito dentro lo stesso blocco, e il tumbao sceglie la conga da quell'indice: suonava il tamburo sbagliato.
+
+## Limiti noti dopo questo giro
+
+- Sopra ~168 BPM e sui groove in **half-time** il tracker preferisce il livello lento (84 invece di 168). Per un orologio di percussioni è spesso la lettura più utile, ma è una scelta, non una certezza.
+- Sotto ~64 BPM con ottavi marcati può ancora raddoppiare.
+- Restano numeri su materiale **sintetico**: la prova sul device con Spotify vero è ancora da fare.
 
 ## Cosa locka oggi
 

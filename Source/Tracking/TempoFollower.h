@@ -7,6 +7,8 @@ namespace vp
 
 struct ClockTick
 {
+    /** The tempo the clock is actually running at over this block. */
+    float tempoBpm = 0.0f;
     bool wrappedBeat = false;
     bool wrappedBar  = false;
     int  pulsesFired = 0;

@@ -74,10 +74,44 @@ No single measurement is both fast and precise, so each does one job.
 | Least squares over 24 beat times | ~24 beats | **precision**, far finer than the 20 ms frame grid |
 | Least squares over 8 beat times | ~8 beats | **responsiveness** when a player moves |
 
-`TempoEstimator` scores candidate periods on the recency-weighted autocorrelation of the activation. A candidate collects its own harmonics and is charged for anything strong **inside** its period, which is what brackets the octave from both sides: the true period finds nothing between its beats, while a candidate at twice the true period finds a full pulse there. Two details matter more than they look:
+`TempoEstimator` scores candidate periods on the recency-weighted autocorrelation of the activation. That answers *how much pulse is at this period* — but not, on its own, which metrical level the music is on.
+
+#### Autocorrelation cannot choose the octave
+
+Measured on BeatNet activations from real material, the correlation at one, two, three and four beats:
+
+| | 0.5× | 1× | 2× | 3× | 4× |
+|---|---|---|---|---|---|
+| 100 BPM, 16th hats | −0.10 | 0.85 | 0.97 | 0.84 | 0.96 |
+| 120 BPM, rock | −0.18 | 0.74 | 0.78 | 0.82 | 0.94 |
+| 168 BPM, rock | −0.26 | 0.87 | 0.80 | 0.78 | 0.86 |
+
+A beat train correlates with itself just as well at any multiple of the beat. Anything that picks the level from correlation alone is really picking it from whatever tie-breaker sits behind it — and the tie-breaker used to be a Gaussian preference for 120 BPM, which hands the double a 46 % advantage at 60 BPM and the half a comparable one at 168. That is precisely the reported failure: **slow songs read double, fast songs read half, and neither reading holds still.**
+
+#### The activation's amplitude can
+
+Fold the activation onto a candidate period and compare the height half a period from its own peak against that peak, floor subtracted. Folded onto the true beat the curve is tall on the beat and flat half a beat later; folded onto twice the true period the two halves look alike, because the "empty" half is a full beat. Over 52 captures:
+
+| folded at | median half-phase ratio |
+|---|---|
+| true beat period | **0.13** |
+| twice the true period | **0.80** |
+
+Both octave charges read that one number, which is what makes them symmetric — at the candidate it says *too slow*, at twice the candidate it says *too fast*. The tempo prior stays, widened and recentred, as a tie-breaker on genuinely ambiguous material rather than as the thing deciding the level.
+
+Three details matter more than they look:
 
 - **Candidate periods are real-valued.** 138 BPM is 21.74 frames at 50 fps. Scoring only whole-frame periods makes such a tempo slide a full beat across a 12 s window and lose to its own sub-harmonics — which is what used to report 138 BPM as 115.
-- **The whole interior is searched, not a fixed set of fractions.** For any fixed set there is a multiple of the true period — one and a half beats, two and a half — whose skipped beats all fall between the fractions tested.
+- **The fold is weighted almost flat** while the autocorrelation stays recency-weighted. Which level the music is on does not change bar to bar; where the beats are does. Weighted alike, the fold at a slow tempo averages barely four beats and its ratio swings between 0.34 and 0.76 between refreshes — enough to flip the level indefinitely.
+- **A harmonic the autocorrelation could not measure is not counted against a candidate.** Slow candidates run out of harmonics first, so charging them for the missing ones was itself an octave bias.
+
+#### Hysteresis
+
+Everything downstream is rebuilt when the level moves — the decoder's grid, its beat history, the clock's phase — and on ambiguous material the two levels trade the lead from refresh to refresh, so "whoever is ahead right now" is a coin toss repeated six times a second. A rival takes the level only by beating the incumbent by a margin and *keeping* it for ~2 s, or immediately if the incumbent stops being a peak at all. Before the buffer is long enough to fold the level an octave slower, that verdict is too weak to defend, so the requirement is brief instead. Measured over the captures, this took reported-level flips from **1590 to 15**.
+
+All the end-to-end figures here come from a probe that drives the engine faster than real time while the neural worker runs on its own thread, so scheduling moves a few cases between runs — two runs of the same build gave 25/120 and 26/120 wrong octaves. Treat them as magnitudes, not exact counts.
+
+The estimator also refuses to report a level whose *too-fast* charge could not be evaluated yet. Early on the buffer holds a few seconds, the slow half of the range is not searched at all, and the fastest candidate present wins by default with nothing slower to lose to — which is how a 68 BPM song used to be established at 136 in the first two seconds and defended ever after.
 
 ### Fixed vs live tempo
 
@@ -96,7 +130,21 @@ A record cut to a click does not change tempo; a band on stage does. `BeatDecode
 Both were real and both are guarded now:
 
 - **Subdivisions taken as beats.** A hi-hat puts an activation peak halfway between every pair of beats. Once a tempo is established a peak must land within 0.18 of a beat on the grid to count, which is tighter than the sixteenths and triplets it has to turn away. Without that the phase reference moves half a beat back and forth and the clock never settles. If nothing lands on the grid for 2.5 beats the grid itself is wrong — a new song, an edit — and the next peak re-anchors it.
-- **An octave flipping under a working lock.** Re-anchoring on the comb needs 4 beats of confident disagreement while acquiring, 8 when live, and 16 once fixed — and is refused outright while the current grid still lands tightly on the beats being detected, because the double of the true tempo always does too.
+- **An octave flipping under a working lock.** Re-anchoring on the comb is a leaky vote over the last few bars, not a run of consecutive beats: 4 beats of net disagreement while acquiring, 6 when live, 8 once fixed, plus 4 more while the current grid still lands tightly on the beats being detected. It is *not* gated on the comb's clarity, and a healthy grid does not veto it. Clarity is low exactly when the current grid is the rival, and the double of the true tempo lands on every detected peak too — so both of those, used as conditions, were the octave error protecting the octave error.
+
+### Analysis level is part of the model's input
+
+BeatNet's features are `log10(magnitude + 1)`. The `+ 1` knee means the level the analysis signal arrives at is not something the normalisation removes — madmom feeds the network integer-scaled audio, orders of magnitude above float `[-1, 1]`, and too quiet leaves the whole filterbank on the linear part of that knee. `VirtualPercussionEngine::applyAnalysisMakeup` therefore has two jobs, and the second one was missing.
+
+Measured end to end — 30 songs, 60–176 BPM, four styles, counting how often the tracker settles on the wrong metrical level:
+
+| target peak | 0.04 | 0.06 | 0.09 | 0.12 | 0.16 | **0.20** | 0.28 | 0.40 | 0.60 |
+|---|---|---|---|---|---|---|---|---|---|
+| wrong octave | 7 | 13 | 13 | 8 | 4 | **2** | 2 | 4 | 7 |
+
+The old target of 0.12 sat on the near side of the optimum, and its failures were the half-tempo readings above 150 BPM and the double-tempo readings below 72.
+
+The gain that gets there also has to *stay* there. It used to take the input peak instantly and release over half a second, so every drum hit dropped the gain and the next half second crept back up — moving the network's operating point on every beat. The envelope is slow in both directions now, primed from the first audio rather than crawling up to it, and the gain is ramped across the block so no edge is put into the analysis signal.
 
 ### Latency
 
