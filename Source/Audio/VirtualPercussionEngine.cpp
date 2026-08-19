@@ -325,10 +325,16 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
-    percussion.setEnabled (cfg.shakerEnabled.load (std::memory_order_relaxed));
+    // The two instruments switch independently. `setEnabled` is the master
+    // gate, so it may only come off once both are off - otherwise turning the
+    // shaker off would take the congas with it.
+    const bool shakerOn = cfg.shakerEnabled.load (std::memory_order_relaxed);
+    const bool congasOn = cfg.congasEnabled.load (std::memory_order_relaxed);
+    percussion.setShakerEnabled (shakerOn);
+    percussion.setCongasEnabled (congasOn);
+    percussion.setEnabled (shakerOn || congasOn);
     percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
     percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
-    percussion.setCongasEnabled (cfg.congasEnabled.load (std::memory_order_relaxed));
     // The manual setting is the override; on auto the music decides.
 
     mixInputs (inputs, numInputs, numSamples);

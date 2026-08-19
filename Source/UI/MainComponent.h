@@ -32,7 +32,17 @@ private:
     void applyFollowSource();
     void applySubdivision (vp::Subdivision s);
     void refreshSubdivisionButtons();
+    void applyStyle (vp::GrooveStyle s);
+    void applyStyleAuto (bool on);
+    void refreshStyleButtons();
     juce::Rectangle<int> layoutColumn() const;
+    /** Height the control stack needs. `paint` reserves exactly this, so the
+        two cannot drift apart. */
+    int  controlsHeight() const;
+    /** Landscape on an iPad leaves far less height than portrait. When there is
+        not enough room for the status area above, the two trim sliders are the
+        first thing to go - style and instrument selection are not negotiable. */
+    bool showTrimRow() const;
 
     struct BigButtonLookAndFeel final : juce::LookAndFeel_V4
     {
@@ -79,8 +89,16 @@ private:
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton sourceButton { "SPEAKER" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
+    juce::TextButton congasButton { "CONGAS  ON" };
+    juce::TextButton styleAuto { "AUTO" };
+    juce::TextButton styleMarcha { "MARCHA" }, styleRock { "ROCK" };
+    juce::TextButton styleDance { "DANCE" }, stylePop { "POP" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
+    juce::Slider swingSlider;
+    juce::Label  swingLabel { {}, "SWING" };
+    juce::Slider intensitySlider;
+    juce::Label  intensityLabel { {}, "ENERGIA" };
 
     juce::AudioBuffer<float> inputScratch;
 

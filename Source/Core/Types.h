@@ -44,6 +44,19 @@ enum class GrooveStyle : int
     count
 };
 
+inline const char* toString (GrooveStyle s) noexcept
+{
+    switch (s)
+    {
+        case GrooveStyle::marcha: return "MARCHA";
+        case GrooveStyle::rock:   return "ROCK";
+        case GrooveStyle::dance:  return "DANCE";
+        case GrooveStyle::pop:    return "POP";
+        case GrooveStyle::count:  break;
+    }
+    return "?";
+}
+
 enum class FollowSource : int
 {
     kitMic = 0,

@@ -2,7 +2,7 @@
 
 Documento operativo. Aggiornarlo ogni volta che cambia cosa si può installare, cosa locka, e cosa resta da provare sul device.
 
-**Data:** 18 agosto 2026  
+**Data:** 19 agosto 2026  
 **Target:** iPadOS 16+, iPad Air M1  
 **Versione albero:** 0.1.0
 
@@ -146,16 +146,63 @@ In Xcode: team `28H5MJ7244`, iPad Air M1, Run, microfono. Primo avvio: CoreML pu
 - CoreML su iPad; se l’EP rifiuta, ORT ricade sulla CPU
 - Attribuzione: Heydari, Cwitkowitz, Duan — BeatNet, ISMIR 2021, CC BY 4.0
 
+## I comandi sullo schermo
+
+Dal 19 agosto l'interfaccia espone tutto quello che il motore sa fare. Prima
+`grooveStyle`, `grooveAuto`, `congasEnabled`, `swing` e `intensity` esistevano nel
+C++ ma non erano raggiungibili: l'app suonava sempre la marcha, e tre parti su
+quattro erano intestabili.
+
+| Comando | Cosa fa |
+|---|---|
+| **AUTO / MARCHA / ROCK / DANCE / POP** | la parte che suona. AUTO lascia scegliere allo `StyleDetector`; premere una parte a mano spegne AUTO |
+| **SHAKER / CONGAS** | accendono e spengono i due strumenti separatamente |
+| **SOURCE (IPAD / MIXER)** | microfono in stanza contro mic ravvicinato |
+| **1/4 · 1/8 · 1/16** | griglia dello shaker |
+| **SWING** | 0 = dritto, 1 = terzinato. Da alzare sugli shuffle |
+| **ENERGIA** | quanto forte suona il percussionista |
+| **REVERB** | ambiente |
+
+La riga **PARTE** sotto il BPM dice sempre quale parte sta suonando; con AUTO
+attivo mostra anche la confidenza del rilevatore e tinge di verde il pulsante che
+ha scelto. Le due manopole SWING ed ENERGIA compaiono in verticale; in
+orizzontale lo schermo non le contiene e vengono nascoste.
+
 ## Checklist device
 
-- [ ] Spotify SPEAKER → FOLLOWING senza TAP, shaker dopo START
+Base — deve funzionare:
+
 - [ ] Riga UI: AI ONNX + IPAD (non STUB, non MIXER)
 - [ ] CLICK TEST → FOLLOWING, shaker dopo START
+- [ ] Spotify SPEAKER → FOLLOWING senza TAP, shaker dopo START
 - [ ] USB-C + mic kit
 - [ ] SPEAKER senza auto-inseguimento dello shaker
 - [ ] Accelerando / rallentando
 - [ ] Stacca/riattacca interfaccia
 - [ ] Interruption / background
+
+Le quattro parti — nuove, mai provate sul device:
+
+- [ ] MARCHA su un brano latino
+- [ ] ROCK su un brano con backbeat
+- [ ] DANCE su qualcosa a quattro in piedi
+- [ ] POP dove le altre tre sono troppo
+- [ ] Cambio di parte mentre suona: non deve saltare né perdere la battuta
+- [ ] SHAKER da solo (CONGAS off) e CONGAS da sole (SHAKER off)
+- [ ] AUTO: che parte sceglie, e quanto spesso cambia idea. **Atteso: sbaglia.**
+      Misurato a 3 casi su 9, cioè come tirare a indovinare — è per questo che è
+      spento di default. Serve sapere *come* sbaglia, non se sbaglia
+
+Suono e feel:
+
+- [ ] SWING alto su uno shuffle: lo shaker deve andare con il brano, non contro
+- [ ] ENERGIA da 0 a 1: deve cambiare peso, non solo volume
+- [ ] Fill sull'ottava battuta: si sente? disturba?
+- [ ] Colpi ripetuti veloci (1/16 a tempo alto): nessun click, nessun buco
+
+Cosa segnare quando qualcosa non va: BPM mostrato, riga PARTE, stato, e il
+pannello **DBG** in alto a destra, che ora riporta anche le cinque misure su cui
+il rilevatore di stile decide.
 
 ## Cosa non è in questo MVP
 

@@ -2,6 +2,7 @@
 #include "Platform/IosMicPermission.h"
 
 #include <cmath>
+#include <functional>
 
 namespace
 {
@@ -53,6 +54,12 @@ MainComponent::MainComponent()
     setupBtn (debugButton, juce::Colour (0xff22262c));
     setupBtn (clickButton, juce::Colour (0xff22262c));
     setupBtn (sourceButton, juce::Colour (0xff2a333e));
+    setupBtn (congasButton, juce::Colour (0xff2a333e));
+    setupBtn (styleAuto, juce::Colour (0xff2a333e));
+    setupBtn (styleMarcha, juce::Colour (0xff2a333e));
+    setupBtn (styleRock, juce::Colour (0xff2a333e));
+    setupBtn (styleDance, juce::Colour (0xff2a333e));
+    setupBtn (stylePop, juce::Colour (0xff2a333e));
     setupBtn (subAuto, juce::Colour (0xff2a333e));
     setupBtn (sub4, juce::Colour (0xff2a333e));
     setupBtn (sub8, juce::Colour (0xff2a333e));
@@ -87,6 +94,19 @@ MainComponent::MainComponent()
         applyFollowSource();
     };
 
+    congasButton.onClick = [this]
+    {
+        const bool on = ! engine.settings().congasEnabled.load();
+        engine.settings().congasEnabled.store (on);
+        congasButton.setButtonText (on ? "CONGAS  ON" : "CONGAS  OFF");
+    };
+
+    styleAuto.onClick   = [this] { applyStyleAuto (! engine.settings().grooveAuto.load()); };
+    styleMarcha.onClick = [this] { applyStyle (vp::GrooveStyle::marcha); };
+    styleRock.onClick   = [this] { applyStyle (vp::GrooveStyle::rock); };
+    styleDance.onClick  = [this] { applyStyle (vp::GrooveStyle::dance); };
+    stylePop.onClick    = [this] { applyStyle (vp::GrooveStyle::pop); };
+
     subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
     sub8.onClick    = [this] { applySubdivision (vp::Subdivision::eighth); };
@@ -108,6 +128,29 @@ MainComponent::MainComponent()
         engine.settings().reverbAmount.store (static_cast<float> (reverbSlider.getValue()));
     };
 
+    auto setupTrim = [this] (juce::Slider& s, juce::Label& lab, double initial,
+                             std::function<void (float)> apply)
+    {
+        addAndMakeVisible (lab);
+        lab.setJustificationType (juce::Justification::centredLeft);
+        lab.setColour (juce::Label::textColourId, mute());
+        lab.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+
+        addAndMakeVisible (s);
+        s.setLookAndFeel (&sliderLaf);
+        s.setSliderStyle (juce::Slider::LinearHorizontal);
+        s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        s.setRange (0.0, 1.0, 0.01);
+        s.setValue (initial, juce::dontSendNotification);
+        auto* sp = &s;
+        s.onValueChange = [sp, apply] { apply (static_cast<float> (sp->getValue())); };
+    };
+
+    setupTrim (swingSlider, swingLabel, 0.00,
+               [this] (float v) { engine.settings().swing.store (v); });
+    setupTrim (intensitySlider, intensityLabel, 0.50,
+               [this] (float v) { engine.settings().intensity.store (v); });
+
    #if JUCE_IOS
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
     sourceButton.setButtonText ("IPAD");
@@ -125,6 +168,7 @@ MainComponent::MainComponent()
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
+    refreshStyleButtons();
     refreshSubdivisionButtons();
 
     startTimerHz (15);
@@ -144,6 +188,8 @@ MainComponent::~MainComponent()
 {
     tapButton.setLookAndFeel (nullptr);
     reverbSlider.setLookAndFeel (nullptr);
+    swingSlider.setLookAndFeel (nullptr);
+    intensitySlider.setLookAndFeel (nullptr);
     stopTimer();
     shutdownAudio();
 }
@@ -273,6 +319,68 @@ void MainComponent::refreshSubdivisionButtons()
     paint (sub16,   static_cast<int> (vp::Subdivision::sixteenth));
 }
 
+void MainComponent::applyStyle (vp::GrooveStyle s)
+{
+    // Picking a part by hand is also the way out of AUTO: leaving both on would
+    // mean the buttons lie about what is playing.
+    engine.settings().grooveAuto.store (false);
+    engine.settings().grooveStyle.store (static_cast<int> (s));
+    refreshStyleButtons();
+}
+
+void MainComponent::applyStyleAuto (bool on)
+{
+    engine.settings().grooveAuto.store (on);
+    refreshStyleButtons();
+}
+
+void MainComponent::refreshStyleButtons()
+{
+    const bool autoOn = engine.settings().grooveAuto.load();
+    const int cur = engine.settings().grooveStyle.load();
+
+    auto paint = [] (juce::TextButton& b, bool on, bool detected)
+    {
+        b.setColour (juce::TextButton::buttonColourId,
+                     on ? juce::Colour (0xff3a4a2e) : juce::Colour (0xff2a333e));
+        b.setColour (juce::TextButton::textColourOffId,
+                     on ? juce::Colour (0xfff5a623)
+                        : (detected ? juce::Colour (0xff9fd6a0) : juce::Colours::white));
+    };
+
+    paint (styleAuto, autoOn, false);
+    // Under AUTO no button is "selected", but the one the detector has landed on
+    // is tinted, so what is actually playing is still visible.
+    paint (styleMarcha, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::marcha),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::marcha));
+    paint (styleRock, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::rock),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::rock));
+    paint (styleDance, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::dance),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::dance));
+    paint (stylePop, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::pop),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::pop));
+}
+
+namespace
+{
+    // start/stop + TAP + subdivisions + style + instruments + reverb
+    constexpr int kControlsBase = 86 + 118 + 48 + 48 + 56 + 58;
+    constexpr int kTrimRow = 58;
+    // What the status block above needs: title, state pill, BPM, engine line,
+    // meter, beat dots and the mic line.
+    constexpr int kStatusMin = 300;
+}
+
+bool MainComponent::showTrimRow() const
+{
+    return layoutColumn().getHeight() - (kControlsBase + kTrimRow) >= kStatusMin;
+}
+
+int MainComponent::controlsHeight() const
+{
+    return kControlsBase + (showTrimRow() ? kTrimRow : 0);
+}
+
 void MainComponent::applyLatencyFromDevice()
 {
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -355,6 +463,8 @@ void MainComponent::timerCallback()
     if (tapFlash > 0)
         --tapFlash;
     refreshTapButton();
+    if (engine.settings().grooveAuto.load())
+        refreshStyleButtons();
     repaint();
 
    #if JUCE_DEBUG
@@ -406,13 +516,40 @@ void MainComponent::resized()
     sub8.setBounds (subs.removeFromLeft (sw).reduced (4));
     sub16.setBounds (subs.reduced (4));
 
+    // The part comes before the instruments: it is the biggest single choice
+    // the player makes, and three of the four were unreachable before.
+    auto styles = r.removeFromBottom (48);
+    const int stw = styles.getWidth() / 5;
+    styleAuto.setBounds (styles.removeFromLeft (stw).reduced (3));
+    styleMarcha.setBounds (styles.removeFromLeft (stw).reduced (3));
+    styleRock.setBounds (styles.removeFromLeft (stw).reduced (3));
+    styleDance.setBounds (styles.removeFromLeft (stw).reduced (3));
+    stylePop.setBounds (styles.reduced (3));
+
     auto inst = r.removeFromBottom (56);
-    sourceButton.setBounds (inst.removeFromLeft (inst.getWidth() / 2).reduced (4, 6));
-    shakerButton.setBounds (inst.reduced (4, 6));
+    const int iw = inst.getWidth() / 3;
+    sourceButton.setBounds (inst.removeFromLeft (iw).reduced (4, 6));
+    shakerButton.setBounds (inst.removeFromLeft (iw).reduced (4, 6));
+    congasButton.setBounds (inst.reduced (4, 6));
 
     auto verb = r.removeFromBottom (58);
     reverbLabel.setBounds (verb.removeFromLeft (108).reduced (4, 8));
     reverbSlider.setBounds (verb.reduced (10, 6));
+
+    const bool trims = showTrimRow();
+    swingSlider.setVisible (trims);
+    swingLabel.setVisible (trims);
+    intensitySlider.setVisible (trims);
+    intensityLabel.setVisible (trims);
+    if (trims)
+    {
+        auto trim = r.removeFromBottom (58);
+        auto left = trim.removeFromLeft (trim.getWidth() / 2);
+        swingLabel.setBounds (left.removeFromLeft (86).reduced (4, 8));
+        swingSlider.setBounds (left.reduced (8, 6));
+        intensityLabel.setBounds (trim.removeFromLeft (96).reduced (4, 8));
+        intensitySlider.setBounds (trim.reduced (8, 6));
+    }
 
     debugButton.setBounds (getLocalBounds().removeFromTop (36).removeFromRight (56).reduced (6));
     clickButton.setBounds (getLocalBounds().removeFromTop (36).removeFromRight (170).removeFromLeft (110).reduced (6));
@@ -422,7 +559,7 @@ void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (bg());
     auto r = layoutColumn();
-    r.removeFromBottom (384);
+    r.removeFromBottom (controlsHeight());
 
     g.setColour (mute());
     g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
@@ -454,6 +591,17 @@ void MainComponent::paint (juce::Graphics& g)
                           + " | p " + juce::String (snap.pBeat, 2)
                           + (snap.hypValid ? "  valid" : "  wait"),
                       r.removeFromTop (20), juce::Justification::centred, 1);
+
+    // Which part is actually playing. Under AUTO the buttons cannot say, so the
+    // detector's choice and how sure it is are spelled out here.
+    const auto activeStyle = static_cast<vp::GrooveStyle> (snap.grooveStyle);
+    g.setColour (mute());
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawFittedText (juce::String ("PARTE  ") + vp::toString (activeStyle)
+                          + (engine.settings().grooveAuto.load()
+                                 ? "   (auto " + juce::String (snap.grooveStyleConfidence, 2) + ")"
+                                 : juce::String()),
+                      r.removeFromTop (18), juce::Justification::centred, 1);
 
     auto meterR = r.removeFromTop (14).reduced (r.getWidth() / 5, 2);
     g.setColour (juce::Colour (0xff2c333c));
@@ -517,6 +665,14 @@ void MainComponent::paint (juce::Graphics& g)
         lines.add (juce::String (snap.tapLocked ? "tap LOCK" : "tap auto"));
         lines.add ("bar " + juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))));
         lines.add ("reverb " + juce::String (snap.reverbAmount, 2));
+        lines.add ("part " + juce::String (vp::toString (static_cast<vp::GrooveStyle> (snap.grooveStyle)))
+                   + (engine.settings().grooveAuto.load() ? "  AUTO" : "  manual")
+                   + "  conf " + juce::String (snap.grooveStyleConfidence, 2));
+        lines.add ("style kick " + juce::String (snap.styleEvenKick, 2)
+                   + "  back " + juce::String (snap.styleBackbeat, 2)
+                   + "  offHi " + juce::String (snap.styleOffHigh, 2)
+                   + "  sync " + juce::String (snap.styleSync, 2)
+                   + "  occ " + juce::String (snap.styleOccupancy, 2));
         g.drawFittedText (lines.joinIntoString ("\n"), dbg.reduced (16), juce::Justification::topLeft, 16);
     }
 }

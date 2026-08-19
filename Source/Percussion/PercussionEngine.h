@@ -25,6 +25,7 @@ public:
     void setReverbAmount (float amount) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
+    void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
     void setShakerSubdivision (Subdivision s) noexcept { groove.setShakerSubdivision (s); }
     void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
