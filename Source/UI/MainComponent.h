@@ -25,6 +25,7 @@ private:
     void stopPressed();
     void tapPressed();
     void refreshTapButton();
+    void refreshStartButton();
     void applyLatencyFromDevice();
     void openAudioDevice (bool micGranted);
     void applyHardwareAudioSetup (int inputChannels);
@@ -44,40 +45,30 @@ private:
         first thing to go - style and instrument selection are not negotiable. */
     bool showTrimRow() const;
 
-    struct BigButtonLookAndFeel final : juce::LookAndFeel_V4
+    struct AppLookAndFeel : juce::LookAndFeel_V4
     {
-        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
-        {
-            return juce::Font (juce::FontOptions (juce::jmax (32.0f, (float) buttonHeight * 0.36f),
-                                                 juce::Font::bold));
-        }
+        AppLookAndFeel();
+
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                                   bool shouldDrawButtonAsHighlighted,
+                                   bool shouldDrawButtonAsDown) override;
+        int getSliderThumbRadius (juce::Slider&) override;
+        void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
+                               float sliderPos, float minSliderPos, float maxSliderPos,
+                               juce::Slider::SliderStyle, juce::Slider&) override;
     };
 
-    struct SliderLookAndFeel final : juce::LookAndFeel_V4
+    struct TapLookAndFeel final : AppLookAndFeel
     {
-        int getSliderThumbRadius (juce::Slider&) override { return 16; }
-
-        void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
-                               float sliderPos, float, float, juce::Slider::SliderStyle,
-                               juce::Slider& slider) override
-        {
-            juce::ignoreUnused (slider);
-            const float trackH = 8.0f;
-            const float cy = static_cast<float> (y) + 0.5f * static_cast<float> (height);
-            juce::Rectangle<float> track (static_cast<float> (x), cy - trackH * 0.5f,
-                                          static_cast<float> (width), trackH);
-            g.setColour (juce::Colour (0xff2c333c));
-            g.fillRoundedRectangle (track, 4.0f);
-            auto filled = track.withWidth (juce::jmax (trackH, sliderPos - static_cast<float> (x)));
-            g.setColour (juce::Colour (0xfff5a623));
-            g.fillRoundedRectangle (filled, 4.0f);
-            g.setColour (juce::Colours::white);
-            g.fillEllipse (sliderPos - 16.0f, cy - 16.0f, 32.0f, 32.0f);
-        }
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                                   bool shouldDrawButtonAsHighlighted,
+                                   bool shouldDrawButtonAsDown) override;
     };
 
-    BigButtonLookAndFeel tapLaf;
-    SliderLookAndFeel sliderLaf;
+    AppLookAndFeel appLaf;
+    TapLookAndFeel tapLaf;
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 

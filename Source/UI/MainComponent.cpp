@@ -6,64 +6,173 @@
 
 namespace
 {
-    juce::Colour bg()     { return juce::Colour (0xff0b0d10); }
-    juce::Colour panel()  { return juce::Colour (0xff161a20); }
-    juce::Colour amber()  { return juce::Colour (0xfff5a623); }
-    juce::Colour mute()   { return juce::Colour (0xff8a9099); }
-    juce::Colour live()   { return juce::Colour (0xff3dd68c); }
-    juce::Colour warn()   { return juce::Colour (0xffffc14d); }
-    juce::Colour accent() { return juce::Colour (0xff4da3ff); }
+    juce::Colour bg()      { return juce::Colour (0xff050506); }
+    juce::Colour panel()   { return juce::Colour (0xff0c0c0e); }
+    juce::Colour ink()     { return juce::Colour (0xff121214); }
+    juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
+    juce::Colour mute()    { return juce::Colour (0xffa8a8b4); }
+    juce::Font fontDisplay (float h)
+    {
+        return juce::Font (juce::FontOptions().withName ("Futura").withStyle ("Bold").withHeight (h));
+    }
+
+    juce::Font fontUi (float h, bool bold = true)
+    {
+        return juce::Font (juce::FontOptions().withName ("Avenir Next")
+                               .withStyle (bold ? "Bold" : "Medium")
+                               .withHeight (h));
+    }
 
     juce::Colour stateColour (vp::FollowBar b)
     {
         using B = vp::FollowBar;
         switch (b)
         {
-            case B::following:       return live();
-            case B::followingListen: return live();
-            case B::calibrating:     return warn();
-            case B::listening:       return accent();
-            case B::tapAlign:        return amber();
-            case B::waitBeat:        return amber();
-            case B::weakFollow:      return warn();
-            case B::recalin:         return juce::Colour (0xffff8a4d);
+            case B::following:       return fuchsia();
+            case B::followingListen: return fuchsia();
+            case B::calibrating:     return juce::Colours::white;
+            case B::listening:       return juce::Colours::white;
+            case B::tapAlign:        return fuchsia();
+            case B::waitBeat:        return fuchsia().withAlpha (0.75f);
+            case B::weakFollow:      return juce::Colours::white;
+            case B::recalin:         return juce::Colours::white;
             case B::paused:          return mute();
             case B::ready:           return mute();
         }
         return mute();
     }
+
+    bool stateIsHot (vp::FollowBar b)
+    {
+        using B = vp::FollowBar;
+        return b == B::following || b == B::followingListen || b == B::tapAlign;
+    }
+
+    void paintRadial (juce::Graphics& g, juce::Point<float> c, float radius,
+                      juce::Colour col, float alpha)
+    {
+        juce::ColourGradient grad (col.withAlpha (alpha), c.x, c.y,
+                                   col.withAlpha (0.0f), c.x, c.y + radius, true);
+        g.setGradientFill (grad);
+        g.fillEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f);
+    }
+
+    void drawFlatButton (juce::Graphics& g, juce::Button& button, juce::Colour fill,
+                         bool down)
+    {
+        auto bounds = button.getLocalBounds().toFloat();
+        const bool hotFill = fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
+        const bool active = button.getToggleState() || down || hotFill;
+
+        g.setColour (hotFill || down ? fuchsia() : ink());
+        g.fillRect (bounds);
+
+        if (active)
+        {
+            const float h = 3.0f;
+            g.setColour (hotFill || down ? juce::Colours::white : fuchsia());
+            g.fillRect (bounds.getX(), bounds.getBottom() - h, bounds.getWidth(), h);
+        }
+    }
+}
+
+MainComponent::AppLookAndFeel::AppLookAndFeel()
+{
+    setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    setColour (juce::Label::textColourId, mute());
+}
+
+juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
+{
+    return fontUi (juce::jmax (12.0f, (float) buttonHeight * 0.30f));
+}
+
+void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                                          const juce::Colour& backgroundColour,
+                                                          bool, bool shouldDrawButtonAsDown)
+{
+    drawFlatButton (g, button, backgroundColour, shouldDrawButtonAsDown);
+}
+
+int MainComponent::AppLookAndFeel::getSliderThumbRadius (juce::Slider&)
+{
+    return 15;
+}
+
+void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+                                                      float sliderPos, float, float,
+                                                      juce::Slider::SliderStyle, juce::Slider&)
+{
+    const float trackH = 6.0f;
+    const float cy = static_cast<float> (y) + 0.5f * static_cast<float> (height);
+    juce::Rectangle<float> track (static_cast<float> (x), cy - trackH * 0.5f,
+                                  static_cast<float> (width), trackH);
+
+    g.setColour (juce::Colours::white.withAlpha (0.08f));
+    g.fillRoundedRectangle (track.expanded (1.0f), 4.0f);
+    g.setColour (ink());
+    g.fillRoundedRectangle (track, 3.0f);
+
+    auto filled = track.withWidth (juce::jmax (trackH, sliderPos - static_cast<float> (x)));
+    juce::ColourGradient fill (fuchsia().brighter (0.15f), filled.getX(), filled.getY(),
+                               fuchsia().darker (0.1f), filled.getRight(), filled.getY(), false);
+    g.setGradientFill (fill);
+    g.fillRoundedRectangle (filled, 3.0f);
+
+    const float tr = 15.0f;
+    paintRadial (g, { sliderPos, cy }, 28.0f, fuchsia(), 0.35f);
+    g.setColour (fuchsia());
+    g.drawEllipse (sliderPos - tr, cy - tr, tr * 2.0f, tr * 2.0f, 2.0f);
+    g.setColour (juce::Colours::white);
+    g.fillEllipse (sliderPos - tr + 3.0f, cy - tr + 3.0f, (tr - 3.0f) * 2.0f, (tr - 3.0f) * 2.0f);
+    g.setColour (fuchsia());
+    g.fillEllipse (sliderPos - 3.5f, cy - 3.5f, 7.0f, 7.0f);
+}
+
+juce::Font MainComponent::TapLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
+{
+    return fontDisplay (juce::jmax (34.0f, (float) buttonHeight * 0.38f));
+}
+
+void MainComponent::TapLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
+                                                          const juce::Colour& backgroundColour,
+                                                          bool, bool shouldDrawButtonAsDown)
+{
+    drawFlatButton (g, button, backgroundColour, shouldDrawButtonAsDown);
 }
 
 MainComponent::MainComponent()
 {
     setOpaque (true);
     setSize (834, 1112);
+    setLookAndFeel (&appLaf);
 
     auto setupBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
         addAndMakeVisible (b);
         b.setColour (juce::TextButton::buttonColourId, fill);
         b.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-        b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.2f));
+        b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.18f));
     };
 
-    setupBtn (startButton, juce::Colour (0xff1f8a4c));
-    setupBtn (stopButton, juce::Colour (0xff6b3030));
-    setupBtn (tapButton, juce::Colour (0xffc47a12));
-    setupBtn (shakerButton, juce::Colour (0xff2a333e));
-    setupBtn (debugButton, juce::Colour (0xff22262c));
-    setupBtn (clickButton, juce::Colour (0xff22262c));
-    setupBtn (sourceButton, juce::Colour (0xff2a333e));
-    setupBtn (congasButton, juce::Colour (0xff2a333e));
-    setupBtn (styleAuto, juce::Colour (0xff2a333e));
-    setupBtn (styleMarcha, juce::Colour (0xff2a333e));
-    setupBtn (styleRock, juce::Colour (0xff2a333e));
-    setupBtn (styleDance, juce::Colour (0xff2a333e));
-    setupBtn (stylePop, juce::Colour (0xff2a333e));
-    setupBtn (subAuto, juce::Colour (0xff2a333e));
-    setupBtn (sub4, juce::Colour (0xff2a333e));
-    setupBtn (sub8, juce::Colour (0xff2a333e));
-    setupBtn (sub16, juce::Colour (0xff2a333e));
+    setupBtn (startButton, ink());
+    setupBtn (stopButton, ink());
+    setupBtn (tapButton, ink());
+    setupBtn (shakerButton, ink());
+    setupBtn (debugButton, juce::Colour (0xff0a0a0c));
+    setupBtn (clickButton, juce::Colour (0xff0a0a0c));
+    setupBtn (sourceButton, ink());
+    setupBtn (congasButton, ink());
+    setupBtn (styleAuto, ink());
+    setupBtn (styleMarcha, ink());
+    setupBtn (styleRock, ink());
+    setupBtn (styleDance, ink());
+    setupBtn (stylePop, ink());
+    setupBtn (subAuto, ink());
+    setupBtn (sub4, ink());
+    setupBtn (sub8, ink());
+    setupBtn (sub16, ink());
 
     startButton.onClick = [this] { startPressed(); };
     stopButton.onClick = [this] { stopPressed(); };
@@ -74,8 +183,13 @@ MainComponent::MainComponent()
         const bool on = ! engine.settings().shakerEnabled.load();
         engine.settings().shakerEnabled.store (on);
         shakerButton.setButtonText (on ? "SHAKER  ON" : "SHAKER  OFF");
+        shakerButton.setToggleState (on, juce::dontSendNotification);
     };
-    debugButton.onClick = [this] { debugOpen = ! debugOpen; repaint(); };
+    debugButton.onClick = [this] {
+        debugOpen = ! debugOpen;
+        debugButton.setToggleState (debugOpen, juce::dontSendNotification);
+        repaint();
+    };
     clickButton.onClick = [this]
     {
         static bool click = false;
@@ -83,6 +197,7 @@ MainComponent::MainComponent()
         engine.setClickInjectEnabled (click);
         engine.setClickInjectBpm (120.0f);
         clickButton.setButtonText (click ? "CLICK  ON" : "CLICK TEST");
+        clickButton.setToggleState (click, juce::dontSendNotification);
     };
     sourceButton.onClick = [this]
     {
@@ -99,6 +214,7 @@ MainComponent::MainComponent()
         const bool on = ! engine.settings().congasEnabled.load();
         engine.settings().congasEnabled.store (on);
         congasButton.setButtonText (on ? "CONGAS  ON" : "CONGAS  OFF");
+        congasButton.setToggleState (on, juce::dontSendNotification);
     };
 
     styleAuto.onClick   = [this] { applyStyleAuto (! engine.settings().grooveAuto.load()); };
@@ -115,10 +231,9 @@ MainComponent::MainComponent()
     addAndMakeVisible (reverbLabel);
     reverbLabel.setJustificationType (juce::Justification::centredLeft);
     reverbLabel.setColour (juce::Label::textColourId, mute());
-    reverbLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    reverbLabel.setFont (fontUi (13.0f));
 
     addAndMakeVisible (reverbSlider);
-    reverbSlider.setLookAndFeel (&sliderLaf);
     reverbSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     reverbSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     reverbSlider.setRange (0.0, 1.0, 0.01);
@@ -134,10 +249,9 @@ MainComponent::MainComponent()
         addAndMakeVisible (lab);
         lab.setJustificationType (juce::Justification::centredLeft);
         lab.setColour (juce::Label::textColourId, mute());
-        lab.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        lab.setFont (fontUi (12.0f));
 
         addAndMakeVisible (s);
-        s.setLookAndFeel (&sliderLaf);
         s.setSliderStyle (juce::Slider::LinearHorizontal);
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         s.setRange (0.0, 1.0, 0.01);
@@ -168,6 +282,9 @@ MainComponent::MainComponent()
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
+    shakerButton.setToggleState (true, juce::dontSendNotification);
+    congasButton.setToggleState (true, juce::dontSendNotification);
+    refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
 
@@ -187,9 +304,7 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     tapButton.setLookAndFeel (nullptr);
-    reverbSlider.setLookAndFeel (nullptr);
-    swingSlider.setLookAndFeel (nullptr);
-    intensitySlider.setLookAndFeel (nullptr);
+    setLookAndFeel (nullptr);
     stopTimer();
     shutdownAudio();
 }
@@ -199,28 +314,35 @@ void MainComponent::startPressed()
     ensureMicrophone();
     userWantsArmed = true;
     engine.start();
+    refreshStartButton();
 }
 
 void MainComponent::stopPressed()
 {
     userWantsArmed = false;
     engine.stop();
+    refreshStartButton();
 }
 
 void MainComponent::tapPressed()
 {
     ensureMicrophone();
     engine.tap();
-    tapFlash = 8;
+    tapFlash = 1;
     refreshTapButton();
 }
 
 void MainComponent::refreshTapButton()
 {
-    const bool lit = tapFlash > 0 || snap.followBar == vp::FollowBar::tapAlign;
-    tapButton.setColour (juce::TextButton::buttonColourId,
-                         lit ? juce::Colour (0xffe8a21a) : juce::Colour (0xffc47a12));
+    const bool lit = tapFlash > 0;
+    tapButton.setColour (juce::TextButton::buttonColourId, lit ? fuchsia() : ink());
     tapButton.setButtonText ("TAP");
+}
+
+void MainComponent::refreshStartButton()
+{
+    startButton.setColour (juce::TextButton::buttonColourId, userWantsArmed ? fuchsia() : ink());
+    startButton.setToggleState (userWantsArmed, juce::dontSendNotification);
 }
 
 void MainComponent::ensureMicrophone()
@@ -308,10 +430,9 @@ void MainComponent::refreshSubdivisionButtons()
     auto paint = [cur] (juce::TextButton& b, int v)
     {
         const bool on = cur == v;
-        b.setColour (juce::TextButton::buttonColourId,
-                     on ? juce::Colour (0xff3a4a2e) : juce::Colour (0xff2a333e));
-        b.setColour (juce::TextButton::textColourOffId,
-                     on ? juce::Colour (0xfff5a623) : juce::Colours::white);
+        b.setToggleState (on, juce::dontSendNotification);
+        b.setColour (juce::TextButton::buttonColourId, ink());
+        b.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : juce::Colours::white);
     };
     paint (subAuto, static_cast<int> (vp::Subdivision::autoDetect));
     paint (sub4,    static_cast<int> (vp::Subdivision::quarter));
@@ -341,11 +462,10 @@ void MainComponent::refreshStyleButtons()
 
     auto paint = [] (juce::TextButton& b, bool on, bool detected)
     {
-        b.setColour (juce::TextButton::buttonColourId,
-                     on ? juce::Colour (0xff3a4a2e) : juce::Colour (0xff2a333e));
+        b.setToggleState (on, juce::dontSendNotification);
+        b.setColour (juce::TextButton::buttonColourId, ink());
         b.setColour (juce::TextButton::textColourOffId,
-                     on ? juce::Colour (0xfff5a623)
-                        : (detected ? juce::Colour (0xff9fd6a0) : juce::Colours::white));
+                     on || detected ? fuchsia() : juce::Colours::white);
     };
 
     paint (styleAuto, autoOn, false);
@@ -463,6 +583,7 @@ void MainComponent::timerCallback()
     if (tapFlash > 0)
         --tapFlash;
     refreshTapButton();
+    refreshStartButton();
     if (engine.settings().grooveAuto.load())
         refreshStyleButtons();
     repaint();
@@ -557,38 +678,85 @@ void MainComponent::resized()
 
 void MainComponent::paint (juce::Graphics& g)
 {
+    const auto full = getLocalBounds().toFloat();
     g.fillAll (bg());
+
+    const float energy = juce::jlimit (0.0f, 1.0f, std::sqrt (std::max (0.0f, snap.inputPeak)) * 3.2f);
+    const float follow = stateIsHot (snap.followBar) ? 1.0f : 0.42f;
+    const float wash = 0.12f + 0.20f * energy * follow;
+
+    juce::ColourGradient floor (juce::Colour (0xff0a0a0c), full.getCentreX(), full.getY(),
+                                bg(), full.getCentreX(), full.getBottom(), false);
+    g.setGradientFill (floor);
+    g.fillRect (full);
+
+    paintRadial (g, { full.getCentreX(), full.getY() + 28.0f },
+                 full.getWidth() * 0.70f, fuchsia(), wash);
+    paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
+                 full.getWidth() * 0.50f, fuchsia(), 0.08f + 0.14f * (tapFlash > 0 ? 1.0f : energy));
+
     auto r = layoutColumn();
     r.removeFromBottom (controlsHeight());
 
-    g.setColour (mute());
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    g.drawFittedText ("VIRTUAL PERCUSSIONIST", r.removeFromTop (24), juce::Justification::centred, 1);
+    auto titleR = r.removeFromTop (24);
+    auto brand = titleR.removeFromLeft (22);
+    g.setColour (fuchsia());
+    g.fillRoundedRectangle (brand.withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
+    g.setColour (juce::Colours::white);
+    g.setFont (fontUi (14.0f));
+    g.drawFittedText ("VIRTUAL PERCUSSIONIST", titleR, juce::Justification::centredLeft, 1);
+    g.setColour (fuchsia().withAlpha (0.75f));
+    g.fillRect ((float) titleR.getX(), (float) titleR.getBottom() - 1.0f,
+                (float) (r.getWidth() - 22), 1.2f);
 
     auto stateR = r.removeFromTop (42).reduced (r.getWidth() / 12, 2);
-    g.setColour (stateColour (snap.followBar));
-    g.fillRoundedRectangle (stateR.toFloat(), 16.0f);
-    g.setColour (juce::Colours::black);
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    const auto stCol = stateColour (snap.followBar);
+    const bool hot = stateIsHot (snap.followBar);
+    if (hot)
+    {
+        g.setColour (stCol.withAlpha (0.28f));
+        g.fillRoundedRectangle (stateR.toFloat().expanded (4.0f), 22.0f);
+        g.setColour (stCol);
+        g.fillRoundedRectangle (stateR.toFloat(), 18.0f);
+        g.setColour (juce::Colours::white);
+    }
+    else
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.06f));
+        g.fillRoundedRectangle (stateR.toFloat(), 18.0f);
+        g.setColour (stCol);
+        g.drawRoundedRectangle (stateR.toFloat().reduced (0.6f), 18.0f, 1.4f);
+        g.setColour (stCol);
+    }
+    g.setFont (fontUi (14.0f));
     g.drawFittedText (juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))),
                       stateR, juce::Justification::centred, 1);
 
     r.removeFromTop (12);
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::FontOptions (72.0f, juce::Font::bold));
+    auto bpmR = r.removeFromTop (84);
+    paintRadial (g, bpmR.getCentre().toFloat(), 140.0f, fuchsia(), 0.12f + 0.18f * energy);
+
     const auto bpmText = snap.bpm > 40.0f
                              ? juce::String (snap.bpm, 1)
                              : juce::String ("--");
-    g.drawFittedText (bpmText + " BPM", r.removeFromTop (84), juce::Justification::centred, 1);
+    g.setFont (fontDisplay (78.0f));
+    g.setColour (fuchsia().withAlpha (0.40f));
+    g.drawFittedText (bpmText, bpmR.translated (0, 3).withTrimmedBottom (20),
+                      juce::Justification::centred, 1);
+    g.setColour (juce::Colours::white);
+    g.drawFittedText (bpmText, bpmR.withTrimmedBottom (20), juce::Justification::centred, 1);
+    g.setColour (fuchsia());
+    g.setFont (fontUi (12.0f));
+    g.drawFittedText ("BPM", bpmR.removeFromBottom (18), juce::Justification::centred, 1);
 
-    g.setColour (snap.aiOnnx ? live() : juce::Colour (0xffff5a5a));
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.setColour (snap.aiOnnx ? juce::Colours::white : fuchsia());
+    g.setFont (fontUi (12.0f));
     const juce::String srcName = snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER";
     const juce::String nnText = snap.neuralBpm > 40.0f ? juce::String (snap.neuralBpm, 0) : juce::String ("--");
     g.drawFittedText ((snap.aiOnnx ? juce::String ("AI ONNX") : juce::String ("AI STUB"))
-                          + " | " + srcName
-                          + " | nn " + nnText
-                          + " | p " + juce::String (snap.pBeat, 2)
+                          + "  ·  " + srcName
+                          + "  ·  nn " + nnText
+                          + "  ·  p " + juce::String (snap.pBeat, 2)
                           + (snap.hypValid ? "  valid" : "  wait"),
                       r.removeFromTop (20), juce::Justification::centred, 1);
 
@@ -596,7 +764,7 @@ void MainComponent::paint (juce::Graphics& g)
     // detector's choice and how sure it is are spelled out here.
     const auto activeStyle = static_cast<vp::GrooveStyle> (snap.grooveStyle);
     g.setColour (mute());
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.setFont (fontUi (12.0f));
     g.drawFittedText (juce::String ("PARTE  ") + vp::toString (activeStyle)
                           + (engine.settings().grooveAuto.load()
                                  ? "   (auto " + juce::String (snap.grooveStyleConfidence, 2) + ")"
@@ -604,31 +772,52 @@ void MainComponent::paint (juce::Graphics& g)
                       r.removeFromTop (18), juce::Justification::centred, 1);
 
     auto meterR = r.removeFromTop (14).reduced (r.getWidth() / 5, 2);
-    g.setColour (juce::Colour (0xff2c333c));
-    g.fillRoundedRectangle (meterR.toFloat(), 4.0f);
-    const float level = juce::jlimit (0.0f, 1.0f, std::sqrt (std::max (0.0f, snap.inputPeak)) * 3.2f);
-    g.setColour (inputChannels > 0 ? live() : juce::Colour (0xffff5a5a));
-    g.fillRoundedRectangle (meterR.toFloat().withWidth (static_cast<float> (meterR.getWidth()) * level), 4.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.08f));
+    g.fillRoundedRectangle (meterR.toFloat().expanded (1.0f), 6.0f);
+    g.setColour (ink());
+    g.fillRoundedRectangle (meterR.toFloat(), 5.0f);
+    const float level = energy;
+    auto fillM = meterR.toFloat().withWidth (static_cast<float> (meterR.getWidth()) * level);
+    if (fillM.getWidth() > 2.0f)
+    {
+        juce::ColourGradient mg (fuchsia().brighter (0.2f), fillM.getX(), fillM.getY(),
+                                 juce::Colours::white, fillM.getRight(), fillM.getY(), false);
+        g.setGradientFill (mg);
+        g.fillRoundedRectangle (fillM, 5.0f);
+    }
 
     auto beats = r.removeFromTop (64);
     const float bw = static_cast<float> (beats.getWidth());
     const float y = static_cast<float> (beats.getCentreY());
+    g.setColour (juce::Colours::white.withAlpha (0.08f));
+    g.fillRoundedRectangle (static_cast<float> (beats.getX()) + bw * 0.14f, y - 1.0f,
+                            bw * 0.72f, 2.0f, 1.0f);
+
     for (int i = 0; i < 4; ++i)
     {
         const float x = static_cast<float> (beats.getX()) + bw * (0.2f + 0.2f * static_cast<float> (i));
         const int beatIdx = static_cast<int> (snap.barPhase * 4.0f) & 3;
         const bool on = snap.percussionAudible && beatIdx == i;
-        g.setColour (on ? amber() : juce::Colour (0xff2c333c));
-        g.fillEllipse (x - 14.0f, y - 14.0f, 28.0f, 28.0f);
+        const bool downbeat = i == 0;
+        const float rad = downbeat ? 16.0f : 13.0f;
+
         if (on)
         {
-            g.setColour (amber().withAlpha (0.25f));
-            g.fillEllipse (x - 22.0f, y - 22.0f, 44.0f, 44.0f);
+            paintRadial (g, { x, y }, rad * 2.6f, fuchsia(), 0.45f);
+            g.setColour (fuchsia());
+            g.fillEllipse (x - rad, y - rad, rad * 2.0f, rad * 2.0f);
+            g.setColour (juce::Colours::white);
+            g.fillEllipse (x - rad * 0.38f, y - rad * 0.38f, rad * 0.76f, rad * 0.76f);
+        }
+        else
+        {
+            g.setColour (downbeat ? fuchsia().withAlpha (0.55f) : juce::Colours::white.withAlpha (0.22f));
+            g.drawEllipse (x - rad, y - rad, rad * 2.0f, rad * 2.0f, downbeat ? 2.0f : 1.4f);
         }
     }
 
     g.setColour (mute());
-    g.setFont (juce::FontOptions (13.0f));
+    g.setFont (fontUi (12.0f, false));
     const juce::String micText = ! micGranted ? "MIC DENIED"
                                 : (inputChannels <= 0 ? "MIC OFF"
                                 : (snap.inputPeak > 0.0012f ? "MIC LIVE"
@@ -641,10 +830,12 @@ void MainComponent::paint (juce::Graphics& g)
     if (debugOpen)
     {
         auto dbg = getLocalBounds().reduced (24).removeFromTop (280);
-        g.setColour (panel().withAlpha (0.94f));
-        g.fillRoundedRectangle (dbg.toFloat(), 12.0f);
+        g.setColour (panel().withAlpha (0.96f));
+        g.fillRoundedRectangle (dbg.toFloat(), 16.0f);
+        g.setColour (fuchsia().withAlpha (0.7f));
+        g.drawRoundedRectangle (dbg.toFloat().reduced (0.5f), 16.0f, 1.4f);
         g.setColour (juce::Colours::white);
-        g.setFont (juce::FontOptions (13.0f));
+        g.setFont (fontUi (12.0f, false));
         juce::StringArray lines;
         lines.add ("DEBUG");
         lines.add (juce::String (snap.aiOnnx ? "AI ONNX BeatNet" : "AI STUB (modello NON caricato)"));
