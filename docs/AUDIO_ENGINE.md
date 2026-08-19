@@ -33,6 +33,21 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 `GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is on a **sixteenth grid** even though the loud strokes sit on eighths, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting selects how dense the *shaker* is, not the clock.
 
+### Four styles
+
+A player does not bring a marcha to a rock track, so the styles are four different parts rather than variations on one:
+
+| Style | Congas | Shaker | Ghosts |
+|---|---|---|---|
+| **marcha** | the tumbao: slap on 2, bass on 3, the paired open tones closing the bar | eighths, weight on the pulse | busy |
+| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the one and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
+| **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
+| **pop** | mostly space: the one, a light lift, the push into the next bar | eighths, level and quiet | almost none |
+
+The accent contour across the bar belongs to the **style**, not to the engine. That is not a refinement — a single global contour favouring beat one silently cancelled the rock pattern's backbeat emphasis (0.80 against 0.79, when the pattern asked for 0.80 against 0.92), and the test caught it.
+
+The user's subdivision setting *thins* a style's shaker pattern and never adds to it, so a style that does not want sixteenths does not get them because the user asked for a busy shaker.
+
 This used to be a constant array of eight entries inside the render loop, repeated identically for the length of the song, and it was not a marcha:
 
 - **The signature was missing.** A marcha closes the bar with the *pair* of open tones on 4 and the "and" of 4, pulling into the next bar. Without them it is a list of conga hits.

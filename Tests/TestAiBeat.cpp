@@ -399,6 +399,133 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
+        // The styles have to be different parts, not one pattern under four
+        // names, and each has a property that identifies it.
+        auto strokesOfBar = [] (vp::GrooveStyle st, int bar, std::vector<vp::GrooveEvent>& into)
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0x2468u);
+            gr.setStyle (st);
+            gr.setHumanize (0.0f);
+            gr.setSwing (0.0f);
+            gr.setIntensity (0.0f);   // no ghosts: show the skeleton
+            into.clear();
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                const int n = gr.eventsAt (bar, step, ev, vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < n; ++i)
+                {
+                    auto e = ev[i];
+                    e.delayBeats = static_cast<float> (step);   // reuse as the step index
+                    into.push_back (e);
+                }
+            }
+        };
+        auto congaVelocityAt = [] (const std::vector<vp::GrooveEvent>& v, int step)
+        {
+            float best = 0.0f;
+            for (const auto& e : v)
+                if (static_cast<int> (e.delayBeats) == step
+                    && e.stroke != vp::Stroke::shakerDown && e.stroke != vp::Stroke::shakerUp)
+                    best = std::max (best, e.velocity);
+            return best;
+        };
+        auto congaCount = [] (const std::vector<vp::GrooveEvent>& v)
+        {
+            int n = 0;
+            for (const auto& e : v)
+                if (e.stroke != vp::Stroke::shakerDown && e.stroke != vp::Stroke::shakerUp)
+                    ++n;
+            return n;
+        };
+        auto shakerVelocityAt = [] (const std::vector<vp::GrooveEvent>& v, int step)
+        {
+            for (const auto& e : v)
+                if (static_cast<int> (e.delayBeats) == step
+                    && (e.stroke == vp::Stroke::shakerDown || e.stroke == vp::Stroke::shakerUp))
+                    return e.velocity;
+            return 0.0f;
+        };
+
+        std::vector<vp::GrooveEvent> marcha, rock, dance, pop;
+        strokesOfBar (vp::GrooveStyle::marcha, 0, marcha);
+        strokesOfBar (vp::GrooveStyle::rock, 0, rock);
+        strokesOfBar (vp::GrooveStyle::dance, 0, dance);
+        strokesOfBar (vp::GrooveStyle::pop, 0, pop);
+
+        std::printf ("groove-styles  conga strokes per bar: marcha=%d rock=%d dance=%d pop=%d\n",
+                     congaCount (marcha), congaCount (rock), congaCount (dance), congaCount (pop));
+
+        // Rock: the snare owns 2 and 4, so the congas stay off them and take
+        // the "and" of 2 and the "and" of 4 instead. Doubling the backbeat is
+        // the commonest way to make a rock track sound crowded.
+        const float rockOn2 = congaVelocityAt (rock, 4);
+        const float rockAnd2 = congaVelocityAt (rock, 6);
+        const float rockAnd4 = congaVelocityAt (rock, 14);
+        std::printf ("groove-rock    conga on 2=%.2f  and-of-2=%.2f  and-of-4=%.2f\n",
+                     static_cast<double> (rockOn2), static_cast<double> (rockAnd2),
+                     static_cast<double> (rockAnd4));
+        expect (rockOn2 < 0.01f && rockAnd2 > 0.4f && rockAnd4 > 0.7f,
+                "rock keeps the congas off the backbeat and pushes on the and of 4");
+
+        // ...while the shaker does the opposite and leans on 2 and 4 with the
+        // drummer.
+        const float shBeat1 = shakerVelocityAt (rock, 0);
+        const float shBeat2 = shakerVelocityAt (rock, 4);
+        std::printf ("groove-rock    shaker on 1=%.2f  on 2=%.2f\n",
+                     static_cast<double> (shBeat1), static_cast<double> (shBeat2));
+        expect (shBeat2 > shBeat1 * 1.05f,
+                "the rock shaker puts its weight on the backbeat");
+
+        // Dance: four-on-the-floor leaves the offbeats free, so the part fills
+        // them - and the shaker leans on the off-eighth where the open hat is.
+        int danceOnTheA = 0;
+        for (int step : { 3, 7, 11, 15 })
+            if (congaVelocityAt (dance, step) > 0.4f)
+                ++danceOnTheA;
+        const float danceShakerPulse = shakerVelocityAt (dance, 0);
+        const float danceShakerOff = shakerVelocityAt (dance, 2);
+        std::printf ("groove-dance   hits on the a: %d/4   shaker pulse=%.2f off=%.2f\n",
+                     danceOnTheA, static_cast<double> (danceShakerPulse),
+                     static_cast<double> (danceShakerOff));
+        expect (danceOnTheA >= 3 && danceShakerOff > danceShakerPulse,
+                "dance leans on the sixteenth before the beat and accents the offbeat");
+
+        // Pop: the job is to be felt and not noticed, so it has to be the
+        // sparsest of the four by a clear margin.
+        expect (congaCount (pop) < congaCount (rock)
+                    && congaCount (pop) * 2 <= congaCount (dance),
+                "pop is the sparsest part of the four");
+
+        // And no two styles may be the same bar.
+        auto sameShape = [&congaVelocityAt] (const std::vector<vp::GrooveEvent>& a,
+                                             const std::vector<vp::GrooveEvent>& b)
+        {
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                if (std::fabs (congaVelocityAt (a, step) - congaVelocityAt (b, step)) > 0.01f)
+                    return false;
+            return true;
+        };
+        expect (! sameShape (marcha, rock) && ! sameShape (marcha, dance)
+                    && ! sameShape (marcha, pop) && ! sameShape (rock, dance)
+                    && ! sameShape (rock, pop) && ! sameShape (dance, pop),
+                "the four styles are four different parts");
+
+        // Every style keeps the two-bar phrase and the fill.
+        for (auto st : { vp::GrooveStyle::marcha, vp::GrooveStyle::rock,
+                         vp::GrooveStyle::dance, vp::GrooveStyle::pop })
+        {
+            std::vector<vp::GrooveEvent> a, b, f;
+            strokesOfBar (st, 0, a);
+            strokesOfBar (st, 1, b);
+            strokesOfBar (st, 7, f);
+            expect (! sameShape (a, b) && ! sameShape (a, f),
+                    "every style has a two-bar phrase and a fill");
+        }
+    }
+
+    {
         // Feel. Swing has to move the off-eighth and leave the pulse alone, and
         // humanisation has to move both the timing and the weight - a part that
         // is dead on the grid with identical velocities is a sequencer.

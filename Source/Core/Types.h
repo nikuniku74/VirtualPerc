@@ -32,6 +32,18 @@ enum class Subdivision : int
     sixteenth
 };
 
+/** Which part the percussionist plays. A player does not bring a marcha to a
+    rock track, so this is not a set of variations on one pattern - each has its
+    own conga figure and its own shaker. */
+enum class GrooveStyle : int
+{
+    marcha = 0,   // latin: tumbao, the paired open tones closing the bar
+    rock,         // sparse, locked to the backbeat, pushing into the one
+    dance,        // busy sixteenths, syncopated, offbeat-accented
+    pop,          // tasteful and out of the way
+    count
+};
+
 enum class FollowSource : int
 {
     kitMic = 0,
@@ -143,6 +155,7 @@ struct EngineSettings
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
     std::atomic<bool>  shakerEnabled   { true };
     std::atomic<bool>  congasEnabled   { true };
+    std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::marcha) };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };

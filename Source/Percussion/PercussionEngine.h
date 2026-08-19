@@ -27,6 +27,7 @@ public:
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
     void setShakerSubdivision (Subdivision s) noexcept { groove.setShakerSubdivision (s); }
+    void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
     void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
     void silence() noexcept;

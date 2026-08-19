@@ -321,6 +321,7 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
     percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
     percussion.setCongasEnabled (cfg.congasEnabled.load (std::memory_order_relaxed));
+    percussion.setGrooveStyle (static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed)));
 
     mixInputs (inputs, numInputs, numSamples);
     float peak = 0.0f;

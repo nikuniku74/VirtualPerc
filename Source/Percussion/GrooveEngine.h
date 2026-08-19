@@ -60,6 +60,14 @@ public:
     void prepare (std::uint32_t seed) noexcept;
     void reset() noexcept;
 
+    /** Which part to play. Not a set of variations on one pattern: each style
+        has its own conga figure and its own shaker weighting. */
+    void setStyle (GrooveStyle s) noexcept;
+    GrooveStyle currentStyle() const noexcept { return style; }
+
+    /** Whether this bar takes a fill instead of repeating the pattern. */
+    bool isFillBar (int barIndex) const noexcept;
+
     /** 0 = dead on the grid and mechanically even, 1 = as loose as a player
         who is not trying. Drives velocity spread, micro-timing and ghosts. */
     void setHumanize (float amount) noexcept;
@@ -88,6 +96,7 @@ private:
     float humanDelay (int step) noexcept;
 
     DeterministicRng rng { 0x9E3779B9u };
+    GrooveStyle style = GrooveStyle::marcha;
     float humanize = 0.35f;
     float swing = 0.0f;
     float intensity = 0.5f;
