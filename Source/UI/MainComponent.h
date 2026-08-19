@@ -6,7 +6,8 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 class MainComponent final : public juce::AudioAppComponent,
-                            private juce::Timer
+                            private juce::Timer,
+                            private juce::DarkModeSettingListener
 {
 public:
     MainComponent();
@@ -21,6 +22,7 @@ public:
 
 private:
     void timerCallback() override;
+    void darkModeSettingChanged() override;
     void startPressed();
     void stopPressed();
     void tapPressed();
@@ -36,6 +38,8 @@ private:
     void applyStyle (vp::GrooveStyle s);
     void applyStyleAuto (bool on);
     void refreshStyleButtons();
+    void applyTheme (bool dark, bool manualOverride);
+    void refreshThemeColours();
     juce::Rectangle<int> layoutColumn() const;
     /** Height the control stack needs. `paint` reserves exactly this, so the
         two cannot drift apart. */
@@ -48,6 +52,7 @@ private:
     struct AppLookAndFeel : juce::LookAndFeel_V4
     {
         AppLookAndFeel();
+        void refreshColours();
 
         juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
         void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
@@ -78,6 +83,7 @@ private:
     juce::TextButton shakerButton { "SHAKER  ON" };
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
+    juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton congasButton { "CONGAS  ON" };
@@ -94,6 +100,8 @@ private:
     juce::AudioBuffer<float> inputScratch;
 
     bool debugOpen = false;
+    bool darkMode = true;
+    bool themeFollowsSystem = true;
     bool audioReady = false;
     bool audioOpened = false;
     bool micGranted = false;
