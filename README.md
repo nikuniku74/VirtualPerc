@@ -57,6 +57,7 @@ Simulator (no device signing):
 - [Neural beat tracking (ONNX)](docs/AI_BEAT_TRACKING.md)
 - [Technical decisions](docs/TECHNICAL_DECISIONS.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Percussioni intelligenti — gap analysis e piano](docs/SMART_PERCUSSION.md)
 - [Audio engine](docs/AUDIO_ENGINE.md)
 - [Beat tracking](docs/BEAT_TRACKING.md)
 - [Platform](docs/PLATFORM.md)
