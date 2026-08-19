@@ -23,6 +23,8 @@ public:
         ClockTick     clock;
         TrackingState state = TrackingState::idle;
         Subdivision   subdivision = Subdivision::sixteenth;
+        /** Resolution the clock is emitting pulses at, for the groove. */
+        int           clockPulsesPerBeat = 4;
         float         bpm = 0.0f;
         float         targetBpm = 0.0f;
         float         confidence = 0.0f;

@@ -106,7 +106,7 @@ struct EngineSnapshot
     float latencyMs            = 0.0f;
     float inputPeak            = 0.0f;
     float callbackMs           = 0.0f;
-    float humanization         = 0.00f;
+    float humanization         = 0.35f;
     float reverbAmount         = 0.30f;
     bool  shakerEnabled        = true;
     bool  percussionAudible    = false;
@@ -134,10 +134,15 @@ struct EngineSettings
     std::atomic<float> masterVolume    { 0.90f };
     std::atomic<float> percussionVolume{ 1.00f };
     std::atomic<float> reverbAmount    { 0.30f };
-    std::atomic<float> humanization    { 0.00f };
+    // A percussionist is not on the grid and is not evenly loud. 0 is a
+    // sequencer; the default is a player who is not trying to be one.
+    std::atomic<float> humanization    { 0.35f };
+    std::atomic<float> swing           { 0.00f };
+    std::atomic<float> intensity       { 0.50f };
     std::atomic<int>   followStrength  { static_cast<int> (FollowStrength::high) };
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
     std::atomic<bool>  shakerEnabled   { true };
+    std::atomic<bool>  congasEnabled   { true };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };

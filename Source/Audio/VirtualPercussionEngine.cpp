@@ -318,6 +318,9 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
     percussion.setEnabled (cfg.shakerEnabled.load (std::memory_order_relaxed));
+    percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
+    percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
+    percussion.setCongasEnabled (cfg.congasEnabled.load (std::memory_order_relaxed));
 
     mixInputs (inputs, numInputs, numSamples);
     float peak = 0.0f;
@@ -339,20 +342,13 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     }
 
     const auto tr = tracker.process (mono.data(), numSamples);
-    int pulses = 2;
-    switch (tr.subdivision)
-    {
-        case Subdivision::quarter:   pulses = 1; break;
-        case Subdivision::eighth:    pulses = 2; break;
-        case Subdivision::sixteenth: pulses = 4; break;
-        case Subdivision::autoDetect: pulses = 2; break;
-    }
     // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
     // until the tracker has locked and reads 0 before then, so the percussion
     // was being told 120 while the clock ran at whatever it had actually found.
     percussion.setGroove (tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
                                                     : (tr.bpm > 40.0f ? tr.bpm : 120.0f),
-                          pulses);
+                          tr.clockPulsesPerBeat);
+    percussion.setShakerSubdivision (tr.subdivision);
 
     if (stretcher.hasLoop())
     {

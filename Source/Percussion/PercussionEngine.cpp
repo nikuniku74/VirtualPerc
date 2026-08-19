@@ -12,33 +12,18 @@ namespace
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
-    // none of them has decayed anywhere near far enough by then: the shaker
-    // stops at 21% of its peak, the open conga at 11%, the slap at 8%. That
-    // step is a click on *every* hit - not a rare glitch, the normal case - and
-    // it is the first thing to fix when the percussion sounds broken up.
+    // without this none of them has decayed far enough by then - the shaker
+    // stopped at 21% of its peak, the open conga at 11%, the slap at 8%. That
+    // step is a click on *every* hit, not a rare glitch.
     constexpr double kTailFadeSec = 0.012;
 
-    // Milliseconds of fade when a voice is taken over by a new hit of the same
-    // kind. Long enough not to click, short enough that the new hit is not
-    // muddied by the old one.
+    // Fade when a voice is taken over by a new stroke of the same kind. Long
+    // enough not to click, short enough that the new stroke is not muddied.
     constexpr double kStealFadeSec = 0.004;
 
-    // Shortest gap between two percussion hits. A 32nd note at 200 BPM is 37 ms,
-    // so anything closer than this is the clock stuttering, not the groove.
+    // Shortest gap between two strokes. A 32nd at 200 BPM is 37 ms, so anything
+    // closer than this is the clock stuttering, not the groove.
     constexpr double kRetriggerGuardSec = 0.020;
-
-    void fadeTail (std::vector<float>& L, std::vector<float>& R, double sampleRate) noexcept
-    {
-        const int n = static_cast<int> (std::min (L.size(), R.size()));
-        const int fade = std::min (n, std::max (1, static_cast<int> (sampleRate * kTailFadeSec)));
-        for (int i = 0; i < fade; ++i)
-        {
-            const float t = static_cast<float> (i) / static_cast<float> (fade);
-            const float g = 0.5f * (1.0f + std::cos (kPi * t));
-            L[static_cast<size_t> (n - fade + i)] *= g;
-            R[static_cast<size_t> (n - fade + i)] *= g;
-        }
-    }
 
     struct Svf
     {
@@ -55,25 +40,58 @@ namespace
         }
     };
 
-    void addBead (std::vector<float>& L, std::vector<float>& R,
-                  int pos, int dur, float sr, float freq, float amp,
-                  float pan, float decay, DeterministicRng& rng) noexcept
+    void fadeTail (std::vector<float>& L, std::vector<float>& R, double sampleRate) noexcept
     {
-        const int nMax = static_cast<int> (L.size());
-        if (pos >= nMax || dur <= 0)
-            return;
-        const int end = std::min (nMax, pos + dur);
-        const float wL = amp * (1.0f - pan) * 0.5f;
-        const float wR = amp * (1.0f + pan) * 0.5f;
-        for (int n = pos; n < end; ++n)
+        const int n = static_cast<int> (std::min (L.size(), R.size()));
+        const int fade = std::min (n, std::max (1, static_cast<int> (sampleRate * kTailFadeSec)));
+        for (int i = 0; i < fade; ++i)
         {
-            const float t = static_cast<float> (n - pos) / sr;
-            const float env = std::exp (-t * decay);
-            const float ping = std::sin (2.0f * kPi * freq * t);
-            const float click = rng.nextSigned() * std::exp (-t * 900.0f);
-            const float g = (ping * 0.72f + click * 0.28f) * env;
-            L[static_cast<size_t> (n)] += g * wL;
-            R[static_cast<size_t> (n)] += g * wR;
+            const float t = static_cast<float> (i) / static_cast<float> (fade);
+            const float g = 0.5f * (1.0f + std::cos (kPi * t));
+            L[static_cast<size_t> (n - fade + i)] *= g;
+            R[static_cast<size_t> (n - fade + i)] *= g;
+        }
+    }
+
+    void normalise (std::vector<float>& L, std::vector<float>& R, float target) noexcept
+    {
+        float peak = 1.0e-6f;
+        const int n = static_cast<int> (std::min (L.size(), R.size()));
+        for (int i = 0; i < n; ++i)
+            peak = std::max (peak, std::max (std::fabs (L[static_cast<size_t> (i)]),
+                                             std::fabs (R[static_cast<size_t> (i)])));
+        const float g = target / peak;
+        for (int i = 0; i < n; ++i)
+        {
+            L[static_cast<size_t> (i)] *= g;
+            R[static_cast<size_t> (i)] *= g;
+        }
+    }
+
+    // Physical description of each articulation, before the dynamic layer
+    // bends it. `noise` is how much of the stroke is hand and skin rather than
+    // pitched membrane; `decay` is how fast the ring dies; `pan` is where the
+    // drum sits, which is fixed per drum because a player does not move them.
+    struct DrumSpec
+    {
+        float freq;
+        float noise;
+        float decay;
+        float seconds;
+        float pan;
+    };
+
+    DrumSpec specFor (Stroke s) noexcept
+    {
+        switch (s)
+        {
+            case Stroke::tumba: return {  82.0f, 0.10f,  8.5f, 0.30f, -0.30f };
+            case Stroke::open:  return { 178.0f, 0.09f, 12.0f, 0.20f,  0.16f };
+            case Stroke::slap:  return { 330.0f, 0.52f, 26.0f, 0.10f,  0.34f };
+            case Stroke::heel:  return { 120.0f, 0.42f, 46.0f, 0.07f, -0.10f };
+            case Stroke::toe:   return { 240.0f, 0.50f, 60.0f, 0.05f,  0.22f };
+            case Stroke::muff:  return { 190.0f, 0.30f, 34.0f, 0.09f,  0.12f };
+            default:            return { 180.0f, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
 }
@@ -99,71 +117,144 @@ void PercussionEngine::applyReverbParams() noexcept
     reverb.setParameters (p);
 }
 
-void PercussionEngine::synthesizeShaker() noexcept
+void PercussionEngine::setHumanization (float amount) noexcept
 {
-        const int length = std::max (256, static_cast<int> (sampleRate * 0.14));
+    humanization = clamp01 (amount);
+    groove.setHumanize (humanization);
+}
+
+void PercussionEngine::setSwing (float amount) noexcept
+{
+    groove.setSwing (amount);
+}
+
+void PercussionEngine::setIntensity (float amount) noexcept
+{
+    groove.setIntensity (amount);
+}
+
+void PercussionEngine::synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept
+{
+    // A shaker is two strokes, not one. The down-stroke throws the beads onto
+    // the far wall and rings the gourd; the up-stroke is the return, shorter
+    // and duller, and it is what the ear reads as the offbeat. Playing the same
+    // sample for both is why a shaker part can be perfectly in time and still
+    // sound like a click track with noise on it.
+    const bool down = stroke == Stroke::shakerDown;
+    const float force = 0.55f + 0.45f * (static_cast<float> (layer) / static_cast<float> (kLayers - 1));
+
+    const double seconds = down ? 0.13 : 0.085;
+    const int length = std::max (256, static_cast<int> (sampleRate * seconds));
     const float sr = static_cast<float> (sampleRate);
 
-    for (int take = 0; take < kTakes; ++take)
+    s.left.assign (static_cast<size_t> (length), 0.0f);
+    s.right.assign (static_cast<size_t> (length), 0.0f);
+    DeterministicRng local (seed);
+
+    // Harder strokes are brighter and snap open faster: the beads arrive
+    // together instead of smearing.
+    const float fBead = (down ? 5400.0f : 4300.0f) * (0.82f + 0.30f * force) / sr;
+    const float fBody = (down ? 1400.0f : 1150.0f) / sr;
+    const float decay = (down ? 11.0f : 17.0f) * (1.10f - 0.18f * force);
+    const float snap = (down ? 380.0f : 520.0f) * (0.7f + 0.6f * force);
+
+    Svf bpL, bpR, bodyL, bodyR;
+    float lpL = 0.0f, lpR = 0.0f;
+    for (int n = 0; n < length; ++n)
     {
-        auto& L = shakerL[take];
-        auto& R = shakerR[take];
-        L.assign (static_cast<size_t> (length), 0.0f);
-        R.assign (static_cast<size_t> (length), 0.0f);
+        const float t = static_cast<float> (n) / sr;
+        const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * snap));
+        const float nL = local.nextSigned();
+        const float nR = local.nextSigned();
+        const float beadsL = bpL.bandpass (nL, fBead, 0.20f);
+        const float beadsR = bpR.bandpass (nR, fBead, 0.20f);
+        const float gourdL = bodyL.bandpass (nL, fBody, 0.35f);
+        const float gourdR = bodyR.bandpass (nR, fBody, 0.35f);
+        lpL += 0.012f * (nL - lpL);
+        lpR += 0.012f * (nR - lpR);
+        const float hand = (n < static_cast<int> (0.008 * sampleRate))
+                               ? std::exp (-t * 70.0f) * 0.10f * force : 0.0f;
+        const float bead = 0.26f + 0.10f * force;
+        s.left[static_cast<size_t> (n)]  = (beadsL * bead + gourdL * 0.10f + lpL * hand) * env;
+        s.right[static_cast<size_t> (n)] = (beadsR * bead + gourdR * 0.10f + lpR * hand) * env;
+    }
 
-        DeterministicRng local (0x5A4E11u + static_cast<std::uint32_t> (take) * 7919u);
+    normalise (s.left, s.right, 0.92f);
+    fadeTail (s.left, s.right, sampleRate);
+}
 
-        const int nBeads = 70 + static_cast<int> (local.nextU32() % 40u);
-        for (int b = 0; b < nBeads; ++b)
-        {
-            const float u = std::max (1.0e-4f, local.nextFloat());
-            const float tHit = -std::log (u) * 0.026f;
-            if (tHit > 0.14f)
-                continue;
-            const int pos = static_cast<int> (tHit * sampleRate);
-            const float freq = 2600.0f + local.nextFloat() * 5600.0f;
-            const float amp = (0.35f + 0.65f * local.nextFloat()) * std::exp (-tHit * 16.0f);
-            const float pan = local.nextSigned() * 0.62f;
-            const float decay = 160.0f + local.nextFloat() * 260.0f;
-            const int dur = static_cast<int> (0.010 * sampleRate);
-            addBead (L, R, pos, dur, sr, freq, amp, pan, decay, local);
-        }
+void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept
+{
+    const DrumSpec spec = specFor (stroke);
+    const float force = 0.55f + 0.45f * (static_cast<float> (layer) / static_cast<float> (kLayers - 1));
+    const float sr = static_cast<float> (sampleRate);
 
-        Svf bpL, bpR, bodyL, bodyR;
-        float lpL = 0.0f, lpR = 0.0f;
-        const float fBead = 5200.0f / sr;
-        const float fBody = 1400.0f / sr;
-        for (int n = 0; n < length; ++n)
-        {
-            const float t = static_cast<float> (n) / sr;
-            const float env = std::exp (-t * 11.0f) * (1.0f - std::exp (-t * 380.0f));
-            const float nL = local.nextSigned();
-            const float nR = local.nextSigned();
-            const float beadsL = bpL.bandpass (nL, fBead, 0.22f);
-            const float beadsR = bpR.bandpass (nR, fBead, 0.22f);
-            const float gourdL = bodyL.bandpass (nL, fBody, 0.35f);
-            const float gourdR = bodyR.bandpass (nR, fBody, 0.35f);
-            lpL += 0.012f * (nL - lpL);
-            lpR += 0.012f * (nR - lpR);
-            const float hand = (n < static_cast<int> (0.008 * sampleRate))
-                                   ? std::exp (-t * 70.0f) * 0.10f : 0.0f;
-            L[static_cast<size_t> (n)] += (beadsL * 0.28f + gourdL * 0.10f + lpL * hand) * env;
-            R[static_cast<size_t> (n)] += (beadsR * 0.28f + gourdR * 0.10f + lpR * hand) * env;
-        }
+    // Force does three things to a drum, and gain is none of them: the strike
+    // gets noisier, the attack gets faster, and the head is driven harder so it
+    // starts sharp and falls into pitch.
+    const float noiseAmt = std::clamp (spec.noise * (0.6f + 0.9f * force), 0.0f, 0.95f);
+    const float decay = spec.decay * (1.12f - 0.22f * force);
+    const float bend = 0.06f + 0.10f * force;
+    const float attack = 300.0f + 500.0f * force;
 
-        float peak = 1.0e-6f;
-        for (int n = 0; n < length; ++n)
+    const int n = std::max (256, static_cast<int> (sampleRate * static_cast<double> (spec.seconds)));
+    s.left.assign (static_cast<size_t> (n), 0.0f);
+    s.right.assign (static_cast<size_t> (n), 0.0f);
+
+    DeterministicRng local (seed);
+    const float wL = (1.0f - spec.pan) * 0.5f;
+    const float wR = (1.0f + spec.pan) * 0.5f;
+
+    float lp = 0.0f;
+    Svf crack;
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = static_cast<float> (i) / sr;
+        const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * attack));
+
+        // The head: fundamental falling into pitch, plus the first overtone a
+        // conga actually has (roughly a fifth above, decaying faster).
+        const float f0 = spec.freq * (1.0f + bend * std::exp (-t * 28.0f));
+        const float skin = std::sin (2.0f * kPi * f0 * t)
+                         + 0.30f * std::sin (3.0f * kPi * f0 * t) * std::exp (-t * decay * 1.8f);
+
+        const float nse = local.nextSigned();
+        lp += 0.09f * (nse - lp);
+        const float slap = crack.bandpass (nse, (2200.0f + 2600.0f * force) / sr, 0.35f)
+                           * std::exp (-t * (90.0f + 60.0f * force));
+
+        const float v = (skin * (1.0f - noiseAmt) + (lp * 0.5f + slap) * noiseAmt) * env;
+        s.left[static_cast<size_t> (i)] = v * wL;
+        s.right[static_cast<size_t> (i)] = v * wR;
+    }
+
+    normalise (s.left, s.right, 0.95f);
+    fadeTail (s.left, s.right, sampleRate);
+}
+
+void PercussionEngine::synthesizeAll() noexcept
+{
+    for (int st = 0; st < kStrokes; ++st)
+    {
+        const Stroke stroke = static_cast<Stroke> (st);
+        for (int layer = 0; layer < kLayers; ++layer)
         {
-            peak = std::max (peak, std::fabs (L[static_cast<size_t> (n)]));
-            peak = std::max (peak, std::fabs (R[static_cast<size_t> (n)]));
+            for (int rr = 0; rr < kRoundRobin; ++rr)
+            {
+                // Every variant gets its own noise seed, which is what makes
+                // two consecutive strokes of the same weight different takes
+                // rather than the same take twice.
+                const std::uint32_t seed = 0x5A4E11u
+                                           + static_cast<std::uint32_t> (st) * 7919u
+                                           + static_cast<std::uint32_t> (layer) * 104729u
+                                           + static_cast<std::uint32_t> (rr) * 1299709u;
+                Sample& s = bank[st][layer][rr];
+                if (stroke == Stroke::shakerDown || stroke == Stroke::shakerUp)
+                    synthesizeShaker (s, stroke, layer, seed);
+                else
+                    synthesizeDrum (s, stroke, layer, seed);
+            }
         }
-        const float g = 0.92f / peak;
-        for (int n = 0; n < length; ++n)
-        {
-            L[static_cast<size_t> (n)] *= g;
-            R[static_cast<size_t> (n)] *= g;
-        }
-        fadeTail (L, R, sampleRate);
     }
 }
 
@@ -172,17 +263,22 @@ void PercussionEngine::prepare (double sr) noexcept
     sampleRate = sr > 1.0 ? sr : 48000.0;
     reverb.setSampleRate (sampleRate);
     applyReverbParams();
-    synthesizeShaker();
-    synthesizeCongas();
+    synthesizeAll();
+    groove.prepare (0x9E3779B9u);
+    groove.setHumanize (humanization);
     reset();
 }
 
 void PercussionEngine::reset() noexcept
 {
     clearVoices();
+    groove.reset();
     totalHits = 0;
     lastActive = 0;
     samplesSinceHit = 1000000;
+    barCounter = 0;
+    lastBarBeat = -1;
+    std::fill (rrCursor, rrCursor + kStrokes, 0);
     reverb.reset();
 }
 
@@ -203,69 +299,21 @@ void PercussionEngine::silence() noexcept
 void PercussionEngine::setGroove (float bpm, int pulsesPerBeat) noexcept
 {
     grooveBpm = std::clamp (bpm, 40.0f, 220.0f);
-    groovePulses = pulsesPerBeat < 1 ? 2 : pulsesPerBeat;
+    groovePulses = pulsesPerBeat < 1 ? 4 : pulsesPerBeat;
 }
 
-void PercussionEngine::synthesizeCongas() noexcept
+void PercussionEngine::releaseStroke (Stroke stroke) noexcept
 {
-    const float sr = static_cast<float> (sampleRate);
-    auto synth = [&] (std::vector<float>& L, std::vector<float>& R,
-                      float freq, float noiseAmt, float decay, float seconds, float pan)
-    {
-        const int n = std::max (256, static_cast<int> (sampleRate * static_cast<double> (seconds)));
-        L.assign (static_cast<size_t> (n), 0.0f);
-        R.assign (static_cast<size_t> (n), 0.0f);
-        DeterministicRng local (0xC0A7u + static_cast<std::uint32_t> (freq));
-        const float wL = (1.0f - pan) * 0.5f;
-        const float wR = (1.0f + pan) * 0.5f;
-        float lp = 0.0f;
-        for (int i = 0; i < n; ++i)
-        {
-            const float t = static_cast<float> (i) / sr;
-            const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * 420.0f));
-            const float skin = std::sin (2.0f * kPi * freq * t * (1.0f - 0.08f * t));
-            const float nse = local.nextSigned();
-            lp += 0.08f * (nse - lp);
-            const float slap = nse * std::exp (-t * 90.0f);
-            const float s = (skin * (1.0f - noiseAmt) + (lp + slap) * noiseAmt) * env;
-            L[static_cast<size_t> (i)] = s * wL;
-            R[static_cast<size_t> (i)] = s * wR;
-        }
-        float peak = 1.0e-6f;
-        for (int i = 0; i < n; ++i)
-            peak = std::max (peak, std::max (std::fabs (L[static_cast<size_t> (i)]),
-                                             std::fabs (R[static_cast<size_t> (i)])));
-        const float g = 0.95f / peak;
-        for (int i = 0; i < n; ++i)
-        {
-            L[static_cast<size_t> (i)] *= g;
-            R[static_cast<size_t> (i)] *= g;
-        }
-        fadeTail (L, R, sampleRate);
-    };
-
-    synth (tumbaL, tumbaR, 82.0f, 0.12f, 9.5f, 0.28f, -0.28f);
-    synth (openL, openR, 175.0f, 0.10f, 14.0f, 0.16f, 0.18f);
-    synth (slapL, slapR, 320.0f, 0.55f, 28.0f, 0.09f, 0.38f);
-}
-
-void PercussionEngine::releaseKind (Kind kind) noexcept
-{
-    // Fade the outgoing voice instead of switching it off mid-sample.
     const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
     for (auto& v : voices)
-    {
-        if (v.active && v.kind == kind && v.fadeStep <= 0.0f)
+        if (v.active && v.stroke == stroke && v.fadeStep <= 0.0f)
             v.fadeStep = step;
-    }
 }
 
 PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
 {
-    // A free slot if there is one, otherwise the oldest voice - which is the
-    // one furthest into its decay, so it is the least missed. Falling back to
-    // slot 0 the way this used to meant a busy bar overwrote whichever voice
-    // happened to be first, part-way through, at full amplitude.
+    // A free slot if there is one, otherwise the oldest voice - the one
+    // furthest into its decay, so it is the least missed.
     int slot = -1;
     for (int i = 0; i < kVoices; ++i)
     {
@@ -287,76 +335,49 @@ PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
     return voices[slot];
 }
 
-void PercussionEngine::triggerShaker (int sampleOffset) noexcept
+const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float velocity, float& gain) noexcept
 {
-    releaseKind (Kind::shaker);
+    const int st = std::clamp (static_cast<int> (stroke), 0, kStrokes - 1);
 
-    const float hum = humanization;
-    const float vel = 0.78f + 0.14f * (1.0f - hum) + 0.08f * hum * rng.nextFloat();
-    const float pan = 0.03f * rng.nextSigned();
+    // Which dynamic layer the stroke belongs to, and then how far into it: the
+    // layer sets the timbre and the remainder sets the level, so a crescendo
+    // moves smoothly instead of stepping between layers.
+    const float v = std::clamp (velocity, 0.0f, 1.0f);
+    const float scaled = v * static_cast<float> (kLayers);
+    int layer = std::clamp (static_cast<int> (scaled), 0, kLayers - 1);
+    const float within = scaled - static_cast<float> (layer);
+
+    // Level within the layer spans the band the layer covers, so the loudest
+    // stroke of layer 0 and the quietest of layer 1 meet rather than jump.
+    const float lo = static_cast<float> (layer) / static_cast<float> (kLayers);
+    gain = std::clamp (lo + within / static_cast<float> (kLayers), 0.08f, 1.0f);
+
+    const int rr = rrCursor[st];
+    rrCursor[st] = (rr + 1) % kRoundRobin;
+    return bank[st][layer][rr];
+}
+
+void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset) noexcept
+{
+    releaseStroke (stroke);
+
+    float gain = 1.0f;
+    const Sample& s = pick (stroke, velocity, gain);
+    if (s.left.empty())
+        return;
+
+    // A stroke sits where the drum sits; the tiny random spread on top is the
+    // hand not landing in exactly the same place twice.
+    const float spread = 0.04f * rng.nextSigned() * humanization;
     auto& v = allocateVoice();
-    v.kind = Kind::shaker;
+    v.stroke = stroke;
+    v.sample = &s;
     v.pos = -sampleOffset;
-    v.take = static_cast<int> (rng.nextU32() % static_cast<std::uint32_t> (kTakes));
-    v.length = static_cast<int> (shakerL[v.take].size());
-    v.gainL = vel * (1.0f - pan);
-    v.gainR = vel * (1.0f + pan);
+    v.length = static_cast<int> (s.left.size());
+    v.gainL = gain * (1.0f - spread);
+    v.gainR = gain * (1.0f + spread);
     v.active = true;
     ++totalHits;
-}
-
-void PercussionEngine::triggerConga (Kind kind, int sampleOffset, float pan) noexcept
-{
-    releaseKind (kind);
-
-    const float vel = 0.82f + 0.12f * rng.nextFloat();
-    auto& v = allocateVoice();
-    v.kind = kind;
-    v.pos = -sampleOffset;
-    v.take = 0;
-    switch (kind)
-    {
-        case Kind::tumba: v.length = static_cast<int> (tumbaL.size()); break;
-        case Kind::open:  v.length = static_cast<int> (openL.size()); break;
-        case Kind::slap:  v.length = static_cast<int> (slapL.size()); break;
-        default:          v.length = 0; break;
-    }
-    v.gainL = vel * (1.0f - pan);
-    v.gainR = vel * (1.0f + pan);
-    v.active = true;
-    ++totalHits;
-}
-
-const std::vector<float>& PercussionEngine::sampleL (const Voice& v) const noexcept
-{
-    switch (v.kind)
-    {
-        case Kind::tumba: return tumbaL;
-        case Kind::open:  return openL;
-        case Kind::slap:  return slapL;
-        case Kind::shaker:
-        default:
-        {
-            const int t = std::clamp (v.take, 0, kTakes - 1);
-            return shakerL[t];
-        }
-    }
-}
-
-const std::vector<float>& PercussionEngine::sampleR (const Voice& v) const noexcept
-{
-    switch (v.kind)
-    {
-        case Kind::tumba: return tumbaR;
-        case Kind::open:  return openR;
-        case Kind::slap:  return slapR;
-        case Kind::shaker:
-        default:
-        {
-            const int t = std::clamp (v.take, 0, kTakes - 1);
-            return shakerR[t];
-        }
-    }
 }
 
 int PercussionEngine::render (float* left, float* right, int numSamples,
@@ -372,13 +393,14 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     {
         // A guard against firing the same grid position twice - which the clock
         // can do when a phase correction steps the grid backwards - and nothing
-        // more. It used to be 82% of the nominal pulse derived from `grooveBpm`,
-        // which is the *displayed* BPM: before a lock that is 120 whatever the
-        // clock is really doing, so at any real tempo above ~145 the guard was
-        // longer than the actual pulse and swallowed every second hit. Dropped
-        // notes are exactly the symptom this had to stop causing, so the guard
-        // is now a short fixed one that no musical subdivision can reach.
+        // more. It used to be 82% of the nominal pulse derived from the
+        // *displayed* BPM, which is 120 until the tracker locks, so at any real
+        // tempo above ~145 the guard was longer than the actual pulse and
+        // swallowed every second stroke.
         const int minGap = static_cast<int> (sampleRate * kRetriggerGuardSec);
+        const float beatSamples = 60.0f / std::max (40.0f, grooveBpm)
+                                  * static_cast<float> (sampleRate);
+
         for (int i = 0; i < tick.pulsesFired; ++i)
         {
             int offset = tick.pulseOffset[i];
@@ -389,36 +411,31 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             if (samplesSinceHit + offset < minGap)
                 continue;
 
-            const int idx = tick.pulseIndex[i];
             const int barBeat = tick.pulseBeatInBar[i];
-            int step = -1;
-            if (groovePulses <= 1)
-                step = (barBeat * 2) % 8;
-            else if (groovePulses == 2)
-                step = tick.barPulse[i] % 8;
-            else
-            {
-                if ((idx & 1) != 0)
-                    continue;
-                step = ((barBeat * 2) + (idx / 2)) % 8;
-            }
-            if (step < 0)
-                continue;
+            const int idx = tick.pulseIndex[i];
 
-            triggerShaker (offset);
-            // Tumbao / marcha on the bar's 8ths: 1, 1&, 2, 2&, 4, 4&
-            static constexpr Kind kConga[8] = {
-                Kind::tumba, Kind::shaker, Kind::open, Kind::slap,
-                Kind::open,  Kind::shaker, Kind::slap, Kind::open
-            };
-            const Kind ck = kConga[step];
-            if (ck != Kind::shaker)
+            // Bars are counted off the beat-in-bar wrapping back to zero, so
+            // the two-bar phrase and the fill stay aligned to the song's bar
+            // even across a re-lock.
+            if (barBeat == 0 && idx == 0 && lastBarBeat != 0)
+                ++barCounter;
+            if (idx == 0)
+                lastBarBeat = barBeat;
+
+            // Map the clock's pulse onto the groove's sixteenth grid, whatever
+            // resolution the clock is running at.
+            const int per = std::max (1, groovePulses);
+            const int step = (barBeat * 4 + (idx * 4) / per) % GrooveEngine::kStepsPerBar;
+
+            GrooveEvent events[GrooveEngine::kMaxEvents];
+            const int n = groove.eventsAt (barCounter, step, events, GrooveEngine::kMaxEvents);
+            for (int e = 0; e < n; ++e)
             {
-                const float pan = (ck == Kind::tumba) ? -0.28f
-                                : (ck == Kind::slap)  ?  0.36f : 0.16f;
-                triggerConga (ck, offset, pan);
+                const int delay = static_cast<int> (events[e].delayBeats * beatSamples);
+                trigger (events[e].stroke, events[e].velocity, offset + delay);
             }
-            samplesSinceHit = -offset;
+            if (n > 0)
+                samplesSinceHit = -offset;
         }
     }
 
@@ -426,11 +443,11 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     const float g = volume;
     for (auto& v : voices)
     {
-        if (! v.active)
+        if (! v.active || v.sample == nullptr)
             continue;
         ++active;
-        const auto& bL = sampleL (v);
-        const auto& bR = sampleR (v);
+        const auto& bL = v.sample->left;
+        const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));
         for (int n = 0; n < numSamples; ++n)
         {

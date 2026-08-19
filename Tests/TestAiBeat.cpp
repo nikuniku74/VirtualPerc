@@ -11,6 +11,7 @@
 #include "AI/OnnxSession.h"
 #include "AI/StubBeatModel.h"
 #include "Audio/VirtualPercussionEngine.h"
+#include "Percussion/GrooveEngine.h"
 #include "Percussion/PercussionEngine.h"
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
@@ -319,6 +320,221 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
     }
 
+    // What the percussionist plays. These are about the *musical* shape of the
+    // part, which nothing used to check: the old pattern compiled, ran, and was
+    // not a marcha.
+    {
+        vp::GrooveEngine gr;
+        gr.prepare (0x1234u);
+        gr.setHumanize (0.0f);      // isolate the pattern from the feel
+        gr.setSwing (0.0f);
+        gr.setIntensity (0.0f);     // no ghosts, so the skeleton is visible
+
+        auto strokesAt = [&gr] (int bar, int step, std::vector<vp::Stroke>& into)
+        {
+            vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+            const int n = gr.eventsAt (bar, step, ev, vp::GrooveEngine::kMaxEvents);
+            into.clear();
+            for (int i = 0; i < n; ++i)
+                into.push_back (ev[i].stroke);
+        };
+        auto has = [] (const std::vector<vp::Stroke>& v, vp::Stroke s)
+        {
+            return std::find (v.begin(), v.end(), s) != v.end();
+        };
+
+        std::vector<vp::Stroke> at12, at14, at4, at8;
+        strokesAt (0, 12, at12);
+        strokesAt (0, 14, at14);
+        strokesAt (0, 4, at4);
+        strokesAt (0, 8, at8);
+
+        // The signature of the pattern: two open tones together at the end of
+        // the bar, pulling into the next one. Without them it is a list of
+        // conga hits, which is exactly what the previous fixed array was.
+        expect (has (at12, vp::Stroke::open) && has (at14, vp::Stroke::open),
+                "the marcha closes the bar with the paired open tones");
+        expect (has (at4, vp::Stroke::slap) && has (at8, vp::Stroke::tumba),
+                "the marcha puts the slap on 2 and the bass on 3");
+
+        // Shaker: down on the pulse, up on the return, and the down has to be
+        // the louder of the two or it is not an accent.
+        vp::GrooveEvent down[4], up[4];
+        const int nd = gr.eventsAt (0, 0, down, 4);
+        const int nu = gr.eventsAt (0, 2, up, 4);
+        float vDown = 0.0f, vUp = 0.0f;
+        for (int i = 0; i < nd; ++i) if (down[i].stroke == vp::Stroke::shakerDown) vDown = down[i].velocity;
+        for (int i = 0; i < nu; ++i) if (up[i].stroke == vp::Stroke::shakerUp) vUp = up[i].velocity;
+        std::printf ("groove-shaker  down=%.2f  up=%.2f\n",
+                     static_cast<double> (vDown), static_cast<double> (vUp));
+        expect (vDown > 0.3f && vUp > 0.1f && vDown > vUp * 1.25f,
+                "the shaker alternates an accented down-stroke with a lighter up-stroke");
+
+        // Two-bar phrasing: bar 1 must not be bar 0 again.
+        bool differs = false;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            std::vector<vp::Stroke> a, b;
+            strokesAt (0, step, a);
+            strokesAt (1, step, b);
+            if (a != b)
+                differs = true;
+        }
+        expect (differs, "the second bar of the phrase is not the first one again");
+
+        // And a fill closes the eight-bar phrase.
+        int fillStrokes = 0, plainStrokes = 0;
+        for (int step = 8; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            std::vector<vp::Stroke> f, p2;
+            strokesAt (7, step, f);
+            strokesAt (0, step, p2);
+            fillStrokes += static_cast<int> (f.size());
+            plainStrokes += static_cast<int> (p2.size());
+        }
+        std::printf ("groove-fill  bar7=%d strokes  bar0=%d strokes (second half)\n",
+                     fillStrokes, plainStrokes);
+        expect (fillStrokes > plainStrokes,
+                "the eighth bar takes a fill instead of repeating the pattern");
+    }
+
+    {
+        // Feel. Swing has to move the off-eighth and leave the pulse alone, and
+        // humanisation has to move both the timing and the weight - a part that
+        // is dead on the grid with identical velocities is a sequencer.
+        vp::GrooveEngine gr;
+        gr.prepare (0x77u);
+        gr.setHumanize (0.0f);
+        gr.setIntensity (0.0f);
+        gr.setSwing (1.0f);
+
+        vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+        const int nOn = gr.eventsAt (0, 0, ev, vp::GrooveEngine::kMaxEvents);
+        const float onDelay = nOn > 0 ? ev[0].delayBeats : -1.0f;
+        const int nOff = gr.eventsAt (0, 2, ev, vp::GrooveEngine::kMaxEvents);
+        const float offDelay = nOff > 0 ? ev[0].delayBeats : -1.0f;
+        std::printf ("groove-swing  pulse=%.4f beat  off-eighth=%.4f beat\n",
+                     static_cast<double> (onDelay), static_cast<double> (offDelay));
+        expect (std::fabs (onDelay) < 1.0e-4f && offDelay > 0.15f && offDelay < 0.18f,
+                "swing moves the off-eighth onto the triplet and leaves the pulse alone");
+
+        gr.prepare (0x99u);
+        gr.setSwing (0.0f);
+        gr.setHumanize (0.8f);
+        gr.setIntensity (0.0f);
+        float vMin = 2.0f, vMax = 0.0f, dMin = 2.0f, dMax = 0.0f;
+        for (int bar = 0; bar < 32; ++bar)
+        {
+            const int n = gr.eventsAt (bar, 0, ev, vp::GrooveEngine::kMaxEvents);
+            for (int i = 0; i < n; ++i)
+            {
+                if (ev[i].stroke != vp::Stroke::shakerDown)
+                    continue;
+                vMin = std::min (vMin, ev[i].velocity);
+                vMax = std::max (vMax, ev[i].velocity);
+                dMin = std::min (dMin, ev[i].delayBeats);
+                dMax = std::max (dMax, ev[i].delayBeats);
+            }
+        }
+        std::printf ("groove-human  velocity %.2f..%.2f  delay %.4f..%.4f beat\n",
+                     static_cast<double> (vMin), static_cast<double> (vMax),
+                     static_cast<double> (dMin), static_cast<double> (dMax));
+        expect (vMax - vMin > 0.05f && dMax - dMin > 1.0e-4f && dMin >= 0.0f,
+                "humanisation moves both the weight and the timing, and never asks to play early");
+    }
+
+    {
+        // Round-robin and dynamic layers. Two strokes of the same articulation
+        // in a row must not be the same buffer, and a hard stroke must not be a
+        // soft one with more gain on it.
+        vp::PercussionEngine perc;
+        perc.prepare (48000.0);
+        perc.setReverbAmount (0.0f);
+        perc.setVolume (1.0f);
+        perc.setHumanization (0.0f);
+
+        auto renderOne = [&perc] (int barPulse, std::vector<float>& into)
+        {
+            vp::ClockTick hit;
+            hit.tempoBpm = 120.0f;
+            hit.pulsesFired = 1;
+            hit.pulseOffset[0] = 0;
+            hit.pulseIndex[0] = barPulse % 4;
+            hit.pulseBeatInBar[0] = (barPulse / 4) % 4;
+            hit.barPulse[0] = barPulse;
+            vp::ClockTick idle;
+            idle.tempoBpm = 120.0f;
+            const int block = 256;
+            std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+            into.clear();
+            for (int b = 0; b < 60; ++b)
+            {
+                perc.render (L.data(), R.data(), block, b == 0 ? hit : idle, true);
+                for (int i = 0; i < block; ++i)
+                    into.push_back (L[static_cast<size_t> (i)]);
+            }
+        };
+
+        // Same grid position twice: the pattern is identical, so any difference
+        // is the round-robin doing its job.
+        std::vector<float> first, second;
+        renderOne (0, first);
+        renderOne (0, second);
+        double diff = 0.0, energy = 0.0;
+        const size_t n = std::min (first.size(), second.size());
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double d = static_cast<double> (first[i]) - second[i];
+            diff += d * d;
+            energy += static_cast<double> (first[i]) * first[i];
+        }
+        const double rel = energy > 0.0 ? diff / energy : 0.0;
+        std::printf ("perc-roundrobin  relative difference between takes = %.3f\n", rel);
+        expect (energy > 1.0e-6 && rel > 0.05,
+                "two strokes of the same kind are different takes, not the same buffer twice");
+    }
+
+    {
+        // Real-time budget. The part is busier than it was - sixteenth grid,
+        // ghost notes, two instruments, sixteen voices - and all of it runs in
+        // the audio callback, so the cost has to stay a small fraction of the
+        // block it is filling.
+        vp::TempoFollower clock;
+        clock.prepare (48000.0);
+        clock.forceTempo (180.0f);
+        clock.setPulsesPerBeat (4);
+        clock.setLocked (true);
+
+        vp::PercussionEngine perc;
+        const auto tp0 = std::chrono::steady_clock::now();
+        perc.prepare (48000.0);
+        const auto tp1 = std::chrono::steady_clock::now();
+        const double prepareMs = std::chrono::duration<double, std::milli> (tp1 - tp0).count();
+        std::printf ("perc-prepare  %.1f ms to synthesise the whole bank\n", prepareMs);
+        // prepare() runs off the audio thread, but it also runs on every device
+        // change, so it must not stall the app for a noticeable time.
+        expect (prepareMs < 400.0, "the sample bank is built quickly enough to survive a device change");
+        perc.setHumanization (0.6f);
+        perc.setIntensity (1.0f);
+        perc.setGroove (180.0f, 4);
+
+        const int block = 128;   // a small buffer is the harder case
+        std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+        const int blocks = 20 * 48000 / block;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int b = 0; b < blocks; ++b)
+            perc.render (L.data(), R.data(), block, clock.advance (block), true);
+        const auto t1 = std::chrono::steady_clock::now();
+
+        const double elapsedMs = std::chrono::duration<double, std::milli> (t1 - t0).count();
+        const double perBlockMs = elapsedMs / static_cast<double> (blocks);
+        const double budgetMs = 1000.0 * block / 48000.0;
+        std::printf ("perc-cpu  %.3f ms per %d-sample block (budget %.2f ms) = %.1f%%\n",
+                     perBlockMs, block, budgetMs, 100.0 * perBlockMs / budgetMs);
+        expect (perBlockMs < budgetMs * 0.25,
+                "the percussion voice mix stays well inside the audio block budget");
+    }
+
     // Percussion continuity. All of these are about the same complaint - the
     // shaker and the congas breaking up - and all of them used to fail.
     {
@@ -591,8 +807,14 @@ void vpRunAiBeatTests (int& passed, int& failed)
                              static_cast<double> (meanLate * beatMs),
                              static_cast<double> (worstLate), last.tempoRegime);
 
-                expect (std::fabs (meanEarly) < 0.05f && std::fabs (meanLate) < 0.05f,
-                        "clock sits on the song pulse, not behind it");
+                // Tight on purpose. The old bound of 0.05 beat is 25 ms at 120
+                // BPM, which passes a clock sitting a audible distance off the
+                // beat - and one did: a steady +15..20 ms lead that no test
+                // objected to. 8 ms is about where a listener stops hearing a
+                // percussionist as "with" the track.
+                expect (std::fabs (meanEarly) * beatMs < 8.0f
+                            && std::fabs (meanLate) * beatMs < 8.0f,
+                        "clock sits on the song pulse, not beside it");
                 expect (std::fabs (meanLate - meanEarly) < 0.02f,
                         "phase alignment holds over time instead of walking off");
             }

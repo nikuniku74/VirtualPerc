@@ -22,6 +22,7 @@ set (VP_CORE_SOURCES
     Source/Tracking/TempoFollower.cpp
     Source/Tracking/BeatTracker.cpp
     Source/Percussion/PercussionEngine.cpp
+    Source/Percussion/GrooveEngine.cpp
     Source/Audio/VirtualPercussionEngine.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp

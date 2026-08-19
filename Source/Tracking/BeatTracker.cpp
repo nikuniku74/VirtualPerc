@@ -6,6 +6,27 @@
 namespace vp
 {
 
+namespace
+{
+    // Sixteenths. See the note in process().
+    constexpr int kClockPulsesPerBeat = 4;
+
+    // The pipeline delay computed below is a geometric figure - where the
+    // analysis frame sits in the input stream - and it comes out about one hop
+    // too long. Measured against a notated click through the real network, the
+    // clock ran a steady 15-20 ms *ahead* of the song at 78, 100 and 138 BPM:
+    // constant in milliseconds rather than in beats, which is what identifies
+    // it as a fixed pipeline offset and not a rate error.
+    //
+    // Trimming the lead by 18 ms takes that residual to -3..+2 ms across the
+    // same three tempi. The value is a calibration, not a derivation: it is
+    // suspiciously close to one 20 ms hop, but the geometry in
+    // NeuralBeatTracker::analysisSampleFor checks out frame by frame, so the
+    // rest is most likely the network's own response offset. It is measured on
+    // a click, so real material may sit a millisecond or two either side.
+    constexpr float kAnalysisLeadTrimSec = 0.018f;
+}
+
 void BeatTracker::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
@@ -361,8 +382,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     {
         const double pipelineSec = static_cast<double> (neural.samplesFed() - hyp.analysisSample)
                                    / sampleRate;
-        const float leadSec = std::clamp (static_cast<float> (pipelineSec), 0.0f, 0.60f)
-                              + reportedLatencyMs * 0.001f;
+        // Clamp last: the trim can take a short startup pipeline below zero, and
+        // a negative lead would drag the phase target backwards.
+        const float leadSec = std::clamp (static_cast<float> (pipelineSec) - kAnalysisLeadTrimSec
+                                              + reportedLatencyMs * 0.001f,
+                                          0.0f, 0.60f);
         leadBeats = leadSec / beatSeconds;
         lastLeadMs = leadSec * 1000.0f;
     }
@@ -401,10 +425,16 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         follower.setTargetTempo (nnBpm, nnConf);
     }
 
+    // The clock always runs on sixteenths, whatever the part is playing. The
+    // loud strokes of a marcha sit on eighths, but the quiet half of it - the
+    // heel and toe filling the gaps - is on sixteenths, and that half is what a
+    // listener hears as a player rather than as a pattern. What the user's
+    // subdivision setting selects is how dense the *shaker* is, which is a
+    // question for GrooveEngine, not for the clock.
     effectiveSubdivision = userSubdivision == Subdivision::autoDetect
                                ? Subdivision::eighth
                                : userSubdivision;
-    follower.setPulsesPerBeat (pulsesFor (effectiveSubdivision));
+    follower.setPulsesPerBeat (kClockPulsesPerBeat);
 
     if (downbeatHoldSamples > 0)
         downbeatHoldSamples -= numSamples;
@@ -555,6 +585,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     out.state = currentState;
     out.subdivision = effectiveSubdivision;
+    out.clockPulsesPerBeat = kClockPulsesPerBeat;
     const bool showBpm = heldBpm > 40.0f
                          && (lockedOnce || tapEstablished || periodic);
     out.bpm = showBpm ? (tapOwnsTempo ? follower.currentTempo() : heldBpm) : 0.0f;
