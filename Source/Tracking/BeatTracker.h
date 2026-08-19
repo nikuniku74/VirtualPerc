@@ -95,6 +95,7 @@ private:
     int tapHoldSamples = 0;
     int lostSyncSamples = 0;
     int downbeatHoldSamples = 0;
+    int downbeatVotes[4] {};
     int quantizeWaitSamples = 0;
     double lastTapSec = -1.0;
     float tapIoi[8] {};

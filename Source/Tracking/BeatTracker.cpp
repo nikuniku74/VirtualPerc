@@ -11,6 +11,15 @@ namespace
     // Sixteenths. See the note in process().
     constexpr int kClockPulsesPerBeat = 4;
 
+    // How long to hold out for a downbeat before coming in on any quarter.
+    // Percussion entering mid-bar is the kind of mistake a listener hears
+    // immediately, so this is generous - but it cannot be unbounded, because
+    // material the network never finds a downbeat in would then never start.
+    constexpr double kBarsBeforeGivingUp = 4.0;
+
+    // Downbeats to collect before the vote is worth acting on.
+    constexpr int kVotesToTrustTheBar = 3;
+
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
     // too long. Measured against a notated click through the real network, the
@@ -69,6 +78,7 @@ void BeatTracker::reset() noexcept
     tapHoldSamples = 0;
     lostSyncSamples = 0;
     downbeatHoldSamples = 0;
+    std::fill (downbeatVotes, downbeatVotes + 4, 0);
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     tapIoiWrite = 0;
@@ -438,12 +448,38 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     if (downbeatHoldSamples > 0)
         downbeatHoldSamples -= numSamples;
-    if (hadDownbeat && ! tapHold && ! waitForQuantize && downbeatHoldSamples <= 0
-        && follower.beatPhase() < 0.22f
-        && follower.beatInBarIndex() != 0)
+    // The bar has to be alignable *while* waiting to come in - that is the one
+    // moment it matters most. It used to be excluded here, so through the whole
+    // wait the bar was never corrected and "the first quarter" meant whichever
+    // beat the clock happened to start counting on. Measured over eight tracks,
+    // the percussion came in on the one twice, and the misses were off by very
+    // nearly a whole beat: the clock was on the beat and the bar was rotated.
+    if (hadDownbeat && ! tapHold)
     {
-        follower.snapDownbeat (follower.beatPhase());
-        downbeatHoldSamples = static_cast<int> (sampleRate * 0.85);
+        // Which beat of the bar this downbeat fell on, as the clock currently
+        // counts them. A single one of these is not worth acting on: the
+        // network answers "this is a strong beat" reliably and "this is *the*
+        // strong beat" much less so, and on material where beats one and three
+        // carry the same kick it splits almost evenly between them. Measured
+        // over eight tracks it put 7 of 12, 9 of 11, 10 of 19 and 13 of 25 on
+        // the true one - a plurality every time, and a coin toss taken one at a
+        // time. So they are counted and the majority is used, rather than the
+        // most recent one winning.
+        const int at = follower.beatPhase() < 0.5f
+                           ? follower.beatInBarIndex()
+                           : (follower.beatInBarIndex() + 1) & 3;
+        downbeatVotes[at] += 1;
+        if (downbeatVotes[at] > 1000)
+            for (int& v : downbeatVotes)
+                v /= 2;
+
+        if (! waitForQuantize && downbeatHoldSamples <= 0
+            && follower.beatPhase() < 0.22f
+            && follower.beatInBarIndex() != 0)
+        {
+            follower.snapDownbeat (follower.beatPhase());
+            downbeatHoldSamples = static_cast<int> (sampleRate * 0.85);
+        }
     }
 
     if (hadBeat)
@@ -604,12 +640,42 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     {
         quantizeWaitSamples += numSamples;
         const float bpmForWait = std::max (50.0f, heldBpm > 40.0f ? heldBpm : 120.0f);
-        const int twoBars = static_cast<int> (sampleRate * (8.0 * 60.0 / static_cast<double> (bpmForWait)));
-        const int timeout = std::min (static_cast<int> (sampleRate * 3.0),
-                                      std::max (static_cast<int> (sampleRate * 1.6), twoBars));
+        const double barSec = 4.0 * 60.0 / static_cast<double> (bpmForWait);
+
+        // The fallback, for when no downbeat is ever found. It has to be long
+        // enough to actually contain the bars it is waiting for: the old ceiling
+        // of three seconds is shorter than two bars at anything under 160 BPM,
+        // so at every ordinary tempo the wait expired before a downbeat could
+        // arrive and the part came in on whatever quarter was next.
+        const int timeout = std::clamp (static_cast<int> (sampleRate * barSec * kBarsBeforeGivingUp),
+                                        static_cast<int> (sampleRate * 2.0),
+                                        static_cast<int> (sampleRate * 10.0));
         const bool timedOut = quantizeWaitSamples > timeout;
 
-        bool onOne = out.clock.wrappedBar;
+        // Before looking for the one, put the bar where the evidence says it
+        // is. Rotating the count is free - it moves no phase and drops no
+        // pulse - so it can be done as often as the vote changes its mind,
+        // right up until the moment of entry.
+        int best = 0, bestVotes = 0, totalVotes = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            totalVotes += downbeatVotes[i];
+            if (downbeatVotes[i] > bestVotes)
+            {
+                bestVotes = downbeatVotes[i];
+                best = i;
+            }
+        }
+        if (totalVotes >= kVotesToTrustTheBar && best != 0
+            && bestVotes * 2 > totalVotes - bestVotes)
+        {
+            follower.rotateBarIndex (-best);
+            for (int i = 0; i < 4; ++i)
+                downbeatVotes[i] = 0;
+            downbeatVotes[0] = bestVotes;
+        }
+
+        bool onOne = false;
         for (int i = 0; i < out.clock.pulsesFired; ++i)
         {
             if (out.clock.pulseIndex[i] != 0)

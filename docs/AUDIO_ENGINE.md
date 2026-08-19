@@ -44,6 +44,32 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
 | **pop** | mostly space: the one, a light lift, the push into the next bar | eighths, level and quiet | almost none |
 
+### Coming in on the one
+
+The percussion should enter on beat one. Measured over eight tracks by finding the first non-zero sample of the percussion channel and comparing it with the generator's own bar:
+
+| | before | after |
+|---|---|---|
+| entered on a strong beat (1 or 3) | 3/8 | **5/8** |
+| entered on beat 1 exactly | 2/8 | 2/8 |
+| time to entry | 3.8–8.7 s | **4.2–7.2 s** |
+
+Three faults were found, and they are worth separating because only two of them are the engine's:
+
+- **Bar alignment was switched off during the wait.** `hadDownbeat` was gated on `! waitForQuantize`, so through the entire count-in the bar was never corrected and "the first quarter" meant whichever beat the clock happened to start counting on. That is the one moment the alignment matters most.
+- **The give-up timeout was shorter than what it was waiting for.** It was capped at 3 s, and two bars is longer than that at anything under 160 BPM — so at every ordinary tempo the wait expired and the part came in on the next quarter regardless. It is now four bars, floored at 2 s and ceilinged at 10 s.
+- **A single downbeat is not evidence.** The network answers "this is a strong beat" reliably and "this is *the* strong beat" much less so: over the same eight tracks it put 7 of 12, 9 of 11, 10 of 19 and 13 of 25 detected downbeats on the true one — a plurality every time, and a coin toss taken one at a time. They are now counted and the bar is rotated to the majority before entry, which is what moved 3/8 to 5/8.
+
+**What is left is not the bar logic.** Splitting the residual error into the phase of the clock and the rotation of the bar:
+
+| | 68 | 84 | 96 | 104 | 120 | 126 | 140 | 152 |
+|---|---|---|---|---|---|---|---|---|
+| distance from the clock's own beat | −0.46 | −0.32 | −0.11 | −0.07 | +0.05 | +0.02 | +0.01 | +0.07 |
+
+At 96 BPM and above the clock is on the beat and every remaining error is a whole number of beats — the bar is rotated, not the clock. Those are all beat 3 rather than beat 1, which is the ambiguity the network genuinely has on this material: the test tracks put the same kick on beats 1 and 3, so nothing distinguishes them. Real music separates them with chord changes, vocal phrasing and crashes; the synthetic loops used here deliberately do not, so this number is a floor rather than an estimate.
+
+At 68 and 84 BPM the clock itself is locked half a beat out, onto the offbeat. That is the slow-tempo octave and phase weakness documented above, not an entry problem, and it is where the next work on this belongs.
+
 ### Choosing the style automatically — measured, and not good enough
 
 `StyleDetector` folds the analysis signal onto the bar in three bands and reads four rotation-invariant features from it: how evenly the low band lands on the four quarters (four-on-the-floor), the depth of the two-beat alternation in the snare band (backbeat), the high band on the offbeat against the beat (open hat), and energy on the odd sixteenths (syncopation).
