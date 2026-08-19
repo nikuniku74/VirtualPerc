@@ -33,6 +33,11 @@ public:
 
     int  render (float* left, float* right, int numSamples, const ClockTick& tick, bool audible) noexcept;
 
+    /** How many articulations are sounding from a recording rather than from
+        the synthesis fallback. Worth asserting on: a missing or unreadable
+        asset would otherwise degrade silently back to the synthetic bank. */
+    int  recordedStrokeCount() const noexcept;
+
     int  hitsFired() const noexcept { return totalHits; }
     int  activeVoices() const noexcept { return lastActive; }
 
@@ -70,16 +75,20 @@ private:
         std::uint32_t age = 0;
     };
 
+    bool   loadRecordedStroke (Stroke stroke, std::vector<float>& mono) noexcept;
+    void   buildBank() noexcept;
+    void   layerFromRecording (Sample& dest, const std::vector<float>& src,
+                               Stroke stroke, int layer, std::uint32_t seed) noexcept;
     Voice& allocateVoice() noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset) noexcept;
     void   releaseStroke (Stroke stroke) noexcept;
-    void   synthesizeAll() noexcept;
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   applyReverbParams() noexcept;
     const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
 
     Sample bank[kStrokes][kLayers][kRoundRobin];
+    bool   recorded[kStrokes] {};   // which strokes came from a recording
     int    rrCursor[kStrokes] {};
     Voice  voices[kVoices] {};
     GrooveEngine groove;

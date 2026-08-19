@@ -490,6 +490,15 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
         const double rel = energy > 0.0 ? diff / energy : 0.0;
         std::printf ("perc-roundrobin  relative difference between takes = %.3f\n", rel);
+        std::printf ("perc-source      %d of %d articulations from recordings\n",
+                     perc.recordedStrokeCount(), static_cast<int> (vp::Stroke::count));
+       #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
+        // shakerDown, shakerUp, tumba, open, slap are recorded; heel, toe and
+        // muff are derived from the open tone, which counts too. A silent
+        // fallback to synthesis is the failure this catches.
+        expect (perc.recordedStrokeCount() == static_cast<int> (vp::Stroke::count),
+                "every articulation sounds from the recorded library, not the synthesis fallback");
+       #endif
         expect (energy > 1.0e-6 && rel > 0.05,
                 "two strokes of the same kind are different takes, not the same buffer twice");
     }

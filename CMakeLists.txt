@@ -23,6 +23,7 @@ set (VP_CORE_SOURCES
     Source/Tracking/BeatTracker.cpp
     Source/Percussion/PercussionEngine.cpp
     Source/Percussion/GrooveEngine.cpp
+    Source/Percussion/GrooveEngine.cpp
     Source/Audio/VirtualPercussionEngine.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp
@@ -96,6 +97,19 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 juce_generate_juce_header (VirtualPercussionist)
+
+file (GLOB VP_PERC_SAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Percussion/*.wav")
+if (VP_PERC_SAMPLES)
+    juce_add_binary_data (VpPercussionSamples
+        HEADER_NAME VpPercussionData.h
+        NAMESPACE VpPercussionData
+        SOURCES ${VP_PERC_SAMPLES}
+    )
+    set (VP_HAS_PERC_SAMPLES TRUE)
+else()
+    set (VP_HAS_PERC_SAMPLES FALSE)
+    message (STATUS "No Assets/Percussion/*.wav - percussion falls back to synthesis")
+endif()
 
 if (VP_HAS_BEAT_MODEL_FILE)
     juce_add_binary_data (VpBeatModel
@@ -207,6 +221,10 @@ function (vp_apply_ai_options target)
     if (VP_HAS_BEAT_MODEL_FILE)
         target_compile_definitions (${target} PRIVATE VP_HAS_BEAT_MODEL=1)
         target_link_libraries (${target} PRIVATE VpBeatModel)
+    endif()
+    if (VP_HAS_PERC_SAMPLES)
+        target_compile_definitions (${target} PRIVATE VP_HAS_PERC_SAMPLES=1)
+        target_link_libraries (${target} PRIVATE VpPercussionSamples juce::juce_audio_formats)
     endif()
     if (VP_USE_SIGNALSMITH)
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=1)
