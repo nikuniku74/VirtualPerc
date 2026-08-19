@@ -185,6 +185,86 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
 endif()
 
+# Host-only diagnostic. Not part of the test suite: it renders a minute of
+# audio per case and drives the whole engine over it, which is far too slow to
+# sit in a run anyone waits on. Build it explicitly when a tracking change needs
+# measuring against material that behaves like a record.
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    juce_add_console_app (VPProbe
+        PRODUCT_NAME "VPProbe"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPProbe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPProbe PRIVATE ${VP_CORE_SOURCES} scripts/probe_song.cpp)
+    target_include_directories (VPProbe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPProbe PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPProbe PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
+    juce_add_console_app (VPDecoderProbe
+        PRODUCT_NAME "VPDecoderProbe"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPDecoderProbe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPDecoderProbe PRIVATE ${VP_CORE_SOURCES} scripts/probe_decoder.cpp)
+    target_include_directories (VPDecoderProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_compile_definitions (VPDecoderProbe PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPDecoderProbe PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
+    juce_add_console_app (VPReplay
+        PRODUCT_NAME "VPReplay"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPReplay PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPReplay PRIVATE ${VP_CORE_SOURCES} scripts/probe_replay.cpp)
+    target_include_directories (VPReplay PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPReplay PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPReplay PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
+    juce_add_console_app (VPActivations
+        PRODUCT_NAME "VPActivations"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPActivations PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPActivations PRIVATE ${VP_CORE_SOURCES} scripts/probe_activations.cpp)
+    target_include_directories (VPActivations PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPActivations PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPActivations PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+endif()
+
 function (vp_apply_ai_options target)
     if (VP_USE_ONNX)
         target_compile_definitions (${target} PRIVATE VP_USE_ONNX=1)
@@ -238,6 +318,18 @@ endfunction()
 vp_apply_ai_options (VirtualPercussionist)
 if (TARGET VPTests)
     vp_apply_ai_options (VPTests)
+endif()
+if (TARGET VPProbe)
+    vp_apply_ai_options (VPProbe)
+endif()
+if (TARGET VPActivations)
+    vp_apply_ai_options (VPActivations)
+endif()
+if (TARGET VPReplay)
+    vp_apply_ai_options (VPReplay)
+endif()
+if (TARGET VPDecoderProbe)
+    vp_apply_ai_options (VPDecoderProbe)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

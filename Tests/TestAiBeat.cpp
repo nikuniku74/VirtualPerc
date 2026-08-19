@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -373,7 +374,15 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 const int beatNo = static_cast<int> (std::floor (static_cast<double> (i) / period + 0.5));
                 te.push (act);
                 h = dec.observe (act, (beatNo % 4) == 0 ? onBeat * 0.9f : 0.05f, 1.0f - act);
-                if (te.ready())
+                // Flips are counted from the point the estimator says the
+                // level is settled, not from the first reading. Before that the
+                // buffer has not yet held several periods of the octave below
+                // the winner, so what it reports is the fastest level it could
+                // see rather than a measurement - and revising it is the
+                // correct behaviour, not a fault. Measured on BeatNet output
+                // from a 104 BPM mix, refusing to revise it is what kept the
+                // tempo at 208 for the first half-minute.
+                if (te.ready() && te.levelSettled())
                 {
                     if (prev > 0.0f && std::fabs (te.bpm() - prev) / prev > 0.08f)
                         ++flips;
@@ -386,7 +395,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
                          static_cast<double> (c.bpm), static_cast<double> (te.bpm()),
                          static_cast<double> (h.bpm), flips);
             // Zero flips, not "few": the level is what every other guard is
-            // anchored to, so one flip is a clock that restarts.
+            // anchored to, so one flip is a clock that restarts. Once settled,
+            // it must not move at all for the rest of the track.
             expect (err < 0.04f && flips == 0, c.name);
         }
     }
@@ -927,6 +937,203 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (gaps == 0, "no phantom discontinuity on a stream that never overran");
     }
 
+    // A record cut to a click does not change tempo, so once the decoder has
+    // found it the number must stop moving - not drift, not hunt, not take a
+    // step on every beat. What broke this was not the fits but the release from
+    // the held regime: a median of three inter-onset intervals against the held
+    // tempo, three of them agreeing on a direction. Beat onsets through a
+    // microphone in a room carry several milliseconds of jitter, which clears
+    // that bar in one direction several times a minute, and each release put
+    // the decoder back to chasing an eight-beat fit.
+    {
+        constexpr double fps = 50.0;
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+
+        constexpr float trueBpm = 112.0f;
+        const double period = 60.0 / static_cast<double> (trueBpm) * fps;
+        std::mt19937 rng (20250819u);
+        std::normal_distribution<double> jitter (0.0, 1.1);        // ~22 ms of onset noise
+        std::uniform_real_distribution<float> floorNoise (0.0f, 0.14f);
+        std::uniform_real_distribution<float> coin (0.0f, 1.0f);
+
+        // Pre-roll the beat positions so each beat's jitter is fixed rather
+        // than re-drawn per frame. The network's idea of where a beat is
+        // wanders by a couple of frames on a dense mix, one beat in twelve does
+        // not clear the gate at all, and every eighth bar is a fill - which is
+        // the material a held tempo has to ride out without being released.
+        std::vector<double> beatAt;
+        std::vector<float>  beatGain;
+        std::vector<double> extraAt;
+        for (int k = 0; k < 220; ++k)
+        {
+            beatAt.push_back (static_cast<double> (k) * period + jitter (rng));
+            beatGain.push_back (coin (rng) < 0.08f ? 0.10f : 0.94f);
+            if ((k / 4) % 8 == 7)
+                for (int sixteenth = 1; sixteenth < 4; ++sixteenth)
+                    extraAt.push_back (static_cast<double> (k) * period
+                                       + period * 0.25 * sixteenth + jitter (rng));
+        }
+
+        float lo = 1.0e9f, hi = 0.0f;
+        int fixedFrames = 0, steadyFrames = 0;
+        vp::BeatHypothesis h {};
+        const int total = static_cast<int> (fps * 50.0);
+        for (int i = 0; i < total; ++i)
+        {
+            float act = floorNoise (rng);
+            for (size_t k = 0; k < beatAt.size(); ++k)
+            {
+                const double d = static_cast<double> (i) - beatAt[k];
+                if (std::fabs (d) < 6.0)
+                    act = std::max (act, beatGain[k] * static_cast<float> (
+                                             std::exp (-0.5 * (d / 1.6) * (d / 1.6))));
+                // The eighth between, quieter - the hi-hat that makes the level
+                // arguable in the first place.
+                const double e = static_cast<double> (i) - (beatAt[k] + period * 0.5);
+                if (std::fabs (e) < 6.0)
+                    act = std::max (act, 0.45f * static_cast<float> (
+                                             std::exp (-0.5 * (e / 1.6) * (e / 1.6))));
+            }
+            for (double x : extraAt)
+            {
+                const double d = static_cast<double> (i) - x;
+                if (std::fabs (d) < 6.0)
+                    act = std::max (act, 0.55f * static_cast<float> (
+                                             std::exp (-0.5 * (d / 1.6) * (d / 1.6))));
+            }
+            h = dec.observe (act, 0.03f, 1.0f - act);
+
+            if (static_cast<double> (i) / fps > 25.0 && h.valid)
+            {
+                ++steadyFrames;
+                fixedFrames += h.regime == vp::TempoRegime::fixed;
+                lo = std::min (lo, h.bpm);
+                hi = std::max (hi, h.bpm);
+            }
+        }
+
+        const float span = hi >= lo ? hi - lo : 0.0f;
+        const double heldFraction = steadyFrames > 0
+                                        ? static_cast<double> (fixedFrames) / steadyFrames : 0.0;
+        std::printf ("fixed-hold  bpm=%.2f (true %.1f)  span=%.3f  held=%.0f%%\n",
+                     static_cast<double> (h.bpm), static_cast<double> (trueBpm),
+                     static_cast<double> (span), heldFraction * 100.0);
+
+        // Measured both ways on this material: with the release taking the
+        // recent intervals at their word the tempo spans 1.67 BPM and holds the
+        // regime 61% of the time; requiring the window to agree takes that to
+        // 0.64 BPM and 85%. The bounds sit between the two.
+        expect (std::fabs (h.bpm - trueBpm) / trueBpm < 0.02f && span < 1.0f,
+                "a fixed tempo measured through onset jitter stops moving instead of hunting");
+        expect (heldFraction > 0.75,
+                "and stays in the held regime rather than being shaken out of it");
+    }
+
+    // A record does not restart its bar in the middle, and neither may the
+    // clock. The network answers "this is a strong beat" reliably and "this is
+    // *the* strong beat" much less so - measured over eight tracks it put only
+    // a plurality of its downbeats on the true one - so the tracker is handed a
+    // scripted network here that gets the bar right most of the time and wrong
+    // the rest, which is exactly what the real one does.
+    //
+    // The defect this catches: the bar used to be reset by whichever downbeat
+    // arrived last, so every stray one restarted the count mid-bar. A listener
+    // hears that as "one, two, one". Measured on the song probe it happened 268
+    // times over thirty tracks; it must now happen never.
+    {
+        // Beats every framesPerBeat analysis frames, a downbeat on beat one of
+        // each bar, plus a stray downbeat on beat three of every other bar.
+        class ScriptedBeatModel final : public vp::IBeatModel
+        {
+        public:
+            explicit ScriptedBeatModel (double framesPerBeat) : fpb (framesPerBeat) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double beats = static_cast<double> (frame++) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const int    beatNo = static_cast<int> (std::llround (beats));
+                const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                         std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                const int inBar = ((beatNo % 4) + 4) % 4;
+                const bool trueOne = inBar == 0;
+                const bool strayOne = inBar == 2 && ((beatNo / 4) % 2) == 0;
+                activations3[0] = pulse;
+                activations3[1] = (trueOne || strayOne) ? pulse * 0.95f : 0.03f;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+        private:
+            double fpb;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::make_unique<ScriptedBeatModel> (framesPerBeat));
+        eng.prepare (sr, block, 1);
+        eng.start();
+
+        // The scripted model ignores the audio, but the tracker still gates on
+        // input level, so give it something to hear.
+        const int n = static_cast<int> (sr * 40.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        int prevBeat = -1, earlyRestarts = 0, advances = 0;
+        float lo = 1.0e9f, hi = 0.0f;
+        int pos = 0, blocks = 0;
+        while (pos + block <= n)
+        {
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            const auto snap = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+            if (t > 12.0 && snap.state == vp::TrackingState::following && snap.bpm > 40.0f)
+            {
+                lo = std::min (lo, snap.bpm);
+                hi = std::max (hi, snap.bpm);
+                const int beatInBar = std::clamp (
+                    static_cast<int> (snap.barPhase * 4.0f), 0, 3);
+                if (beatInBar != prevBeat)
+                {
+                    if (prevBeat >= 0)
+                    {
+                        ++advances;
+                        if (beatInBar == 0 && prevBeat != 3)
+                            ++earlyRestarts;
+                    }
+                    prevBeat = beatInBar;
+                }
+            }
+            pos += block;
+            if ((++blocks % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (2));
+        }
+
+        const float span = hi >= lo ? hi - lo : 0.0f;
+        std::printf ("bar-integrity  advances=%d  earlyRestarts=%d  span=%.2f BPM\n",
+                     advances, earlyRestarts, static_cast<double> (span));
+        expect (advances > 20 && earlyRestarts == 0,
+                "the bar counts to four before it starts again, whatever the network calls a downbeat");
+        // And the stray downbeats must not disturb the tempo either: the old
+        // path reset the phase loop to move the bar, which threw away the
+        // measured trim along with it.
+        expect (advances > 20 && span < 1.0f,
+                "a mistaken downbeat costs the bar nothing and the tempo nothing");
+    }
+
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (48000.0, 128, 1);
@@ -957,7 +1164,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
             {
                 const double sr = 48000.0;
                 const int block = 128;
-                const int n = static_cast<int> (sr * 26.0);
+                // Long enough to contain the acquisition and still leave two
+                // comparable halves after it. Settling the metrical level takes
+                // the best part of ten seconds on a bare click at a slow tempo,
+                // deliberately: the alternative measured on real material was
+                // locking in two seconds to the wrong octave.
+                const int n = static_cast<int> (sr * 38.0);
                 std::vector<float> song (static_cast<size_t> (n), 0.0f);
                 renderClickTrack (song, trackBpm, sr);
 
@@ -985,13 +1197,13 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         const float err = vp::wrapCentered (
                             last.beatPhase - static_cast<float> (truePhase - std::floor (truePhase)));
                         const double t = static_cast<double> (pos) / sr;
-                        if (t > 8.0)
+                        if (t > 14.0)
                         {
                             worstLate = std::max (worstLate, std::fabs (err));
                             // Split the run in two: a constant offset is a
                             // calibration question, a growing one is a wrong
                             // rate that will walk off the beat.
-                            if (t < 17.0) { earlyHalf += err; ++earlyN; }
+                            if (t < 26.0) { earlyHalf += err; ++earlyN; }
                             else          { lateHalf += err; ++lateN; }
                         }
                     }

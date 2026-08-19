@@ -17,8 +17,15 @@ namespace
     // material the network never finds a downbeat in would then never start.
     constexpr double kBarsBeforeGivingUp = 4.0;
 
-    // Downbeats to collect before the vote is worth acting on.
+    // Downbeats to collect before the vote is worth acting on while waiting to
+    // come in, and the larger number needed to move a bar that is already
+    // playing - where the correction is something the listener hears.
     constexpr int kVotesToTrustTheBar = 3;
+    constexpr int kVotesToMoveTheBar = 8;
+
+    // And once moved, left alone for four bars at 100 BPM. Anything shorter and
+    // two disagreeing votes can trade the bar back and forth inside one phrase.
+    constexpr double kBarMoveHoldSeconds = 9.6;
 
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
@@ -34,6 +41,11 @@ namespace
     // rest is most likely the network's own response offset. It is measured on
     // a click, so real material may sit a millisecond or two either side.
     constexpr float kAnalysisLeadTrimSec = 0.018f;
+}
+
+void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
+{
+    neural.setModel (std::move (m));
 }
 
 void BeatTracker::prepare (double sr) noexcept
@@ -324,6 +336,48 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
     }
 }
 
+void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
+{
+    int best = 0, bestVotes = 0, runnerUp = 0, totalVotes = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        totalVotes += downbeatVotes[i];
+        if (downbeatVotes[i] > bestVotes)
+        {
+            runnerUp = bestVotes;
+            bestVotes = downbeatVotes[i];
+            best = i;
+        }
+        else if (downbeatVotes[i] > runnerUp)
+        {
+            runnerUp = downbeatVotes[i];
+        }
+    }
+
+    if (best == 0 || totalVotes < (comingIn ? kVotesToTrustTheBar : kVotesToMoveTheBar))
+        return;
+
+    // Waiting to come in, a plurality is enough: nothing is playing yet, so a
+    // rotation costs nothing and the alternative is entering on the wrong beat.
+    // Once the part is playing the bar is audible, and moving it is only worth
+    // doing on evidence that is not close - so the leader must also be clear of
+    // whoever is second.
+    const bool plurality = bestVotes * 2 > totalVotes - bestVotes;
+    if (! plurality)
+        return;
+    if (! comingIn)
+    {
+        if (bestVotes < runnerUp * 2 || downbeatHoldSamples > 0)
+            return;
+        downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
+    }
+
+    follower.rotateBarIndex (-best);
+    for (int i = 0; i < 4; ++i)
+        downbeatVotes[i] = 0;
+    downbeatVotes[0] = bestVotes;
+}
+
 BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noexcept
 {
     Output out;
@@ -473,13 +527,18 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             for (int& v : downbeatVotes)
                 v /= 2;
 
-        if (! waitForQuantize && downbeatHoldSamples <= 0
-            && follower.beatPhase() < 0.22f
-            && follower.beatInBarIndex() != 0)
-        {
-            follower.snapDownbeat (follower.beatPhase());
-            downbeatHoldSamples = static_cast<int> (sampleRate * 0.85);
-        }
+        // While playing, the bar is corrected from the same vote - never from
+        // the single downbeat that just arrived.
+        //
+        // It used to snap on that one downbeat, which is what a listener hears
+        // as "one, two, one": the network puts a plurality of its downbeats on
+        // the true one and scatters the rest, so every stray one restarted the
+        // bar in the middle of it. Worse, it snapped the *phase* to do it,
+        // which threw away the clock's whole loop state - its phase error, its
+        // measured trim - for a correction that only ever concerned the count.
+        // Rotating the index moves no phase and drops no pulse.
+        if (! waitForQuantize)
+            alignBarFromVotes (false);
     }
 
     if (hadBeat)
@@ -656,24 +715,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // is. Rotating the count is free - it moves no phase and drops no
         // pulse - so it can be done as often as the vote changes its mind,
         // right up until the moment of entry.
-        int best = 0, bestVotes = 0, totalVotes = 0;
-        for (int i = 0; i < 4; ++i)
-        {
-            totalVotes += downbeatVotes[i];
-            if (downbeatVotes[i] > bestVotes)
-            {
-                bestVotes = downbeatVotes[i];
-                best = i;
-            }
-        }
-        if (totalVotes >= kVotesToTrustTheBar && best != 0
-            && bestVotes * 2 > totalVotes - bestVotes)
-        {
-            follower.rotateBarIndex (-best);
-            for (int i = 0; i < 4; ++i)
-                downbeatVotes[i] = 0;
-            downbeatVotes[0] = bestVotes;
-        }
+        alignBarFromVotes (true);
 
         bool onOne = false;
         for (int i = 0; i < out.clock.pulsesFired; ++i)
@@ -704,6 +746,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.pBeat = haveHyp ? hyp.pBeat : 0.0f;
     out.leadMs = lastLeadMs;
     out.regime = haveHyp ? hyp.regime : TempoRegime::unknown;
+    out.combBpm = haveHyp ? hyp.combBpm : 0.0f;
+    out.levelSettled = haveHyp && hyp.levelSettled;
     if (! armed)
         out.followBar = FollowBar::paused;
     else if (waitForQuantize && canPlay)

@@ -74,6 +74,19 @@ namespace
     constexpr float kSwitchMargin = 1.20f;
     constexpr int   kSwitchRefreshes = 10;
 
+    // How long a hold lasts has to depend on how badly the seat holder is
+    // losing, not only on whether it is losing. Held at a flat ten refreshes, a
+    // level that had stopped scoring at all still kept the seat: measured on a
+    // 104 BPM track the estimator sat on 208 for eighteen seconds while its own
+    // score fell to a twentieth of the leader's, and reported that score as the
+    // salience - so the decoder, which ignores a comb below the salience floor,
+    // never even saw the disagreement. A rival that is merely ahead still has to
+    // prove itself; a rival that is winning outright is believed at once.
+    constexpr float kRoutMargin  = 2.50f;
+    constexpr float kStrongMargin = 1.60f;
+    constexpr int   kSwitchRefreshesRout   = 2;
+    constexpr int   kSwitchRefreshesStrong = 4;
+
     // Until the buffer holds enough periods to fold the level one octave slower
     // than the winner, the slow side has not really been examined - the ratio
     // that would rule the winner out as too fast is being measured over a
@@ -86,8 +99,29 @@ namespace
     // before its value means anything.
     constexpr float kMinOverlap = 0.25f;
 
-    // Fold needs a few periods before it means anything.
-    constexpr int kMinPeriods = 3;
+    // Periods the fold needs before a candidate may be evaluated at all.
+    //
+    // Three was too few, and the cost was the whole octave problem. Measured on
+    // BeatNet output from a 104 BPM mix, the fold onto the true beat period puts
+    // the half-beat point at 0.86 of the beat over the first three bars - which
+    // charges the true tempo with being an octave too slow - and at 0.15 once
+    // ten seconds have accumulated. Two things move it: the LSTM is still
+    // warming up in its first seconds, and three periods is simply too small a
+    // sample to separate a beat bin from an offbeat bin. Every wrong level this
+    // class ever picked was picked inside that window.
+    constexpr int kMinPeriods = 5;
+
+    // The fold that decides whether a candidate is settled has its own, smaller
+    // requirement: it only has to see the octave below several times, not judge
+    // it. Tying it to kMinPeriods above would put the slow half of the range
+    // beyond the buffer entirely, so a 76 BPM track would never settle at all.
+    constexpr int kSettlePeriods = 3;
+
+    // Nothing is a settled metrical level before this much audio, whatever the
+    // arithmetic says. This is the measured warm-up above, made explicit: the
+    // estimator still reports a tempo earlier, and the decoder still locks to
+    // it, but nothing downstream may treat it as decided.
+    constexpr double kLevelSettleSeconds = 9.0;
 
 
     // Search wider than we report. A candidate pinned against the edge of the
@@ -95,6 +129,16 @@ namespace
     // period and halving it into range is an answer.
     constexpr double kSearchMinBpm = 42.0;
     constexpr double kSearchMaxBpm = 280.0;
+
+    // A level is only settled once the buffer holds several periods of the
+    // octave *below* the candidate: that is the comparison that would rule the
+    // candidate out as too fast, and until it can be made the candidate is
+    // simply the fastest thing in view.
+    bool settledFor (float lag, int n, double fps) noexcept
+    {
+        return 4.0f * lag * static_cast<float> (kSettlePeriods) <= static_cast<float> (n)
+               && static_cast<double> (n) >= fps * kLevelSettleSeconds;
+    }
 
     float smoothStep (float edge0, float edge1, float x) noexcept
     {
@@ -143,6 +187,7 @@ void TempoEstimator::reset() noexcept
     challengerBpm = 0.0f;
     challengerRefreshes = 0;
     isReady = false;
+    isLevelSettled = false;
     bestBpm = 0.0f;
     bestSalience = 0.0f;
     bestClarity = 0.0f;
@@ -291,6 +336,26 @@ float TempoEstimator::levelScore (float lag, int n, float& offbeatOut, bool& rul
            * tempoPrior (static_cast<float> (60.0 * fps) / lag);
 }
 
+TempoEstimator::CandidateScore TempoEstimator::scoreFor (float bpmCandidate) const noexcept
+{
+    CandidateScore out;
+    if (bpmCandidate <= 1.0f || filled < minLag * kMinPeriods)
+        return out;
+    const float lag = static_cast<float> (60.0 * fps) / bpmCandidate;
+    if (lag < static_cast<float> (minLag) || lag > static_cast<float> (maxLag))
+        return out;
+
+    float offbeat = 1.0f;
+    bool ruledOutFast = false;
+    out.score = levelScore (lag, filled, offbeat, ruledOutFast);
+    out.comb = combStrength (lag);
+    out.halfAtSelf = offbeat;
+    out.evaluable = ruledOutFast;
+    if (ruledOutFast)
+        out.halfAtDouble = halfPhaseRatio (2.0f * lag, filled);
+    return out;
+}
+
 void TempoEstimator::push (float activation) noexcept
 {
     if (ring.empty())
@@ -310,6 +375,7 @@ void TempoEstimator::push (float activation) noexcept
 void TempoEstimator::refresh() noexcept
 {
     const int n = filled;
+    isLevelSettled = false;
 
     // Three periods of the fastest tempo we accept is the floor for saying
     // anything at all; slower tempi simply become available a little later.
@@ -560,9 +626,25 @@ void TempoEstimator::refresh() noexcept
 
             const float incumbentLag = static_cast<float> (minLag)
                                        + static_cast<float> (peakIdx[incumbent]) * kLagStep;
-            const bool levelSettled = 4.0f * incumbentLag * static_cast<float> (kMinPeriods)
-                                          <= static_cast<float> (n);
-            const int need = levelSettled ? kSwitchRefreshes : kSwitchRefreshesEarly;
+            const float margin = finalScore[bestPeak]
+                                 / std::max (1.0e-6f, finalScore[incumbent]);
+
+            // The graded escape exists to get out of a level adopted before
+            // there was evidence for one, and that is the only thing it is for.
+            // Applied to a level the buffer has now properly examined it does
+            // the opposite: on ambiguous material the two readings trade
+            // decisive-looking wins every couple of seconds, and a seat that
+            // changes hands on each of them is the flicker this hysteresis was
+            // written to stop. Settled, a rival serves the full hold.
+            int need = kSwitchRefreshes;
+            if (! settledFor (incumbentLag, n, fps))
+            {
+                need = kSwitchRefreshesEarly;
+                if (margin >= kRoutMargin)
+                    need = std::min (need, kSwitchRefreshesRout);
+                else if (margin >= kStrongMargin)
+                    need = std::min (need, kSwitchRefreshesStrong);
+            }
 
             if (challengerRefreshes < need)
             {
@@ -612,6 +694,9 @@ void TempoEstimator::refresh() noexcept
         return;
     }
 
+    const float winningLag = static_cast<float> (minLag)
+                             + static_cast<float> (peakIdx[bestPeak]) * kLagStep;
+    isLevelSettled = settledFor (winningLag, n, fps);
     bestBpm = finalBpm[bestPeak];
     // A comb that correlates at 0.5 after the offbeat charge is an unmistakable
     // pulse; scale so that maps to ~1.

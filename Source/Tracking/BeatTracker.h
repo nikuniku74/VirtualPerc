@@ -2,7 +2,10 @@
 
 #include "AI/BeatHypothesis.h"
 #include "AI/NeuralBeatTracker.h"
+#include "AI/IBeatModel.h"
 #include "Tracking/TempoFollower.h"
+
+#include <memory>
 
 namespace vp
 {
@@ -10,6 +13,14 @@ namespace vp
 class BeatTracker
 {
 public:
+    /** Test seam: supply the model the neural worker will run, instead of
+        letting it load the bundled BeatNet. Must be called before prepare(),
+        which is what starts the worker. Nothing in the app calls this; it is
+        how the tests get a network whose output they choose, which is the only
+        way to test what the tracker does with a *particular* activation - a
+        stray downbeat, say - rather than with whatever the real one emits. */
+    void setBeatModel (std::unique_ptr<IBeatModel> model);
+
     void prepare (double sampleRate) noexcept;
     void reset() noexcept;
 
@@ -41,6 +52,8 @@ public:
         /** Measured analysis-plus-output delay the clock is running ahead by. */
         float         leadMs = 0.0f;
         TempoRegime   regime = TempoRegime::unknown;
+        float         combBpm = 0.0f;
+        bool          levelSettled = false;
     };
 
     void start() noexcept;
@@ -54,6 +67,7 @@ public:
 
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept;
+    void alignBarFromVotes (bool comingIn) noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
     NeuralBeatTracker neural;

@@ -42,6 +42,24 @@ public:
     const BeatHypothesis& current() const noexcept { return hyp; }
     TempoRegime regime() const noexcept { return tempoRegime; }
 
+    /** What the three tempo sources are each saying, and how far the level
+        argument between them has got. Read by the probes and by the on-screen
+        debug panel; nothing in the audio path depends on it. */
+    struct Diagnostics
+    {
+        float combBpm = 0.0f;
+        float combSalience = 0.0f;
+        float longFit = 0.0f;
+        float shortFit = 0.0f;
+        float residual = 1.0f;
+        float coverage = 0.0f;
+        int   octaveMismatch = 0;
+        int   beatsHeld = 0;
+        bool  levelSettled = false;
+    };
+
+    Diagnostics diagnostics() const noexcept;
+
 private:
     void  registerBeat (double beatTimeSec) noexcept;
     void  updateTempo() noexcept;
@@ -50,6 +68,10 @@ private:
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     float scoreConfidence() const noexcept;
+    void  pushLongFit (float bpmValue) noexcept;
+    bool  longFitSpread (float& spread, float& trend) const noexcept;
+    void  enterRegime (TempoRegime r) noexcept;
+    float pullTowardsComb (float target, bool combReady, float combBpm) const noexcept;
 
     static constexpr int kBeatHistory = 32;
     static constexpr int kLongFit  = 24;  // precision for a fixed tempo
@@ -79,18 +101,46 @@ private:
     uint32_t beatSerial = 0;
     uint32_t downbeatSerial = 0;
 
-    // Regime tracking
+    // Regime tracking. The question "is this a record or a band" is settled on
+    // the *spread* of the long fit over a window of beats, not on a run of
+    // consecutive beats agreeing: on a microphone in a room a single noisy beat
+    // is routine, and a counter any one of them resets never gets anywhere -
+    // which is how a track cut to a click stayed in the live regime for its
+    // whole length, chasing an eight-beat fit that was never still.
+    static constexpr int kLongHistory = 24;
+    static constexpr int kLongHistoryMin = 10;
+
     TempoRegime tempoRegime = TempoRegime::unknown;
-    int   stableBeats = 0;
-    int   driftBeats = 0;
-    int   driftSign = 0;
     int   fastDriftBeats = 0;
+    int   fastDriftLargeBeats = 0;
     int   fastDriftSign = 0;
     int   octaveMismatchBeats = 0;
+    /** The level the comb was naming when the current re-anchor vote started.
+        A comb that keeps changing its own mind is not evidence; only a comb
+        that holds one answer while disagreeing with us gets to move the grid. */
+    float octaveVoteBpm = 0.0f;
+    /** Beats the current metrical level has been in use for. A level that has
+        worked for a minute is not overturned as cheaply as one adopted five
+        seconds ago. */
+    int   beatsOnLevel = 0;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
     float longFitBpm = 0.0f;
     float shortFitBpm = 0.0f;
+
+    float longHist[kLongHistory] {};
+    int   longWrite = 0;
+    int   longFilled = 0;
+
+    /** Where a fixed tempo is converging to: the running mean of the long fit
+        since the tempo was called fixed. A mean over dozens of beats resolves
+        the tempo far finer than any single fit, which is what "find it once and
+        then refine it" actually requires - the committed tempo chases nothing,
+        it settles. */
+    float fixedAnchorBpm = 0.0f;
+    int   fixedSamples = 0;
+    int   beatsInRegime = 0;
+    int   fixedErrorBeats = 0;
 
     BeatHypothesis hyp {};
 };

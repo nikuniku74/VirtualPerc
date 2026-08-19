@@ -8,6 +8,7 @@
 #include "Stretch/TimeStretchEngine.h"
 
 #include <atomic>
+#include <memory>
 #include <vector>
 
 namespace vp
@@ -16,6 +17,9 @@ namespace vp
 class VirtualPercussionEngine
 {
 public:
+    /** Test seam - see BeatTracker::setBeatModel. Call before prepare(). */
+    void setBeatModel (std::unique_ptr<IBeatModel> model) { tracker.setBeatModel (std::move (model)); }
+
     void prepare (double sampleRate, int maxBlock, int numInputChannels) noexcept;
     void reset() noexcept;
 
@@ -94,6 +98,8 @@ private:
     std::atomic<float> lastAnalysisPeak { 0.0f };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };
+    std::atomic<float> lastCombBpm { 0.0f };
+    std::atomic<bool>  lastLevelSettled { false };
     std::atomic<int>   lastStyle { 0 };
     std::atomic<float> lastStyleConf { 0.0f };
 

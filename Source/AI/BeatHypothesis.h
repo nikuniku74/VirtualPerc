@@ -50,6 +50,14 @@ struct BeatHypothesis
     float    periodSec   = 0.0f;
 
     TempoRegime regime   = TempoRegime::unknown;
+
+    /** What the fold is naming, and whether the buffer is yet long enough for
+        that to be a decision rather than the fastest thing in view. Diagnostic:
+        when the reported tempo is wrong these two say which half of the
+        analysis to look at, and there is no way to see them from outside
+        otherwise - the estimator lives on the worker thread. */
+    float    combBpm     = 0.0f;
+    bool     levelSettled = false;
 };
 
 class HypothesisSlot

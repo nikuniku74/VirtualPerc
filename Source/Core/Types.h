@@ -99,6 +99,20 @@ enum class FollowBar : int
     paused
 };
 
+/** The tempo regime as it appears in a snapshot. Takes the int rather than the
+    enum: TempoRegime belongs to the analysis layer, and this header is below
+    it. 0 = not decided yet, 1 = held, 2 = following. */
+inline const char* regimeLabel (int regime) noexcept
+{
+    switch (regime)
+    {
+        case 1:  return "FISSO";
+        case 2:  return "VIVO";
+        default: break;
+    }
+    return "CERCO";
+}
+
 inline const char* toBarString (FollowBar b) noexcept
 {
     switch (b)
@@ -152,6 +166,10 @@ struct EngineSnapshot
     /** Whether the analysis is treating the tempo as a fixed one to hold or a
         live one to follow. */
     int   tempoRegime          = 0;
+    /** What the tempo fold is naming, and whether it has had enough audio for
+        that to count as decided. */
+    float combBpm              = 0.0f;
+    bool  levelSettled         = false;
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
     float styleEvenKick        = 0.0f;

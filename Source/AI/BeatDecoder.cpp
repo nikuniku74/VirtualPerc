@@ -16,34 +16,62 @@ namespace
     // Below this the fold found no pulse worth trusting.
     constexpr float kSalienceFloor = 0.14f;
 
-    // Beats agreeing this closely count as "the tempo has not moved".
-    constexpr float kStableTolerance = 0.010f;
+    // The long fit, watched over a window of beats. A record cut to a click
+    // holds its 24-beat fit inside a few tenths of a percent; a band drifts out
+    // of that band and keeps going in one direction.
+    //
+    // These are spreads over the whole window, not beat-to-beat differences,
+    // which is what makes them survive an occasional bad beat: one outlier
+    // widens the spread for as long as it stays in the window and then leaves,
+    // where a consecutive-beat counter would have gone back to zero.
+    constexpr float kFixedSpread = 0.009f;   // 0.9% peak-to-peak = still
+    constexpr float kLiveTrend   = 0.018f;   // 1.8% across the window = moving
 
-    // Beats disagreeing this much, repeatedly and in the same direction, mean
-    // the tempo really is moving.
-    constexpr float kDriftTolerance = 0.014f;
+    // Sustained disagreement between the committed tempo and the long fit. This
+    // is the slow, certain way out of a held tempo; the fast way is below.
+    constexpr float kLeaveFixedError = 0.020f;
+    constexpr int   kBeatsToLeaveFixed = 6;
 
-    // Consecutive agreeing beats before a tempo is called fixed. Eight beats is
-    // two bars: long enough to rule out a fill, short enough to settle fast.
-    constexpr int kBeatsToFixed = 8;
-
-    // Consecutive drifting beats before a fixed tempo is released.
-    constexpr int kBeatsToLive = 3;
-    constexpr int kBeatsToLeaveFixed = 4;
-
-    // The fast release path: recent intervals are noisy, so the bar is set well
-    // above their spread and three beats must agree on the direction. Random
-    // jitter does not accumulate a sign; a band changing tempo does.
+    // The fast release path: recent intervals against the held tempo, three
+    // beats agreeing on a direction. Random jitter does not accumulate a sign;
+    // a band changing tempo does.
+    //
+    // Two tolerances, because there are two ways to be sure and they need
+    // different evidence. A gentle accelerando never puts a big number on the
+    // recent intervals, but it does lean the twenty-four beat window the same
+    // way, so a small deviation counts once the window agrees. A step change
+    // does the opposite: it is large immediately, and the window cannot
+    // corroborate it at all, because the moment the grid is wrong the on-grid
+    // gate stops admitting beats and the window has nothing left to move with.
+    // So a large deviation stands on its own, and just has to say so twice
+    // more.
     constexpr float kFastDriftTolerance = 0.024f;
+    constexpr float kFastDriftLarge     = 0.045f;
     constexpr int   kFastBeatsToLeaveFixed = 3;
+    constexpr int   kFastBeatsAlone = 5;
 
     // How fast the committed tempo moves per beat in each regime.
     constexpr float kRateAcquiring = 0.70f;
-    constexpr float kRateLive      = 0.50f;
-    constexpr float kRateFixed     = 0.12f;
+    constexpr float kRateLive      = 0.35f;
 
     // A fixed tempo may only be refined, never dragged.
     constexpr float kFixedMaxStep = 0.015f;
+
+    // Below this the committed tempo is not moved at all. A fixed tempo that
+    // keeps taking hundredth-of-a-BPM steps is a number that never stops
+    // changing on screen and a clock that never stops being nudged, for a
+    // correction no listener could hear: a hundredth of a BPM is 4 microseconds
+    // of beat at 120.
+    constexpr float kFixedDeadband = 0.05f;
+
+    // Floor on the anchor's gain. 1/n alone would freeze the anchor solid after
+    // a couple of minutes, and a record that really does creep - a live take, a
+    // tape transfer - would never be caught up with.
+    constexpr float kFixedAnchorFloor = 0.02f;
+
+    // Beats a regime must last before it may be left, so the machine cannot
+    // oscillate between two verdicts on adjacent beats.
+    constexpr int kRegimeMinBeats = 4;
 
     // The 8-beat fit is centred 3.5 beats back and the 24-beat fit 11.5 beats
     // back, so their difference spans 8 beats of tempo change. Leading the short
@@ -57,11 +85,39 @@ namespace
     // beats is right for an octave picked badly a second ago, and nowhere near
     // enough to overturn two bars of agreement on a record cut to a click.
     constexpr float kOctaveThreshold = 0.25f;
+
+    // Between "the same tempo" and "a different metrical level" there is a gap,
+    // and the decoder used to fall into it and stay there. A click at 78 BPM
+    // was tracked at 90: a quarter of an octave is 0.25, log2(90/78) is 0.21,
+    // so the re-anchor never fired - and the fit cannot walk out on its own,
+    // because on a grid 15% fast the fit is fitting whichever beats happen to
+    // land inside its tolerance. Nothing between 3% and a quarter octave was
+    // anybody's job.
+    //
+    // So a settled comb also gets a pull, short of a re-anchor: no history is
+    // thrown away, the committed tempo is simply drawn towards the fold a
+    // third of the way per beat. Precision still comes from the fit; being in
+    // the right place comes from the comb.
+    constexpr float kCombPullThreshold = 0.030f;
+    constexpr float kCombPull = 0.35f;
     constexpr int   kOctaveSnapBeats = 4;
     constexpr int   kOctaveSnapBeatsLive = 6;
     constexpr int   kOctaveSnapBeatsFixed = 8;
     constexpr int   kOctaveSnapBeatsHealthy = 4;
+    constexpr int   kOctaveSnapBeatsProvisional = 2;
+
+    // Tenure. Beats the level has survived, divided by this, are added to the
+    // proof a rival must produce - up to a ceiling, so a level can still be
+    // overturned by a new song rather than merely by a long one. The counters
+    // above describe how confident the decoder is in the level; this describes
+    // how much the listener has already heard of it, which is the other half of
+    // what a change costs.
+    constexpr int kOctaveTenurePerBeat = 12;
+    constexpr int kOctaveTenureMax = 10;
     constexpr float kOctaveSnapSalience = 0.22f;
+
+    // How far the comb may move and still be casting the same vote.
+    constexpr float kOctaveVoteHold = 0.10f;
 
     // Once a tempo is established, a peak has to land on the grid to count as a
     // beat. Subdivisions clear the activation threshold all the time - a hi-hat
@@ -121,18 +177,88 @@ void BeatDecoder::reset() noexcept
     beatSerial = 0;
     downbeatSerial = 0;
     tempoRegime = TempoRegime::unknown;
-    stableBeats = 0;
-    driftBeats = 0;
-    driftSign = 0;
     fastDriftBeats = 0;
+    fastDriftLargeBeats = 0;
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
+    octaveVoteBpm = 0.0f;
+    beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    longWrite = 0;
+    longFilled = 0;
+    fixedAnchorBpm = 0.0f;
+    fixedSamples = 0;
+    beatsInRegime = 0;
+    fixedErrorBeats = 0;
+    std::fill (longHist, longHist + kLongHistory, 0.0f);
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
     hyp = {};
+}
+
+void BeatDecoder::pushLongFit (float bpmValue) noexcept
+{
+    if (bpmValue < kMinBpm || bpmValue > kMaxBpm)
+        return;
+    longHist[longWrite] = bpmValue;
+    longWrite = (longWrite + 1) % kLongHistory;
+    if (longFilled < kLongHistory)
+        ++longFilled;
+}
+
+bool BeatDecoder::longFitSpread (float& spread, float& trend) const noexcept
+{
+    const int n = std::min (longFilled, kLongHistory);
+    if (n < kLongHistoryMin)
+        return false;
+
+    float lo = longHist[(longWrite - 1 + kLongHistory) % kLongHistory];
+    float hi = lo;
+    double sum = 0.0;
+    for (int k = 0; k < n; ++k)
+    {
+        const float v = longHist[(longWrite - 1 - k + kLongHistory) % kLongHistory];
+        lo = std::min (lo, v);
+        hi = std::max (hi, v);
+        sum += v;
+    }
+    const float mean = static_cast<float> (sum / n);
+    if (mean < kMinBpm)
+        return false;
+
+    const float newest = longHist[(longWrite - 1 + kLongHistory) % kLongHistory];
+    const float oldest = longHist[(longWrite - n + kLongHistory) % kLongHistory];
+    spread = (hi - lo) / mean;
+    trend = (newest - oldest) / mean;
+    return true;
+}
+
+void BeatDecoder::enterRegime (TempoRegime r) noexcept
+{
+    if (r == tempoRegime)
+        return;
+    tempoRegime = r;
+    beatsInRegime = 0;
+    fixedErrorBeats = 0;
+    fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
+    fixedSamples = 0;
+}
+
+BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
+{
+    Diagnostics d;
+    d.combBpm = tempo.bpm();
+    d.combSalience = tempo.salience();
+    d.longFit = longFitBpm;
+    d.shortFit = shortFitBpm;
+    d.residual = lastFitResidual;
+    d.coverage = lastFitCoverage;
+    d.octaveMismatch = octaveMismatchBeats;
+    d.beatsHeld = beatsOnLevel;
+    d.levelSettled = tempo.levelSettled();
+    return d;
 }
 
 void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
@@ -155,16 +281,17 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
 
     // Evidence chains describe beats that are now gone. Nothing measured before
     // the hole may vouch for the grid afterwards.
-    stableBeats = 0;
-    driftBeats = 0;
-    driftSign = 0;
     fastDriftBeats = 0;
+    fastDriftLargeBeats = 0;
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
+    octaveVoteBpm = 0.0f;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    longWrite = 0;
+    longFilled = 0;
 }
 
 float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
@@ -350,6 +477,16 @@ void BeatDecoder::updateTempo() noexcept
                   : tempoRegime == TempoRegime::live  ? kOctaveSnapBeatsLive
                                                       : kOctaveSnapBeats;
 
+    // Before the estimator has enough buffer to have examined the octave below
+    // its own winner, the level on offer is the fastest thing the buffer could
+    // see. A level adopted then is a guess, and defending a guess is what made
+    // a 104 BPM track play at 208 for a quarter of a minute: the estimator
+    // corrected itself after seven seconds and the decoder then charged twelve
+    // more beats for the privilege. While the level is provisional, a
+    // disagreeing comb is believed almost at once.
+    if (! tempo.levelSettled())
+        snapBeats = kOctaveSnapBeatsProvisional;
+
     // A grid that still lands tightly on the beats being detected has earned
     // patience - but not a veto, and not an unbounded one. How well the grid
     // fits says nothing about whether it is on the right metrical level: the
@@ -357,8 +494,11 @@ void BeatDecoder::updateTempo() noexcept
     // *always* one of the healthy ones. Charging a fixed number of extra beats
     // keeps a glitching comb from costing a good grid without letting a bad
     // level defend itself forever.
-    if (gridHealthy)
+    if (gridHealthy && tempo.levelSettled())
         snapBeats += kOctaveSnapBeatsHealthy;
+
+    if (tempo.levelSettled())
+        snapBeats += std::min (kOctaveTenureMax, beatsOnLevel / kOctaveTenurePerBeat);
 
     // Clarity is deliberately *not* a condition. Clarity measures how far the
     // winning period stands above its best rival, and when the current grid is
@@ -372,23 +512,50 @@ void BeatDecoder::updateTempo() noexcept
     // on the first agreeing beat never got anywhere against that, which is how
     // a level chosen in the first seconds outlived every correction.
     if (combDisagrees && tempo.salience() > kOctaveSnapSalience)
-        ++octaveMismatchBeats;
+    {
+        // A vote is for one specific level. On ambiguous material the comb does
+        // not merely disagree with the grid, it disagrees with itself - 208,
+        // then 52, then 104, then 208 again - and counting all of that as one
+        // accumulating case against the grid hands the clock to whichever level
+        // happened to be named on the beat the total came due. Each new level
+        // starts its own vote.
+        if (octaveVoteBpm < kMinBpm
+            || std::fabs (std::log2 (combBpm / octaveVoteBpm)) > kOctaveVoteHold)
+        {
+            octaveVoteBpm = combBpm;
+            octaveMismatchBeats = 1;
+        }
+        else
+        {
+            ++octaveMismatchBeats;
+        }
+    }
     else
+    {
         --octaveMismatchBeats;
+    }
     octaveMismatchBeats = std::clamp (octaveMismatchBeats, 0, 3 * snapBeats);
+    if (octaveMismatchBeats == 0)
+        octaveVoteBpm = 0.0f;
 
     if (octaveMismatchBeats >= snapBeats)
     {
         bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
+        // The beat times go. Keeping them was measured and is worse: at the new
+        // level half of them are offbeats, fitPeriod keeps whichever of those
+        // happen to land inside its tolerance, and the fits that result are
+        // noisier than no fit at all - 0.9 BPM of steady-state spread became
+        // 1.7 on the same material.
         beatWrite = 0;
         beatFilled = 0;
         octaveMismatchBeats = 0;
-        tempoRegime = TempoRegime::unknown;
-        stableBeats = 0;
-        driftBeats = 0;
-        driftSign = 0;
+        octaveVoteBpm = 0.0f;
+        beatsOnLevel = 0;
+        enterRegime (TempoRegime::unknown);
         fastDriftBeats = 0;
         fastDriftSign = 0;
+        longWrite = 0;
+        longFilled = 0;
         // Nothing measured about the grid we just left describes the new one, and
         // a stale clean bill of health would let it defend itself immediately.
         lastFitResidual = 1.0f;
@@ -416,35 +583,26 @@ void BeatDecoder::updateTempo() noexcept
 
     if (! haveShort)
     {
-        // Not enough clean beats on the grid; let the fold carry the tempo.
-        if (combReady)
-            commit (combBpm, tempoRegime == TempoRegime::fixed ? kRateFixed : kRateAcquiring);
+        // Not enough clean beats on the grid; let the fold carry the tempo, and
+        // only while the tempo is not being held: a fixed tempo that has already
+        // been measured off its own beat times is not improved by a comb whose
+        // resolution is a whole frame.
+        if (combReady && tempoRegime != TempoRegime::fixed)
+            commit (combBpm, kRateAcquiring);
         return;
     }
 
-    // Regime: does the recent tempo still agree with the established one? The
-    // short fit is the one that moves when a player speeds up.
-    const float reference = haveLong ? longFitBpm : bpm;
-    const float deviation = (shortFitBpm - reference) / std::max (kMinBpm, reference);
-    const int sign = deviation > 0.0f ? 1 : -1;
+    ++beatsInRegime;
+    ++beatsOnLevel;
+    if (haveLong)
+        pushLongFit (longFitBpm);
 
-    if (std::fabs (deviation) < kStableTolerance)
-    {
-        ++stableBeats;
-        driftBeats = 0;
-        driftSign = 0;
-    }
-    else if (std::fabs (deviation) > kDriftTolerance)
-    {
-        stableBeats = 0;
-        if (sign == driftSign)
-            ++driftBeats;
-        else
-        {
-            driftSign = sign;
-            driftBeats = 1;
-        }
-    }
+    // Is the long fit standing still, or going somewhere? This is the whole
+    // regime decision, and it is deliberately made on the *long* baseline: the
+    // short fit is there for responsiveness and is far too noisy on a
+    // microphone in a room to certify anything.
+    float spread = 0.0f, trend = 0.0f;
+    const bool haveWindow = longFitSpread (spread, trend);
 
     float recent = 0.0f;
     if (recentPeriod (recent))
@@ -454,55 +612,97 @@ void BeatDecoder::updateTempo() noexcept
         {
             const int fastSign = fastDeviation > 0.0f ? 1 : -1;
             if (fastSign == fastDriftSign)
+            {
                 ++fastDriftBeats;
+                if (std::fabs (fastDeviation) > kFastDriftLarge)
+                    ++fastDriftLargeBeats;
+                else
+                    fastDriftLargeBeats = 0;
+            }
             else
             {
                 fastDriftSign = fastSign;
                 fastDriftBeats = 1;
+                fastDriftLargeBeats = std::fabs (fastDeviation) > kFastDriftLarge ? 1 : 0;
             }
         }
         else
         {
             fastDriftBeats = 0;
+            fastDriftLargeBeats = 0;
             fastDriftSign = 0;
         }
     }
 
     // Being called fixed is what earns a tempo the right to defend itself
-    // against the comb, so it cannot be granted while the comb is still naming
-    // a different metrical level: that would let a bad first guess make itself
-    // permanent.
-    const bool mayFix = stableBeats >= kBeatsToFixed
+    // against the comb and to stop moving, so it cannot be granted while the
+    // comb is still naming a different metrical level, nor while the metrical
+    // level itself is still provisional - either would let a bad first guess
+    // make itself permanent.
+    const bool mayFix = haveWindow
+                        && spread < kFixedSpread
                         && lastFitResidual < 0.05f
-                        && ! combDisagrees;
+                        && ! combDisagrees
+                        && tempo.levelSettled();
+
+    // A tempo genuinely on the move: the window's ends differ, and by more than
+    // the window's own scatter, so this is a direction rather than noise.
+    const bool moving = haveWindow
+                        && std::fabs (trend) > kLiveTrend
+                        && std::fabs (trend) > spread * 0.6f;
 
     switch (tempoRegime)
     {
         case TempoRegime::unknown:
             if (mayFix)
-                tempoRegime = TempoRegime::fixed;
-            else if (driftBeats >= kBeatsToLive)
-                tempoRegime = TempoRegime::live;
+                enterRegime (TempoRegime::fixed);
+            else if (moving)
+                enterRegime (TempoRegime::live);
             break;
 
         case TempoRegime::fixed:
+        {
             // Deliberately stubborn. A record cut to a click does not change
             // tempo, so anything that looks like a change here is a fill, a
             // dropout, or a missed beat until it proves otherwise. Three recent
             // intervals agreeing on a direction is that proof, and arrives well
-            // before the eight-beat fit notices.
-            if (driftBeats >= kBeatsToLeaveFixed
-                || fastDriftBeats >= kFastBeatsToLeaveFixed
-                || std::fabs (deviation) > 0.06f)
+            // before the long fit notices.
+            const float anchorError = fixedAnchorBpm > kMinBpm
+                                          ? (longFitBpm - fixedAnchorBpm) / fixedAnchorBpm
+                                          : 0.0f;
+            const bool wandered = haveLong && std::fabs (anchorError) > kLeaveFixedError;
+            if (wandered)
+                ++fixedErrorBeats;
+            else
+                fixedErrorBeats = 0;
+
+            // The fast release has to agree with the window before it counts.
+            // On its own it is a median of three intervals against a held
+            // tempo, and on a microphone in a room three intervals drift 2.4%
+            // in one direction often enough to break a fixed tempo out of the
+            // regime several times a minute - which is most of the movement
+            // left in a tempo that was otherwise correct and still. A real
+            // change moves the recent intervals *and* leans the twenty-four
+            // beat window the same way; jitter does only the first.
+            const bool windowAgrees = haveWindow && fastDriftSign != 0
+                                      && trend * static_cast<float> (fastDriftSign) > 0.0f
+                                      && std::fabs (trend) > kLiveTrend * 0.25f;
+
+            if (beatsInRegime >= kRegimeMinBeats
+                && (fixedErrorBeats >= kBeatsToLeaveFixed
+                    || (fastDriftBeats >= kFastBeatsToLeaveFixed && windowAgrees)
+                    || fastDriftLargeBeats >= kFastBeatsAlone
+                    || (haveLong && std::fabs (anchorError) > 0.06f)))
             {
-                tempoRegime = TempoRegime::live;
-                stableBeats = 0;
+                enterRegime (TempoRegime::live);
+                fixedErrorBeats = 0;
             }
             break;
+        }
 
         case TempoRegime::live:
-            if (mayFix)
-                tempoRegime = TempoRegime::fixed;
+            if (mayFix && beatsInRegime >= kRegimeMinBeats)
+                enterRegime (TempoRegime::fixed);
             break;
     }
 
@@ -510,12 +710,30 @@ void BeatDecoder::updateTempo() noexcept
     {
         case TempoRegime::fixed:
         {
-            // Refine towards the long, precise baseline, but never let it be
-            // dragged: this is what keeps a Spotify track from wandering.
-            const float target = haveLong ? longFitBpm : shortFitBpm;
-            const float step = (target - bpm) / std::max (kMinBpm, bpm);
-            if (std::fabs (step) <= kFixedMaxStep)
-                commit (target, kRateFixed);
+            // Refinement, not tracking. The anchor is the running mean of the
+            // long fit since the tempo was called fixed, so it converges as
+            // evidence accumulates instead of following the last fit around;
+            // its gain floors low enough that a slow real change still moves it,
+            // and it is the anchor - not the fit - that the committed tempo
+            // follows. The deadband is what actually stops the number moving:
+            // without it the tempo takes a hundredth of a BPM step on every
+            // beat forever, which is a clock that is never quite still.
+            if (haveLong)
+            {
+                if (fixedSamples == 0)
+                    fixedAnchorBpm = longFitBpm;
+                ++fixedSamples;
+                const float gain = std::max (kFixedAnchorFloor,
+                                             1.0f / static_cast<float> (fixedSamples));
+                fixedAnchorBpm += (longFitBpm - fixedAnchorBpm) * gain;
+            }
+            if (fixedAnchorBpm > kMinBpm)
+            {
+                const float step = (fixedAnchorBpm - bpm) / std::max (kMinBpm, bpm);
+                if (std::fabs (fixedAnchorBpm - bpm) > kFixedDeadband
+                    && std::fabs (step) <= kFixedMaxStep)
+                    bpm = std::clamp (fixedAnchorBpm, kMinBpm, kMaxBpm);
+            }
             break;
         }
 
@@ -532,14 +750,27 @@ void BeatDecoder::updateTempo() noexcept
                 const float lead = kLiveLead * (shortFitBpm - longFitBpm);
                 target += std::clamp (lead, -0.04f * shortFitBpm, 0.04f * shortFitBpm);
             }
-            commit (target, kRateLive);
+            commit (pullTowardsComb (target, combReady, combBpm), kRateLive);
             break;
         }
 
         case TempoRegime::unknown:
-            commit (haveLong ? longFitBpm : shortFitBpm, kRateAcquiring);
+            commit (pullTowardsComb (haveLong ? longFitBpm : shortFitBpm, combReady, combBpm),
+                    kRateAcquiring);
             break;
     }
+}
+
+float BeatDecoder::pullTowardsComb (float target, bool combReady, float combBpm) const noexcept
+{
+    if (! combReady || ! tempo.levelSettled() || target < kMinBpm || combBpm < kMinBpm)
+        return target;
+
+    const float rel = (combBpm - target) / target;
+    if (std::fabs (rel) < kCombPullThreshold || std::fabs (std::log2 (combBpm / target)) > kOctaveThreshold)
+        return target;   // agreed, or a different level entirely - not this path's business
+
+    return target + (combBpm - target) * kCombPull;
 }
 
 float BeatDecoder::scoreConfidence() const noexcept
@@ -662,6 +893,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeatSerial = downbeatSerial;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
+    hyp.combBpm = tempo.ready() ? tempo.bpm() : 0.0f;
+    hyp.levelSettled = tempo.levelSettled();
     hyp.confidence = scoreConfidence();
     hyp.valid = established;
 

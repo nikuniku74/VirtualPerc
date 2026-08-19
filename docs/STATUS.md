@@ -2,7 +2,7 @@
 
 Documento operativo. Aggiornarlo ogni volta che cambia cosa si può installare, cosa locka, e cosa resta da provare sul device.
 
-**Data:** 19 agosto 2026  
+**Data:** 19 agosto 2026 (sera)  
 **Target:** iPadOS 16+, iPad Air M1  
 **Versione albero:** 0.1.0
 
@@ -12,11 +12,11 @@ Sì: apri il progetto Xcode, seleziona l’iPad, Run. Nel binario c’è **BeatN
 
 Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstalla: il lock SPEAKER/Spotify è cambiato nel C++.
 
-## Ultima verifica automatica (18 agosto 2026)
+## Ultima verifica automatica (19 agosto 2026, sera)
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | 42 passed: kit/CLICK/quiet SPEAKER 120.0 stabile; sincopi forti senza oscillazione; START esce da ATTENDO BATTUTA |
+| Host `VPTests` | **71 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -86,6 +86,124 @@ Cause, tutte verificate con misure e non per ipotesi:
 4. **Il decoder non seguiva la correzione.** Il re-anchor era condizionato alla *clarity* del comb — che è bassa proprio quando la griglia sbagliata è il rivale — e vietato del tutto finché la griglia «stava bene», cosa sempre vera per il doppio del tempo giusto.
 5. **Il livello di analisi era parte del problema.** Le feature sono `log10(mag + 1)`, quindi il guadagno conta. Il target era 0.12; l'ottimo misurato è **0.20**. E il guadagno inseguiva il picco istantaneamente, spostando il punto di lavoro della rete a ogni colpo di batteria.
 
+## Tempo che oscilla su Spotify e battuta che riparte (19 agosto, sera)
+
+I tre sintomi riportati provando con Spotify — **riconoscimento lento**, **BPM
+che oscilla anche su un brano registrato in studio**, e **la battuta che fa
+«uno, due» e torna all'uno** — erano tutti reali e tutti riproducibili. Col
+click funzionavano perché un click non ha niente di quello che li causa.
+
+### Come sono stati misurati
+
+Serviva materiale che si comportasse come un disco, non come un segnale di
+prova. `scripts/probe_song.cpp` (target `VPProbe`) genera trenta brani a tempo
+**perfettamente fisso** — cinque arrangiamenti × sei tempi — con basso tenuto,
+pad senza attacco, hi-hat sugli ottavi, sincopi, fill ogni otto battute e uno
+stacco di quattro battute senza batteria; poi li fa passare per **cassa
+dell'iPad → stanza → microfono dell'iPad**, taglio sotto i 250 Hz compreso: la
+cassa dell'iPad la fondamentale del kick non la riproduce, quindi alla rete non
+arriva. Sopra ci gira il motore intero, BeatNet ONNX compreso.
+
+`scripts/probe_activations.cpp` registra le attivazioni della rete su quegli
+stessi brani e `scripts/probe_replay.cpp` le rigioca dentro al solo
+`BeatDecoder`: stesso segnale, stesse misure, un secondo invece di due minuti,
+che è ciò che ha reso possibile tarare le decisioni invece di indovinarle.
+
+| Su 30 brani a tempo fisso | prima | dopo |
+|---|---|---|
+| Battute che ripartono prima del quattro | 268 / 254 / 260 | **0 / 0 / 1** |
+| Brani col BPM instabile (span > 1.5 BPM a regime) | 28 / 28 / 29 | **15 / 17 / 18** |
+| Span medio del BPM a regime | 21.8 / 24.0 / 25.7 BPM | **10.8 / 11.3 / 13.0 BPM** |
+| Salti di BPM > 1 | 312 / 301 / 334 | **125 / 150 / 156** |
+| Brani lenti a stabilizzarsi (> 12 s) | 28 / 28 / 28 | **15 / 17 / 19** |
+| Ottava sbagliata | 4 / 4 / 4 | 4 / 5 / 5 |
+| Tempo fino a FOLLOWING | 2.3 s | 3.9 s |
+
+Tre esecuzioni per colonna: la sonda guida il motore più veloce del tempo reale
+e il worker neurale sta su un altro thread, quindi lo scheduling sposta qualche
+caso da un run all'altro. Vanno lette come ordine di grandezza.
+
+### Cause, tutte misurate
+
+1. **Il livello metrico veniva scelto sui primi tre secondi.** Ripiegando
+   l'attivazione BeatNet di un mix a 104 BPM sul periodo vero, il punto a mezzo
+   battito vale **0.86** del battito nelle prime tre battute e **0.15** dopo
+   dieci secondi: la LSTM si sta ancora scaldando e tre periodi sono troppo
+   pochi per separare un bin sul battito da uno sul controtempo. In quella
+   finestra il tempo vero viene *addebitato* di essere un'ottava troppo lento e
+   vince il doppio. Ora il fold chiede cinque periodi (`kMinPeriods`), e niente
+   è un livello «deciso» prima di nove secondi di buffer.
+2. **L'isteresi difendeva il livello sbagliato fino a diciotto secondi.** Il
+   seggio si cambiava solo dopo dieci refresh consecutivi, qualunque fosse il
+   distacco — e siccome la *salience* riportata è il punteggio di chi siede,
+   scendeva a 0.06 mentre il rivale stava a 1.00. Sotto la soglia di salience il
+   decoder ignora del tutto il fold, quindi non vedeva nemmeno il disaccordo.
+   Ora l'attesa dipende dal distacco: un rivale che stravince entra in due
+   refresh. **Solo finché il livello è provvisorio**: una volta deciso serve
+   l'attesa piena, altrimenti su materiale ambiguo i due livelli se lo passano
+   ogni due secondi.
+3. **La battuta veniva riportata all'uno dall'ultimo downbeat arrivato.** La
+   rete mette sull'uno vero solo una *pluralità* dei suoi downbeat: ogni
+   downbeat sbagliato faceva ripartire la battuta a metà. Ed era uno **snap di
+   fase**, che buttava via lo stato dell'anello — errore di fase, trim misurato
+   — per una correzione che riguardava solo il conteggio. Ora la battuta si
+   corregge dallo **stesso voto** già usato per entrare, con maggioranza netta e
+   una pausa di quattro battute fra una correzione e l'altra, e **ruota
+   l'indice** invece di spostare la fase: non muove niente e non perde un
+   impulso.
+4. **Un tempo fisso non veniva rifinito, veniva inseguito.** Il regime si
+   decideva su otto battute *consecutive* d'accordo fra il fit a 8 e quello a
+   24: col microfono in stanza una battuta storta è normale e un contatore che
+   qualunque di esse azzera non arriva mai in fondo, quindi il decoder restava
+   in regime «vivo» a inseguire il fit a otto battute. Ora si decide sullo
+   **spread del fit lungo** su una finestra di battute (una battuta storta
+   allarga lo spread e poi esce), e una volta fisso il tempo converge verso la
+   **media corrente** del fit lungo — con una banda morta di 0.05 BPM. È la
+   differenza fra «rifinire» e «inseguire»: sulle attivazioni sintetiche lo
+   span a regime è **0.00 BPM** su nove tempi da 62 a 186.
+5. **La via d'uscita rapida dal tempo fisso scattava sul rumore.** Era la
+   mediana di tre intervalli contro il tempo tenuto, tre volte nella stessa
+   direzione: il jitter d'attacco di un mix in stanza la supera parecchie volte
+   al minuto. Ora una deviazione piccola conta solo se la finestra da 24 battute
+   pende dalla stessa parte, mentre una grande sta in piedi da sola (un cambio a
+   gradino la finestra non può confermarlo: appena la griglia è sbagliata il
+   gate on-grid smette di ammettere battute). Il gradino 120 → 132 resta
+   agganciato in **3.6 s**, l'accelerando 120 → 140 resta entro **0.085 di
+   battito** dalla pulsazione.
+6. **Fra il 3% e un quarto d'ottava non era compito di nessuno.** Un click a 78
+   BPM veniva seguito a 90 e ci restava: `log2(90/78)` è 0.21, sotto la soglia
+   d'ottava, quindi il ri-aggancio non scattava mai — e il fit da solo non ne
+   esce, perché su una griglia sbagliata del 15% sta interpolando quelle battute
+   che per caso cadono dentro la tolleranza. Ora un fold deciso *tira* il tempo
+   commesso verso di sé senza buttare via niente. Lo stesso click ora sta a
+   **78.00 BPM, ±1 ms dalla pulsazione**.
+
+### Cosa resta storto
+
+- **Sotto ~92 BPM con ottavi pieni raddoppia ancora.** Sui brani di prova a 76
+  BPM la correlazione a mezzo battito vale 0.73–0.77 contro 0.02–0.18 a 104 e
+  128: gli ottavi sono forti quanto i battiti e 152 è una lettura difendibile.
+  Ho provato a spostare la banda «troppo veloce» per farlo cadere dalla parte
+  giusta: peggiora, perché la stessa asimmetria è ciò che impedisce di leggere
+  in half-time un normale backbeat rock. Misurato, non ipotizzato — resta com'è.
+- Il half-time a 104 continua a discutere fra 104 e 52. È la stessa ambiguità
+  vista da vicino: con rullante solo sul tre, 52 *è* una lettura in half-time.
+- Il tempo fino a FOLLOWING è passato da 2.3 a 3.9 s, e su un click lento
+  arriva a ~8 s. È il prezzo dichiarato del punto 1: prima si agganciava in due
+  secondi all'ottava sbagliata e ci metteva mezzo minuto a uscirne.
+
+### Test aggiunti
+
+- `bar-integrity` — una rete finta sbaglia il downbeat una battuta su due, come
+  fa quella vera; la battuta deve arrivare al quattro prima di ripartire. Sul
+  codice vecchio: 12 ripartenze anticipate.
+- `fixed-hold` — tempo fisso con 22 ms di jitter d'attacco, una battuta su
+  dodici mancata e un fill ogni otto battute. Vecchio: span 1.67 BPM, regime
+  tenuto il 61% del tempo. Nuovo: **0.64 BPM, 85%**.
+- Il conteggio dei cambi di livello ora parte da quando l'estimatore dichiara il
+  livello **deciso**, non dalla prima lettura: rivedere un livello provvisorio è
+  il comportamento voluto, non un difetto.
+
 ## Shaker e congas interrotti (19 agosto)
 
 Cinque difetti distinti, tutti nel percorso di riproduzione:
@@ -99,8 +217,8 @@ Cinque difetti distinti, tutti nel percorso di riproduzione:
 ## Limiti noti dopo questo giro
 
 - Sopra ~168 BPM e sui groove in **half-time** il tracker preferisce il livello lento (84 invece di 168). Per un orologio di percussioni è spesso la lettura più utile, ma è una scelta, non una certezza.
-- Sotto ~64 BPM con ottavi marcati può ancora raddoppiare.
-- Restano numeri su materiale **sintetico**: la prova sul device con Spotify vero è ancora da fare.
+- Sotto ~92 BPM con ottavi pieni può ancora raddoppiare — vedi la sezione del 19 agosto sera, dove è misurato e spiegato perché non si corregge spostando le soglie.
+- Restano numeri su materiale **sintetico**, per quanto il percorso cassa → stanza → microfono sia simulato: la prova sul device con Spotify vero è ancora da fare.
 
 ## Cosa locka oggi
 
@@ -175,6 +293,20 @@ Base — deve funzionare:
 - [ ] Riga UI: AI ONNX + IPAD (non STUB, non MIXER)
 - [ ] CLICK TEST → FOLLOWING, shaker dopo START
 - [ ] Spotify SPEAKER → FOLLOWING senza TAP, shaker dopo START
+
+Tempo e battuta — è qui che si vede il giro del 19 sera. Il pannello **DBG**
+ora ha la riga `tempo FISSO/VIVO/CERCO · livello deciso/provvisorio · fold nnn`:
+è la prima cosa da leggere quando qualcosa non torna.
+
+- [ ] Su un brano registrato in studio il BPM deve **fermarsi** e restare fermo.
+      Aspettati che si assesti in 5–10 s e che poi non si muova più di qualche
+      decimo. Se oscilla di un BPM o più, segna la riga DBG
+- [ ] La battuta deve arrivare al **quattro** prima di tornare all'uno. Guarda
+      il pallino, non l'orecchio: è il difetto «uno, due, uno»
+- [ ] Quando trova il tempo giusto non deve poi scappare via: se lo vedi salire
+      o scendere in fretta dopo essersi assestato, segna `tempo` e `fold`
+- [ ] Brano lento (sotto ~92) con ottavi pieni: **atteso che raddoppi**. Segna
+      se lo fa e a quale tempo
 - [ ] USB-C + mic kit
 - [ ] SPEAKER senza auto-inseguimento dello shaker
 - [ ] Accelerando / rallentando
@@ -229,3 +361,19 @@ il rilevatore di stile decide.
 ./scripts/configure-ios.sh             # re-embed + Xcode proj
 ./scripts/build-simulator.sh
 ```
+
+Diagnostica del tracking (host, non fanno parte della suite — sono lenti):
+
+```bash
+cmake --build build-host --target VPProbe        # 30 brani a tempo fisso, motore intero
+./build-host/VPProbe_artefacts/Release/VPProbe
+./build-host/VPProbe_artefacts/Release/VPProbe --trace straight 104   # un caso solo
+
+cmake --build build-host --target VPActivations VPReplay
+./build-host/VPActivations_artefacts/Release/VPActivations 104 straight > act.txt
+./build-host/VPReplay_artefacts/Release/VPReplay act.txt              # solo il decoder
+./build-host/VPReplay_artefacts/Release/VPReplay --levels act.txt     # la lite sulle ottave
+```
+
+`VPProbe` vuole ONNX Runtime host (`./scripts/fetch_onnxruntime.sh`): senza, gira
+lo stub e non misura niente di utile.

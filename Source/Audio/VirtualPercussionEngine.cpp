@@ -437,6 +437,8 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastPBeat.store (tr.pBeat, std::memory_order_relaxed);
     lastLeadMs.store (tr.leadMs, std::memory_order_relaxed);
     lastRegime.store (static_cast<int> (tr.regime), std::memory_order_relaxed);
+    lastCombBpm.store (tr.combBpm, std::memory_order_relaxed);
+    lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
     lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
 
@@ -477,6 +479,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
+    s.combBpm = lastCombBpm.load (std::memory_order_relaxed);
+    s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
     const auto f = styleDetector.features();

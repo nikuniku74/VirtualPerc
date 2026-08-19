@@ -63,6 +63,29 @@ public:
         and the decoder should not throw away a working grid over it. */
     float offbeatRatio() const noexcept { return bestOffbeat; }
 
+    /** Whether the buffer is yet long enough to have folded the winner's own
+        octave *below* it several times over. Until it is, nothing slower than
+        the winner has really been examined, so the level on offer is the
+        fastest thing the buffer could see rather than a measurement - and a
+        level committed to before this point is committed to on no evidence at
+        all. */
+    bool levelSettled() const noexcept { return isLevelSettled; }
+
+    /** The score one candidate tempo would get from the buffer as it stands,
+        with the two charges that decide it broken out. Diagnostic only: the
+        level argument is the hardest part of this class to reason about from
+        the outside, and guessing at it is how it was got wrong before. */
+    struct CandidateScore
+    {
+        float score = 0.0f;
+        float comb = 0.0f;
+        float halfAtSelf = 1.0f;   // charges the candidate for being too slow
+        float halfAtDouble = 1.0f; // charges it for being too fast
+        bool  evaluable = false;   // buffer long enough for the too-fast charge
+    };
+
+    CandidateScore scoreFor (float bpmCandidate) const noexcept;
+
 private:
     void  refresh() noexcept;
     float tempoPrior (float bpmCandidate) const noexcept;
@@ -97,6 +120,7 @@ private:
     float bestSalience = 0.0f;
     float bestClarity = 0.0f;
     float bestOffbeat = 1.0f;
+    bool  isLevelSettled = false;
     float challengerBpm = 0.0f;
     int   challengerRefreshes = 0;
 

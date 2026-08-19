@@ -655,6 +655,10 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  conf " + juce::String (snap.confidence, 3));
         lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
+        lines.add ("tempo " + juce::String (vp::regimeLabel (snap.tempoRegime))
+                   + "  livello " + juce::String (snap.levelSettled ? "deciso" : "provvisorio")
+                   + "  fold " + (snap.combBpm > 1.0f ? juce::String (snap.combBpm, 1)
+                                                      : juce::String ("--")));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms");
         lines.add ("sr " + juce::String (snap.sampleRate, 0)
                    + "  mic " + juce::String (snap.inputPeak, 4)
