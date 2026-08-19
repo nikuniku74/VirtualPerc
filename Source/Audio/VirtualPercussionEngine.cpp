@@ -60,6 +60,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
 
     tracker.prepare (sampleRate);
     percussion.prepare (sampleRate);
+    styleDetector.prepare (sampleRate);
     percussion.setSeed (0x51A4E1u);
     stretcher.prepare (sampleRate, maxBlock);
     stretch.prepare (120.0f, sampleRate);
@@ -71,6 +72,7 @@ void VirtualPercussionEngine::reset() noexcept
 {
     tracker.reset();
     percussion.reset();
+    styleDetector.reset();
     stretcher.reset();
     stretch.reset();
     clickPhase = 0.0;
@@ -321,7 +323,7 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
     percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
     percussion.setCongasEnabled (cfg.congasEnabled.load (std::memory_order_relaxed));
-    percussion.setGrooveStyle (static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed)));
+    // The manual setting is the override; on auto the music decides.
 
     mixInputs (inputs, numInputs, numSamples);
     float peak = 0.0f;
@@ -350,6 +352,21 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
                                                     : (tr.bpm > 40.0f ? tr.bpm : 120.0f),
                           tr.clockPulsesPerBeat);
     percussion.setShakerSubdivision (tr.subdivision);
+
+    // Fold the analysis signal onto the bar to see which part the music is
+    // asking for. Only while the clock is actually on the song: folding audio
+    // onto a bar the tracker has not found yet just smears every bin.
+    const bool autoStyle = cfg.grooveAuto.load (std::memory_order_relaxed);
+    if (autoStyle)
+    {
+        const bool clockStable = tr.state == TrackingState::following
+                                 && tr.clock.tempoBpm > 40.0f;
+        styleDetector.process (mono.data(), numSamples, tr.barPhase, clockStable);
+    }
+    const GrooveStyle chosen = autoStyle
+                                   ? styleDetector.style()
+                                   : static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed));
+    percussion.setGrooveStyle (chosen);
 
     if (stretcher.hasLoop())
     {
@@ -408,6 +425,8 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastPBeat.store (tr.pBeat, std::memory_order_relaxed);
     lastLeadMs.store (tr.leadMs, std::memory_order_relaxed);
     lastRegime.store (static_cast<int> (tr.regime), std::memory_order_relaxed);
+    lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
+    lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
 
     const auto t1 = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli> (t1 - t0).count();
@@ -446,6 +465,14 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
+    s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
+    s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
+    const auto f = styleDetector.features();
+    s.styleEvenKick = f.evenKick;
+    s.styleBackbeat = f.alternation;
+    s.styleOffHigh = f.offHigh;
+    s.styleSync = f.syncopation;
+    s.styleOccupancy = f.occupancy;
     return s;
 }
 

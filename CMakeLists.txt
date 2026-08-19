@@ -23,7 +23,9 @@ set (VP_CORE_SOURCES
     Source/Tracking/BeatTracker.cpp
     Source/Percussion/PercussionEngine.cpp
     Source/Percussion/GrooveEngine.cpp
+    Source/Percussion/StyleDetector.cpp
     Source/Percussion/GrooveEngine.cpp
+    Source/Percussion/StyleDetector.cpp
     Source/Audio/VirtualPercussionEngine.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp
@@ -260,4 +262,14 @@ if (APPLE AND VP_USE_ONNX AND ONNXRUNTIME_ROOT AND NOT VP_ORT_IOS)
                     "$<TARGET_FILE_DIR:${vp_ai_target}>")
         endif()
     endforeach()
+endif()
+
+if (EXISTS "$ENV{VP_STYLE_SRC}")
+    juce_add_console_app (VPStyle PRODUCT_NAME "VPStyle" NEEDS_WEB_BROWSER FALSE NEEDS_CURL FALSE)
+    target_sources (VPStyle PRIVATE ${VP_CORE_SOURCES} "$ENV{VP_STYLE_SRC}")
+    target_include_directories (VPStyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "$ENV{VP_PROBE_DIR}")
+    target_compile_definitions (VPStyle PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPStyle PRIVATE juce::juce_dsp juce::juce_audio_basics juce::juce_audio_formats
+                           juce::juce_core PUBLIC juce::juce_recommended_config_flags)
+    vp_apply_ai_options (VPStyle)
 endif()

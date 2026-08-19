@@ -44,6 +44,19 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
 | **pop** | mostly space: the one, a light lift, the push into the next bar | eighths, level and quiet | almost none |
 
+### Choosing the style automatically — measured, and not good enough
+
+`StyleDetector` folds the analysis signal onto the bar in three bands and reads four rotation-invariant features from it: how evenly the low band lands on the four quarters (four-on-the-floor), the depth of the two-beat alternation in the snare band (backbeat), the high band on the offbeat against the beat (open hat), and energy on the odd sixteenths (syncopation).
+
+**Measured against nine pieces of material whose style is known: 3 correct.** Always guessing "rock" would also score 3. So it is **off by default**, and the manual setting is what the app uses.
+
+Two things were established on the way, both by measurement rather than argument:
+
+- The first attempt put the kick band under 120 Hz. A tablet speaker in a room, picked up by the device's own microphone, has essentially nothing down there — it was reading an empty band, which is why identical material scored differently at different tempi.
+- The obvious suspect was bar alignment: the tracker finds the beat to ±3 ms but the downbeat much less surely, and a bar rotated by one beat inverts "are 2 and 4 louder than 1 and 3" (a half-time track with the snare on 3 scored the highest backbeat of anything tested). Feeding the detector the **ground-truth bar phase** from the generator scored **3/9 as well**, which rules alignment out: the features themselves do not separate these styles.
+
+What would work is a small classifier over the log-spectrogram the engine already computes for BeatNet, folded onto the bar — a learned model, and so a different piece of work needing training data. The detector and its measurement harness are kept so that work can start from a baseline rather than from nothing.
+
 The accent contour across the bar belongs to the **style**, not to the engine. That is not a refinement — a single global contour favouring beat one silently cancelled the rock pattern's backbeat emphasis (0.80 against 0.79, when the pattern asked for 0.80 against 0.92), and the test caught it.
 
 The user's subdivision setting *thins* a style's shaker pattern and never adds to it, so a style that does not want sixteenths does not get them because the user asked for a busy shaker.

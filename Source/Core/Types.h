@@ -139,6 +139,13 @@ struct EngineSnapshot
     /** Whether the analysis is treating the tempo as a fixed one to hold or a
         live one to follow. */
     int   tempoRegime          = 0;
+    int   grooveStyle          = 0;
+    float grooveStyleConfidence = 0.0f;
+    float styleEvenKick        = 0.0f;
+    float styleBackbeat        = 0.0f;
+    float styleOffHigh         = 0.0f;
+    float styleSync            = 0.0f;
+    float styleOccupancy       = 0.0f;
 };
 
 struct EngineSettings
@@ -156,6 +163,10 @@ struct EngineSettings
     std::atomic<bool>  shakerEnabled   { true };
     std::atomic<bool>  congasEnabled   { true };
     std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::marcha) };
+    // Let the music choose the part. Off by default: measured at 3 cases in 9
+    // against material whose style is known, which is no better than always
+    // guessing the same style. See docs/AUDIO_ENGINE.md.
+    std::atomic<bool>  grooveAuto      { false };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };
