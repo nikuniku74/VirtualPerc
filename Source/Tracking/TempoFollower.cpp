@@ -304,12 +304,16 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         if (offset < 0) offset = 0;
         if (offset >= numSamples) offset = numSamples - 1;
 
-        const int idx = ((p % pulsesPerBeat) + pulsesPerBeat) % pulsesPerBeat;
-        int barBeat = beatAtStart;
-        if (tick.wrappedBeat && idx == 0)
-            barBeat = beatInBar;
-        else if (tick.wrappedBeat && idx != 0)
-            barBeat = beatAtStart;
+        // `p` counts pulses from phase zero of the beat that was current when
+        // the block started, so both the pulse index and how many beats have
+        // been crossed since then are arithmetic on p alone. Deciding this from
+        // `wrappedBeat` instead used to hand every sub-pulse that followed a
+        // wrap inside one block the *previous* beat's index, which put the
+        // pattern on the wrong step for that pulse.
+        const int pp = p < 0 ? 0 : p;
+        const int idx = pp % pulsesPerBeat;
+        const int beatsAdvanced = pp / pulsesPerBeat;
+        const int barBeat = (beatAtStart + beatsAdvanced) & 3;
 
         tick.pulseIndex[tick.pulsesFired] = idx;
         tick.pulseOffset[tick.pulsesFired] = offset;

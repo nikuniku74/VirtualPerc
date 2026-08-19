@@ -18,6 +18,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
+    leakScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     outRing.assign (static_cast<size_t> (ringSize), 0.0f);
     ringWrite = 0;
 
@@ -178,9 +179,14 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
     int delay = static_cast<int> (latMs * 0.001 * sampleRate);
     delay = std::clamp (delay, 64, ringSize - numSamples - 1);
 
+    // The scratch is sized in prepare(). A fixed stack buffer used to cap this
+    // at 2048 samples, which left the tail of a larger block un-subtracted: the
+    // step it created at the splice point is a textbook onset, and it landed
+    // in the analysis signal once per callback.
     float xy = 0.0f, yy = 0.0f;
-    float hpBuf[2048];
-    const int n = std::min (numSamples, 2048);
+    const int n = std::min (numSamples, static_cast<int> (leakScratch.size()));
+    if (n <= 0)
+        return;
 
     for (int i = 0; i < n; ++i)
     {
@@ -188,7 +194,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
         const float y = outRing[static_cast<size_t> (ri)];
         leakLp += 0.18f * (y - leakLp);
         const float hp = y - leakLp;
-        hpBuf[i] = hp;
+        leakScratch[static_cast<size_t> (i)] = hp;
         const float x = mono[static_cast<size_t> (i)];
         xy += x * hp;
         yy += hp * hp;
@@ -200,7 +206,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
         return;
 
     for (int i = 0; i < n; ++i)
-        mono[static_cast<size_t> (i)] -= g * hpBuf[i];
+        mono[static_cast<size_t> (i)] -= g * leakScratch[static_cast<size_t> (i)];
 }
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak) noexcept

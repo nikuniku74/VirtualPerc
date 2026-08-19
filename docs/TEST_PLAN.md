@@ -13,7 +13,12 @@
 | TAP then START | Following; shaker plays |
 | Fast taps | Do not start the shaker |
 | STOP after TAP+START | Immediately silent |
+| Grid density per subdivision | 1/4, 1/8 and 1/16 play 16, 32 and 64 shaker notes in four bars |
+| Bar pulses across beat wraps | `barPulse` steps by one at any block size and tempo |
+| Retrigger of a sounding voice | Released over a ramp, never cut; no voice stolen mid-note |
+| Speaker leak on a large block | Subtraction covers the whole block, not the first 2048 samples |
 | AudioFifo / BeatDecoder / stretch / WSOLA / log-spect / worker | See `Tests/TestAiBeat.cpp` |
+| FIFO overrun | Reported exactly; the decoder keeps the tempo but drops its stale confidence |
 
 Shaker events must keep a monotonically increasing sample index (no loop restart).
 

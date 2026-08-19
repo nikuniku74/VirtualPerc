@@ -30,6 +30,15 @@ public:
     void reset() noexcept;
     BeatHypothesis observe (float pBeat, float pDownbeat, float pNone) noexcept;
 
+    /** The audio feeding this decoder has a hole in it: the FIFO overran and the
+        worker never saw `lostSeconds` of input. Every interval measured across
+        that hole would be wrong and the splice itself looks like an onset, so
+        the beat history is dropped and the timeline is advanced to stay in step
+        with real input time. The committed tempo, the regime and the metrical
+        level are deliberately kept: a dropout is a reason to stop trusting the
+        recent evidence, not a reason to forget the song. */
+    void notifyDiscontinuity (double lostSeconds) noexcept;
+
     const BeatHypothesis& current() const noexcept { return hyp; }
     TempoRegime regime() const noexcept { return tempoRegime; }
 

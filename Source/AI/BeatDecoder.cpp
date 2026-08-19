@@ -129,6 +129,38 @@ void BeatDecoder::reset() noexcept
     hyp = {};
 }
 
+void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
+{
+    if (lostSeconds > 0.0)
+        timeSec += lostSeconds;
+
+    // No interval spanning the hole is measurable, so the fits must not see one.
+    lastBeatSec = -1.0;
+    lastDownbeatSec = -1.0;
+    beatWrite = 0;
+    beatFilled = 0;
+
+    // The splice is a broadband transient. Keep the peak picker from reading it
+    // as a local maximum, and hold off events until fresh frames have arrived.
+    prevPulse = 0.0f;
+    prevPrevPulse = 0.0f;
+    prevDownbeat = 0.0f;
+    refractoryFrames = std::max (refractoryFrames, 3);
+
+    // Evidence chains describe beats that are now gone. Nothing measured before
+    // the hole may vouch for the grid afterwards.
+    stableBeats = 0;
+    driftBeats = 0;
+    driftSign = 0;
+    fastDriftBeats = 0;
+    fastDriftSign = 0;
+    octaveMismatchBeats = 0;
+    lastFitResidual = 1.0f;
+    lastFitCoverage = 0.0f;
+    longFitBpm = 0.0f;
+    shortFitBpm = 0.0f;
+}
+
 float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
 {
     // A missed beat doubles the interval, a ghost halves it. Snap the interval

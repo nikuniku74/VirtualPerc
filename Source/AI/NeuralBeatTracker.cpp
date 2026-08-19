@@ -41,6 +41,9 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     decoder.prepare (kBeatModelSampleRate / static_cast<double> (kBeatModelHop));
     inputSamplesPerModelSample = deviceSr / kBeatModelSampleRate;
     fedTotal.store (0, std::memory_order_relaxed);
+    gapCount.store (0, std::memory_order_relaxed);
+    seenDropped = 0;
+    modelRefill = 0;
     if (! model->prepare (LogSpectFeatures::kDim))
         return false;
     model->reset();
@@ -79,6 +82,24 @@ void NeuralBeatTracker::workerLoop()
 
     while (! stopFlag.load (std::memory_order_relaxed))
     {
+        // An overrun means the producer overwrote audio this thread never read.
+        // The timestamps already account for it, but the feature extractor, the
+        // LSTM and the decoder would otherwise carry straight on across the hole
+        // and read the splice as an onset. Re-prime them first.
+        const uint64_t droppedNow = fifo.droppedSamples();
+        if (droppedNow != seenDropped)
+        {
+            const double lostSec = static_cast<double> (droppedNow - seenDropped) / deviceSr;
+            seenDropped = droppedNow;
+            resampler.reset();
+            features.reset();
+            if (model != nullptr)
+                model->reset();
+            decoder.notifyDiscontinuity (lostSec);
+            modelRefill += kBeatModelFrame - kBeatModelHop;
+            gapCount.fetch_add (1, std::memory_order_relaxed);
+        }
+
         const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
         if (n <= 0)
         {
@@ -102,7 +123,7 @@ void NeuralBeatTracker::workerLoop()
     }
 }
 
-int64_t NeuralBeatTracker::analysisSampleFor (uint64_t frameIndex) const noexcept
+int64_t NeuralBeatTracker::analysisSampleFor (uint64_t frameIndex) noexcept
 {
     // Frames leave LogSpectFeatures on a fixed grid: the first once frameLen
     // samples have arrived, then one per hop. So the position of any frame is
@@ -112,7 +133,8 @@ int64_t NeuralBeatTracker::analysisSampleFor (uint64_t frameIndex) const noexcep
     // describes is centred half a window back. Anchoring on that centre is what
     // makes the delay the audio thread computes a real acoustic delay.
     const double modelPos = static_cast<double> (frameIndex) * kBeatModelHop
-                            + kBeatModelFrame * 0.5 - kBeatModelHop;
+                            + kBeatModelFrame * 0.5 - kBeatModelHop
+                            + static_cast<double> (modelRefill);
     const double inputPos = modelPos * inputSamplesPerModelSample;
 
     // Anything the FIFO overwrote never reached the feature extractor, so the

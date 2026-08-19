@@ -61,6 +61,7 @@ private:
     std::vector<float> outL;
     std::vector<float> outR;
     std::vector<float> clickScratch;
+    std::vector<float> leakScratch;
     std::vector<float> outRing;
 
     double sampleRate = 48000.0;

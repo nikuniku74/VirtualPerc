@@ -117,6 +117,77 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (fifo.pop (out, 10) == 10 && out[9] == 9.0f, "AudioFifo round-trip");
     }
 
+    // B5 - an overrun has to be reported exactly, because the worker sizes its
+    // recovery (and every timestamp downstream) from that number.
+    {
+        vp::AudioFifo fifo;
+        fifo.prepare (32);                    // rounded up to a power of two
+        std::vector<float> in (100, 1.0f);
+        fifo.push (in.data(), 100);           // 100 into 32: 68 overwritten
+        const uint64_t dropped = fifo.droppedSamples();
+        std::vector<float> out (64, 0.0f);
+        const int got = fifo.pop (out.data(), 64);
+        std::printf ("fifo-overrun  dropped=%llu  readable=%d\n",
+                     static_cast<unsigned long long> (dropped), got);
+        expect (dropped == 68u && got == 32,
+                "AudioFifo reports exactly how many samples an overrun overwrote");
+    }
+
+    // B5 - a hole in the audio must cost the recent evidence, never the lock.
+    // The committed tempo and validity survive; what must not survive is the
+    // decoder's claim to be confident, because every interval it would measure
+    // now spans the hole. Reporting the old confidence is what lets the clock
+    // keep trusting a grid that no longer describes the audio.
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (50.0);
+
+        const double fps = 50.0;
+        const float bpm = 120.0f;
+        const double period = 60.0 / static_cast<double> (bpm);
+        int frame = 0;
+        auto feed = [&] (double seconds)
+        {
+            const int n = static_cast<int> (seconds * fps);
+            for (int i = 0; i < n; ++i, ++frame)
+            {
+                const double t = static_cast<double> (frame) / fps;
+                const double ph = std::fmod (t, period) / period;
+                const float on = ph < 0.03 || ph > 0.97 ? 0.90f : 0.02f;
+                dec.observe (on, on > 0.5f ? 0.60f : 0.02f, 1.0f - on);
+            }
+        };
+
+        feed (14.0);
+        const auto before = dec.current();
+
+        // Audio resumes 2.3 s later - not a whole number of beats, so the pulse
+        // comes back on a different phase. The analysis has no way to know that
+        // except for what it is told here.
+        dec.notifyDiscontinuity (2.3);
+        frame += static_cast<int> (2.3 * fps);
+        feed (0.2);
+        const auto justAfter = dec.current();
+
+        feed (12.0);
+        const auto after = dec.current();
+
+        const float driftPct = std::fabs (after.bpm - before.bpm) / before.bpm * 100.0f;
+        std::printf ("gap-decoder  bpm %.2f -> %.2f (%.2f%%)  conf %.2f -> %.2f -> %.2f  valid=%d\n",
+                     static_cast<double> (before.bpm),
+                     static_cast<double> (after.bpm),
+                     static_cast<double> (driftPct),
+                     static_cast<double> (before.confidence),
+                     static_cast<double> (justAfter.confidence),
+                     static_cast<double> (after.confidence),
+                     after.valid ? 1 : 0);
+        expect (before.valid && after.valid
+                    && driftPct < 1.0f
+                    && justAfter.confidence < before.confidence * 0.75f
+                    && after.confidence > before.confidence * 0.80f,
+                "a dropout costs the recent evidence, not the tempo or the lock");
+    }
+
     {
         vp::BeatDecoder dec;
         dec.prepare (50.0);
@@ -289,8 +360,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
             nb.feed (z.data(), 512);
         vp::BeatHypothesis h;
         nb.tryLoad (h);
+        const int64_t gaps = nb.discontinuities();
         nb.stop();
         expect (! nb.running(), "NeuralBeatTracker stops the worker");
+        // B5 - the overrun path must not fire on a run that never overran, or
+        // it would re-prime the analysis for no reason and cost the lock.
+        expect (gaps == 0, "no phantom discontinuity on a stream that never overran");
     }
 
     {

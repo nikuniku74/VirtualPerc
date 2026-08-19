@@ -139,6 +139,9 @@ void PercussionEngine::synthesizeShaker() noexcept
 void PercussionEngine::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
+    // 2.5 ms of release: long enough to remove the step, short enough that the
+    // next grain still starts on the beat rather than under a tail.
+    voiceFadeStep = 1.0f / static_cast<float> (std::max (8, static_cast<int> (sampleRate * 0.0025)));
     reverb.setSampleRate (sampleRate);
     applyReverbParams();
     synthesizeShaker();
@@ -150,7 +153,9 @@ void PercussionEngine::reset() noexcept
 {
     clearVoices();
     totalHits = 0;
+    shakerHits = 0;
     lastActive = 0;
+    hardStealCount = 0;
     samplesSinceHit = 1000000;
     reverb.reset();
 }
@@ -217,28 +222,57 @@ void PercussionEngine::synthesizeCongas() noexcept
     synth (slapL, slapR, 320.0f, 0.55f, 28.0f, 0.09f, 0.38f);
 }
 
-void PercussionEngine::stealKind (Kind kind) noexcept
+void PercussionEngine::releaseKind (Kind kind, int sampleOffset) noexcept
 {
+    // A retriggered instrument used to have its previous voice switched off
+    // between two samples, which is a step in the waveform and clicks on every
+    // hit. Ramp it out instead, starting where the new note starts.
     for (auto& v : voices)
     {
-        if (v.active && v.kind == kind)
-            v.active = false;
+        if (! v.active || v.kind != kind || v.fadeStep > 0.0f)
+            continue;
+        v.fadeStep = voiceFadeStep;
+        v.fadeDelay = sampleOffset > 0 ? sampleOffset : 0;
     }
+}
+
+int PercussionEngine::allocateVoice() noexcept
+{
+    for (int i = 0; i < kNumVoices; ++i)
+        if (! voices[i].active)
+            return i;
+
+    // Nothing idle. Take the quietest voice - the behaviour docs/AUDIO_ENGINE.md
+    // has always described - instead of always overwriting slot 0 whatever it
+    // happened to be playing.
+    int quietest = 0;
+    float lowest = -1.0f;
+    for (int i = 0; i < kNumVoices; ++i)
+    {
+        const Voice& v = voices[i];
+        // A voice waiting to start later in this block reads as silent but has
+        // not sounded yet, so taking it would swallow a scheduled note.
+        if (v.pos < 0)
+            continue;
+        const auto& buf = sampleL (v);
+        const float s = v.pos < static_cast<int> (buf.size())
+                            ? std::fabs (buf[static_cast<size_t> (v.pos)]) : 0.0f;
+        const float level = s * std::max (v.gainL, v.gainR) * v.fade;
+        if (lowest < 0.0f || level < lowest)
+        {
+            lowest = level;
+            quietest = i;
+        }
+    }
+    ++hardStealCount;
+    return quietest;
 }
 
 void PercussionEngine::triggerShaker (int sampleOffset) noexcept
 {
-    stealKind (Kind::shaker);
+    releaseKind (Kind::shaker, sampleOffset);
 
-    int slot = 0;
-    for (int i = 0; i < 12; ++i)
-    {
-        if (! voices[i].active)
-        {
-            slot = i;
-            break;
-        }
-    }
+    const int slot = allocateVoice();
 
     const float hum = humanization;
     const float vel = 0.78f + 0.14f * (1.0f - hum) + 0.08f * hum * rng.nextFloat();
@@ -250,23 +284,19 @@ void PercussionEngine::triggerShaker (int sampleOffset) noexcept
     v.length = static_cast<int> (shakerL[v.take].size());
     v.gainL = vel * (1.0f - pan);
     v.gainR = vel * (1.0f + pan);
+    v.fade = 1.0f;
+    v.fadeStep = 0.0f;
+    v.fadeDelay = 0;
     v.active = true;
     ++totalHits;
+    ++shakerHits;
 }
 
 void PercussionEngine::triggerConga (Kind kind, int sampleOffset, float pan) noexcept
 {
-    stealKind (kind);
+    releaseKind (kind, sampleOffset);
 
-    int slot = 0;
-    for (int i = 0; i < 12; ++i)
-    {
-        if (! voices[i].active)
-        {
-            slot = i;
-            break;
-        }
-    }
+    const int slot = allocateVoice();
 
     const float vel = 0.82f + 0.12f * rng.nextFloat();
     auto& v = voices[slot];
@@ -282,6 +312,9 @@ void PercussionEngine::triggerConga (Kind kind, int sampleOffset, float pan) noe
     }
     v.gainL = vel * (1.0f - pan);
     v.gainR = vel * (1.0f + pan);
+    v.fade = 1.0f;
+    v.fadeStep = 0.0f;
+    v.fadeDelay = 0;
     v.active = true;
     ++totalHits;
 }
@@ -342,27 +375,26 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             if (samplesSinceHit + offset < minGap)
                 continue;
 
+            // Every pulse of the chosen grid gets a shaker, so 1/16 really is
+            // sixteen hits per bar. The congas keep their own place in the bar
+            // regardless of how fine that grid is, so the pattern is written on
+            // the 16th grid and each pulse is mapped onto it. With 1/4 and 1/8
+            // this lands on exactly the steps the 8-step table used to give;
+            // only 1/16, which used to drop every odd pulse and play eighths,
+            // changes.
             const int idx = tick.pulseIndex[i];
             const int barBeat = tick.pulseBeatInBar[i];
-            int step = -1;
-            if (groovePulses <= 1)
-                step = (barBeat * 2) % 8;
-            else if (groovePulses == 2)
-                step = tick.barPulse[i] % 8;
-            else
-            {
-                if ((idx & 1) != 0)
-                    continue;
-                step = ((barBeat * 2) + (idx / 2)) % 8;
-            }
-            if (step < 0)
-                continue;
+            const int pulses = std::max (1, groovePulses);
+            const int step = (barBeat * 4 + (idx * 4) / pulses) % 16;
 
             triggerShaker (offset);
-            // Tumbao / marcha on the bar's 8ths: 1, 1&, 2, 2&, 4, 4&
-            static constexpr Kind kConga[8] = {
-                Kind::tumba, Kind::shaker, Kind::open, Kind::slap,
-                Kind::open,  Kind::shaker, Kind::slap, Kind::open
+            // Tumbao / marcha on the bar's 8ths: 1, 2, 2&, 3, 4, 4&.
+            // Odd 16ths carry no conga (Kind::shaker = "shaker only").
+            static constexpr Kind kConga[16] = {
+                Kind::tumba,  Kind::shaker, Kind::shaker, Kind::shaker,
+                Kind::open,   Kind::shaker, Kind::slap,   Kind::shaker,
+                Kind::open,   Kind::shaker, Kind::shaker, Kind::shaker,
+                Kind::slap,   Kind::shaker, Kind::open,   Kind::shaker
             };
             const Kind ck = kConga[step];
             if (ck != Kind::shaker)
@@ -385,6 +417,9 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         const auto& bL = sampleL (v);
         const auto& bR = sampleR (v);
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));
+        float fade = v.fade;
+        const float fadeStep = v.fadeStep;
+        int fadeDelay = v.fadeDelay;
         for (int n = 0; n < numSamples; ++n)
         {
             const int p = v.pos + n;
@@ -395,9 +430,28 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                 v.active = false;
                 break;
             }
-            left[n]  += bL[static_cast<size_t> (p)] * v.gainL * g;
-            right[n] += bR[static_cast<size_t> (p)] * v.gainR * g;
+            if (fadeStep > 0.0f)
+            {
+                if (fadeDelay > 0)
+                {
+                    --fadeDelay;
+                }
+                else
+                {
+                    fade -= fadeStep;
+                    if (fade <= 0.0f)
+                    {
+                        fade = 0.0f;
+                        v.active = false;
+                        break;
+                    }
+                }
+            }
+            left[n]  += bL[static_cast<size_t> (p)] * v.gainL * g * fade;
+            right[n] += bR[static_cast<size_t> (p)] * v.gainR * g * fade;
         }
+        v.fade = fade;
+        v.fadeDelay = fadeDelay;
         if (v.active)
         {
             v.pos += numSamples;

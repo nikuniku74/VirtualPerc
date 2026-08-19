@@ -1,4 +1,5 @@
 #include "Audio/VirtualPercussionEngine.h"
+#include "Percussion/PercussionEngine.h"
 #include "TestAiBeat.h"
 #include "Tracking/TempoFollower.h"
 
@@ -24,6 +25,37 @@ namespace
             ++gFailed;
             std::printf ("  FAIL  %s\n", name);
         }
+    }
+
+
+    /** Runs the percussion engine off a locked clock for a whole number of bars
+        and returns how many shaker notes it played. */
+    int shakerNotesInBars (int pulsesPerBeat, float bpm, int bars, double sr, int block)
+    {
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (pulsesPerBeat);
+        clock.forceTempo (bpm);
+        clock.setTargetTempo (bpm, 1.0f);
+        clock.setLocked (true);
+        clock.snapDownbeat (0.0f);
+
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setGroove (bpm, pulsesPerBeat);
+        perc.setReverbAmount (0.0f);
+
+        std::vector<float> l (static_cast<size_t> (block), 0.0f);
+        std::vector<float> r (static_cast<size_t> (block), 0.0f);
+
+        const double barsSec = static_cast<double> (bars) * 4.0 * 60.0 / static_cast<double> (bpm);
+        const int total = static_cast<int> (sr * barsSec);
+        for (int pos = 0; pos + block <= total; pos += block)
+        {
+            const auto tick = clock.advance (block);
+            perc.render (l.data(), r.data(), block, tick, true);
+        }
+        return perc.shakerHitsFired();
     }
 
     void feedSilence (vp::VirtualPercussionEngine& eng, double sr, int block, float seconds)
@@ -221,6 +253,218 @@ int main()
         const auto last = eng.snapshot();
         expect (eng.shakerHits() == hitsBefore && ! last.percussionAudible,
                 "STOP is immediately silent but keeps the clock");
+    }
+
+
+    // B1 - the grid the user picked is the grid that plays. 1/16 used to drop
+    // every odd pulse and come out as eighths.
+    {
+        const int q   = shakerNotesInBars (1, 120.0f, 4, sr, block);
+        const int e   = shakerNotesInBars (2, 120.0f, 4, sr, block);
+        const int s16 = shakerNotesInBars (4, 120.0f, 4, sr, block);
+        // Whether the pulse sitting exactly on the starting downbeat is emitted
+        // depends on how the clock was primed, so one note either way is not
+        // what this measures: the point is that 1/16 is twice 1/8, which it was
+        // not - it played eighths.
+        const bool ok = std::abs (q - 16) <= 1 && std::abs (e - 32) <= 1 && std::abs (s16 - 64) <= 1;
+        std::printf ("grid-density  1/4=%d  1/8=%d  1/16=%d  (expect 16 / 32 / 64)\n", q, e, s16);
+        expect (ok, "each subdivision plays its own density, 1/16 included");
+    }
+
+    // B2 - a pulse must know which beat of the bar it belongs to, including the
+    // sub-pulses that follow a beat wrap inside the same block.
+    {
+        struct Case { float bpm; int pulses; int block; };
+        const Case cases[] = {
+            { 210.0f, 4, 4096 }, { 210.0f, 4, 2048 }, { 180.0f, 4, 4096 },
+            { 120.0f, 2, 4096 }, { 120.0f, 4, 1024 }, {  60.0f, 1,  256 },
+            { 174.0f, 2, 3000 }, {  95.0f, 4, 4096 },
+        };
+        bool ok = true;
+        int worstSeen = -1;
+        for (const auto& c : cases)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (c.pulses);
+            clock.forceTempo (c.bpm);
+            clock.setTargetTempo (c.bpm, 1.0f);
+            clock.setLocked (true);
+            clock.snapDownbeat (0.0f);
+
+            const int cycle = 4 * c.pulses;
+            int prev = -1;
+            const int total = static_cast<int> (sr * 20.0);
+            for (int pos = 0; pos + c.block <= total; pos += c.block)
+            {
+                const auto tick = clock.advance (c.block);
+                for (int i = 0; i < tick.pulsesFired; ++i)
+                {
+                    const int bp = tick.barPulse[i];
+                    if (bp < 0 || bp >= cycle)
+                        ok = false;
+                    // Consecutive pulses step the bar counter by exactly one.
+                    if (prev >= 0 && bp != (prev + 1) % cycle)
+                    {
+                        ok = false;
+                        if (worstSeen < 0)
+                            worstSeen = bp;
+                    }
+                    prev = bp;
+                }
+            }
+        }
+        std::printf ("bar-pulse  contiguous=%d\n", ok ? 1 : 0);
+        expect (ok, "bar pulses stay contiguous across beat wraps at any block size");
+    }
+
+    // B3 - retriggering an instrument must release the old voice over a short
+    // ramp, not switch it off between two samples, and a note must never take a
+    // slot from a voice that is still sounding.
+    {
+        constexpr float bpm = 200.0f;
+        constexpr int pulses = 4;
+        constexpr int blk = 32;                       // 0.67 ms per block
+
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setGroove (bpm, pulses);
+        perc.setReverbAmount (0.0f);
+        perc.setVolume (1.0f);
+
+        std::vector<float> l (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> r (static_cast<size_t> (blk), 0.0f);
+        const vp::ClockTick idle {};
+
+        // Steps 1 and 3 of the bar carry a shaker and no conga, so the voice
+        // count below is the shaker's alone.
+        auto strike = [&] (int idx)
+        {
+            vp::ClockTick t {};
+            t.pulsesFired = 1;
+            t.pulseOffset[0] = 0;
+            t.pulseIndex[0] = idx;
+            t.pulseBeatInBar[0] = 0;
+            t.barPulse[0] = idx;
+            perc.render (l.data(), r.data(), blk, t, true);
+        };
+
+        strike (1);
+        const int gapBlocks = static_cast<int> (sr * 0.075) / blk;   // one 16th at 200 BPM
+        for (int i = 1; i < gapBlocks; ++i)
+            perc.render (l.data(), r.data(), blk, idle, true);
+
+        strike (3);                                   // this one steals the first
+        const int voicesAtSteal = perc.activeVoices();
+
+        for (int i = 0; i < 12; ++i)                  // ~8 ms later the ramp is done
+            perc.render (l.data(), r.data(), blk, idle, true);
+        const int voicesAfterRamp = perc.activeVoices();
+
+        // Separately: a dense grid must never exhaust the pool.
+        int hardSteals = 0;
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (pulses);
+            clock.forceTempo (bpm);
+            clock.setTargetTempo (bpm, 1.0f);
+            clock.setLocked (true);
+            clock.snapDownbeat (0.0f);
+
+            vp::PercussionEngine stress;
+            stress.prepare (sr);
+            stress.setGroove (bpm, pulses);
+            stress.setVolume (1.0f);
+            std::vector<float> sl (static_cast<size_t> (block), 0.0f);
+            std::vector<float> sr2 (static_cast<size_t> (block), 0.0f);
+            const int total = static_cast<int> (sr * 30.0);
+            for (int pos = 0; pos + block <= total; pos += block)
+            {
+                const auto tick = clock.advance (block);
+                stress.render (sl.data(), sr2.data(), block, tick, true);
+            }
+            hardSteals = stress.hardSteals();
+        }
+
+        std::printf ("voice-steal  atSteal=%d  afterRamp=%d  hardSteals=%d\n",
+                     voicesAtSteal, voicesAfterRamp, hardSteals);
+        expect (voicesAtSteal == 2 && voicesAfterRamp == 1 && hardSteals == 0,
+                "a retriggered voice rings out over a ramp instead of being cut, and none are stolen");
+    }
+
+    // B4 - the speaker-leak subtraction has to cover the whole block. It used to
+    // stop at 2048 samples, so on a larger buffer the tail of every block went
+    // through untouched and the splice between the two halves put a step into
+    // the analysis signal once per callback.
+    //
+    // The mic hears the app's own output delayed by the round trip, so the
+    // reference has to be older than the block is long - otherwise the tail of
+    // the block would need output that has not been rendered yet. 150 ms covers
+    // every buffer size used here.
+    {
+        auto leakThrough = [&] (int blk)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, blk, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+            eng.settings().masterVolume.store (1.0f);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.setReportedLatencyMs (150.0f);
+
+            const int delay = static_cast<int> (0.150 * sr);
+            std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
+            int histWrite = 0;
+
+            std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+            std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            eng.start();
+            eng.tapAt (0.0);
+            eng.tapAt (0.5);
+            eng.tapAt (1.0);
+            eng.tapAt (1.5);
+
+            double sum = 0.0;
+            int counted = 0;
+            const int blocks = static_cast<int> (sr * 8.0) / blk;
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < blk; ++i)
+                {
+                    const int ri = (histWrite - delay + i + static_cast<int> (history.size()))
+                                   % static_cast<int> (history.size());
+                    in[static_cast<size_t> (i)] = history[static_cast<size_t> (ri)] * 0.6f;
+                }
+                const float* ins[1] = { in.data() };
+                eng.process (ins, 1, outs, 2, blk);
+                for (int i = 0; i < blk; ++i)
+                {
+                    history[static_cast<size_t> (histWrite)] =
+                        0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                    histWrite = (histWrite + 1) % static_cast<int> (history.size());
+                }
+                const auto snap = eng.snapshot();
+                // Loud blocks only: below 0.25 the analysis make-up gain kicks in
+                // and the ratio would stop describing the subtraction.
+                if (b > blocks / 3 && snap.inputPeak > 0.25f)
+                {
+                    sum += static_cast<double> (snap.analysisPeak / snap.inputPeak);
+                    ++counted;
+                }
+            }
+            return counted > 0 ? static_cast<float> (sum / counted) : 1.0f;
+        };
+
+        const float small = leakThrough (1024);
+        const float large = leakThrough (4096);
+        std::printf ("leak-residual  through@1024=%.3f  through@4096=%.3f\n", small, large);
+        // Fixed, the big block cancels slightly better than the small one
+        // (0.57 vs 0.62 here); truncated, the untouched tail pushes it to 0.79.
+        expect (large <= small * 1.10f,
+                "speaker-leak subtraction covers a block larger than the old 2048 cap");
     }
 
     vpRunAiBeatTests (gPassed, gFailed);

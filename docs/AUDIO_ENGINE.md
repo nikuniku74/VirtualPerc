@@ -31,7 +31,7 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 ## Voices
 
-Up to 12 overlapping shaker grains. Steal quietest. Sample data lives in a precomputed buffer generated at prepare.
+Up to 12 overlapping grains. Retriggering an instrument releases its previous voice over a ~2.5 ms ramp starting at the new note's sample offset, rather than switching it off mid-cycle; only when no voice is idle at all is the quietest one taken outright, which the tests assert never happens on a 1/16 grid. Sample data lives in a precomputed buffer generated at prepare.
 
 ## Latency display
 

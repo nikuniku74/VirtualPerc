@@ -39,9 +39,15 @@ public:
         and however late the worker thread happened to be scheduled. */
     int64_t samplesFed() const noexcept { return fedTotal.load (std::memory_order_relaxed); }
 
+    /** How many times the worker found the FIFO had overrun and re-primed the
+        analysis chain. Non-zero means the worker fell far enough behind to lose
+        audio; the tests assert on it so a silent overrun cannot pass for a
+        clean run. */
+    int64_t discontinuities() const noexcept { return gapCount.load (std::memory_order_relaxed); }
+
 private:
     void workerLoop();
-    int64_t analysisSampleFor (uint64_t frameIndex) const noexcept;
+    int64_t analysisSampleFor (uint64_t frameIndex) noexcept;
 
     AudioFifo fifo;
     LinearResampler resampler;
@@ -57,6 +63,13 @@ private:
     std::atomic<bool> armed { false };
     std::atomic<bool> onnxFlag { false };
     std::atomic<int64_t> fedTotal { 0 };
+    std::atomic<int64_t> gapCount { 0 };
+    uint64_t seenDropped = 0;
+    /** Model samples of extra priming the feature extractor has needed across
+        all discontinuities. After a reset it buffers a whole frame before
+        emitting again, not one hop, so without this every later frame would be
+        timestamped early by that difference. */
+    int64_t modelRefill = 0;
     double deviceSr = 48000.0;
     double inputSamplesPerModelSample = 1.0;
 };
