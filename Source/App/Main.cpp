@@ -26,10 +26,7 @@ public:
     {
     public:
         explicit MainWindow (juce::String name)
-            : DocumentWindow (name,
-                              juce::Desktop::getInstance().getDefaultLookAndFeel()
-                                  .findColour (backgroundColourId),
-                              allButtons)
+            : DocumentWindow (name, juce::Colour (0xff050506), allButtons)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);

@@ -6,7 +6,8 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 class MainComponent final : public juce::AudioAppComponent,
-                            private juce::Timer
+                            private juce::Timer,
+                            private juce::DarkModeSettingListener
 {
 public:
     MainComponent();
@@ -21,10 +22,12 @@ public:
 
 private:
     void timerCallback() override;
+    void darkModeSettingChanged() override;
     void startPressed();
     void stopPressed();
     void tapPressed();
     void refreshTapButton();
+    void refreshStartButton();
     void applyLatencyFromDevice();
     void openAudioDevice (bool micGranted);
     void applyHardwareAudioSetup (int inputChannels);
@@ -35,15 +38,16 @@ private:
     void applyStyle (vp::GrooveStyle s);
     void applyStyleAuto (bool on);
     void refreshStyleButtons();
+    void applyTheme (bool dark, bool manualOverride);
+    void refreshThemeColours();
     void applyTempoOctave (int octaves);
     void refreshOctaveButtons();
 
     juce::Rectangle<int> layoutColumn() const;
 
     /** Portrait stacks the stage over the console; landscape puts them side by
-        side. The old layout only ever stacked, so in landscape the stage was
-        squeezed until the feel controls had to be dropped outright - which is
-        why they used to disappear when the iPad was turned. */
+        side. Stacking in both is what used to force the feel controls off the
+        screen when the iPad was turned. */
     bool isLandscape() const;
 
     /** A titled group of controls. The console is a handful of these rather
@@ -60,8 +64,7 @@ private:
 
     /** The stage laid out row by row. Both resized() and paint() ask for it, so
         the halve/double buttons cannot end up somewhere other than beside the
-        number they apply to - which is what happened when each worked the
-        geometry out for itself. */
+        number they apply to. */
     struct StageRows
     {
         juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoLine, beats, part, meter, mic;
@@ -77,40 +80,39 @@ private:
     void paintCards (juce::Graphics& g);
     juce::Rectangle<int> layoutConsole (juce::Rectangle<int> area);
 
-    struct BigButtonLookAndFeel final : juce::LookAndFeel_V4
+    struct AppLookAndFeel : juce::LookAndFeel_V4
     {
-        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
-        {
-            return juce::Font (juce::FontOptions (juce::jmax (32.0f, (float) buttonHeight * 0.36f),
-                                                 juce::Font::bold));
-        }
+        AppLookAndFeel();
+        void refreshColours();
+
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+        /** Sized against the width as well as the height. Scaling by height
+            alone meant a button narrow enough - PARTE holds five of them - got
+            a label too wide for it, and JUCE answers that with an ellipsis:
+            MARCHA and DANCE came out as "MAR..." and "DAN..." the moment the
+            iPad was turned. */
+        void drawButtonText (juce::Graphics&, juce::TextButton&,
+                             bool shouldDrawButtonAsHighlighted,
+                             bool shouldDrawButtonAsDown) override;
+        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                                   bool shouldDrawButtonAsHighlighted,
+                                   bool shouldDrawButtonAsDown) override;
+        int getSliderThumbRadius (juce::Slider&) override;
+        void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
+                               float sliderPos, float minSliderPos, float maxSliderPos,
+                               juce::Slider::SliderStyle, juce::Slider&) override;
     };
 
-    struct SliderLookAndFeel final : juce::LookAndFeel_V4
+    struct TapLookAndFeel final : AppLookAndFeel
     {
-        int getSliderThumbRadius (juce::Slider&) override { return 16; }
-
-        void drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
-                               float sliderPos, float, float, juce::Slider::SliderStyle,
-                               juce::Slider& slider) override
-        {
-            juce::ignoreUnused (slider);
-            const float trackH = 8.0f;
-            const float cy = static_cast<float> (y) + 0.5f * static_cast<float> (height);
-            juce::Rectangle<float> track (static_cast<float> (x), cy - trackH * 0.5f,
-                                          static_cast<float> (width), trackH);
-            g.setColour (juce::Colour (0xff2c333c));
-            g.fillRoundedRectangle (track, 4.0f);
-            auto filled = track.withWidth (juce::jmax (trackH, sliderPos - static_cast<float> (x)));
-            g.setColour (juce::Colour (0xfff5a623));
-            g.fillRoundedRectangle (filled, 4.0f);
-            g.setColour (juce::Colours::white);
-            g.fillEllipse (sliderPos - 16.0f, cy - 16.0f, 32.0f, 32.0f);
-        }
+        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
+        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
+                                   bool shouldDrawButtonAsHighlighted,
+                                   bool shouldDrawButtonAsDown) override;
     };
 
-    BigButtonLookAndFeel tapLaf;
-    SliderLookAndFeel sliderLaf;
+    AppLookAndFeel appLaf;
+    TapLookAndFeel tapLaf;
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 
@@ -122,6 +124,7 @@ private:
     juce::TextButton shakerButton { "SHAKER  ON" };
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
+    juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton congasButton { "CONGAS  ON" };
@@ -137,11 +140,13 @@ private:
 
     juce::AudioBuffer<float> inputScratch;
 
-    /** Where the beat dots are drawn, so the timer can repaint that strip alone
-        at the frame rate the eye needs without redrawing the whole console. */
+    /** Where the beat dots are drawn, kept so the timer can repaint that strip
+        alone rather than the whole console. */
     juce::Rectangle<int> beatStrip;
 
     bool debugOpen = false;
+    bool darkMode = true;
+    bool themeFollowsSystem = true;
     bool audioReady = false;
     bool audioOpened = false;
     bool micGranted = false;

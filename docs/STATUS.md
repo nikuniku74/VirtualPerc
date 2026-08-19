@@ -283,6 +283,7 @@ quattro erano intestabili.
 | Comando | Cosa fa |
 |---|---|
 | **÷2 / ×2** | dimezza o raddoppia il livello metrico, quando l'analisi lo legge un'ottava fuori. Premere di nuovo lo stesso tasto torna a quello misurato |
+| **DARK / LIGHT** | tema. All'avvio segue l'impostazione di sistema; toccarlo lo fissa |
 | **AUTO / MARCHA / ROCK / DANCE / POP** | la parte che suona. AUTO lascia scegliere allo `StyleDetector`; premere una parte a mano spegne AUTO |
 | **SHAKER / CONGAS** | accendono e spengono i due strumenti separatamente |
 | **SOURCE (IPAD / MIXER)** | microfono in stanza contro mic ravvicinato |
@@ -298,17 +299,24 @@ visibili anche in orizzontale: vedi la sezione sull'interfaccia più sotto.
 
 ## L'interfaccia (19 agosto, sera)
 
-Rifatta. Prima era una colonna di righe tutte dello stesso peso, con in mezzo
-righe di diagnostica (`AI ONNX | IPAD | nn 120 | p 0.42 valid`) che sono uscita
-di debug, non una superficie da suonare; e in orizzontale non ci stava, quindi
-SWING ed ENERGIA venivano semplicemente **nascoste**.
+Due linee di lavoro unite: da `main` il **linguaggio visivo e il tema
+light/dark** (palette fucsia, `AppLookAndFeel` piatto con la sottolineatura
+sull'attivo, tipografia Futura/Avenir, bagliori radiali, interruttore del tema e
+ascolto dell'impostazione di sistema); da qui il **layout** e i comandi che il
+motore aveva ma non erano raggiungibili.
+
+Prima era una colonna di righe tutte dello stesso peso, con in mezzo righe di
+diagnostica (`AI ONNX | IPAD | nn 120 | p 0.42 valid`) che sono uscita di debug,
+non una superficie da suonare; e in orizzontale non ci stava, quindi SWING ed
+ENERGIA venivano semplicemente **nascoste**.
 
 Ora sono due zone:
 
-- **Palco** — quello che guardi mentre suoni: stato, BPM grande, come il tempo
-  è tenuto (`FISSO` / `VIVO` / `CERCO`, più «livello provvisorio» finché
-  l'analisi non ha deciso), quattro pallini con l'uno segnato, e una riga sola
-  sull'ingresso in italiano (`SENTO LA STANZA`) invece di quattro numeri.
+- **Palco** — quello che guardi mentre suoni: stato, BPM grande con **÷2** e
+  **×2** ai lati, come il tempo è tenuto (`FISSO` / `VIVO` / `CERCO`, più
+  «livello provvisorio» finché l'analisi non ha deciso), quattro pallini con
+  l'uno segnato, e una riga sola sull'ingresso in italiano (`SENTO LA STANZA`)
+  invece di quattro numeri.
 - **Console** — quattro schede intitolate: **TRASPORTO** (START/STOP grandi più
   TAP), **PARTE**, **STRUMENTI**, **FEEL**. Un comando si cerca per *posto*, non
   per posizione in un elenco.
@@ -317,11 +325,36 @@ In orizzontale le due zone si affiancano invece di impilarsi: **non si nasconde
 più niente**. I numeri di diagnostica sono tutti nel pannello **DBG**, che ora
 riporta anche `tempo`, `livello`, `fold` e `ottava`.
 
+### Il tema light era scuro
+
+Era un difetto vero, non un'impressione. `ink()` — il colore con cui viene
+riempito **ogni** bottone — valeva `0xff211d24` anche in chiaro, cioè un
+quasi-nero, e il testo dei bottoni era forzato a bianco in entrambi i temi.
+Risultato: fondo chiaro e sopra un muro di bottoni neri, che è esattamente come
+appare un tema scuro. Ora `ink()` in chiaro è una superficie chiara e il testo
+segue `text()`, tranne dove il riempimento è fucsia — lì il bianco è giusto.
+
+Aggiustato anche quello che era tarato solo sul fondo nero: i bagliori radiali
+(un terzo dell'intensità in chiaro, altrimenti sono una nuvola rosa sulla
+pagina), l'ombra fucsia sotto le cifre del BPM, e il meter d'ingresso, che
+sfumava verso `text()` e quindi in chiaro finiva nel nero.
+
+E il font dei bottoni veniva scalato solo sull'altezza: in orizzontale, dove la
+scheda PARTE ne mette cinque in fila, JUCE rispondeva con i puntini di
+sospensione e si leggeva `MAR...` e `DAN...`. Ora la larghezza viene misurata e
+il corpo ridotto quanto serve.
+
+Guardata davvero in tutte e quattro le combinazioni — chiaro e scuro, verticale
+e orizzontale — su un display virtuale, non solo compilata.
+
 ## Checklist device
 
 Base — deve funzionare:
 
 - [ ] Riga UI: AI ONNX + IPAD (non STUB, non MIXER)
+- [ ] Tema: chiaro **davvero** chiaro, scuro scuro, e il cambio non lascia
+      indietro nessun bottone. Ruota l'iPad in entrambi i temi: non deve sparire
+      nessun comando e nessuna scritta deve finire con i puntini
 - [ ] CLICK TEST → FOLLOWING, shaker dopo START
 - [ ] Spotify SPEAKER → FOLLOWING senza TAP, shaker dopo START
 
