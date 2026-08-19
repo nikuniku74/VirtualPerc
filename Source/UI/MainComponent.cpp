@@ -37,7 +37,19 @@ namespace
 MainComponent::MainComponent()
 {
     setOpaque (true);
-    setSize (834, 1112);
+    // iPad portrait by default, but never larger than the display it has to
+    // live on: on a desktop the old fixed size ran off the bottom of a short
+    // screen, taking the feel controls with it.
+    {
+        int w = 834, h = 1112;
+        if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        {
+            const auto area = display->userArea;
+            w = juce::jmin (w, juce::jmax (600, area.getWidth() - 40));
+            h = juce::jmin (h, juce::jmax (520, area.getHeight() - 60));
+        }
+        setSize (w, h);
+    }
 
     auto setupBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
@@ -61,6 +73,20 @@ MainComponent::MainComponent()
     setupBtn (styleDance, juce::Colour (0xff2a333e));
     setupBtn (stylePop, juce::Colour (0xff2a333e));
     setupBtn (subAuto, juce::Colour (0xff2a333e));
+    setupBtn (halveButton, juce::Colour (0xff232a33));
+    setupBtn (doubleButton, juce::Colour (0xff232a33));
+
+    // Half and double. The one part of the metrical level that the signal does
+    // not decide - full eighths under a slow tempo read as well at the double -
+    // is decided here instead, by the person listening, in one tap.
+    halveButton.onClick = [this]
+    {
+        applyTempoOctave (engine.settings().tempoOctave.load() < 0 ? 0 : -1);
+    };
+    doubleButton.onClick = [this]
+    {
+        applyTempoOctave (engine.settings().tempoOctave.load() > 0 ? 0 : 1);
+    };
     setupBtn (sub4, juce::Colour (0xff2a333e));
     setupBtn (sub8, juce::Colour (0xff2a333e));
     setupBtn (sub16, juce::Colour (0xff2a333e));
@@ -169,6 +195,7 @@ MainComponent::MainComponent()
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
     refreshStyleButtons();
+    refreshOctaveButtons();
     refreshSubdivisionButtons();
 
     startTimerHz (15);
@@ -328,6 +355,27 @@ void MainComponent::applyStyle (vp::GrooveStyle s)
     refreshStyleButtons();
 }
 
+void MainComponent::applyTempoOctave (int octaves)
+{
+    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, octaves));
+    refreshOctaveButtons();
+    repaint();
+}
+
+void MainComponent::refreshOctaveButtons()
+{
+    const int oct = engine.settings().tempoOctave.load();
+    auto paint = [] (juce::TextButton& b, bool on)
+    {
+        b.setColour (juce::TextButton::buttonColourId,
+                     on ? juce::Colour (0xff8a5a12) : juce::Colour (0xff232a33));
+        b.setColour (juce::TextButton::textColourOffId,
+                     on ? juce::Colours::white : juce::Colour (0xff9aa3ad));
+    };
+    paint (halveButton, oct < 0);
+    paint (doubleButton, oct > 0);
+}
+
 void MainComponent::applyStyleAuto (bool on)
 {
     engine.settings().grooveAuto.store (on);
@@ -359,26 +407,6 @@ void MainComponent::refreshStyleButtons()
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::dance));
     paint (stylePop, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::pop),
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::pop));
-}
-
-namespace
-{
-    // start/stop + TAP + subdivisions + style + instruments + reverb
-    constexpr int kControlsBase = 86 + 118 + 48 + 48 + 56 + 58;
-    constexpr int kTrimRow = 58;
-    // What the status block above needs: title, state pill, BPM, engine line,
-    // meter, beat dots and the mic line.
-    constexpr int kStatusMin = 300;
-}
-
-bool MainComponent::showTrimRow() const
-{
-    return layoutColumn().getHeight() - (kControlsBase + kTrimRow) >= kStatusMin;
-}
-
-int MainComponent::controlsHeight() const
-{
-    return kControlsBase + (showTrimRow() ? kTrimRow : 0);
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -491,157 +519,348 @@ juce::Rectangle<int> MainComponent::layoutColumn() const
 {
     auto r = getLocalBounds();
    #if JUCE_IOS
-    if (auto* d = getPeer())
-        juce::ignoreUnused (d);
-    r = r.reduced (28, 24).withTrimmedTop (18);
+    r = r.reduced (24, 20).withTrimmedTop (16);
    #else
-    r = r.reduced (36, 28);
+    r = r.reduced (30, 24);
    #endif
     return r;
+}
+
+bool MainComponent::isLandscape() const
+{
+    return getWidth() > getHeight();
+}
+
+juce::Rectangle<int> MainComponent::stageArea() const
+{
+    auto r = layoutColumn();
+    r.removeFromTop (34 + 8);
+    if (isLandscape())
+        return r.removeFromLeft (juce::roundToInt (static_cast<float> (r.getWidth()) * 0.44f));
+
+    const int consoleH = juce::jlimit (330, 560,
+                                       juce::roundToInt (static_cast<float> (r.getHeight()) * 0.54f));
+    return r.removeFromTop (juce::jmax (240, r.getHeight() - consoleH));
+}
+
+MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) const
+{
+    // Sized first, placed second. The rows have natural heights; whatever is
+    // left over is split above and below so the block sits in the middle of
+    // whatever space the orientation happens to give it, instead of piling up
+    // at the top and leaving a hole - which is what the first pass did.
+    const int bpmH = juce::jlimit (72, 156, area.getHeight() / 4);
+    const int beatsH = juce::jlimit (52, 96, area.getHeight() / 6);
+
+    const int content = 18 + 6 + 40 + 12 + bpmH + 16 + 20 + 10 + beatsH + 20 + 10 + 10 + 18;
+    const int slack = juce::jmax (0, area.getHeight() - content);
+    // A third above rather than a half: dead centre in a tall landscape column
+    // leaves the tempo sitting below the middle of the screen, and the eye
+    // expects the thing it is reading to be in the upper half.
+    area.removeFromTop (slack / 3);
+
+    StageRows s;
+    s.title = area.removeFromTop (18);
+    area.removeFromTop (6);
+    s.pill = area.removeFromTop (40).reduced (juce::jmax (0, area.getWidth() / 10), 0);
+    area.removeFromTop (12);
+    s.bpm = area.removeFromTop (bpmH);
+    {
+        // A bounded block, centred. Wider than this and the two buttons sit so
+        // far from the number that they read as unrelated; narrower and the
+        // number has nowhere to go.
+        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 430), bpmH);
+        const int octW = juce::jlimit (48, 78, block.getWidth() / 6);
+        s.octaveDown = block.removeFromLeft (octW).reduced (0, bpmH / 5);
+        s.octaveUp = block.removeFromRight (octW).reduced (0, bpmH / 5);
+        s.bpmNumber = block.reduced (8, 0);
+    }
+    s.bpmLabel = area.removeFromTop (16);
+    s.tempoLine = area.removeFromTop (20);
+    area.removeFromTop (10);
+    s.beats = area.removeFromTop (beatsH);
+    s.part = area.removeFromTop (20);
+    area.removeFromTop (10);
+    s.meter = area.removeFromTop (10).reduced (juce::jmax (0, area.getWidth() / 6), 2);
+    s.mic = area.removeFromTop (18);
+    return s;
+}
+
+juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
+{
+    cards.clearQuick();
+
+    // Proportional, not fixed: the same five cards have to fit an iPad in
+    // portrait, the same iPad turned, and a desktop window someone has dragged
+    // to an odd size. Fixed row heights are what made the feel controls
+    // undroppable in one orientation and impossible in the other.
+    const int gap = 10;
+    const int titleH = 18;
+    auto card = [&] (juce::Rectangle<int> bounds, const char* title)
+    {
+        cards.add ({ bounds, juce::String (title) });
+        return bounds.reduced (12, 10).withTrimmedTop (titleH);
+    };
+
+    const int n = area.getHeight();
+    // Weights, summing to one. Transport is the biggest thing on the console
+    // because it is the thing hit under pressure.
+    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.30f);
+    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.16f);
+    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.22f);
+
+    {
+        auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
+        auto row = body.removeFromTop (juce::roundToInt (static_cast<float> (body.getHeight()) * 0.55f));
+        startButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (4));
+        stopButton.setBounds (row.reduced (4));
+        tapButton.setBounds (body.reduced (4, 3));
+        area.removeFromTop (gap);
+    }
+
+    {
+        auto body = card (area.removeFromTop (hPart), "PARTE");
+        const int w = body.getWidth() / 5;
+        styleAuto.setBounds (body.removeFromLeft (w).reduced (3));
+        styleMarcha.setBounds (body.removeFromLeft (w).reduced (3));
+        styleRock.setBounds (body.removeFromLeft (w).reduced (3));
+        styleDance.setBounds (body.removeFromLeft (w).reduced (3));
+        stylePop.setBounds (body.reduced (3));
+        area.removeFromTop (gap);
+    }
+
+    {
+        auto body = card (area.removeFromTop (hInst), "STRUMENTI");
+        auto top = body.removeFromTop (body.getHeight() / 2);
+        shakerButton.setBounds (top.removeFromLeft (top.getWidth() / 2).reduced (3));
+        congasButton.setBounds (top.reduced (3));
+        const int w = body.getWidth() / 4;
+        subAuto.setBounds (body.removeFromLeft (w).reduced (3));
+        sub4.setBounds (body.removeFromLeft (w).reduced (3));
+        sub8.setBounds (body.removeFromLeft (w).reduced (3));
+        sub16.setBounds (body.reduced (3));
+        area.removeFromTop (gap);
+    }
+
+    {
+        // Whatever is left goes to feel. Three sliders always fit, because
+        // three sliders will squeeze; the alternative was hiding them.
+        auto body = card (area, "FEEL");
+        const int rowH = body.getHeight() / 3;
+        auto slider = [&] (juce::Label& label, juce::Slider& s, juce::Rectangle<int> row)
+        {
+            label.setBounds (row.removeFromLeft (96).reduced (4, 4));
+            s.setBounds (row.reduced (8, 3));
+        };
+        slider (swingLabel, swingSlider, body.removeFromTop (rowH));
+        slider (intensityLabel, intensitySlider, body.removeFromTop (rowH));
+        slider (reverbLabel, reverbSlider, body);
+    }
+
+    for (auto* c : { &swingSlider, &intensitySlider })
+        c->setVisible (true);
+    swingLabel.setVisible (true);
+    intensityLabel.setVisible (true);
+    return area;
 }
 
 void MainComponent::resized()
 {
     auto r = layoutColumn();
-    auto bottom = r.removeFromBottom (86);
-    startButton.setBounds (bottom.removeFromLeft (bottom.getWidth() / 2).reduced (6));
-    stopButton.setBounds (bottom.reduced (6));
 
-    tapButton.setBounds (r.removeFromBottom (118).reduced (4, 6));
+    // The utility row goes in a corner of the *stage*, not across the top of
+    // everything: pushed to the right in landscape it lands on the console and
+    // reads as part of the transport card, which is the one place a stray tap
+    // does damage.
+    const auto stage = stageArea();
+    auto util = r.removeFromTop (34);
+    if (isLandscape())
+        util = util.withWidth (stage.getWidth());
+    debugButton.setBounds (util.removeFromRight (56).reduced (2));
+    util.removeFromRight (6);
+    clickButton.setBounds (util.removeFromRight (112).reduced (2));
+    util.removeFromRight (6);
+    sourceButton.setBounds (util.removeFromRight (96).reduced (2));
+    r.removeFromTop (8);
+    if (isLandscape())
+        r.removeFromLeft (stage.getWidth() + 16);
+    else
+        r.removeFromTop (stage.getHeight() + 14);
 
-    auto subs = r.removeFromBottom (48);
-    const int sw = subs.getWidth() / 4;
-    subAuto.setBounds (subs.removeFromLeft (sw).reduced (4));
-    sub4.setBounds (subs.removeFromLeft (sw).reduced (4));
-    sub8.setBounds (subs.removeFromLeft (sw).reduced (4));
-    sub16.setBounds (subs.reduced (4));
+    // The halve/double pair flanks the number it applies to, close enough to
+    // read as belonging to it and never overlapping it.
+    const auto rows = stageRows (stage);
+    halveButton.setBounds (rows.octaveDown);
+    doubleButton.setBounds (rows.octaveUp);
 
-    // The part comes before the instruments: it is the biggest single choice
-    // the player makes, and three of the four were unreachable before.
-    auto styles = r.removeFromBottom (48);
-    const int stw = styles.getWidth() / 5;
-    styleAuto.setBounds (styles.removeFromLeft (stw).reduced (3));
-    styleMarcha.setBounds (styles.removeFromLeft (stw).reduced (3));
-    styleRock.setBounds (styles.removeFromLeft (stw).reduced (3));
-    styleDance.setBounds (styles.removeFromLeft (stw).reduced (3));
-    stylePop.setBounds (styles.reduced (3));
+    layoutConsole (r);
+}
 
-    auto inst = r.removeFromBottom (56);
-    const int iw = inst.getWidth() / 3;
-    sourceButton.setBounds (inst.removeFromLeft (iw).reduced (4, 6));
-    shakerButton.setBounds (inst.removeFromLeft (iw).reduced (4, 6));
-    congasButton.setBounds (inst.reduced (4, 6));
+void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    const auto rows = stageRows (area);
 
-    auto verb = r.removeFromBottom (58);
-    reverbLabel.setBounds (verb.removeFromLeft (108).reduced (4, 8));
-    reverbSlider.setBounds (verb.reduced (10, 6));
+    g.setColour (mute());
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawFittedText ("VIRTUAL PERCUSSIONIST", rows.title, juce::Justification::centred, 1);
 
-    const bool trims = showTrimRow();
-    swingSlider.setVisible (trims);
-    swingLabel.setVisible (trims);
-    intensitySlider.setVisible (trims);
-    intensityLabel.setVisible (trims);
-    if (trims)
+    // What the tracker is doing, in one word, in a colour. This is the line a
+    // player glances at between phrases.
+    g.setColour (stateColour (snap.followBar));
+    g.fillRoundedRectangle (rows.pill.toFloat(), 20.0f);
+    g.setColour (juce::Colours::black);
+    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    g.drawFittedText (juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))),
+                      rows.pill, juce::Justification::centred, 1);
+
+    // The tempo, sized to the room it has rather than to a constant, so it is
+    // the biggest thing on the screen in portrait and still the biggest thing
+    // when the iPad is turned.
+    const bool haveBpm = snap.bpm > 40.0f;
+    if (haveBpm)
     {
-        auto trim = r.removeFromBottom (58);
-        auto left = trim.removeFromLeft (trim.getWidth() / 2);
-        swingLabel.setBounds (left.removeFromLeft (86).reduced (4, 8));
-        swingSlider.setBounds (left.reduced (8, 6));
-        intensityLabel.setBounds (trim.removeFromLeft (96).reduced (4, 8));
-        intensitySlider.setBounds (trim.reduced (8, 6));
+        // Sized against the width by measurement, not by drawFittedText: with
+        // one line to work with that squashes to 70% and then puts an ellipsis
+        // in, so a five-character tempo in a narrow landscape column came out
+        // as "11...". Measure, scale, draw.
+        const juce::String text (snap.bpm, 1);
+        const float wanted = static_cast<float> (rows.bpm.getHeight()) * 0.92f;
+        juce::Font f (juce::FontOptions (wanted, juce::Font::bold));
+        const float textW = juce::GlyphArrangement::getStringWidth (f, text);
+        const float roomW = static_cast<float> (rows.bpmNumber.getWidth());
+        if (textW > roomW && textW > 1.0f)
+            f = f.withHeight (wanted * roomW / textW);
+        g.setColour (juce::Colours::white);
+        g.setFont (f);
+        g.drawText (text, rows.bpmNumber, juce::Justification::centred, false);
+    }
+    else
+    {
+        // Two drawn bars rather than "--" in the tempo's own font. A hyphen is
+        // a hairline a tenth of its em tall, so set at the size the number
+        // wants it reads as something broken rather than as a blank waiting to
+        // be filled.
+        const float barW = static_cast<float> (rows.bpm.getHeight()) * 0.34f;
+        const float barH = juce::jmax (6.0f, static_cast<float> (rows.bpm.getHeight()) * 0.10f);
+        const float gap = barW * 0.35f;
+        const float cx = static_cast<float> (rows.bpmNumber.getCentreX());
+        const float cy = static_cast<float> (rows.bpmNumber.getCentreY());
+        g.setColour (juce::Colour (0xff2b323b));
+        g.fillRoundedRectangle (cx - barW - gap * 0.5f, cy - barH * 0.5f, barW, barH, barH * 0.5f);
+        g.fillRoundedRectangle (cx + gap * 0.5f, cy - barH * 0.5f, barW, barH, barH * 0.5f);
+    }
+    g.setColour (mute());
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.drawFittedText ("BPM", rows.bpmLabel, juce::Justification::centred, 1);
+
+    // How the tempo is being held. Since the tracking work this is the most
+    // useful line on the screen when something looks wrong: a tempo that says
+    // FISSO and will not stop moving is a different fault from one that never
+    // leaves CERCO.
+    const bool held = snap.tempoRegime == 1;
+    g.setColour (held ? live() : (snap.tempoRegime == 2 ? warn() : mute()));
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    juce::String tempoLine = juce::String (vp::regimeLabel (snap.tempoRegime));
+    if (! snap.levelSettled)
+        tempoLine += juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  livello provvisorio"));
+    if (snap.tempoOctave != 0)
+        tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0 ? "  \xc2\xb7  a met\xc3\xa0"
+                                                                                : "  \xc2\xb7  doppio"));
+    g.drawFittedText (tempoLine, rows.tempoLine, juce::Justification::centred, 1);
+
+    // Four beats, the one marked. Big enough to read at arm's length on a
+    // stand, which the old 28-pixel dots were not, and lit from the clock
+    // rather than from whether a sample happens to be sounding - a player
+    // watching the bar wants to see it turn over before START, not after.
+    beatStrip = rows.beats;
+    {
+        const int bandW = juce::jmin (rows.beats.getWidth(), 400);
+        const auto band = rows.beats.withSizeKeepingCentre (bandW, rows.beats.getHeight());
+        // The lit beat wears a halo of 1.8 radii, so the radius has to leave
+        // room for it inside the row - otherwise the glow spills onto the line
+        // of text below, which is what it did.
+        const float rad = juce::jmin (24.0f, static_cast<float> (rows.beats.getHeight()) * 0.27f);
+        const float y = static_cast<float> (band.getCentreY());
+        const float step = static_cast<float> (band.getWidth()) / 4.0f;
+        const int beatIdx = juce::jlimit (0, 3, static_cast<int> (snap.barPhase * 4.0f));
+        const bool running = snap.bpm > 40.0f;
+        for (int i = 0; i < 4; ++i)
+        {
+            const float x = static_cast<float> (band.getX()) + step * (static_cast<float> (i) + 0.5f);
+            const bool on = running && beatIdx == i;
+            const bool one = i == 0;
+            if (on)
+            {
+                g.setColour ((one ? amber() : live()).withAlpha (0.20f));
+                g.fillEllipse (x - rad * 1.8f, y - rad * 1.8f, rad * 3.6f, rad * 3.6f);
+            }
+            g.setColour (on ? (one ? amber() : live()) : juce::Colour (0xff262d36));
+            g.fillEllipse (x - rad, y - rad, rad * 2.0f, rad * 2.0f);
+            if (one)
+            {
+                g.setColour (on ? juce::Colours::black.withAlpha (0.35f) : juce::Colour (0xff3d4854));
+                g.drawEllipse (x - rad, y - rad, rad * 2.0f, rad * 2.0f, 2.0f);
+            }
+        }
     }
 
-    debugButton.setBounds (getLocalBounds().removeFromTop (36).removeFromRight (56).reduced (6));
-    clickButton.setBounds (getLocalBounds().removeFromTop (36).removeFromRight (170).removeFromLeft (110).reduced (6));
+    // Which part is playing, and under AUTO how sure the detector is.
+    g.setColour (mute());
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawFittedText (juce::String ("PARTE  ")
+                          + vp::toString (static_cast<vp::GrooveStyle> (snap.grooveStyle))
+                          + (engine.settings().grooveAuto.load()
+                                 ? "   (auto " + juce::String (snap.grooveStyleConfidence, 2) + ")"
+                                 : juce::String()),
+                      rows.part, juce::Justification::centred, 1);
+
+    // Input. A bar and a phrase: enough to tell "the microphone is hearing the
+    // room" from "the microphone is hearing nothing", which is the only
+    // question the old row of numbers was ever answering.
+    g.setColour (juce::Colour (0xff232a33));
+    g.fillRoundedRectangle (rows.meter.toFloat(), 4.0f);
+    const float level = juce::jlimit (0.0f, 1.0f, std::sqrt (juce::jmax (0.0f, snap.inputPeak)) * 3.2f);
+    const bool listening = inputChannels > 0 && micGranted;
+    g.setColour (listening ? live() : juce::Colour (0xffff5a5a));
+    g.fillRoundedRectangle (rows.meter.toFloat().withWidth (
+                                juce::jmax (4.0f, static_cast<float> (rows.meter.getWidth()) * level)), 4.0f);
+
+    g.setColour (mute());
+    g.setFont (juce::FontOptions (12.0f));
+    const juce::String micText = ! micGranted ? "MICROFONO NEGATO"
+                               : (inputChannels <= 0 ? "MICROFONO SPENTO"
+                               : (snap.inputPeak > 0.0012f ? "SENTO LA STANZA"
+                                                           : "IN ASCOLTO"));
+    const juce::String dot (juce::CharPointer_UTF8 ("   \xc2\xb7   "));
+    g.drawFittedText (micText + dot + (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER")
+                          + (snap.aiOnnx ? juce::String() : dot + "AI STUB"),
+                      rows.mic, juce::Justification::centred, 1);
+}
+
+void MainComponent::paintCards (juce::Graphics& g)
+{
+    for (const auto& c : cards)
+    {
+        g.setColour (panel());
+        g.fillRoundedRectangle (c.bounds.toFloat(), 14.0f);
+        g.setColour (mute());
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawFittedText (c.title, c.bounds.reduced (14, 8).removeFromTop (14),
+                          juce::Justification::topLeft, 1);
+    }
 }
 
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (bg());
-    auto r = layoutColumn();
-    r.removeFromBottom (controlsHeight());
 
-    g.setColour (mute());
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    g.drawFittedText ("VIRTUAL PERCUSSIONIST", r.removeFromTop (24), juce::Justification::centred, 1);
-
-    auto stateR = r.removeFromTop (42).reduced (r.getWidth() / 12, 2);
-    g.setColour (stateColour (snap.followBar));
-    g.fillRoundedRectangle (stateR.toFloat(), 16.0f);
-    g.setColour (juce::Colours::black);
-    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    g.drawFittedText (juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))),
-                      stateR, juce::Justification::centred, 1);
-
-    r.removeFromTop (12);
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::FontOptions (72.0f, juce::Font::bold));
-    const auto bpmText = snap.bpm > 40.0f
-                             ? juce::String (snap.bpm, 1)
-                             : juce::String ("--");
-    g.drawFittedText (bpmText + " BPM", r.removeFromTop (84), juce::Justification::centred, 1);
-
-    g.setColour (snap.aiOnnx ? live() : juce::Colour (0xffff5a5a));
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    const juce::String srcName = snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER";
-    const juce::String nnText = snap.neuralBpm > 40.0f ? juce::String (snap.neuralBpm, 0) : juce::String ("--");
-    g.drawFittedText ((snap.aiOnnx ? juce::String ("AI ONNX") : juce::String ("AI STUB"))
-                          + " | " + srcName
-                          + " | nn " + nnText
-                          + " | p " + juce::String (snap.pBeat, 2)
-                          + (snap.hypValid ? "  valid" : "  wait"),
-                      r.removeFromTop (20), juce::Justification::centred, 1);
-
-    // Which part is actually playing. Under AUTO the buttons cannot say, so the
-    // detector's choice and how sure it is are spelled out here.
-    const auto activeStyle = static_cast<vp::GrooveStyle> (snap.grooveStyle);
-    g.setColour (mute());
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawFittedText (juce::String ("PARTE  ") + vp::toString (activeStyle)
-                          + (engine.settings().grooveAuto.load()
-                                 ? "   (auto " + juce::String (snap.grooveStyleConfidence, 2) + ")"
-                                 : juce::String()),
-                      r.removeFromTop (18), juce::Justification::centred, 1);
-
-    auto meterR = r.removeFromTop (14).reduced (r.getWidth() / 5, 2);
-    g.setColour (juce::Colour (0xff2c333c));
-    g.fillRoundedRectangle (meterR.toFloat(), 4.0f);
-    const float level = juce::jlimit (0.0f, 1.0f, std::sqrt (std::max (0.0f, snap.inputPeak)) * 3.2f);
-    g.setColour (inputChannels > 0 ? live() : juce::Colour (0xffff5a5a));
-    g.fillRoundedRectangle (meterR.toFloat().withWidth (static_cast<float> (meterR.getWidth()) * level), 4.0f);
-
-    auto beats = r.removeFromTop (64);
-    const float bw = static_cast<float> (beats.getWidth());
-    const float y = static_cast<float> (beats.getCentreY());
-    for (int i = 0; i < 4; ++i)
-    {
-        const float x = static_cast<float> (beats.getX()) + bw * (0.2f + 0.2f * static_cast<float> (i));
-        const int beatIdx = static_cast<int> (snap.barPhase * 4.0f) & 3;
-        const bool on = snap.percussionAudible && beatIdx == i;
-        g.setColour (on ? amber() : juce::Colour (0xff2c333c));
-        g.fillEllipse (x - 14.0f, y - 14.0f, 28.0f, 28.0f);
-        if (on)
-        {
-            g.setColour (amber().withAlpha (0.25f));
-            g.fillEllipse (x - 22.0f, y - 22.0f, 44.0f, 44.0f);
-        }
-    }
-
-    g.setColour (mute());
-    g.setFont (juce::FontOptions (13.0f));
-    const juce::String micText = ! micGranted ? "MIC DENIED"
-                                : (inputChannels <= 0 ? "MIC OFF"
-                                : (snap.inputPeak > 0.0012f ? "MIC LIVE"
-                                                 : "MIC ON"));
-    g.drawFittedText (micText + "   in " + juce::String (snap.inputPeak, 3)
-                          + "   ch " + juce::String (inputChannels)
-                          + "   Latency " + juce::String (snap.latencyMs, 1) + " ms",
-                      r.removeFromTop (20), juce::Justification::centred, 1);
+    paintCards (g);
+    paintStage (g, stageArea());
 
     if (debugOpen)
     {
-        auto dbg = getLocalBounds().reduced (24).removeFromTop (280);
-        g.setColour (panel().withAlpha (0.94f));
+        auto dbg = getLocalBounds().reduced (24).removeFromTop (300);
+        g.setColour (panel().withAlpha (0.96f));
         g.fillRoundedRectangle (dbg.toFloat(), 12.0f);
         g.setColour (juce::Colours::white);
         g.setFont (juce::FontOptions (13.0f));
@@ -651,15 +870,17 @@ void MainComponent::paint (juce::Graphics& g)
         lines.add (juce::String (snap.source == vp::FollowSource::speaker ? "source IPAD/SPEAKER" : "source MIXER"));
         lines.add ("BPM " + juce::String (snap.bpm, 2) + "  nn " + juce::String (snap.neuralBpm, 2)
                    + "  target " + juce::String (snap.targetBpm, 2));
+        lines.add ("tempo " + juce::String (vp::regimeLabel (snap.tempoRegime))
+                   + "  livello " + juce::String (snap.levelSettled ? "deciso" : "provvisorio")
+                   + "  fold " + (snap.combBpm > 1.0f ? juce::String (snap.combBpm, 1)
+                                                      : juce::String ("--"))
+                   + "  ottava " + juce::String (snap.tempoOctave));
         lines.add ("pBeat " + juce::String (snap.pBeat, 3) + "  valid " + juce::String (snap.hypValid ? 1 : 0)
                    + "  conf " + juce::String (snap.confidence, 3));
         lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
-        lines.add ("tempo " + juce::String (vp::regimeLabel (snap.tempoRegime))
-                   + "  livello " + juce::String (snap.levelSettled ? "deciso" : "provvisorio")
-                   + "  fold " + (snap.combBpm > 1.0f ? juce::String (snap.combBpm, 1)
-                                                      : juce::String ("--")));
-        lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms");
+        lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
+                   + juce::String (snap.leadMs, 1) + " ms");
         lines.add ("sr " + juce::String (snap.sampleRate, 0)
                    + "  mic " + juce::String (snap.inputPeak, 4)
                    + "  analysis " + juce::String (snap.analysisPeak, 4));
@@ -668,7 +889,6 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  voices " + juce::String (snap.shakerVoices));
         lines.add (juce::String (snap.tapLocked ? "tap LOCK" : "tap auto"));
         lines.add ("bar " + juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))));
-        lines.add ("reverb " + juce::String (snap.reverbAmount, 2));
         lines.add ("part " + juce::String (vp::toString (static_cast<vp::GrooveStyle> (snap.grooveStyle)))
                    + (engine.settings().grooveAuto.load() ? "  AUTO" : "  manual")
                    + "  conf " + juce::String (snap.grooveStyleConfidence, 2));

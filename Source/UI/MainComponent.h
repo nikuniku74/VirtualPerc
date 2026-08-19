@@ -35,14 +35,47 @@ private:
     void applyStyle (vp::GrooveStyle s);
     void applyStyleAuto (bool on);
     void refreshStyleButtons();
+    void applyTempoOctave (int octaves);
+    void refreshOctaveButtons();
+
     juce::Rectangle<int> layoutColumn() const;
-    /** Height the control stack needs. `paint` reserves exactly this, so the
-        two cannot drift apart. */
-    int  controlsHeight() const;
-    /** Landscape on an iPad leaves far less height than portrait. When there is
-        not enough room for the status area above, the two trim sliders are the
-        first thing to go - style and instrument selection are not negotiable. */
-    bool showTrimRow() const;
+
+    /** Portrait stacks the stage over the console; landscape puts them side by
+        side. The old layout only ever stacked, so in landscape the stage was
+        squeezed until the feel controls had to be dropped outright - which is
+        why they used to disappear when the iPad was turned. */
+    bool isLandscape() const;
+
+    /** A titled group of controls. The console is a handful of these rather
+        than one column of identical rows: what a player reaches for mid-song
+        is a *place*, not a position in a list. resized() computes them and
+        paint() draws them, so a card and the controls inside it cannot drift
+        apart. */
+    struct Card
+    {
+        juce::Rectangle<int> bounds;
+        juce::String title;
+    };
+    juce::Array<Card> cards;
+
+    /** The stage laid out row by row. Both resized() and paint() ask for it, so
+        the halve/double buttons cannot end up somewhere other than beside the
+        number they apply to - which is what happened when each worked the
+        geometry out for itself. */
+    struct StageRows
+    {
+        juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoLine, beats, part, meter, mic;
+        /** The three columns the tempo row is divided into. The number gets the
+            middle one and nothing else: given the whole row it grew until it
+            ran under the two buttons and out of the column. */
+        juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
+    };
+    StageRows stageRows (juce::Rectangle<int> area) const;
+    juce::Rectangle<int> stageArea() const;
+
+    void paintStage (juce::Graphics& g, juce::Rectangle<int> area);
+    void paintCards (juce::Graphics& g);
+    juce::Rectangle<int> layoutConsole (juce::Rectangle<int> area);
 
     struct BigButtonLookAndFeel final : juce::LookAndFeel_V4
     {
@@ -81,6 +114,8 @@ private:
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 
+    juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
+    juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
     juce::TextButton tapButton { "TAP" };
@@ -101,6 +136,10 @@ private:
     juce::Label  intensityLabel { {}, "ENERGIA" };
 
     juce::AudioBuffer<float> inputScratch;
+
+    /** Where the beat dots are drawn, so the timer can repaint that strip alone
+        at the frame rate the eye needs without redrawing the whole console. */
+    juce::Rectangle<int> beatStrip;
 
     bool debugOpen = false;
     bool audioReady = false;

@@ -100,6 +100,8 @@ void NeuralBeatTracker::workerLoop()
             gapCount.fetch_add (1, std::memory_order_relaxed);
         }
 
+        decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
+
         const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
         if (n <= 0)
         {

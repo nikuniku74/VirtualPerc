@@ -56,11 +56,37 @@ public:
         int   octaveMismatch = 0;
         int   beatsHeld = 0;
         bool  levelSettled = false;
+        int   userOctave = 0;
     };
 
     Diagnostics diagnostics() const noexcept;
 
 private:
+    /** The metrical level the *listener* wants, as octaves away from the one the
+        analysis picked. Zero unless the user has asked for half or double.
+
+        This exists because one part of the octave problem is not solvable from
+        the signal. Measured on BeatNet output from a 76 BPM mix with full
+        eighths, the activation half a beat from the beat stands at 0.73-0.77 of
+        it, against 0.02-0.18 on the same material at 104 and 128: the eighths
+        are as strong as the beats, and 152 is a defensible reading of what the
+        network was given. Moving the estimator's thresholds to break the tie
+        that way makes the aggregate worse, because the same asymmetry is what
+        stops an ordinary rock backbeat being read in half-time. So the tie is
+        broken by the person listening, in one tap, and the analysis carries on
+        unchanged underneath.
+
+        Applied to the fold's answer rather than to the reported number, so the
+        decoder genuinely tracks at the chosen level: the peaks between its
+        beats fall off the grid and are rejected as offbeats, exactly as they
+        would be if the fold had named that level itself. Everything downstream
+        - the fits, the phase, the bar - therefore needs no knowledge of it. */
+public:
+    void setUserOctave (int octaves) noexcept;
+    int  userOctave() const noexcept { return octaveShift; }
+
+private:
+    float applyUserOctave (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec) noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
@@ -123,6 +149,7 @@ private:
         worked for a minute is not overturned as cheaply as one adopted five
         seconds ago. */
     int   beatsOnLevel = 0;
+    int   octaveShift = 0;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
     float longFitBpm = 0.0f;

@@ -198,6 +198,50 @@ void BeatDecoder::reset() noexcept
     hyp = {};
 }
 
+void BeatDecoder::setUserOctave (int octaves) noexcept
+{
+    const int wanted = std::clamp (octaves, -2, 2);
+    if (wanted == octaveShift)
+        return;
+
+    // Move the committed tempo with it and start the grid again. Everything
+    // measured about the level just left describes a different grid: the beat
+    // times are now offbeats (or half of the beats are missing), the fits would
+    // be fitting neither, and the regime was decided about a tempo nobody is
+    // playing any more.
+    const float scale = std::pow (2.0f, static_cast<float> (wanted - octaveShift));
+    octaveShift = wanted;
+    if (bpm >= kMinBpm)
+        bpm = std::clamp (bpm * scale, kMinBpm, kMaxBpm);
+
+    beatWrite = 0;
+    beatFilled = 0;
+    longWrite = 0;
+    longFilled = 0;
+    octaveMismatchBeats = 0;
+    octaveVoteBpm = 0.0f;
+    beatsOnLevel = 0;
+    lastFitResidual = 1.0f;
+    lastFitCoverage = 0.0f;
+    longFitBpm = 0.0f;
+    shortFitBpm = 0.0f;
+    enterRegime (TempoRegime::unknown);
+}
+
+float BeatDecoder::applyUserOctave (float bpmValue) const noexcept
+{
+    if (octaveShift == 0 || bpmValue < 1.0f)
+        return bpmValue;
+
+    // Off the end of the reported range the request cannot be honoured, so it
+    // is not: a halved tempo below 50 would be reported as its own double
+    // anyway, which is the level the listener just asked to leave.
+    const float shifted = bpmValue * std::pow (2.0f, static_cast<float> (octaveShift));
+    if (shifted < kMinBpm || shifted > kMaxBpm)
+        return bpmValue;
+    return shifted;
+}
+
 void BeatDecoder::pushLongFit (float bpmValue) noexcept
 {
     if (bpmValue < kMinBpm || bpmValue > kMaxBpm)
@@ -258,6 +302,7 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.octaveMismatch = octaveMismatchBeats;
     d.beatsHeld = beatsOnLevel;
     d.levelSettled = tempo.levelSettled();
+    d.userOctave = octaveShift;
     return d;
 }
 
@@ -433,7 +478,7 @@ void BeatDecoder::registerBeat (double beatTimeSec) noexcept
 void BeatDecoder::updateTempo() noexcept
 {
     const bool combReady = tempo.ready() && tempo.salience() > kSalienceFloor;
-    const float combBpm = tempo.bpm();
+    const float combBpm = applyUserOctave (tempo.bpm());
 
     // Acquisition: adopt the fold outright. Easing towards it from a default of
     // 120 is what used to make a 75 BPM song take twenty seconds to find.
@@ -893,7 +938,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeatSerial = downbeatSerial;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
-    hyp.combBpm = tempo.ready() ? tempo.bpm() : 0.0f;
+    hyp.combBpm = tempo.ready() ? applyUserOctave (tempo.bpm()) : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
     hyp.confidence = scoreConfidence();
     hyp.valid = established;

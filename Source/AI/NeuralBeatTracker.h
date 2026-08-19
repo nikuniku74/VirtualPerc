@@ -28,6 +28,14 @@ public:
     void stop();
 
     void feed (const float* mono, int numSamples) noexcept;
+
+    /** The metrical level the listener asked for, in octaves. Set from the
+        audio thread, read by the worker: the decoder is not ours to touch from
+        here, so the value is handed over rather than the call. */
+    void setUserOctave (int octaves) noexcept
+    {
+        wantedOctave.store (octaves, std::memory_order_relaxed);
+    }
     bool tryLoad (BeatHypothesis& out) const noexcept { return slot.load (out); }
 
     bool running() const noexcept { return armed.load (std::memory_order_relaxed); }
@@ -64,6 +72,7 @@ private:
     std::atomic<bool> onnxFlag { false };
     std::atomic<int64_t> fedTotal { 0 };
     std::atomic<int64_t> gapCount { 0 };
+    std::atomic<int> wantedOctave { 0 };
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across
         all discontinuities. After a reset it buffers a whole frame before

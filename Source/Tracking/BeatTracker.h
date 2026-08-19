@@ -27,6 +27,7 @@ public:
     void setFollowStrength (FollowStrength s) noexcept;
     void setSubdivisionOverride (Subdivision s) noexcept;
     void setSpeakerFollow (bool on) noexcept { speakerFollow = on; }
+    void setTempoOctave (int octaves) noexcept { neural.setUserOctave (octaves); }
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
     struct Output

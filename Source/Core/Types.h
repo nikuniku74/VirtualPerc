@@ -170,6 +170,8 @@ struct EngineSnapshot
         that to count as decided. */
     float combBpm              = 0.0f;
     bool  levelSettled         = false;
+    /** Half or double the measured tempo, when the listener has asked for it. */
+    int   tempoOctave          = 0;
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
     float styleEvenKick        = 0.0f;
@@ -198,6 +200,11 @@ struct EngineSettings
     // against material whose style is known, which is no better than always
     // guessing the same style. See docs/AUDIO_ENGINE.md.
     std::atomic<bool>  grooveAuto      { false };
+    // Half or double the tempo the analysis found, when the listener disagrees
+    // with it. -1 = half, 0 = as measured, +1 = double. Not a preference the app
+    // can guess: below ~92 BPM with full eighths the level is genuinely
+    // ambiguous in the signal, so it is offered as a control instead.
+    std::atomic<int>   tempoOctave     { 0 };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };

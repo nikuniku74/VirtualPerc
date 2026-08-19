@@ -1030,6 +1030,64 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and stays in the held regime rather than being shaken out of it");
     }
 
+    // Half and double, asked for by the listener. One half of the octave
+    // problem is not decidable from the signal: on a 76 BPM mix with full
+    // eighths the activation half a beat from the beat stands at 0.73-0.77 of
+    // it, against 0.02-0.18 on the same material at 104 and 128 - the eighths
+    // are as strong as the beats and 152 is a fair reading of what the network
+    // was handed. So the tie is broken by a control, and what that control has
+    // to do is: move the level, *and stay there* while the fold keeps naming
+    // the other one.
+    {
+        constexpr double fps = 50.0;
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+
+        // Beats at 152 with every other one accented: read as 152 or as 76,
+        // both defensible, which is exactly the case in question.
+        constexpr float fastBpm = 152.0f;
+        const double period = 60.0 / static_cast<double> (fastBpm) * fps;
+        auto activationAt = [period] (int i)
+        {
+            const double b = static_cast<double> (i) / period;
+            const double d = std::fabs (b - std::round (b)) * period;
+            const bool strong = (static_cast<long long> (std::llround (b)) % 2) == 0;
+            return std::max (0.04f, (strong ? 0.95f : 0.72f)
+                                        * static_cast<float> (std::exp (-0.5 * (d / 1.6) * (d / 1.6))));
+        };
+
+        vp::BeatHypothesis h {};
+        for (int i = 0; i < static_cast<int> (fps * 30.0); ++i)
+            h = dec.observe (activationAt (i), 0.03f, 0.0f);
+        const float asFound = h.bpm;
+
+        // Now the listener says "half that".
+        dec.setUserOctave (-1);
+        float lo = 1.0e9f, hi = 0.0f;
+        for (int i = static_cast<int> (fps * 30.0); i < static_cast<int> (fps * 75.0); ++i)
+        {
+            h = dec.observe (activationAt (i), 0.03f, 0.0f);
+            if (static_cast<double> (i) / fps > 45.0 && h.valid)
+            {
+                lo = std::min (lo, h.bpm);
+                hi = std::max (hi, h.bpm);
+            }
+        }
+        const float halvedSpan = hi >= lo ? hi - lo : 0.0f;
+        std::printf ("octave-control  found=%.2f  halved=%.2f  span=%.3f\n",
+                     static_cast<double> (asFound), static_cast<double> (h.bpm),
+                     static_cast<double> (halvedSpan));
+
+        expect (std::fabs (asFound - fastBpm) / fastBpm < 0.03f,
+                "the fold is left to name the level it finds");
+        // The point is not that it halves once - it is that it does not drift
+        // back. The fold still says 152 for the whole of the second half, and
+        // the re-anchor that normally answers a disagreeing fold must not fire
+        // against the listener's own choice.
+        expect (std::fabs (h.bpm - fastBpm * 0.5f) / (fastBpm * 0.5f) < 0.03f && halvedSpan < 1.0f,
+                "asking for half moves the level there and keeps it there");
+    }
+
     // A record does not restart its bar in the middle, and neither may the
     // clock. The network answers "this is a strong beat" reliably and "this is
     // *the* strong beat" much less so - measured over eight tracks it put only

@@ -16,7 +16,7 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **71 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
+| Host `VPTests` | **73 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -185,7 +185,16 @@ caso da un run all'altro. Vanno lette come ordine di grandezza.
   128: gli ottavi sono forti quanto i battiti e 152 è una lettura difendibile.
   Ho provato a spostare la banda «troppo veloce» per farlo cadere dalla parte
   giusta: peggiora, perché la stessa asimmetria è ciò che impedisce di leggere
-  in half-time un normale backbeat rock. Misurato, non ipotizzato — resta com'è.
+  in half-time un normale backbeat rock. Misurato, non ipotizzato.
+
+  Non essendo decidibile dal segnale, ora **lo decide chi ascolta**: i due tasti
+  **÷2** e **×2** accanto al BPM spostano il livello di un'ottava. Non è un
+  numero cosmetico — l'ottava scelta viene applicata alla risposta del *fold*,
+  quindi il decoder aggancia davvero quel livello, i picchi in mezzo cadono
+  fuori griglia e vengono scartati come controtempi, e fit, fase e battuta
+  lavorano lì senza sapere niente della scelta. Il test `octave-control`
+  verifica la parte che conta: che ci **resti**, mentre il fold continua a
+  nominare l'altro livello.
 - Il half-time a 104 continua a discutere fra 104 e 52. È la stessa ambiguità
   vista da vicino: con rullante solo sul tre, 52 *è* una lettura in half-time.
 - Il tempo fino a FOLLOWING è passato da 2.3 a 3.9 s, e su un click lento
@@ -273,6 +282,7 @@ quattro erano intestabili.
 
 | Comando | Cosa fa |
 |---|---|
+| **÷2 / ×2** | dimezza o raddoppia il livello metrico, quando l'analisi lo legge un'ottava fuori. Premere di nuovo lo stesso tasto torna a quello misurato |
 | **AUTO / MARCHA / ROCK / DANCE / POP** | la parte che suona. AUTO lascia scegliere allo `StyleDetector`; premere una parte a mano spegne AUTO |
 | **SHAKER / CONGAS** | accendono e spengono i due strumenti separatamente |
 | **SOURCE (IPAD / MIXER)** | microfono in stanza contro mic ravvicinato |
@@ -283,8 +293,29 @@ quattro erano intestabili.
 
 La riga **PARTE** sotto il BPM dice sempre quale parte sta suonando; con AUTO
 attivo mostra anche la confidenza del rilevatore e tinge di verde il pulsante che
-ha scelto. Le due manopole SWING ed ENERGIA compaiono in verticale; in
-orizzontale lo schermo non le contiene e vengono nascoste.
+ha scelto. Dal restyling della sera del 19 agosto **tutti** i comandi restano
+visibili anche in orizzontale: vedi la sezione sull'interfaccia più sotto.
+
+## L'interfaccia (19 agosto, sera)
+
+Rifatta. Prima era una colonna di righe tutte dello stesso peso, con in mezzo
+righe di diagnostica (`AI ONNX | IPAD | nn 120 | p 0.42 valid`) che sono uscita
+di debug, non una superficie da suonare; e in orizzontale non ci stava, quindi
+SWING ed ENERGIA venivano semplicemente **nascoste**.
+
+Ora sono due zone:
+
+- **Palco** — quello che guardi mentre suoni: stato, BPM grande, come il tempo
+  è tenuto (`FISSO` / `VIVO` / `CERCO`, più «livello provvisorio» finché
+  l'analisi non ha deciso), quattro pallini con l'uno segnato, e una riga sola
+  sull'ingresso in italiano (`SENTO LA STANZA`) invece di quattro numeri.
+- **Console** — quattro schede intitolate: **TRASPORTO** (START/STOP grandi più
+  TAP), **PARTE**, **STRUMENTI**, **FEEL**. Un comando si cerca per *posto*, non
+  per posizione in un elenco.
+
+In orizzontale le due zone si affiancano invece di impilarsi: **non si nasconde
+più niente**. I numeri di diagnostica sono tutti nel pannello **DBG**, che ora
+riporta anche `tempo`, `livello`, `fold` e `ottava`.
 
 ## Checklist device
 
@@ -305,8 +336,8 @@ ora ha la riga `tempo FISSO/VIVO/CERCO · livello deciso/provvisorio · fold nnn
       il pallino, non l'orecchio: è il difetto «uno, due, uno»
 - [ ] Quando trova il tempo giusto non deve poi scappare via: se lo vedi salire
       o scendere in fretta dopo essersi assestato, segna `tempo` e `fold`
-- [ ] Brano lento (sotto ~92) con ottavi pieni: **atteso che raddoppi**. Segna
-      se lo fa e a quale tempo
+- [ ] Brano lento (sotto ~92) con ottavi pieni: **atteso che raddoppi**. Premi
+      **÷2**: deve dimezzarsi e *restare* lì, non tornare su dopo qualche battuta
 - [ ] USB-C + mic kit
 - [ ] SPEAKER senza auto-inseguimento dello shaker
 - [ ] Accelerando / rallentando
