@@ -16,6 +16,15 @@ namespace
     // Below this the fold found no pulse worth trusting.
     constexpr float kSalienceFloor = 0.14f;
 
+    // How far ahead of the other metrical levels the state space has to be
+    // before its answer is used as the level, in log-probability, and how much
+    // better a different octave has to look before the level is moved. The
+    // second one is hysteresis: an anchor landing between two octaves must not
+    // be able to flip the level from bar to bar, which is the exact complaint
+    // this whole exercise started from.
+    constexpr float kAnchorMargin = 2.0f;
+    constexpr float kAnchorHysteresis = 0.12f;
+
     // The long fit, watched over a window of beats. A record cut to a click
     // holds its 24-beat fit inside a few tenths of a percent; a band drifts out
     // of that band and keeps going in one direction.
@@ -155,6 +164,7 @@ void BeatDecoder::prepare (double framesPerSecond)
 {
     fps = framesPerSecond > 1.0 ? framesPerSecond : 50.0;
     tempo.prepare (fps);
+    hmm.prepare (fps);
     reset();
 }
 
@@ -196,6 +206,8 @@ void BeatDecoder::reset() noexcept
     fixedErrorBeats = 0;
     std::fill (longHist, longHist + kLongHistory, 0.0f);
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
+    anchorBpm = 0.0f;
+    hmm.reset();
     hyp = {};
 }
 
@@ -227,6 +239,30 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
     enterRegime (TempoRegime::unknown);
+}
+
+float BeatDecoder::foldToAnchor (float bpmValue) const noexcept
+{
+    if (! useAnchor || anchorBpm < kMinBpm || bpmValue < 1.0f)
+        return bpmValue;
+
+    float best = bpmValue;
+    float bestErr = std::fabs (std::log2 (bpmValue / anchorBpm));
+    for (int k = -1; k <= 1; k += 2)
+    {
+        const float cand = bpmValue * std::pow (2.0f, static_cast<float> (k));
+        if (cand < kMinBpm || cand > kMaxBpm)
+            continue;
+        const float err = std::fabs (std::log2 (cand / anchorBpm));
+        // Clearly better, not marginally: an anchor sitting between two octaves
+        // must not be able to flip the level back and forth.
+        if (err < bestErr - kAnchorHysteresis)
+        {
+            bestErr = err;
+            best = cand;
+        }
+    }
+    return best;
 }
 
 float BeatDecoder::applyUserOctave (float bpmValue) const noexcept
@@ -479,7 +515,7 @@ void BeatDecoder::registerBeat (double beatTimeSec) noexcept
 void BeatDecoder::updateTempo() noexcept
 {
     const bool combReady = tempo.ready() && tempo.salience() > kSalienceFloor;
-    const float combBpm = applyUserOctave (tempo.bpm());
+    const float combBpm = applyUserOctave (foldToAnchor (tempo.bpm()));
 
     // Acquisition: adopt the fold outright. Easing towards it from a default of
     // 120 is what used to make a 75 BPM song take twenty seconds to find.
@@ -864,6 +900,15 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     // also a beat, and looking only at pBeat drops bar accents.
     const float pulseActivation = std::max (pBeat, pDownbeat);
     tempo.push (pulseActivation);
+    if (useAnchor)
+    {
+        hmm.push (pulseActivation);
+        // Only take the anchor once the state space is clear about it. The
+        // margin is the winning tempo's lead over the best tempo that is not a
+        // neighbour of it - that is, over the other metrical levels.
+        if (hmm.ready() && hmm.levelMargin() > kAnchorMargin)
+            anchorBpm = hmm.bpm();
+    }
 
     const float period = 60.0f / std::max (kMinBpm, bpm);
     const int minRefr = std::max (2, static_cast<int> (0.4f * period * static_cast<float> (fps)));
@@ -941,7 +986,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeatStrength = lastDownbeatStrength;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
-    hyp.combBpm = tempo.ready() ? applyUserOctave (tempo.bpm()) : 0.0f;
+    hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
     hyp.confidence = scoreConfidence();
     hyp.valid = established;

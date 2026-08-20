@@ -41,6 +41,9 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     resampler.prepare (deviceSr, kBeatModelSampleRate);
     features.prepare (kBeatModelSampleRate, kBeatModelHop);
     decoder.prepare (kBeatModelSampleRate / static_cast<double> (kBeatModelHop));
+    // The metrical level comes from the state-space tracker. See
+    // BeatDecoder::setLevelAnchor for what that buys and what it costs.
+    decoder.setLevelAnchor (true);
     inputSamplesPerModelSample = deviceSr / kBeatModelSampleRate;
     hopInDeviceSamples = static_cast<int> (std::ceil (kBeatModelHop * inputSamplesPerModelSample));
     fedTotal.store (0, std::memory_order_relaxed);

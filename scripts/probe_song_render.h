@@ -62,15 +62,60 @@ struct SongOptions
     bool  halfTimeFeel = false; // snare on 3 only
     bool  breakdown = true;     // eight bars with the drums out
     bool  fills = true;
+
+    /** Peak-to-peak tempo wander over the take, in BPM, as a smooth random
+        walk. Zero is a sequencer. A band that has rehearsed sits around two to
+        four; one that has not, more. Everything in this repository was measured
+        at zero until this existed, which is a poor way to judge a tracker that
+        is going to be pointed at a live recording. */
+    float driftBpm = 0.0f;
+
+    /** Human timing scatter per beat, in milliseconds, one standard deviation.
+        A drummer is not a click: even a very good one lands within about eight
+        to twelve milliseconds of their own average, and the beat the band plays
+        is the average of several people doing that. */
+    float jitterMs = 0.0f;
 };
 
 // A full mix at a fixed tempo. Beat one is at sample zero, so the true beat
 // phase at any sample is exactly known.
-inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double sr, unsigned seed)
+/** Renders the arrangement, and optionally reports where the beats truly fell.
+
+    `truePhase`, when given, receives the exact position in beats at every
+    sample - which is the only way to score a tracker against material that does
+    not hold still, because "the tempo" is then a curve and not a number. */
+inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double sr,
+                        unsigned seed, std::vector<double>* truePhase = nullptr)
 {
     std::mt19937 rng (seed);
-    const double beatSec = 60.0 / static_cast<double> (opt.bpm);
-    const double inc = 1.0 / (beatSec * sr);
+    const double nominalBeatSec = 60.0 / static_cast<double> (opt.bpm);
+
+    // The tempo curve. A band drifts: it does not step, and it does not
+    // oscillate at an audible rate either. Two slow sines at incommensurate
+    // periods give a wander with no period a tracker could learn.
+    std::uniform_real_distribution<double> ph0 (0.0, 6.2831853);
+    const double d1 = ph0 (rng), d2 = ph0 (rng);
+    const double driftHalf = 0.5 * static_cast<double> (opt.driftBpm);
+    auto bpmAt = [&] (double sec)
+    {
+        if (driftHalf <= 0.0)
+            return static_cast<double> (opt.bpm);
+        const double w = 0.62 * std::sin (sec * 2.0 * kPi / 23.0 + d1)
+                       + 0.38 * std::sin (sec * 2.0 * kPi / 37.0 + d2);
+        return static_cast<double> (opt.bpm) + driftHalf * w;
+    };
+
+    // Human scatter, one value per beat, held so that every event inside a beat
+    // moves with it - a drummer who is early is early for the whole beat, not
+    // for each stroke independently.
+    std::normal_distribution<double> jit (0.0, static_cast<double> (opt.jitterMs) * 0.001);
+    std::vector<double> beatShift (4096, 0.0);
+    if (opt.jitterMs > 0.0f)
+        for (auto& v : beatShift)
+            v = jit (rng);
+
+    if (truePhase != nullptr)
+        truePhase->assign (dest.size(), 0.0);
 
     // Chord roots for a four-bar loop, in Hz.
     const float roots[4] = { 110.0f, 146.83f, 98.0f, 130.81f };
@@ -78,7 +123,19 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
     double ph = 0.0;
     for (size_t i = 0; i < dest.size(); ++i)
     {
-        const double beats = ph;
+        const double sec = static_cast<double> (i) / sr;
+        const double curBpm = bpmAt (sec);
+        const double beatSec = 60.0 / curBpm;
+        const double inc = 1.0 / (beatSec * sr);
+        if (truePhase != nullptr)
+            (*truePhase)[i] = ph;
+
+        // The scatter shifts where the events land, not the underlying count,
+        // so the notated grid stays the thing a tracker is scored against.
+        const double shifted = ph + (opt.jitterMs > 0.0f
+            ? beatShift[static_cast<size_t> (static_cast<int> (std::floor (ph)) & 4095)] / beatSec
+            : 0.0);
+        const double beats = shifted;
         const int    beatIdx = static_cast<int> (std::floor (beats));
         const double inBeat = beats - std::floor (beats);
         const int    bar = beatIdx / 4;

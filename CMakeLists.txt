@@ -31,6 +31,7 @@ set (VP_CORE_SOURCES
     Source/AI/StubBeatModel.cpp
     Source/AI/BeatDecoder.cpp
     Source/AI/TempoEstimator.cpp
+    Source/AI/BeatHmm.cpp
     Source/AI/NeuralBeatTracker.cpp
     Source/AI/ModelLocator.cpp
     Source/Stretch/StretchFactor.cpp

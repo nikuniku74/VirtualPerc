@@ -50,6 +50,11 @@ struct Result
     float  phaseMean = 0.0f;
     float  phaseWorst = 0.0f;
     int    gaps = 0;
+    /** Mean and worst distance from the tempo the band is actually playing, in
+        BPM. On material that holds still this is the same question as `span`;
+        on material that does not, it is the only one that means anything. */
+    float  errMean = 0.0f;
+    float  errWorst = 0.0f;
 };
 
 // The two ways the app can be listening, and they are not the same measurement.
@@ -69,7 +74,8 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     const int n = static_cast<int> (sr * seconds);
 
     std::vector<float> song (static_cast<size_t> (n), 0.0f);
-    renderSong (song, opt, sr, seed);
+    std::vector<double> truePhase;
+    renderSong (song, opt, sr, seed, &truePhase);
     if (mode == Listening::ipad)
         speakerRoomMic (song, sr, seed, level);
 
@@ -84,7 +90,18 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     float* outs[2] = { oL.data(), oR.data() };
 
     Result r;
-    const double beatsPerSample = static_cast<double> (opt.bpm) / 60.0 / sr;
+    // The true tempo at any moment, read off the phase the renderer actually
+    // used. On drifting material this is a curve, so it is differenced rather
+    // than assumed.
+    auto trueBpmAt = [&truePhase, sr] (int pos)
+    {
+        const int step = static_cast<int> (sr * 0.5);
+        const int a = std::max (0, pos - step / 2);
+        const int b = std::min (static_cast<int> (truePhase.size()) - 1, a + step);
+        if (b <= a) return 0.0;
+        return (truePhase[static_cast<size_t> (b)] - truePhase[static_cast<size_t> (a)])
+               / (static_cast<double> (b - a) / sr) * 60.0;
+    };
 
     float lo = 1.0e9f, hi = 0.0f;
     float nnLo = 1.0e9f, nnHi = 0.0f;
@@ -94,6 +111,8 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     int    dbpmN = 0;
     double phaseAcc = 0.0;
     int    phaseN = 0;
+    double errAcc = 0.0;
+    int    errN = 0;
     int    prevBeatInBar = -1;
     double settleAt = -1.0;
 
@@ -110,7 +129,7 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
 
         if (snap.bpm > 40.0f)
         {
-            const bool close = std::fabs (snap.bpm - opt.bpm) / opt.bpm < 0.02f;
+            const bool close = std::fabs (snap.bpm - trueBpmAt (pos)) / opt.bpm < 0.02f;
             if (close && r.t2pct < 0.0)
                 r.t2pct = t;
             if (! close)
@@ -146,12 +165,21 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
                 lastSampleT = t;
             }
 
-            const double truePhase = static_cast<double> (pos) * beatsPerSample;
+            const double tp = truePhase[static_cast<size_t> (pos)];
             const float err = vp::wrapCentered (
-                snap.beatPhase - static_cast<float> (truePhase - std::floor (truePhase)));
+                snap.beatPhase - static_cast<float> (tp - std::floor (tp)));
             phaseAcc += std::fabs (err);
             ++phaseN;
             r.phaseWorst = std::max (r.phaseWorst, std::fabs (err));
+
+            const double want = trueBpmAt (pos);
+            if (want > 40.0)
+            {
+                const double e = std::fabs (static_cast<double> (snap.bpm) - want);
+                errAcc += e;
+                ++errN;
+                r.errWorst = std::max (r.errWorst, static_cast<float> (e));
+            }
 
             // The bar counter. A bar that goes back to one before it reached
             // four is the "uno, due, uno" the user hears.
@@ -192,6 +220,7 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     r.wobble = dbpmN > 0 ? static_cast<float> (dbpmAcc / dbpmN) : 0.0f;
     r.octave = r.bpmEnd > 1.0f ? std::log2 (r.bpmEnd / opt.bpm) : 0.0f;
     r.phaseMean = phaseN > 0 ? static_cast<float> (phaseAcc / phaseN) : 0.0f;
+    r.errMean = errN > 0 ? static_cast<float> (errAcc / errN) : 0.0f;
     return r;
 }
 
@@ -200,6 +229,7 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
 int main (int argc, char** argv)
 {
     bool trace = false;
+    float drift = 0.0f, jitter = 0.0f;
     Listening mode = Listening::ipad;
     std::vector<const char*> rest;
     for (int i = 1; i < argc; ++i)
@@ -207,10 +237,19 @@ int main (int argc, char** argv)
         if (std::strcmp (argv[i], "--trace") == 0) trace = true;
         else if (std::strcmp (argv[i], "--mixer") == 0) mode = Listening::mixer;
         else if (std::strcmp (argv[i], "--ipad") == 0) mode = Listening::ipad;
+        else if (std::strcmp (argv[i], "--drift") == 0 && i + 1 < argc) drift = static_cast<float> (std::atof (argv[++i]));
+        else if (std::strcmp (argv[i], "--jitter") == 0 && i + 1 < argc) jitter = static_cast<float> (std::atof (argv[++i]));
+        else if (std::strcmp (argv[i], "--live") == 0) { drift = 3.0f; jitter = 10.0f; }
         else rest.push_back (argv[i]);
     }
     const char* modeName = mode == Listening::ipad ? "IPAD (cassa -> stanza -> microfono)"
                                                    : "MIXER (linea, nessuna stanza)";
+    char material[128];
+    std::snprintf (material, sizeof material,
+                   drift > 0.0f || jitter > 0.0f
+                       ? "band dal vivo: deriva %.1f BPM, scarto umano %.0f ms"
+                       : "sequencer: tempo perfettamente fisso%.0f%.0f",
+                   static_cast<double> (drift), static_cast<double> (jitter));
     const double sr = 48000.0;
 
     // --trace <style> <bpm> runs one case with a full trace, for looking at how
@@ -223,7 +262,9 @@ int main (int argc, char** argv)
         o.sustained = st == "pad" || st == "sync+pad" || st == "half-time";
         o.halfTimeFeel = st == "half-time";
         o.bpm = static_cast<float> (std::atof (rest[1]));
-        std::printf ("# %s\n", modeName);
+        o.driftBpm = drift;
+        o.jitterMs = jitter;
+        std::printf ("# %s  |  %s\n", modeName, material);
         const Result r = run (o, sr, static_cast<unsigned> (o.bpm) * 7u + 13u, 0.55f, true, mode);
         std::printf ("\n%s %.0f: lock=%.1f t2=%.1f end=%.2f span=%.2f bars=%d jumps=%d\n",
                      st.c_str(), static_cast<double> (o.bpm), r.tLock, r.t2pct,
@@ -241,12 +282,12 @@ int main (int argc, char** argv)
 
     const float tempos[] = { 76.0f, 92.0f, 104.0f, 118.0f, 128.0f, 140.0f };
 
-    std::printf ("# ascolto: %s\n", modeName);
-    std::printf ("%-11s %-6s %-7s %-7s %-8s %-7s %-6s %-6s %-6s %-7s %-5s\n",
-                 "style", "bpm", "t_lock", "t_2%", "bpm_end", "span", "spanNN", "jumps", "bars", "phase", "gaps");
+    std::printf ("# ascolto: %s\n# materiale: %s\n", modeName, material);
+    std::printf ("%-11s %-6s %-7s %-7s %-7s %-7s %-7s %-6s %-6s %-7s %-5s\n",
+                 "style", "bpm", "t_lock", "t_2%", "err", "errMax", "span", "jumps", "bars", "phase", "gaps");
 
     int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0, totalGaps = 0;
-    double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0;
+    double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0, errAcc = 0.0;
 
     for (const auto& style : styles)
     {
@@ -254,6 +295,8 @@ int main (int argc, char** argv)
         {
             SongOptions o = style;
             o.bpm = bpm;
+            o.driftBpm = drift;
+            o.jitterMs = jitter;
             const Result r = run (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, 0.55f, trace, mode);
 
             const bool octaveBad = std::fabs (r.octave) > 0.20f;
@@ -271,10 +314,11 @@ int main (int argc, char** argv)
             if (r.tLock >= 0.0) lockAcc += r.tLock;
 
             totalGaps += r.gaps;
-            std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-8.2f %-7.2f %-6.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
+            errAcc += r.errMean;
+            std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-7.2f %-7.2f %-7.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
                          styleName (o), static_cast<double> (bpm), r.tLock, r.t2pct,
-                         static_cast<double> (r.bpmEnd), static_cast<double> (r.span),
-                         static_cast<double> (r.spanNn), r.bigJumps, r.barBreaks,
+                         static_cast<double> (r.errMean), static_cast<double> (r.errWorst),
+                         static_cast<double> (r.span), r.bigJumps, r.barBreaks,
                          static_cast<double> (r.phaseMean), r.gaps,
                          octaveBad ? "OCT " : "", unstable ? "WOBBLE " : "", slow ? "SLOW" : "");
             std::fflush (stdout);
@@ -288,6 +332,7 @@ int main (int argc, char** argv)
     std::printf ("bar restarts      %d\n", totalBars);
     std::printf ("analysis gaps     %d\n", totalGaps);
     std::printf ("bpm jumps >1      %d\n", totalJumps);
+    std::printf ("errore medio      %.2f BPM   <- distanza dal tempo che la band suona davvero\n", errAcc / nRuns);
     std::printf ("mean span         %.2f BPM\n", spanAcc / nRuns);
     std::printf ("mean wobble       %.2f BPM/0.5s\n", wobbleAcc / nRuns);
     std::printf ("mean span (decoder only) %.2f BPM\n", spanNnAcc / nRuns);

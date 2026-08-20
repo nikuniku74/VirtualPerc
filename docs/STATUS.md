@@ -16,12 +16,12 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **97 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; TAP e falso aggancio provati in MIXER **e** in IPAD; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
+| Host `VPTests` | **99 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; TAP e falso aggancio provati in MIXER **e** in IPAD; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
 | ASan + UBSan | Suite intera, **zero segnalazioni** nel nostro codice (restano 64 byte una tantum dentro `libonnxruntime`) |
 | ThreadSanitizer | Suite intera, **zero corse** |
 | CPU (`VPCpu`) | Callback allo **0,35%** del suo budget; app intera al **2,0% di un core** |
-| Tracking, MIXER | span medio **7,8 BPM**, attacco sentito **+1,4 ms**, battuta allineata **10/12** |
-| Tracking, IPAD | span medio 27,8 BPM, attacco sentito +3,1 ms, battuta allineata 5/12 |
+| Tracking, MIXER | errore medio dal tempo vero **2,9 BPM**, ottava giusta **29/30**, attacco sentito +1,4 ms |
+| Tracking, IPAD, band dal vivo | errore medio **13,7 BPM** (era 29,7), ottava giusta **25/30** (era 19/30) |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -486,6 +486,137 @@ dichiarazione tolta dal codice, su tre esecuzioni.
 
 Il timing non è cambiato: attacco sentito +3.01 ms, identico a prima del riff.
 
+## Il livello metrico, e il materiale che nessuno aveva mai provato (20 agosto)
+
+Segnalazione: su una registrazione della band dal vivo, in modalita' iPad, il
+tempo ancora non regge. Richiesta: la soluzione migliore che esiste.
+
+### Due cose sbagliate, e una era nel banco di prova
+
+**La prima.** Ogni misura in questo repository era su `ph += inc` con `inc`
+costante: tempo perfettamente fisso, sequencer. La band di chi lo usa non e' un
+sequencer. `SongOptions` ha ora `driftBpm` (deriva lenta, due sinusoidi a
+periodi incommensurabili) e `jitterMs` (scarto umano per battito, tenuto per
+tutto il battito - un batterista in anticipo lo e' per tutto il movimento, non
+per ogni colpo). E la sonda misura una cosa nuova, l'**errore medio** dalla
+curva di tempo che il brano suona davvero, perche' su materiale che si muove lo
+`span` non vuol dire piu' niente.
+
+La differenza e' grossa, e spiega perche' funzionava nei test e non a casa sua:
+
+| IPAD | sequencer | band dal vivo |
+|---|---|---|
+| ottava sbagliata | 5/30 | **11/30** |
+| instabili | 17/30 | **26/30** |
+| salti > 1 BPM | 194 | **310** |
+| errore medio | 21,5 | **29,7 BPM** |
+
+**La seconda.** Il difetto dominante non era instabilita', era il **livello
+metrico**: sotto i cento BPM il decoder leggeva gli ottavi come battiti e
+suonava al doppio, con sicurezza e senza oscillare. Trenta attivazioni
+registrate, ripassate nel decoder da solo: tutti e sei i brani a 76 danno 152,
+tutti e sei quelli a 92 danno 184. Da 104 in su lo span sta sotto 2 BPM.
+
+### Tre strade chiuse, misurate
+
+Prima di cambiare l'algoritmo ho controllato se l'informazione sul livello ci
+fosse e non venisse usata. Non c'e':
+
+1. **Energia per bande** (260-600, 600-1.5k, 1.5k-4k, 4k-9k), ripiegata sul
+   battito: il rapporto battito/ottavo e' 1,3-1,8 **a ogni tempo**, uguale a 128
+   dove il tracker ci prende e a 76 dove sbaglia. Nessun segnale.
+2. **Timbro** (corpo contro brillantezza all'attacco): separazione 0,67-0,73,
+   di nuovo costante col tempo. Nessun segnale.
+3. **La caratteristica che il fold gia' usa** — quanto e' alto il mezzo battito
+   rispetto al battito. Misurata su tutte e trenta le tracce, contro il
+   candidato *davvero* troppo lento: le due distribuzioni si **sovrappongono
+   completamente** (troppo lento 0,51-1,00; livello vero 0,04-0,80). Nessuna
+   soglia le separa. Questo chiude definitivamente la strada su cui erano stati
+   spesi due giri.
+
+La cassa dell'iPad taglia tutto sotto i 260 Hz: la cassa della batteria
+sparisce, e con lei l'informazione che un percussionista usa per sapere quale
+colpo e' il battito.
+
+### La soluzione: lo spazio di stati (tempo, fase)
+
+E' il modello del *bar pointer* — Whiteley/Cemgil/Godsill 2006, reso efficiente
+da Krebs/Bock/Widmer 2015 — cioe' quello dietro al beat tracker DBN di madmom e
+al filtro a particelle di BeatNet. Lo stato e' una coppia: a che tempo sta la
+musica, e a che punto del battito. Ogni frame avanza di una posizione; alla fine
+di un battito puo' cambiare tempo, e **cambiare tempo costa**.
+
+Quel costo e' tutto il punto, ed e' quello che la macchina precedente non aveva.
+Un filtro a pettine ricalcolato ogni otto frame risponde a «quale periodo spiega
+meglio gli ultimi secondi» ed e' libero di rispondere diverso la volta dopo —
+che e' esattamente il tempo che scatta fra una battuta e l'altra. Qui muovere il
+tempo va pagato con l'evidenza, quindi si muove solo quando la musica si e'
+mossa, e si muove come si muove un musicista: al tempo vicino, con continuita'.
+
+Due dettagli che ho dovuto misurare per farli giusti:
+
+- **La normalizzazione dell'osservazione.** Dividere la massa «qui non c'e' un
+  battito» per il periodo fa pagare a un tempo lento ogni frame che passa fra i
+  suoi battiti: lo spazio collassa sul tempo piu' veloce che contiene, e infatti
+  la prima versione riportava 230 BPM su tutto. Va divisa per una costante
+  (sedici, la scelta di madmom), cosi' ogni tempo passa la stessa *frazione* del
+  suo tempo sul battito.
+- **Il costo del cambio va preso in valore assoluto, non al quadrato.** Al
+  quadrato un cambio di un passo costa un millesimo, cioe' niente, e il tracker
+  vaga per tutto lo spazio. Con `|rel|` e lambda 200 sta fermo.
+
+E un terzo che e' una scelta, non un dettaglio: il **prior percettivo**, centrato
+a 118 BPM con larghezza 0,40 ottave. Non e' un pareggio deciso all'ultimo: fa
+parte del sentire. Nessuno batte le mani a 184 su un pezzo lento, e il motivo
+non e' che 184 non ci sta — e' che 184 non e' una pulsazione.
+
+### L'innesto: il livello dallo spazio di stati, la precisione dal fold
+
+I due falliscono in posti opposti — il fold legge gli ottavi come battito sotto
+i cento, lo spazio di stati viene tirato verso il centro della gamma agli
+estremi. Quindi lo spazio di stati fornisce **solo l'ottava**, con isteresi, e
+tutto il resto della macchina resta com'era: il fit ai minimi quadrati risolve
+il tempo molto piu' fine di quanto possa uno spazio di stati a periodi interi.
+
+Sulle stesse trenta attivazioni registrate, decoder da solo:
+
+| | prima | dopo |
+|---|---|---|
+| **span medio** | 15,35 BPM | **0,55 BPM** |
+| ottava sbagliata | 7/30 | 5/30 |
+| instabili | 12/30 | 9/30 |
+| tempo per arrivare entro il 2% | 6,5 s | **3,8 s** |
+
+Motore intero, IPAD, band dal vivo — il caso segnalato:
+
+| | prima | dopo |
+|---|---|---|
+| ottava sbagliata | 11/30 | **5/30** |
+| **errore medio** | 29,7 BPM | **13,7 BPM** |
+| span medio | 13,5 | **7,5 BPM** |
+| salti > 1 BPM | 310 | 296 |
+
+MIXER non peggiora: ottava 1/30 come prima, errore medio 2,89 BPM. La larghezza
+del prior e' stata scelta su quel vincolo — a 0,55 il guadagno su iPad era lo
+stesso ma tre brani a 140 in MIXER venivano tirati a 70.
+
+Costo: **niente di misurabile**. Millesettecento stati a cinquanta frame al
+secondo sul thread di analisi; l'app resta al 2,0% di un core e il callback allo
+0,38% del suo budget.
+
+### Cosa resta storto, e perche'
+
+I cinque che restano sono tutti a **76 BPM letti 152**. A quel tempo, con gli
+ottavi pieni, il prior a 118 preferisce 152 — e onestamente: 76 e' al limite di
+quello che una persona batte, e su quella curva 152 e' una lettura difendibile.
+Spostare il centro del prior piu' in basso e' stato provato (95, 105, 112) e
+peggiora il totale. Resta il tasto **÷2**.
+
+Misurato anche l'inviluppo dentro cui il modello tiene il livello giusto: ottavi
+fino a circa il 75% del battito con picchi larghi un frame e mezzo, fino al 55%
+con picchi larghi tre e mezzo. Oltre raddoppia, e a quel punto la curva
+*davvero* somiglia a un battito ogni ottavo.
+
 ## MIXER e IPAD sono due prodotti diversi (20 agosto)
 
 Fino a qui **ogni** sonda girava in modalita' IPAD: cassa dell'iPad, stanza,
@@ -918,6 +1049,8 @@ Diagnostica del tracking (host, non fanno parte della suite — sono lenti):
 cmake --build build-host --target VPProbe        # 30 brani a tempo fisso, motore intero
 ./build-host/VPProbe_artefacts/Release/VPProbe --ipad     # cassa -> stanza -> microfono
 ./build-host/VPProbe_artefacts/Release/VPProbe --mixer    # mandata di linea
+./build-host/VPProbe_artefacts/Release/VPProbe --ipad --live   # band vera: deriva + scarto umano
+./build-host/VPProbe_artefacts/Release/VPReplay --anchor act_*.txt   # decoder da solo, con l'ancora di livello
 ./build-host/VPProbe_artefacts/Release/VPProbe --trace --mixer straight 104   # un caso solo
 
 cmake --build build-host --target VPActivations VPReplay

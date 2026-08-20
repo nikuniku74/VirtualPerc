@@ -147,6 +147,83 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "AudioFifo accounts for an overrun exactly and resumes where it says it does");
     }
 
+    // The metrical level, on the material where it is genuinely ambiguous.
+    //
+    // A slow song with the hi-hat playing eighths gives the network an
+    // activation curve that is nearly as tall between the beats as on them.
+    // Folding that curve cannot separate the two readings - measured on thirty
+    // recorded activations, the two distributions overlap completely - so the
+    // decoder read the eighths as the beat below about a hundred BPM and played
+    // twice as fast as the band. That is not a wobble to be smoothed out: it is
+    // a confident, stable, wrong answer.
+    //
+    // The state space settles it, because it is not scoring a window, it is
+    // accumulating a whole performance, and because it carries what a listener
+    // brings to the question: nobody taps 184 to a slow rock tune.
+    {
+        constexpr double fps = 50.0;
+        constexpr float trueBpm = 92.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trueBpm) * fps;
+
+        // Beats at full height, eighths at 0.70 of it. That figure is not
+        // invented: folded onto the true beat, the recorded activations for
+        // this material put the half-beat between 0.56 and 0.72 of the beat,
+        // and the two readings' score distributions overlap completely there -
+        // which is why no amount of work on the fold separated them. Swept, the
+        // fold reads this material correctly up to 0.65 and doubles from 0.70
+        // on, so this sits just the wrong side of where it gives up.
+        //
+        // Note the envelope this sits inside. Swept, the state space holds the
+        // right level up to eighths at about 0.75 of the beat with peaks a
+        // frame and a half wide, and about 0.55 when they are three and a half
+        // frames wide. Past that it doubles too, and honestly so: at that point
+        // the curve really does look like a beat every eighth.
+        auto curveAt = [framesPerBeat] (int frame)
+        {
+            const double halves = static_cast<double> (frame) / (framesPerBeat * 0.5);
+            const double toHalf = std::fabs (halves - std::round (halves)) * framesPerBeat * 0.5;
+            const bool onBeat = (static_cast<int> (std::llround (halves)) & 1) == 0;
+            const float peak = onBeat ? 0.95f : 0.95f * 0.70f;
+            return 0.03f + (peak - 0.03f)
+                   * static_cast<float> (std::exp (-0.5 * (toHalf / 1.5) * (toHalf / 1.5)));
+        };
+
+        auto runFor = [&] (bool anchored)
+        {
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLevelAnchor (anchored);
+            float last = 0.0f;
+            int onLevel = 0, total = 0;
+            for (int f = 0; f < static_cast<int> (fps * 50.0); ++f)
+            {
+                const auto h = dec.observe (curveAt (f), 0.03f, 0.0f);
+                if (static_cast<double> (f) / fps > 25.0 && h.valid && h.bpm > 40.0f)
+                {
+                    ++total;
+                    onLevel += std::fabs (std::log2 (h.bpm / trueBpm)) < 0.2f ? 1 : 0;
+                    last = h.bpm;
+                }
+            }
+            return std::make_pair (last, total > 0 ? static_cast<double> (onLevel) / total : 0.0);
+        };
+
+        const auto plain = runFor (false);
+        const auto anchored = runFor (true);
+        std::printf ("level-anchor  ottavi al 70%% del battito, vero %.0f: senza ancora %.1f"
+                     " (%.0f%% sul livello), con ancora %.1f (%.0f%%)\n",
+                     static_cast<double> (trueBpm),
+                     static_cast<double> (plain.first), plain.second * 100.0,
+                     static_cast<double> (anchored.first), anchored.second * 100.0);
+        expect (anchored.second > 0.95,
+                "the level comes from the state space, so strong eighths are not the beat");
+        // And the point of the whole exercise: without it, this material is read
+        // an octave out. If that ever stops being true the test above has
+        // stopped proving anything.
+        expect (plain.second < 0.5,
+                "and the fold alone really does read this material an octave out");
+    }
+
     // The same bar, with the analysis starved on purpose.
     //
     // Feeding the engine faster than the worker can keep up makes the FIFO

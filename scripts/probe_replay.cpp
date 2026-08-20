@@ -7,6 +7,7 @@
 //
 // Usage: VPReplay <dump.txt> [...]   (dumps come from VPActivations)
 #include "AI/BeatDecoder.h"
+#include "AI/BeatHmm.h"
 #include "AI/TempoEstimator.h"
 
 #include <algorithm>
@@ -16,6 +17,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+
+float gAnchorCentre = 0.0f, gAnchorWidth = 0.45f;
 
 namespace
 {
@@ -81,11 +84,14 @@ struct Stats
     double fixedFraction = 0.0;
 };
 
-Stats replay (const Dump& d, bool trace)
+Stats replay (const Dump& d, bool trace, bool anchor)
 {
     constexpr double fps = 50.0;
     vp::BeatDecoder dec;
     dec.prepare (fps);
+    dec.setLevelAnchor (anchor);
+    if (anchor && gAnchorCentre > 0.0f)
+        dec.setAnchorPrior (gAnchorCentre, gAnchorWidth);
 
     Stats s;
     float lo = 1.0e9f, hi = 0.0f;
@@ -190,21 +196,149 @@ void levelTrace (const Dump& d)
     }
 }
 
+// Scores the state-space tracker on a recorded activation, so it can be
+// compared against the machinery it is meant to replace on exactly the same
+// signal. Reports the same things the decoder replay reports, plus how often it
+// sat on the wrong metrical level - which is the failure it exists to fix.
+struct HmmStats { double lock = -1.0; double onLevel = 0.0; double octErr = 0.0; float span = 0.0f; int jumps = 0; };
+
+HmmStats hmmRun (const Dump& d, float lambda, float priorWidth, int beatWidth, bool trace, bool quiet)
+{
+    constexpr double fps = 50.0;
+    vp::BeatHmm hmm;
+    hmm.prepare (fps);
+    hmm.setChangePenalty (lambda);
+    hmm.setPriorWidth (priorWidth);
+    hmm.setBeatWidth (beatWidth);
+
+    double tLock = -1.0;
+    float lo = 1.0e9f, hi = 0.0f, last = 0.0f, prevSample = 0.0f;
+    int jumps = 0, onLevel = 0, steady = 0;
+    double prevT = -1.0, octAcc = 0.0;
+    for (size_t i = 0; i < d.pBeat.size(); ++i)
+    {
+        hmm.push (std::max (d.pBeat[i], d.pDown[i]));
+        const double t = static_cast<double> (i) / fps;
+        if (! hmm.ready())
+            continue;
+        const float b = hmm.bpm();
+        if (tLock < 0.0 && std::fabs (b - d.bpm) / d.bpm < 0.04f)
+            tLock = t;
+        if (t > 25.0)
+        {
+            ++steady;
+            onLevel += std::fabs (std::log2 (b / d.bpm)) < 0.2f ? 1 : 0;
+            lo = std::min (lo, b);
+            hi = std::max (hi, b);
+            octAcc += std::fabs (std::log2 (b / d.bpm));
+            // Sampled every half second, like the other probes: a single step
+            // of the state space is several BPM at speed, so counting
+            // frame-to-frame changes would count the grid, not the wandering.
+            if (t - prevT >= 0.5)
+            {
+                if (prevSample > 1.0f && std::fabs (b - prevSample) > 1.0f)
+                    ++jumps;
+                prevSample = b;
+                prevT = t;
+            }
+        }
+        last = b;
+        if (trace && (i % 50) == 0)
+            std::printf ("   t=%5.1f  bpm=%7.2f  phase=%.2f  margin=%6.1f\n",
+                         t, static_cast<double> (b), static_cast<double> (hmm.phase()),
+                         static_cast<double> (hmm.levelMargin()));
+    }
+    HmmStats s;
+    s.lock = tLock;
+    s.onLevel = steady > 0 ? static_cast<double> (onLevel) / steady : 0.0;
+    s.octErr = steady > 0 ? octAcc / steady : 9.9;
+    s.span = hi >= lo ? hi - lo : 0.0f;
+    s.jumps = jumps;
+    if (! quiet)
+        std::printf ("%-18s %-6.0f %-7.1f %-8.2f %-7.2f %-6d %-6.0f %s\n",
+                     d.name.c_str(), static_cast<double> (d.bpm), tLock,
+                     static_cast<double> (last), static_cast<double> (s.span),
+                     jumps, s.onLevel * 100.0, s.onLevel < 0.5 ? "LIVELLO" : "");
+    return s;
+}
+
 int main (int argc, char** argv)
 {
     bool trace = false;
     bool levels = false;
+    bool hmm = false;
+    float lambda = 100.0f, priorWidth = 1.1f;
+    int beatWidth = 0;
+    bool sweep = false;
+    bool anchor = false;
     std::vector<const char*> files;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (argv[i], "--trace") == 0) trace = true;
         else if (std::strcmp (argv[i], "--levels") == 0) levels = true;
+        else if (std::strcmp (argv[i], "--hmm") == 0) hmm = true;
+        else if (std::strcmp (argv[i], "--lambda") == 0 && i + 1 < argc) lambda = static_cast<float> (std::atof (argv[++i]));
+        else if (std::strcmp (argv[i], "--prior") == 0 && i + 1 < argc) priorWidth = static_cast<float> (std::atof (argv[++i]));
+        else if (std::strcmp (argv[i], "--width") == 0 && i + 1 < argc) beatWidth = std::atoi (argv[++i]);
+        else if (std::strcmp (argv[i], "--sweep") == 0) sweep = true;
+        else if (std::strcmp (argv[i], "--anchor") == 0) anchor = true;
+        else if (std::strcmp (argv[i], "--centre") == 0 && i + 1 < argc) gAnchorCentre = static_cast<float> (std::atof (argv[++i]));
+        else if (std::strcmp (argv[i], "--pw") == 0 && i + 1 < argc) gAnchorWidth = static_cast<float> (std::atof (argv[++i]));
         else files.push_back (argv[i]);
     }
     if (files.empty())
     {
         std::fprintf (stderr, "usage: VPReplay [--trace] dump.txt...\n");
         return 2;
+    }
+
+    if (hmm || sweep)
+    {
+        std::vector<Dump> dumps;
+        for (const char* p : files)
+        {
+            Dump d;
+            if (loadDump (p, d))
+                dumps.push_back (std::move (d));
+        }
+
+        auto score = [&dumps] (float lam, float pw, int bw, bool quiet)
+        {
+            int ok = 0;
+            double octAcc = 0.0, spanAcc = 0.0, lockAcc = 0.0;
+            int jumpAcc = 0, locked = 0;
+            for (const auto& d : dumps)
+            {
+                const HmmStats s = hmmRun (d, lam, pw, bw, false, quiet);
+                ok += s.onLevel > 0.8 ? 1 : 0;
+                octAcc += s.octErr;
+                spanAcc += static_cast<double> (s.span);
+                jumpAcc += s.jumps;
+                if (s.lock >= 0.0) { lockAcc += s.lock; ++locked; }
+            }
+            const double n = std::max<size_t> (1, dumps.size());
+            std::printf ("lambda %-5.0f prior %-4.2f larghezza %-2d | livello %2d/%zu"
+                         "  errore ott. %.3f  span %6.2f  salti %4d  lock %.1f s (%d)\n",
+                         static_cast<double> (lam), static_cast<double> (pw), bw,
+                         ok, dumps.size(), octAcc / n, spanAcc / n, jumpAcc,
+                         locked > 0 ? lockAcc / locked : -1.0, locked);
+        };
+
+        if (sweep)
+        {
+            for (int bw : { 0, 1, 2, 3, 4 })
+                for (float lam : { 50.0f, 100.0f, 200.0f })
+                    for (float pw : { 0.7f, 1.1f, 1.6f })
+                        score (lam, pw, bw, true);
+            return 0;
+        }
+
+        std::printf ("# stato (tempo, fase) - lambda %.0f, prior %.2f ottave, larghezza %d\n",
+                     static_cast<double> (lambda), static_cast<double> (priorWidth), beatWidth);
+        std::printf ("%-18s %-6s %-7s %-8s %-7s %-6s %-6s\n",
+                     "track", "bpm", "t_lock", "bpm_end", "span", "jumps", "%liv");
+        score (lambda, priorWidth, beatWidth, false);
+        return 0;
     }
 
     std::printf ("%-18s %-6s %-7s %-7s %-8s %-7s %-6s %-6s %-7s %-6s\n",
@@ -225,7 +359,7 @@ int main (int argc, char** argv)
             levelTrace (d);
             continue;
         }
-        const Stats s = replay (d, trace);
+        const Stats s = replay (d, trace, anchor);
         const bool octaveBad = s.bpmEnd > 1.0f
                                && std::fabs (std::log2 (s.bpmEnd / d.bpm)) > 0.20f;
         const bool isUnstable = s.span > 1.0f;

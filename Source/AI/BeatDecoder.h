@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AI/BeatHypothesis.h"
+#include "AI/BeatHmm.h"
 #include "AI/TempoEstimator.h"
 
 namespace vp
@@ -82,11 +83,28 @@ private:
         would be if the fold had named that level itself. Everything downstream
         - the fits, the phase, the bar - therefore needs no knowledge of it. */
 public:
+    /** Whether the metrical level is anchored by the state-space tracker.
+
+        The fold and the state space fail in opposite places, measured on the
+        same thirty tracks: the fold reads the eighths as the beat below about
+        a hundred, the state space is dragged towards the middle of the range at
+        the extremes. Anchoring keeps the fold's precision - it resolves the
+        tempo far finer than a state space with whole-frame periods can - and
+        takes only the octave from the state space, which is the one thing the
+        fold gets wrong. Off, the decoder behaves exactly as it did. */
+    void setLevelAnchor (bool on) noexcept { useAnchor = on; }
+    /** Probe seam: the two numbers that decide which pulse a listener hears. */
+    void setAnchorPrior (float centreBpm, float widthOctaves) noexcept
+    { hmm.setPriorCentre (centreBpm); hmm.setPriorWidth (widthOctaves); }
+
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
 
 private:
     float applyUserOctave (float bpmValue) const noexcept;
+    /** Moves a tempo by whole octaves to whichever one the state space is
+        naming, and leaves it alone when the state space has nothing to say. */
+    float foldToAnchor (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec) noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
@@ -105,6 +123,7 @@ private:
     static constexpr int kRecentIoi = 3;  // detection of a change in progress
 
     TempoEstimator tempo;
+    BeatHmm hmm;
 
     double fps = 50.0;
     double timeSec = 0.0;
@@ -151,6 +170,8 @@ private:
         seconds ago. */
     int   beatsOnLevel = 0;
     int   octaveShift = 0;
+    bool  useAnchor = false;
+    float anchorBpm = 0.0f;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
     float longFitBpm = 0.0f;
