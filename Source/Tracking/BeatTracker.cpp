@@ -44,6 +44,9 @@ namespace
     // And a good deal longer after the listener has moved it by hand.
     constexpr double kBarNudgeHoldSeconds = 30.0;
 
+    // How long the one stays marked after a tap has declared it.
+    constexpr double kBarDeclaredFlashSeconds = 0.9;
+
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
     // too long. Measured against a notated click through the real network, the
@@ -110,6 +113,7 @@ void BeatTracker::reset() noexcept
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
+    barDeclaredSamples = 0;
     tapIoiWrite = 0;
     tapIoiFilled = 0;
     std::fill (tapIoi, tapIoi + 8, 0.0f);
@@ -164,7 +168,10 @@ void BeatTracker::tap (double timeSeconds) noexcept
         return;
     }
 
-    if (lastTapSec >= 0.0 && dt > 2.0)
+    // A gap this long ends the group: the next tap starts a new count, and it
+    // is the one that gets to say where the bar is.
+    const bool groupIdle = lastTapSec < 0.0 || dt > 2.0;
+    if (groupIdle)
     {
         tapIoiWrite = 0;
         tapIoiFilled = 0;
@@ -177,7 +184,28 @@ void BeatTracker::tap (double timeSeconds) noexcept
         tapIoiFilled = std::min (8, tapIoiFilled + 1);
     }
 
+    const bool startsGroup = groupIdle || tapIoiFilled == 0;
     lastTapSec = timeSeconds;
+
+    // The tap is the one.
+    //
+    // A single tap, on its own, does not say anything about the tempo - three
+    // intervals are needed for that - but it says exactly where the bar starts,
+    // and that is the thing the analysis cannot work out for itself. So the
+    // first tap of a group declares the downbeat whenever there is already a
+    // tempo to hang it on, and the count-in below keeps the same meaning: tap
+    // one-two-three-four and the one was the first of them.
+    if (startsGroup && ! tapEstablished && heldBpm > 50.0f
+        && (currentState == TrackingState::following
+            || currentState == TrackingState::lowConfidence
+            || currentState == TrackingState::recovering))
+    {
+        follower.snapBeat (0, 0.0f);
+        holdBarDecision();
+        barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
+        // Deliberately not tapHold/tapEstablished: those hand the tempo to the
+        // tapper, and this tap was not about the tempo.
+    }
 
     if (tapIoiFilled < 3)
         return;
@@ -232,7 +260,10 @@ void BeatTracker::tap (double timeSeconds) noexcept
         follower.forceTempo (candidate);
         follower.setTargetTempo (candidate, 0.95f);
         heldBpm = candidate;
+        // Four taps counted in: this one is beat four, so the next is the one.
         follower.snapBeat (3);
+        holdBarDecision();
+        barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
         if (armed && ! hadPlayed)
         {
             waitForQuantize = true;
@@ -353,12 +384,21 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
     }
 }
 
-void BeatTracker::nudgeBar (int beats) noexcept
+void BeatTracker::holdBarDecision() noexcept
 {
-    follower.rotateBarIndex (beats);
+    // The evidence that produced the current bar is exactly the evidence that
+    // has just been overruled, so it is cleared and the automatic alignment is
+    // held off. Without this the vote puts the bar back within a phrase and the
+    // correction looks like it did nothing.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     downbeatVotes[0] = kVotesToMoveTheBar;
     downbeatHoldSamples = static_cast<int> (sampleRate * kBarNudgeHoldSeconds);
+}
+
+void BeatTracker::nudgeBar (int beats) noexcept
+{
+    follower.rotateBarIndex (beats);
+    holdBarDecision();
 }
 
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
@@ -748,6 +788,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.confidence = smoothedConf;
     out.beatPhase = follower.beatPhase();
     out.barPhase = follower.barPhase();
+    barDeclaredSamples = std::max (0, barDeclaredSamples - numSamples);
+    out.barDeclared = barDeclaredSamples > 0;
     out.beatsElapsed = follower.beatsElapsed();
 
     const bool canPlay = armed

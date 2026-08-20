@@ -39,6 +39,22 @@ namespace
         { 12, Stroke::open,  0.84f },
         { 14, Stroke::open,  0.94f },
     };
+    // The third bar of the phrase. Two bars of A and B alternating is a loop
+    // you hear the seam of after twenty seconds; four bars is a sentence. C is
+    // the one that goes somewhere - here the tumba answers itself across the
+    // second half - and the phrase reads A B A C, so the change lands where a
+    // listener is already expecting one.
+    constexpr Hit kMarchaC[] = {
+        {  0, Stroke::heel,  0.32f },
+        {  2, Stroke::toe,   0.28f },
+        {  4, Stroke::slap,  0.90f },
+        {  6, Stroke::toe,   0.30f },
+        {  8, Stroke::tumba, 0.78f },
+        {  9, Stroke::heel,  0.24f },
+        { 11, Stroke::tumba, 0.46f },
+        { 12, Stroke::open,  0.88f },
+        { 14, Stroke::open,  0.95f },
+    };
     constexpr Hit kMarchaFill[] = {
         {  8, Stroke::open,  0.72f },
         { 10, Stroke::slap,  0.80f },
@@ -73,6 +89,17 @@ namespace
         { 13, Stroke::open,  0.52f },
         { 14, Stroke::open,  0.92f },
     };
+    // Still nothing on 2 and 4 - that is the drummer's - but the bar leaves with
+    // a pickup on the last sixteenth.
+    constexpr Hit kRockC[] = {
+        {  0, Stroke::tumba, 0.86f },
+        {  3, Stroke::heel,  0.22f },
+        {  6, Stroke::open,  0.76f },
+        {  8, Stroke::tumba, 0.62f },
+        { 10, Stroke::toe,   0.26f },
+        { 14, Stroke::open,  0.88f },
+        { 15, Stroke::slap,  0.58f },
+    };
     constexpr Hit kRockFill[] = {
         { 12, Stroke::open,  0.72f },
         { 13, Stroke::open,  0.80f },
@@ -106,6 +133,18 @@ namespace
         { 13, Stroke::toe,   0.30f },
         { 15, Stroke::open,  0.92f },
     };
+    // The "a" of every beat stays - it is the whole character of the part - and
+    // the variation is in what sits between them.
+    constexpr Hit kDanceC[] = {
+        {  0, Stroke::tumba, 0.72f },
+        {  3, Stroke::open,  0.82f },
+        {  5, Stroke::slap,  0.56f },
+        {  7, Stroke::open,  0.88f },
+        {  9, Stroke::toe,   0.28f },
+        { 11, Stroke::open,  0.80f },
+        { 12, Stroke::tumba, 0.54f },
+        { 15, Stroke::open,  0.94f },
+    };
     constexpr Hit kDanceFill[] = {
         {  8, Stroke::slap,  0.66f },
         {  9, Stroke::open,  0.60f },
@@ -133,6 +172,13 @@ namespace
         { 11, Stroke::toe,   0.28f },
         { 14, Stroke::open,  0.82f },
     };
+    // Even the variation stays out of the way.
+    constexpr Hit kPopC[] = {
+        {  0, Stroke::tumba, 0.74f },
+        {  6, Stroke::toe,   0.26f },
+        { 11, Stroke::open,  0.52f },
+        { 14, Stroke::open,  0.84f },
+    };
     constexpr Hit kPopFill[] = {
         { 10, Stroke::toe,   0.40f },
         { 12, Stroke::open,  0.66f },
@@ -149,10 +195,18 @@ namespace
     // latin leans on the pulse, rock leans on the backbeat with the drummer,
     // dance leans on the offbeat where the open hat sits, pop stays level and
     // out of the way.
+    //
+    // These used to be one beat of weights written out four times - the same
+    // four numbers repeated - which is not a figure, it is a cell. However
+    // musical the numbers were, four identical beats read as a machine, because
+    // nothing in the bar told you where you were in it. Each table now states
+    // its shape over two beats and answers it over the next two, so the phrase
+    // is a bar long and the halves are not the same.
     struct StyleSpec
     {
         const Hit* barA; int nA;
         const Hit* barB; int nB;
+        const Hit* barC; int nC;
         const Hit* fill; int nFill;
         float shaker[GrooveEngine::kStepsPerBar];
         // Where the weight sits across the bar. This belongs to the style and
@@ -170,36 +224,40 @@ namespace
         // marcha
         { kMarchaA, static_cast<int> (std::size (kMarchaA)),
           kMarchaB, static_cast<int> (std::size (kMarchaB)),
+          kMarchaC, static_cast<int> (std::size (kMarchaC)),
           kMarchaFill, static_cast<int> (std::size (kMarchaFill)),
-          { 0.86f, 0.38f, 0.55f, 0.38f,  0.86f, 0.38f, 0.55f, 0.38f,
-            0.86f, 0.38f, 0.55f, 0.38f,  0.86f, 0.38f, 0.55f, 0.38f },
+          { 0.90f, 0.36f, 0.54f, 0.36f,  0.74f, 0.36f, 0.63f, 0.42f,
+            0.86f, 0.36f, 0.54f, 0.36f,  0.70f, 0.42f, 0.80f, 0.48f },
           { 1.00f, 0.86f, 0.93f, 0.88f },
           0.35f, 8 },
 
         // rock - the weight moves onto 2 and 4, with the drummer
         { kRockA, static_cast<int> (std::size (kRockA)),
           kRockB, static_cast<int> (std::size (kRockB)),
+          kRockC, static_cast<int> (std::size (kRockC)),
           kRockFill, static_cast<int> (std::size (kRockFill)),
-          { 0.80f, 0.30f, 0.62f, 0.30f,  0.92f, 0.30f, 0.62f, 0.30f,
-            0.80f, 0.30f, 0.62f, 0.30f,  0.92f, 0.30f, 0.62f, 0.30f },
+          { 0.78f, 0.28f, 0.58f, 0.28f,  0.90f, 0.28f, 0.60f, 0.28f,
+            0.76f, 0.28f, 0.64f, 0.32f,  0.96f, 0.32f, 0.72f, 0.38f },
           { 0.94f, 1.00f, 0.92f, 1.00f },
           0.18f, 8 },
 
         // dance - sixteenths, leaning on the offbeat like an open hat
         { kDanceA, static_cast<int> (std::size (kDanceA)),
           kDanceB, static_cast<int> (std::size (kDanceB)),
+          kDanceC, static_cast<int> (std::size (kDanceC)),
           kDanceFill, static_cast<int> (std::size (kDanceFill)),
-          { 0.72f, 0.46f, 0.88f, 0.46f,  0.72f, 0.46f, 0.88f, 0.46f,
-            0.72f, 0.46f, 0.88f, 0.46f,  0.72f, 0.46f, 0.88f, 0.46f },
+          { 0.70f, 0.40f, 0.88f, 0.40f,  0.58f, 0.52f, 0.90f, 0.62f,
+            0.72f, 0.38f, 0.86f, 0.46f,  0.54f, 0.60f, 0.94f, 0.74f },
           { 1.00f, 0.95f, 0.97f, 0.95f },
           0.30f, 8 },
 
         // pop - level, quiet, and mostly space
         { kPopA, static_cast<int> (std::size (kPopA)),
           kPopB, static_cast<int> (std::size (kPopB)),
+          kPopC, static_cast<int> (std::size (kPopC)),
           kPopFill, static_cast<int> (std::size (kPopFill)),
-          { 0.72f, 0.24f, 0.52f, 0.24f,  0.72f, 0.24f, 0.52f, 0.24f,
-            0.72f, 0.24f, 0.52f, 0.24f,  0.72f, 0.24f, 0.52f, 0.24f },
+          { 0.74f, 0.22f, 0.50f, 0.22f,  0.60f, 0.24f, 0.54f, 0.26f,
+            0.70f, 0.22f, 0.50f, 0.22f,  0.58f, 0.26f, 0.62f, 0.30f },
           { 1.00f, 0.88f, 0.94f, 0.90f },
           0.10f, 8 },
     };
@@ -322,11 +380,30 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
 
     if (congasOn)
     {
+        // A four-bar sentence: state it, answer it, state it again, go
+        // somewhere. Two bars alternating is a loop whose seam you hear after
+        // twenty seconds; this puts the change where a listener is already
+        // expecting one, and the fill every eighth bar closes the pair of
+        // sentences rather than interrupting one.
         const bool fill = isFillBar (barIndex);
-        const Hit* bar = fill ? spec.fill
-                              : (wrapBar (barIndex, 2) == 1 ? spec.barB : spec.barA);
-        const int count = fill ? spec.nFill
-                               : (wrapBar (barIndex, 2) == 1 ? spec.nB : spec.nA);
+        const int inPhrase = wrapBar (barIndex, 4);
+        const Hit* bar = spec.barA;
+        int count = spec.nA;
+        if (fill)
+        {
+            bar = spec.fill;
+            count = spec.nFill;
+        }
+        else if (inPhrase == 1)
+        {
+            bar = spec.barB;
+            count = spec.nB;
+        }
+        else if (inPhrase == 3)
+        {
+            bar = spec.barC;
+            count = spec.nC;
+        }
 
         for (int i = 0; i < count && n < maxOut; ++i)
         {

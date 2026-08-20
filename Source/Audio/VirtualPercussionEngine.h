@@ -80,6 +80,7 @@ private:
     std::atomic<float> lastConf { 0.0f };
     std::atomic<float> lastBeat { 0.0f };
     std::atomic<float> lastBar { 0.0f };
+    std::atomic<bool>  lastBarDeclared { false };
     std::atomic<float> lastPeak { 0.0f };
     std::atomic<float> lastCallbackMs { 0.0f };
     std::atomic<int>   lastState { 0 };

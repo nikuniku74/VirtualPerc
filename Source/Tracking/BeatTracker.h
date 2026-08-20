@@ -63,6 +63,10 @@ public:
         TempoRegime   regime = TempoRegime::unknown;
         float         combBpm = 0.0f;
         bool          levelSettled = false;
+        /** True for a moment after a tap has declared where beat one is, so the
+            UI can show that the gesture landed rather than leaving the player
+            guessing whether the bar moved because of them. */
+        bool          barDeclared = false;
     };
 
     void start() noexcept;
@@ -77,6 +81,7 @@ public:
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
+    void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
     NeuralBeatTracker neural;
@@ -119,6 +124,7 @@ private:
     int lostSyncSamples = 0;
     int downbeatHoldSamples = 0;
     float downbeatVotes[4] {};
+    int   barDeclaredSamples = 0;
 
     int quantizeWaitSamples = 0;
     double lastTapSec = -1.0;

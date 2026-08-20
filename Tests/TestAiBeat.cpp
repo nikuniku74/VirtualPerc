@@ -1088,6 +1088,251 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "asking for half moves the level there and keeps it there");
     }
 
+    // One tap says where the bar starts.
+    //
+    // Which beat is beat one is the thing the analysis cannot work out - four
+    // approaches were measured and all of them landed near chance, see
+    // docs/STATUS.md - so the tap has to be able to say it, and what it says
+    // has to stick. The vote that produced the wrong bar is still running, and
+    // if it is left alone it puts the bar back inside a phrase.
+    {
+        class SteadyBeatModel final : public vp::IBeatModel
+        {
+        public:
+            explicit SteadyBeatModel (double framesPerBeat) : fpb (framesPerBeat) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double beats = static_cast<double> (frame++) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const float pulse = 0.03f + 0.95f * static_cast<float> (
+                                        std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                // Calls a downbeat on beat three, which is what the real one
+                // does often enough to matter: the bar it produces is wrong and
+                // the tap has to be able to overrule it.
+                const int beatNo = static_cast<int> (std::llround (beats));
+                activations3[0] = pulse;
+                activations3[1] = (((beatNo % 4) + 4) % 4) == 2 ? pulse * 0.95f : 0.03f;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+        private:
+            double fpb;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        const double beatSamples = 60.0 / static_cast<double> (trackBpm) * sr;
+
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::make_unique<SteadyBeatModel> (framesPerBeat));
+        eng.prepare (sr, block, 1);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 46.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        // Everything below is read in the middle of a song beat, never at its
+        // edge. The clock's own beat boundary does not coincide with the song's
+        // - it leads it by the attack compensation, and it wanders inside a
+        // block - so a reading taken *at* the boundary reports the beat on
+        // either side of it at random. The first version of this test chose the
+        // beat to tap on from exactly such a reading, picked a beat the clock
+        // was in fact already calling one, and then scored the clock against
+        // itself: it reported 96% with the tap mechanism compiled out.
+        auto midBeat = [beatSamples] (int p)
+        {
+            const double f = static_cast<double> (p) / beatSamples;
+            const double frac = f - std::floor (f);
+            return frac > 0.3 && frac < 0.7;
+        };
+
+        // How far the clock's count sits from the song's, as a number of beats.
+        // It is constant while nothing moves the bar, which is what makes it
+        // usable to choose a tap beat the clock disagrees with.
+        int offset = -1;
+        int tapAtSample = -1, tapBeat = -1;
+        bool tapped = false;
+        // The UI marks the one while this is set, so the player can see the
+        // gesture land instead of waiting a whole bar to find out.
+        bool sawDeclared = false, declaredLater = false;
+        int beforeTotal = 0, beforeAgreed = 0, afterTap = 0, agreed = 0;
+        int pos = 0, blocks = 0;
+        while (pos + block <= n)
+        {
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            const auto snap = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+            const int clockBeat = std::clamp (static_cast<int> (snap.barPhase * 4.0f), 0, 3);
+            const int songBeat = static_cast<int> (static_cast<double> (pos) / beatSamples);
+            if (snap.barDeclared)
+            {
+                if (tapAtSample < 0)
+                    declaredLater = true;               // before any tap: wrong
+                else if (pos < tapAtSample + static_cast<int> (2.0 * sr))
+                    sawDeclared = true;
+                else
+                    declaredLater = true;               // still lit a bar later
+            }
+
+            if (snap.bpm > 40.0f && midBeat (pos))
+            {
+                if (tapAtSample < 0)
+                {
+                    offset = ((clockBeat - songBeat) % 4 + 4) % 4;
+
+                    // The same question as below, asked before the tap and
+                    // against the count the tap is going to impose. Low here is
+                    // what makes "high afterwards" mean the tap did it.
+                    if (t > 12.0)
+                    {
+                        ++beforeTotal;
+                        beforeAgreed += clockBeat == (songBeat & 3);
+                    }
+                }
+                else if (pos > tapAtSample + 2 * beatSamples)
+                {
+                    // From two beats after the tap: the correction lands on the
+                    // next pulse, not inside the block that carried it.
+                    const int sinceTap = ((songBeat - tapBeat) % 4 + 4) % 4;
+                    ++afterTap;
+                    agreed += clockBeat == sinceTap;
+                }
+            }
+
+            // Tap on the next song beat the clock is not already calling one.
+            // With the offset known this is decided a beat ahead, not read off
+            // the clock at the instant of the tap.
+            if (! tapped && t > 20.0 && offset >= 0)
+            {
+                const double beats = static_cast<double> (pos) / beatSamples;
+                const int next = static_cast<int> (std::ceil (beats));
+                if (beats > static_cast<double> (next) - 0.006
+                    && ((next + offset) % 4) != 0)
+                {
+                    tapAtSample = pos;
+                    tapBeat = next;
+                    eng.tapAt (t);
+                    tapped = true;
+                }
+            }
+
+            pos += block;
+            if ((++blocks % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (2));
+        }
+
+        const double held = afterTap > 0 ? static_cast<double> (agreed) / afterTap : 0.0;
+        const double was = beforeTotal > 0 ? static_cast<double> (beforeAgreed) / beforeTotal : 0.0;
+        std::printf ("tap-downbeat  bar on the tap's count: %.0f%% before, %.0f%% after"
+                     " (tap on song beat %d, clock was calling it %d)\n",
+                     was * 100.0, held * 100.0, tapBeat, (tapBeat + offset) % 4);
+        expect (tapped && afterTap > 400 && was < 0.05 && held > 0.95,
+                "one tap says where the bar starts, and the bar stays there");
+        expect (sawDeclared && ! declaredLater,
+                "and the one is marked for a moment, only just after the tap");
+    }
+
+    // A figure has to be longer than the beat it sits on, and a phrase longer
+    // than two bars, or the part is a cell on repeat however well the cell is
+    // written. Both were true: the shaker table was one beat of weights typed
+    // out four times, and the congas alternated two bars forever.
+    {
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0x51ee7u);
+            gr.setStyle (static_cast<vp::GrooveStyle> (st));
+            gr.setHumanize (0.0f);      // the shape, not the scatter
+            gr.setIntensity (0.0f);     // and no ghosts on top of it
+            gr.setShakerSubdivision (vp::Subdivision::sixteenth);
+
+            // The shaker weight at every sixteenth of one bar.
+            float shaker[vp::GrooveEngine::kStepsPerBar] {};
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                const int n = gr.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
+                for (int e = 0; e < n; ++e)
+                    if (ev[e].stroke == vp::Stroke::shakerDown
+                        || ev[e].stroke == vp::Stroke::shakerUp)
+                        shaker[step] = std::max (shaker[step], ev[e].velocity);
+            }
+
+            // Each beat normalised by its own loudest stroke, then compared.
+            //
+            // The comparison has to be of *shapes*. Every style also carries an
+            // accent per beat, which scales a whole beat at once, so raw
+            // weights differ from beat to beat even when the four beats are the
+            // same four numbers typed out four times - and a test on raw
+            // weights passes on exactly the thing it is meant to catch.
+            // Dividing each beat by its own maximum takes the accent out and
+            // leaves the figure.
+            auto beatShape = [&shaker] (int beat, float* into)
+            {
+                float peak = 0.0f;
+                for (int i = 0; i < 4; ++i)
+                    peak = std::max (peak, shaker[beat * 4 + i]);
+                for (int i = 0; i < 4; ++i)
+                    into[i] = peak > 1.0e-6f ? shaker[beat * 4 + i] / peak : 0.0f;
+            };
+            float s0[4], s1[4], s2[4], s3[4];
+            beatShape (0, s0); beatShape (1, s1); beatShape (2, s2); beatShape (3, s3);
+            auto shapeDiff = [] (const float* a, const float* b)
+            {
+                float d = 0.0f;
+                for (int i = 0; i < 4; ++i)
+                    d += std::fabs (a[i] - b[i]);
+                return d;
+            };
+
+            // One beat against the next: if these match, the figure is a beat
+            // long whatever the accent does on top of it.
+            const float beatToBeat = shapeDiff (s0, s1);
+            // And the first half of the bar against the second.
+            const float halfToHalf = shapeDiff (s0, s2) + shapeDiff (s1, s3);
+
+            // The conga bars of the phrase, as a fingerprint each.
+            auto barShape = [&gr] (int bar, juce::String& into)
+            {
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (bar, step, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int e = 0; e < n; ++e)
+                        if (ev[e].stroke != vp::Stroke::shakerDown
+                            && ev[e].stroke != vp::Stroke::shakerUp)
+                            into << step << ":" << static_cast<int> (ev[e].stroke) << " ";
+                }
+            };
+            juce::String b0, b1, b2, b3;
+            barShape (0, b0); barShape (1, b1); barShape (2, b2); barShape (3, b3);
+
+            std::printf ("groove-phrase  %-7s beat-to-beat=%.2f half-to-half=%.2f  A=B?%d A=C?%d B=C?%d\n",
+                         vp::toString (static_cast<vp::GrooveStyle> (st)),
+                         static_cast<double> (beatToBeat), static_cast<double> (halfToHalf),
+                         b0 == b1 ? 1 : 0, b0 == b3 ? 1 : 0, b1 == b3 ? 1 : 0);
+
+            expect (beatToBeat > 0.15f && halfToHalf > 0.15f,
+                    "the shaker figure is longer than one beat");
+            // Bar three of the phrase is its own bar, not bar one or bar two
+            // again - that is what makes the sentence four bars instead of two.
+            expect (b0 != b1 && b0 != b3 && b1 != b3 && b0 == b2,
+                    "the phrase is four bars long: state it, answer it, state it, go somewhere");
+        }
+    }
+
     // What a listener hears has to land on the beat, and the clock being right
     // is not the same thing as that. A shaker is not a click: measured on the
     // bundled library its energy needs ten to thirteen milliseconds to get

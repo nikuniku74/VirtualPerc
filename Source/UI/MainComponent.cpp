@@ -1104,6 +1104,16 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                 g.setColour (text().withAlpha (one ? 0.35f : 0.18f));
                 g.drawEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f, 1.4f);
             }
+
+            // A tap on the one redraws the bar under the player's hands, and a
+            // bar is a slow thing to see move: without a mark here the gesture
+            // looks like it did nothing until the next downbeat comes round.
+            if (one && snap.barDeclared)
+            {
+                const float hr = rr + 6.0f;
+                g.setColour (fuchsia());
+                g.drawEllipse (x - hr, y - hr, hr * 2.0f, hr * 2.0f, 2.2f);
+            }
         }
     }
 

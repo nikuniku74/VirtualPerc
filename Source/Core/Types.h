@@ -150,6 +150,8 @@ struct EngineSnapshot
     bool  shakerEnabled        = true;
     bool  percussionAudible    = false;
     bool  tapLocked            = false;
+    /** A tap has just said where beat one is; the UI marks the one for a moment. */
+    bool  barDeclared          = false;
     FollowBar followBar        = FollowBar::ready;
     int   bufferSize           = 0;
     int   shakerVoices         = 0;

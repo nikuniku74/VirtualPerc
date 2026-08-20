@@ -12,11 +12,11 @@ Sì: apri il progetto Xcode, seleziona l’iPad, Run. Nel binario c’è **BeatN
 
 Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstalla: il lock SPEAKER/Spotify è cambiato nel C++.
 
-## Ultima verifica automatica (19 agosto 2026, sera)
+## Ultima verifica automatica (20 agosto 2026)
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **75 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
+| Host `VPTests` | **85 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -410,6 +410,69 @@ c'è un piatto sull'uno ogni quattro battute — come fanno i dischi.
 materiale e non dal codice, spegnendo la compensazione e rimisurando: **con** la
 compensazione lo span è 17.5, **senza** 26.4, quindi la compensazione lo
 migliora.
+
+## Riff lunghi e il tap che dichiara l'uno (20 agosto)
+
+### La parte era una cella su ripetizione
+
+Due difetti, tutti e due invisibili leggendo il codice e ovvi misurandolo.
+
+Lo **shaker** era un movimento di pesi scritto quattro volte. Sopra ci stava un
+accento per movimento, che scala un intero movimento alla volta: bastava a far
+sembrare i quattro movimenti diversi fra loro all'ascolto distratto, e bastava a
+far passare un test scritto sui pesi grezzi. Normalizzando ogni movimento per il
+proprio picco — cioè togliendo l'accento e guardando la *figura* — la differenza
+fra un movimento e il successivo era esattamente **0.00**.
+
+Le **congas** alternavano due battute per sempre: A B A B. Una frase di due
+battute non è una frase.
+
+Ora la tabella dello shaker è lunga una battuta intera per ognuno dei quattro
+stili, e la frase è di quattro battute, **A B A C**, con una terza battuta
+propria per stile. Misurato con l'accento tolto:
+
+| Stile | movimento vs movimento | prima metà vs seconda |
+|---|---|---|
+| MARCHA | 0.51 | 0.41 |
+| ROCK | 0.17 | 0.36 |
+| DANCE | 0.51 | 0.36 |
+| POP | 0.46 | 0.31 |
+
+Con la tabella vecchia la prima colonna è 0.00 e il test fallisce in tutti e
+quattro gli stili; l'alternanza a due battute lo fa fallire allo stesso modo. Il
+fill sulla quarta battuta resta dov'era.
+
+### Il tap sull'uno
+
+Dato che l'uno automatico è al livello del caso (vedi sopra), il primo tocco di
+una serie di TAP, quando un tempo c'è già ed è tenuto, **dichiara che quel
+momento è il primo quarto**. Non tocca il tempo: quello resta della rete, e i
+tap successivi si comportano come prima (dal quarto in poi prendono il tempo).
+Insieme alla dichiarazione i voti della rete vengono azzerati e l'allineamento
+automatico è tenuto fermo per trenta secondi, altrimenti la battuta torna dov'era
+entro una frase e la correzione sembra non aver fatto niente.
+
+Sui pallini, l'uno porta un anello per nove decimi di secondo dopo il tocco: una
+battuta è una cosa lenta da vedere muoversi, e senza un segno il gesto sembra non
+aver fatto nulla fino al downbeat successivo.
+
+### Il test che non misurava niente
+
+Vale la pena scriverlo perché è lo stesso errore di misura di due giri fa. La
+prima versione del test sceglieva su quale movimento battere leggendo il
+contatore dell'orologio **esattamente sul bordo del movimento** — dove il bordo
+dell'orologio e quello del brano non coincidono (l'orologio anticipa della
+compensazione d'attacco) e la lettura riporta il movimento di prima o quello
+dopo a caso. Sceglieva così un movimento che l'orologio stava *già* chiamando
+uno, e poi confrontava l'orologio con sé stesso: **96% con il meccanismo, 96%
+senza**.
+
+Ora ogni lettura è presa a metà movimento, lo scarto fra i due conteggi è
+misurato prima e il movimento su cui battere è scelto da quello, un movimento in
+anticipo. Risultato: **0% prima del tap, 100% dopo**, e **0% dopo** con la
+dichiarazione tolta dal codice, su tre esecuzioni.
+
+Il timing non è cambiato: attacco sentito +3.01 ms, identico a prima del riff.
 
 ## L'interfaccia (19 agosto, sera)
 

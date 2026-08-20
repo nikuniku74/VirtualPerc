@@ -437,6 +437,7 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastConf.store (tr.confidence, std::memory_order_relaxed);
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
+    lastBarDeclared.store (tr.barDeclared, std::memory_order_relaxed);
     lastPeak.store (peak, std::memory_order_relaxed);
     lastAnalysisPeak.store (analysisPeak, std::memory_order_relaxed);
     lastState.store (static_cast<int> (tr.state), std::memory_order_relaxed);
@@ -474,6 +475,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.confidence = lastConf.load (std::memory_order_relaxed);
     s.beatPhase = lastBeat.load (std::memory_order_relaxed);
     s.barPhase = lastBar.load (std::memory_order_relaxed);
+    s.barDeclared = lastBarDeclared.load (std::memory_order_relaxed);
     s.latencyMs = latencyMs.load (std::memory_order_relaxed);
     s.inputPeak = lastPeak.load (std::memory_order_relaxed);
     s.callbackMs = lastCallbackMs.load (std::memory_order_relaxed);
