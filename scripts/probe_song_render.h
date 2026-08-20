@@ -104,8 +104,22 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
             const bool kickHere = (beatInBar == 0 || beatInBar == 2);
             if (kickHere && inBeat < 0.30)
             {
+                // Beat one a little heavier than beat three. Records nearly
+                // always do this and it costs the tracker nothing on tempo;
+                // identical kicks on one and three leave the bar with no mark
+                // at all, which is what this material used to have.
+                const float weight = beatInBar == 0 ? 1.0f : 0.82f;
                 const float env = decay (tBeat, 26.0f);
-                s += 0.95f * std::sin (2.0f * kPi * (48.0f + 30.0f * env) * tBeat) * env;
+                s += weight * 0.95f * std::sin (2.0f * kPi * (48.0f + 30.0f * env) * tBeat) * env;
+            }
+
+            // A cymbal on the one of every fourth bar. The single clearest
+            // downbeat cue there is, and common enough on real records that
+            // leaving it out was the material being unusual, not hard.
+            if (beatInBar == 0 && (bar % 4) == 0 && inBeat < 0.9)
+            {
+                const float env = decay (tBeat, 3.2f);
+                s += 0.30f * noiseAt (rng) * env;
             }
             if (opt.syncopated && beatInBar == 1 && sixIdx == 3 && sixteenth < 0.5)
             {
@@ -144,14 +158,21 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
             }
         }
 
-        // Bass. Held notes, so most of its energy has no onset at all - and when
-        // it does move, it moves on the offbeat.
+        // Bass. Held notes, so most of its energy has no onset at all - but the
+        // root lands on the one and the note in the middle of the bar is weaker
+        // and higher, which is how a bass line marks a bar. It used to
+        // articulate the same note every two beats, so the strongest thing in
+        // the arrangement above the beat had a period of two - the material had
+        // no bar in it, and neither the network nor a listener could have found
+        // one.
         {
-            const double bassBeat = opt.syncopated ? std::fmod (beats + 0.5, 2.0)
-                                                   : std::fmod (beats, 2.0);
-            const float tb = static_cast<float> (bassBeat * beatSec);
-            const float env = 0.25f + 0.75f * decay (tb, 4.0f);
-            s += 0.42f * std::sin (2.0f * kPi * root * 0.5f * tb) * env;
+            const double inBar = opt.syncopated ? std::fmod (beats + 0.5, 4.0)
+                                                : std::fmod (beats, 4.0);
+            const bool secondHalf = inBar >= 2.0;
+            const float tb = static_cast<float> ((secondHalf ? inBar - 2.0 : inBar) * beatSec);
+            const float env = 0.25f + 0.75f * decay (tb, 3.0f);
+            const float note = secondHalf ? root * 0.75f : root * 0.5f;
+            s += (secondHalf ? 0.30f : 0.46f) * std::sin (2.0f * kPi * note * tb) * env;
         }
 
         // Pad. No transient whatsoever; pure smear across the beats.

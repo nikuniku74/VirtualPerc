@@ -72,6 +72,7 @@ private:
             middle one and nothing else: given the whole row it grew until it
             ran under the two buttons and out of the column. */
         juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
+        juce::Rectangle<int> barShift;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
     juce::Rectangle<int> stageArea() const;
@@ -118,6 +119,7 @@ private:
 
     juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
     juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
+    juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
     juce::TextButton tapButton { "TAP" };

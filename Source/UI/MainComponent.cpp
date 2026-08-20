@@ -233,6 +233,15 @@ MainComponent::MainComponent()
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
+    setupBtn (barButton, ink());
+
+    // Where beat one is cannot be read reliably from what the network gives us,
+    // so this moves it on by one. Same answer as the octave pair: a measurement
+    // that will not come out is offered to the listener instead of guessed at.
+    barButton.onClick = [this]
+    {
+        engine.settings().barNudge.fetch_add (1);
+    };
 
     // Half and double. The one part of the metrical level the signal does not
     // decide - full eighths under a slow tempo read as well at the double - is
@@ -412,7 +421,7 @@ void MainComponent::refreshThemeColours()
         &startButton, &stopButton, &tapButton, &shakerButton, &debugButton,
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
-        &styleDance, &stylePop, &halveButton, &doubleButton
+        &styleDance, &stylePop, &halveButton, &doubleButton, &barButton
     };
     for (auto* button : buttons)
     {
@@ -801,6 +810,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.tempoLine = area.removeFromTop (20);
     area.removeFromTop (10);
     s.beats = area.removeFromTop (beatsH);
+    // Beside the dots, because that is what it moves.
+    s.barShift = s.beats.removeFromRight (juce::jmin (96, s.beats.getWidth() / 4))
+                        .reduced (2, beatsH / 4);
     s.part = area.removeFromTop (20);
     area.removeFromTop (10);
     s.meter = area.removeFromTop (10).reduced (juce::jmax (0, area.getWidth() / 6), 2);
@@ -915,6 +927,7 @@ void MainComponent::resized()
     const auto rows = stageRows (stage);
     halveButton.setBounds (rows.octaveDown);
     doubleButton.setBounds (rows.octaveUp);
+    barButton.setBounds (rows.barShift);
 
     layoutConsole (r);
 }

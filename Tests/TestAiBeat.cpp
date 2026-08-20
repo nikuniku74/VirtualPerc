@@ -1088,6 +1088,76 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "asking for half moves the level there and keeps it there");
     }
 
+    // What a listener hears has to land on the beat, and the clock being right
+    // is not the same thing as that. A shaker is not a click: measured on the
+    // bundled library its energy needs ten to thirteen milliseconds to get
+    // where a slap gets in two, so a voice started exactly on the pulse *sounds*
+    // that much after it - and the strokes sound at different times from each
+    // other, which is worse than all of them being late together.
+    {
+        constexpr double sr = 48000.0;
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setSeed (4242u);
+        perc.setHumanization (0.0f);
+        perc.setReverbAmount (0.0f);
+        perc.setVolume (1.0f);
+        perc.setGroove (120.0f, 4);
+
+        // Where each articulation is heard, measured the same way the
+        // compensation is defined: the point the envelope reaches 80% of the
+        // peak it reaches inside the attack window.
+        auto heardAt = [sr] (const std::vector<float>& x)
+        {
+            const int win = std::min (static_cast<int> (x.size()),
+                                      static_cast<int> (sr * 0.060));
+            const float atk = 1.0f - std::exp (-1.0f / static_cast<float> (sr * 0.0005));
+            std::vector<float> env (static_cast<size_t> (win), 0.0f);
+            float e = 0.0f, peak = 0.0f;
+            for (int i = 0; i < win; ++i)
+            {
+                const float v = std::fabs (x[static_cast<size_t> (i)]);
+                e += (v - e) * (v > e ? 0.5f : atk);
+                env[static_cast<size_t> (i)] = e;
+                peak = std::max (peak, e);
+            }
+            if (peak < 1.0e-6f)
+                return -1.0;
+            for (int i = 0; i < win; ++i)
+                if (env[static_cast<size_t> (i)] >= peak * 0.80f)
+                    return static_cast<double> (i) / sr * 1000.0;
+            return -1.0;
+        };
+
+        double lo = 1.0e9, hi = -1.0e9;
+        for (int s = 0; s < static_cast<int> (vp::Stroke::count); ++s)
+        {
+            const int n = static_cast<int> (sr * 0.4);
+            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+            vp::ClockTick silent;
+            perc.clearVoices();
+            perc.triggerForTest (static_cast<vp::Stroke> (s), 0.9f, 0);
+            perc.render (l.data(), r.data(), n, silent, true);
+            const double at = heardAt (l);
+            if (at < 0.0)
+                continue;
+            lo = std::min (lo, at);
+            hi = std::max (hi, at);
+        }
+
+        std::printf ("attack-align  heard between %.2f and %.2f ms  spread %.2f  lead %.2f\n",
+                     lo, hi, hi - lo, static_cast<double> (perc.attackLeadMs()));
+
+        // Uncompensated these sit between 2.1 and 13.3 ms apart, which is a
+        // shaker landing eleven milliseconds after a slap written on the same
+        // sixteenth. Two milliseconds is below anything a listener can pick out.
+        expect (hi - lo < 2.0, "every articulation is heard at the same moment, not each after its own attack");
+        // And the clock is told to run ahead by exactly that much, or they
+        // would all be late together instead.
+        expect (perc.attackLeadMs() > 4.0f && perc.attackLeadMs() < 25.0f,
+                "the lead the clock is asked for matches the slowest attack in the bank");
+    }
+
     // A record does not restart its bar in the middle, and neither may the
     // clock. The network answers "this is a strong beat" reliably and "this is
     // *the* strong beat" much less so - measured over eight tracks it put only
@@ -1288,14 +1358,22 @@ void vpRunAiBeatTests (int& passed, int& failed)
                              static_cast<double> (meanLate * beatMs),
                              static_cast<double> (worstLate), last.tempoRegime);
 
+                // The clock is deliberately early now, by the slowest attack in
+                // the percussion bank: a shaker started exactly on the pulse is
+                // *heard* thirteen milliseconds after it, so the pulse is placed
+                // thirteen milliseconds before. What has to sit on the beat is
+                // the sound, so that is what this checks - the clock's own lead
+                // is subtracted first, and a test that asserted otherwise would
+                // now be asserting that the shaker is late.
+                //
                 // Tight on purpose. The old bound of 0.05 beat is 25 ms at 120
-                // BPM, which passes a clock sitting a audible distance off the
-                // beat - and one did: a steady +15..20 ms lead that no test
-                // objected to. 8 ms is about where a listener stops hearing a
-                // percussionist as "with" the track.
-                expect (std::fabs (meanEarly) * beatMs < 8.0f
-                            && std::fabs (meanLate) * beatMs < 8.0f,
-                        "clock sits on the song pulse, not beside it");
+                // BPM, which passes a clock an audible distance off the beat.
+                // 8 ms is about where a listener stops hearing a percussionist
+                // as "with" the track.
+                const float lead = last.attackLeadMs;
+                expect (std::fabs (meanEarly * beatMs - lead) < 8.0f
+                            && std::fabs (meanLate * beatMs - lead) < 8.0f,
+                        "what is heard sits on the song pulse, not beside it");
                 expect (std::fabs (meanLate - meanEarly) < 0.02f,
                         "phase alignment holds over time instead of walking off");
             }

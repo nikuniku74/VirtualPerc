@@ -28,6 +28,14 @@ public:
     void setSubdivisionOverride (Subdivision s) noexcept;
     void setSpeakerFollow (bool on) noexcept { speakerFollow = on; }
     void setTempoOctave (int octaves) noexcept { neural.setUserOctave (octaves); }
+
+    /** Move the bar on by whole beats, because the listener says so. Clears the
+        tally and holds the automatic alignment off for a while afterwards: the
+        evidence that produced the current bar is exactly the evidence that
+        has just been overruled, so leaving it in place would let it undo the
+        correction within a phrase. */
+    void nudgeBar (int beats) noexcept;
+
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
     struct Output
@@ -110,7 +118,8 @@ private:
     int tapHoldSamples = 0;
     int lostSyncSamples = 0;
     int downbeatHoldSamples = 0;
-    int downbeatVotes[4] {};
+    float downbeatVotes[4] {};
+
     int quantizeWaitSamples = 0;
     double lastTapSec = -1.0;
     float tapIoi[8] {};

@@ -20,12 +20,29 @@ namespace
     // Downbeats to collect before the vote is worth acting on while waiting to
     // come in, and the larger number needed to move a bar that is already
     // playing - where the correction is something the listener hears.
-    constexpr int kVotesToTrustTheBar = 3;
-    constexpr int kVotesToMoveTheBar = 8;
+    // Now weight, not a count: the sum of the confidences the network attached
+    // to the downbeats it has called. A weak call contributes 0.15, a certain
+    // one about 1, so these are roughly "three convincing downbeats" and "eight
+    // of them".
+    constexpr float kVotesToTrustTheBar = 3.0f;
+    constexpr float kVotesToMoveTheBar = 8.0f;
+
+    // Per downbeat. Over sixteen of them the oldest evidence is worth a third
+    // of the newest, which is a phrase or two - long enough to be a vote and
+    // short enough to notice a section change.
+    constexpr float kVoteDecay = 0.93f;
+
+    // How far the winner has to stand clear of the runner-up before the bar is
+    // moved at all - and how much further while the part is playing.
+    constexpr float kBarWinMargin = 0.10f;
+    constexpr float kBarWinMarginPlaying = 0.42f;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
     constexpr double kBarMoveHoldSeconds = 9.6;
+
+    // And a good deal longer after the listener has moved it by hand.
+    constexpr double kBarNudgeHoldSeconds = 30.0;
 
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
@@ -90,7 +107,7 @@ void BeatTracker::reset() noexcept
     tapHoldSamples = 0;
     lostSyncSamples = 0;
     downbeatHoldSamples = 0;
-    std::fill (downbeatVotes, downbeatVotes + 4, 0);
+    std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     tapIoiWrite = 0;
@@ -336,21 +353,37 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
     }
 }
 
+void BeatTracker::nudgeBar (int beats) noexcept
+{
+    follower.rotateBarIndex (beats);
+    std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+    downbeatVotes[0] = kVotesToMoveTheBar;
+    downbeatHoldSamples = static_cast<int> (sampleRate * kBarNudgeHoldSeconds);
+}
+
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
 {
-    int best = 0, bestVotes = 0, runnerUp = 0, totalVotes = 0;
+    float score[4] {};
+    float totalVotes = 0.0f;
+    for (int i = 0; i < 4; ++i)
+        totalVotes += downbeatVotes[i];
+
+    for (int i = 0; i < 4; ++i)
+        score[i] = totalVotes > 1.0e-6f ? downbeatVotes[i] / totalVotes : 0.25f;
+
+    int best = 0;
+    float bestVotes = 0.0f, runnerUp = 0.0f;
     for (int i = 0; i < 4; ++i)
     {
-        totalVotes += downbeatVotes[i];
-        if (downbeatVotes[i] > bestVotes)
+        if (score[i] > bestVotes)
         {
             runnerUp = bestVotes;
-            bestVotes = downbeatVotes[i];
+            bestVotes = score[i];
             best = i;
         }
-        else if (downbeatVotes[i] > runnerUp)
+        else if (score[i] > runnerUp)
         {
-            runnerUp = downbeatVotes[i];
+            runnerUp = score[i];
         }
     }
 
@@ -362,20 +395,37 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // Once the part is playing the bar is audible, and moving it is only worth
     // doing on evidence that is not close - so the leader must also be clear of
     // whoever is second.
-    const bool plurality = bestVotes * 2 > totalVotes - bestVotes;
-    if (! plurality)
+    // Scores are normalised now, so a clear win is a margin over the runner-up
+    // rather than a share of a total.
+    if (bestVotes < runnerUp + kBarWinMargin)
         return;
     if (! comingIn)
     {
-        if (bestVotes < runnerUp * 2 || downbeatHoldSamples > 0)
+        // Far stricter once the part is playing, because the evidence is not
+        // good enough to spend a listener's attention on. Measured over thirty
+        // tracks the automatic answer is right about four times in ten - better
+        // than the one in four a coin would manage, and nowhere near good
+        // enough to justify moving a bar somebody is playing along to. A bar
+        // that is consistently wrong can be corrected with one tap; one that
+        // keeps moving cannot.
+        if (bestVotes < runnerUp + kBarWinMarginPlaying
+            || totalVotes < kVotesToMoveTheBar
+            || downbeatHoldSamples > 0)
             return;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
 
     follower.rotateBarIndex (-best);
+
+    // Rotating renumbers the beats, so the tally rotates with them rather than
+    // being thrown away: the evidence is still good, it is just about different
+    // indices now. Clearing it instead meant every correction started the
+    // argument again from nothing.
+    float rotated[4];
     for (int i = 0; i < 4; ++i)
-        downbeatVotes[i] = 0;
-    downbeatVotes[0] = bestVotes;
+        rotated[i] = downbeatVotes[(i + best) & 3];
+    for (int i = 0; i < 4; ++i)
+        downbeatVotes[i] = rotated[i];
 }
 
 BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noexcept
@@ -522,10 +572,20 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         const int at = follower.beatPhase() < 0.5f
                            ? follower.beatInBarIndex()
                            : (follower.beatInBarIndex() + 1) & 3;
-        downbeatVotes[at] += 1;
-        if (downbeatVotes[at] > 1000)
-            for (int& v : downbeatVotes)
-                v /= 2;
+
+        // Weighted by how strongly the network called it, not one vote per
+        // event. On material where beats one and three carry the same kick -
+        // which is most material - the network fires on both, and counting
+        // events makes the bar a coin toss between them. It is still more
+        // confident about the true one, and that confidence is the only thing
+        // separating them, so it is what gets counted.
+        //
+        // The whole tally decays as it goes. Without that, the first bars of a
+        // track keep their say forever and a section change can never be heard;
+        // with it the vote is always about the recent past.
+        for (float& v : downbeatVotes)
+            v *= kVoteDecay;
+        downbeatVotes[at] += std::max (0.15f, hyp.downbeatStrength);
 
         // While playing, the bar is corrected from the same vote - never from
         // the single downbeat that just arrived.

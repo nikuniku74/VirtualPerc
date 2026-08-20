@@ -365,6 +365,56 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     fadeTail (dest.left, dest.right, sampleRate);
 }
 
+namespace
+{
+    /** Ceiling on the attack compensation. */
+    constexpr double kMaxAttackLeadSec = 0.025;
+
+    /** Where a recording is heard as starting, in samples from its first.
+        Taken at the point the energy envelope first reaches a large fraction of
+        the peak it will reach inside the attack window - not the first sample
+        above silence, which for a shaker is twelve milliseconds of rising
+        rattle before anything reads as an event, and not the peak either, which
+        for a drum is well inside the decay.
+
+        The fraction is high on purpose: measured across the bundled library it
+        puts a slap at 2.8 ms and a shaker at 10-13 ms, which is the difference
+        a listener actually hears between them. */
+    int measureAttack (const std::vector<float>& x, double sampleRate) noexcept
+    {
+        const int window = std::min (static_cast<int> (x.size()),
+                                     static_cast<int> (sampleRate * 0.040));
+        if (window < 8)
+            return 0;
+
+        const float atk = 1.0f - std::exp (-1.0f / static_cast<float> (sampleRate * 0.0005));
+        float e = 0.0f, peak = 0.0f;
+        std::vector<float> env (static_cast<size_t> (window), 0.0f);
+        for (int i = 0; i < window; ++i)
+        {
+            const float v = std::fabs (x[static_cast<size_t> (i)]);
+            e += (v - e) * (v > e ? 0.5f : atk);
+            env[static_cast<size_t> (i)] = e;
+            peak = std::max (peak, e);
+        }
+        if (peak < 1.0e-6f)
+            return 0;
+
+        const float target = peak * 0.80f;
+        for (int i = 0; i < window; ++i)
+            if (env[static_cast<size_t> (i)] >= target)
+                return i;
+        return 0;
+    }
+}
+
+float PercussionEngine::attackMsFor (Stroke s) const noexcept
+{
+    const int idx = std::clamp (static_cast<int> (s), 0, kStrokes - 1);
+    return static_cast<float> (bank[idx][0][0].attack)
+           / static_cast<float> (sampleRate) * 1000.0f;
+}
+
 void PercussionEngine::buildBank() noexcept
 {
     // The recordings are the OLPC Berklee Sound Library (CC BY 3.0). Anything
@@ -448,6 +498,48 @@ void PercussionEngine::buildBank() noexcept
         }
     }
    #endif
+
+    measureBankAttacks();
+}
+
+void PercussionEngine::measureBankAttacks() noexcept
+{
+    int slowest = 0;
+    for (int st = 0; st < kStrokes; ++st)
+    {
+        // Averaged over the articulation's takes, not taken per take.
+        //
+        // Several of the round-robin slots are the same recording with its
+        // start nudged, and that nudge is the variation - it is what stops four
+        // strokes in a row sounding like one buffer played four times.
+        // Compensating each take by its *own* attack measures the nudge and
+        // takes it straight back out again: measured on the bundled library it
+        // dropped the difference between two takes from 1.42 to 0.001, which is
+        // a round robin that has stopped being one. The compensation belongs to
+        // the articulation.
+        double sum = 0.0;
+        int counted = 0;
+        for (int layer = 0; layer < kLayers; ++layer)
+            for (int rr = 0; rr < kRoundRobin; ++rr)
+            {
+                const int a = measureAttack (bank[st][layer][rr].left, sampleRate);
+                if (a > 0)
+                {
+                    sum += a;
+                    ++counted;
+                }
+            }
+        const int mean = counted > 0 ? static_cast<int> (sum / counted) : 0;
+        for (int layer = 0; layer < kLayers; ++layer)
+            for (int rr = 0; rr < kRoundRobin; ++rr)
+                bank[st][layer][rr].attack = mean;
+        slowest = std::max (slowest, mean);
+    }
+
+    // Bounded. A compensation of tens of milliseconds would be the clock
+    // running ahead of the music by more than the effect it is correcting, and
+    // a damaged asset must not be able to drag the whole part early.
+    bankAttackLead = std::min (slowest, static_cast<int> (sampleRate * kMaxAttackLeadSec));
 }
 
 void PercussionEngine::prepare (double sr) noexcept
@@ -573,10 +665,16 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset)
     // A stroke sits where the drum sits; the tiny random spread on top is the
     // hand not landing in exactly the same place twice.
     const float spread = 0.04f * rng.nextSigned() * humanization;
+    // Every stroke is held back by the difference between the slowest attack in
+    // the bank and its own, so a slap and a shaker started for the same beat are
+    // *heard* together instead of eleven milliseconds apart. The clock supplies
+    // the matching lead, so the pair lands on the beat rather than after it.
+    const int hold = std::max (0, bankAttackLead - s.attack);
+
     auto& v = allocateVoice();
     v.stroke = stroke;
     v.sample = &s;
-    v.pos = -sampleOffset;
+    v.pos = -(sampleOffset + hold);
     v.length = static_cast<int> (s.left.size());
     v.gainL = gain * (1.0f - spread);
     v.gainR = gain * (1.0f + spread);

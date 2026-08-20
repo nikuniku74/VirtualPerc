@@ -51,6 +51,14 @@ struct BeatHypothesis
 
     TempoRegime regime   = TempoRegime::unknown;
 
+    /** How strongly the network called the last downbeat, 0..1. The bar is
+        decided by a vote across the four beats, and counting one vote per event
+        makes that vote a coin toss on material where the network fires on beats
+        one and three alike - which is most material, because on most records
+        those two carry the same kick. Weighted by this, "fires often but
+        weakly" stops outvoting "fires less often and means it". */
+    float    downbeatStrength = 0.0f;
+
     /** What the fold is naming, and whether the buffer is yet long enough for
         that to be a decision rather than the fastest thing in view. Diagnostic:
         when the reported tempo is wrong these two say which half of the

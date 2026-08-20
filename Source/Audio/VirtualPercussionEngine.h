@@ -100,6 +100,8 @@ private:
     std::atomic<int>   lastRegime { 0 };
     std::atomic<float> lastCombBpm { 0.0f };
     std::atomic<bool>  lastLevelSettled { false };
+    int seenBarNudge = 0;
+
     std::atomic<int>   lastStyle { 0 };
     std::atomic<float> lastStyleConf { 0.0f };
 

@@ -172,6 +172,7 @@ void BeatDecoder::reset() noexcept
     prevPulse = 0.0f;
     prevPrevPulse = 0.0f;
     prevDownbeat = 0.0f;
+    lastDownbeatStrength = 0.0f;
     beatWrite = 0;
     beatFilled = 0;
     beatSerial = 0;
@@ -908,6 +909,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
         beatsInBar = (beatsInBar + 1) % 4;
         if (prevDownbeat > downThresh)
         {
+            lastDownbeatStrength = prevDownbeat;
             lastDownbeatSec = eventTimeSec;
             beatsInBar = 0;
             ++downbeatSerial;
@@ -936,6 +938,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeat = peak && prevDownbeat > downThresh;
     hyp.beatSerial = beatSerial;
     hyp.downbeatSerial = downbeatSerial;
+    hyp.downbeatStrength = lastDownbeatStrength;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (tempo.bpm()) : 0.0f;

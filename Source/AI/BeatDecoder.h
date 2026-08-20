@@ -116,6 +116,7 @@ private:
     float  prevPulse = 0.0f;
     float  prevPrevPulse = 0.0f;
     float  prevDownbeat = 0.0f;
+    float  lastDownbeatStrength = 0.0f;
     int    refractoryFrames = 0;
     int    beatsInBar = 0;
     uint64_t frame = 0;

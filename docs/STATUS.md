@@ -16,7 +16,7 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **73 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
+| Host `VPTests` | **75 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -283,6 +283,7 @@ quattro erano intestabili.
 | Comando | Cosa fa |
 |---|---|
 | **÷2 / ×2** | dimezza o raddoppia il livello metrico, quando l'analisi lo legge un'ottava fuori. Premere di nuovo lo stesso tasto torna a quello misurato |
+| **SPOSTA L'1** | sposta la battuta di un movimento. Serve perché il primo quarto non è ricavabile in modo affidabile dal segnale — vedi la sezione del 20 agosto |
 | **DARK / LIGHT** | tema. All'avvio segue l'impostazione di sistema; toccarlo lo fissa |
 | **AUTO / MARCHA / ROCK / DANCE / POP** | la parte che suona. AUTO lascia scegliere allo `StyleDetector`; premere una parte a mano spegne AUTO |
 | **SHAKER / CONGAS** | accendono e spengono i due strumenti separatamente |
@@ -296,6 +297,119 @@ La riga **PARTE** sotto il BPM dice sempre quale parte sta suonando; con AUTO
 attivo mostra anche la confidenza del rilevatore e tinge di verde il pulsante che
 ha scelto. Dal restyling della sera del 19 agosto **tutti** i comandi restano
 visibili anche in orizzontale: vedi la sezione sull'interfaccia più sotto.
+
+## Lo shaker in ritardo, e il primo quarto (20 agosto)
+
+Due richieste. La prima aveva una causa precisa e ora è risolta; la seconda non
+si risolve con questo modello, e sotto c'è scritto perché — misurato, non
+supposto.
+
+### Misurare il suono, non l'orologio
+
+Tutto quello che i test misuravano era il **clock**: la fase che riporta contro
+il battito notato. Un ascoltatore il clock non lo sente. Fra l'impulso e
+l'orecchio ci sono l'attacco del campione, l'offset nel blocco e il percorso
+d'uscita — e un colpo può essere in ritardo di dodici millisecondi buoni con un
+clock perfetto.
+
+`scripts/probe_timing.cpp` (target `VPTiming`) misura l'audio che il motore
+produce: per ogni battito notato cerca l'attacco nell'uscita e riporta di quanto
+è distante. Con congas spente, shaker sui quarti, niente feel e niente riverbero,
+ogni colpo dovrebbe cadere esattamente su un battito.
+
+### Lo shaker era in ritardo perché lo shaker non è un click
+
+| stroke | 20% | 50% | **80%** | picco |
+|---|---|---|---|---|
+| shakerDown | 0.6 | 3.3 | **13.3** | 14.4 |
+| shakerUp | 0.1 | 2.1 | **10.0** | 11.1 |
+| slap | 0.8 | 0.9 | **2.8** | 3.1 |
+| heel / toe | 0.9 | 1.0 | **2.9** | 3.2 |
+
+Millisecondi dal trigger. Lo shaker ha una **salita lenta**: la sua energia ci
+mette dieci-tredici millisecondi ad arrivare dove lo slap arriva in tre. Una
+voce fatta partire esattamente sull'impulso quindi *si sente* dopo — e i colpi
+si sentono in momenti diversi fra loro, che è peggio che essere tutti in ritardo
+insieme.
+
+Due correzioni:
+
+1. **Ogni articolazione viene trattenuta** della differenza fra l'attacco più
+   lento della banca e il proprio, così slap e shaker scritti sullo stesso
+   sedicesimo si *sentono* insieme. L'attacco è misurato dai campioni al momento
+   della costruzione della banca, non scritto a mano: cambiare la libreria
+   cambia i numeri da sola.
+2. **Il clock anticipa di altrettanto.** È la stessa specie di ritardo del
+   round-trip del dispositivo — tempo fra la decisione e il suono — e
+   `VirtualPercussionEngine` è l'unico punto che conosce entrambi.
+
+| Su 12 brani | prima | dopo |
+|---|---|---|
+| Attacco **sentito** rispetto al battito | **+16.3 ms** | **+3.1 ms** |
+| Distanza fra le articolazioni | 2.1 – 13.3 ms | **0.4 ms** |
+
+Un tranello, che vale la pena aver scritto: compensare ogni *presa* con il
+proprio attacco ha fatto crollare la differenza fra due colpi consecutivi da
+1.42 a **0.001**. Diversi slot del round-robin sono la stessa registrazione con
+l'inizio spostato, e quello spostamento *è* la variazione; misurarlo e
+toglierlo l'aveva annullata. La compensazione appartiene all'**articolazione**,
+non alla presa.
+
+Nota: `TempoFollower::setLatencyCompensationMs` scriveva due campi che nessuno
+leggeva — codice morto. La latenza d'uscita era ed è compensata altrove, dentro
+`leadMs`.
+
+### Il primo quarto: quattro strade, tutte al livello del caso
+
+Questa non è risolta, e non per mancanza di tentativi. Misurato su 12 brani,
+quante volte la battuta dell'orologio coincide con quella del brano:
+
+| Approccio | Battuta allineata | Entra sull'uno |
+|---|---|---|
+| Voti della rete, conteggio semplice (prima) | 5/12 | 1/12 |
+| Voti **pesati** per la confidenza, con decadimento | 6/12 | 4/12 |
+| + template metrico (rullante su 2 e 4, kick più pesante su 1) | 5/12 | 2/12 |
+| + novità spettrale (l'accordo cambia sull'uno) | 5/12 | 2/12 |
+
+Il caso puro sarebbe 3/12. Perché nessuna funziona:
+
+1. **L'uscita downbeat della rete non identifica la battuta.** Ripiegando
+   `pDownbeat` sulla battuta, i picchi cadono ogni **singolo movimento**, non
+   uno ogni quattro, e il massimo sta sul terzo movimento tanto spesso quanto
+   sul primo. Votare su quello è votare sul rumore.
+2. **Il template metrico sbagliava di esattamente un movimento.** Il corpo di un
+   rullante sta sui duecento hertz, cioè *dentro* la banda che il template
+   leggeva come kick: le due prove concordavano fra loro e indicavano entrambe
+   il movimento due. Qualunque regola scritta come «quale strumento sta dove»
+   dipende da come gli strumenti si dividono le bande.
+3. **La novità spettrale è rumore** su questo materiale.
+
+Quello che resta, ed è tenuto perché è comunque il modo giusto di usare
+l'informazione: i voti sono **pesati per la confidenza** invece che contati,
+decadono, e ruotano insieme alla battuta invece di essere buttati quando la
+battuta si muove. E muovere la battuta *mentre si suona* ora richiede molta più
+evidenza: con una risposta giusta quattro volte su dieci, una battuta
+costantemente sbagliata si corregge con un tocco, una che continua a spostarsi
+no.
+
+**Il tocco è il tasto `SPOSTA L'1`**, accanto ai pallini. Stessa risposta dei
+tasti d'ottava: una misura che non viene fuori si offre a chi ascolta invece di
+tirarla a indovinare.
+
+### Il materiale di prova aveva un difetto
+
+I brani della sonda avevano il kick identico su 1 e 3, il rullante identico su 2
+e 4, e il basso che si articolava **ogni due movimenti**: la periodicità più
+forte sopra il battito era di due, non di quattro. Il materiale non aveva una
+battuta, e misurare l'uno contro un riferimento arbitrario non misura niente.
+Ora il basso si articola sulla battuta, il kick sull'uno è un po' più pesante e
+c'è un piatto sull'uno ogni quattro battute — come fanno i dischi.
+
+È materiale più difficile per il tempo: lo span medio a regime passa da ~11 a
+~20 BPM (con una varianza fra esecuzioni di ±5). Verificato che dipende dal
+materiale e non dal codice, spegnendo la compensazione e rimisurando: **con** la
+compensazione lo span è 17.5, **senza** 26.4, quindi la compensazione lo
+migliora.
 
 ## L'interfaccia (19 agosto, sera)
 
@@ -367,6 +481,11 @@ ora ha la riga `tempo FISSO/VIVO/CERCO · livello deciso/provvisorio · fold nnn
       decimo. Se oscilla di un BPM o più, segna la riga DBG
 - [ ] La battuta deve arrivare al **quattro** prima di tornare all'uno. Guarda
       il pallino, non l'orecchio: è il difetto «uno, due, uno»
+- [ ] Lo shaker deve cadere **dentro** il colpo del brano, non subito dopo. Se
+      è ancora indietro, segna di quanto ti sembra e a che tempo
+- [ ] Se parte sul movimento sbagliato, premi **SPOSTA L'1** finché non è a
+      posto: deve restarci. **Atteso che sbagli**: automaticamente ci prende
+      quattro volte su dieci
 - [ ] Quando trova il tempo giusto non deve poi scappare via: se lo vedi salire
       o scendere in fretta dopo essersi assestato, segna `tempo` e `fold`
 - [ ] Brano lento (sotto ~92) con ottavi pieni: **atteso che raddoppi**. Premi

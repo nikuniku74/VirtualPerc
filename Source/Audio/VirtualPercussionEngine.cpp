@@ -319,10 +319,24 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     tracker.setFollowStrength (static_cast<FollowStrength> (cfg.followStrength.load (std::memory_order_relaxed)));
     tracker.setSubdivisionOverride (static_cast<Subdivision> (cfg.subdivision.load (std::memory_order_relaxed)));
     tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
+    {
+        const int nudge = cfg.barNudge.load (std::memory_order_relaxed);
+        if (nudge != seenBarNudge)
+        {
+            tracker.nudgeBar (nudge - seenBarNudge);
+            seenBarNudge = nudge;
+        }
+    }
     const bool speaker = cfg.followSource.load (std::memory_order_relaxed)
                          == static_cast<int> (FollowSource::speaker);
     tracker.setSpeakerFollow (speaker);
-    tracker.setReportedLatencyMs (latencyMs.load (std::memory_order_relaxed));
+    // What the clock has to run ahead of the music by, so that what is *heard*
+    // lands on the pulse: the device round trip, plus the slowest attack in the
+    // percussion bank. The second term is not a device property but it is the
+    // same kind of delay - time between the decision and the sound - and this
+    // is the one place that knows both.
+    tracker.setReportedLatencyMs (latencyMs.load (std::memory_order_relaxed)
+                                  + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
@@ -479,10 +493,12 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.pBeat = lastPBeat.load (std::memory_order_relaxed);
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
+    s.attackLeadMs = percussion.attackLeadMs();
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
     s.combBpm = lastCombBpm.load (std::memory_order_relaxed);
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
     s.tempoOctave = cfg.tempoOctave.load (std::memory_order_relaxed);
+
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
     const auto f = styleDetector.features();

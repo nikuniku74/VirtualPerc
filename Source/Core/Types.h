@@ -163,6 +163,10 @@ struct EngineSnapshot
     /** Measured analysis-plus-output delay the clock runs ahead by, so that what
         is played lands on the pulse the listener hears. */
     float leadMs               = 0.0f;
+    /** How far ahead of the beat the clock is deliberately placing its pulses
+        so that the *sound* lands on it: the slowest attack in the percussion
+        bank. The clock is early by exactly this much on purpose. */
+    float attackLeadMs         = 0.0f;
     /** Whether the analysis is treating the tempo as a fixed one to hold or a
         live one to follow. */
     int   tempoRegime          = 0;
@@ -172,6 +176,7 @@ struct EngineSnapshot
     bool  levelSettled         = false;
     /** Half or double the measured tempo, when the listener has asked for it. */
     int   tempoOctave          = 0;
+
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
     float styleEvenKick        = 0.0f;
@@ -205,6 +210,11 @@ struct EngineSettings
     // can guess: below ~92 BPM with full eighths the level is genuinely
     // ambiguous in the signal, so it is offered as a control instead.
     std::atomic<int>   tempoOctave     { 0 };
+    // Counter, not a position: every increment moves the bar on by one beat.
+    // Where beat one is cannot be read reliably from what the network gives us
+    // - see docs/STATUS.md - so the listener gets to say, and saying it has to
+    // be one tap however wrong the analysis currently is.
+    std::atomic<int>   barNudge        { 0 };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };

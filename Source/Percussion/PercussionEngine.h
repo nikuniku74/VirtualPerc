@@ -28,6 +28,17 @@ public:
     void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
     void setShakerSubdivision (Subdivision s) noexcept { groove.setShakerSubdivision (s); }
+
+    /** How far ahead of the beat the clock must place a pulse for the stroke to
+        be *heard* on it: the slowest attack in the bank. The tracker adds this
+        to the lead it already runs to cover the analysis and the output path.
+        Every stroke is then held back by the difference between this and its
+        own attack, so they all land together. */
+    int  attackLeadSamples() const noexcept { return bankAttackLead; }
+    float attackLeadMs() const noexcept
+    {
+        return static_cast<float> (bankAttackLead) / static_cast<float> (sampleRate) * 1000.0f;
+    }
     void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
     void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
@@ -35,12 +46,22 @@ public:
 
     int  render (float* left, float* right, int numSamples, const ClockTick& tick, bool audible) noexcept;
 
+    /** Start one stroke directly, bypassing the groove. Diagnostic only: it is
+        how the timing probe measures an articulation's own attack, which is
+        otherwise buried under whatever the pattern happens to be playing. */
+    void triggerForTest (Stroke stroke, float velocity, int sampleOffset) noexcept
+    {
+        trigger (stroke, velocity, sampleOffset);
+    }
+
     /** How many articulations are sounding from a recording rather than from
         the synthesis fallback. Worth asserting on: a missing or unreadable
         asset would otherwise degrade silently back to the synthetic bank. */
     int  recordedStrokeCount() const noexcept;
 
     int  hitsFired() const noexcept { return totalHits; }
+    /** Attack of one articulation's first layer, in milliseconds. Diagnostic. */
+    float attackMsFor (Stroke s) const noexcept;
     int  activeVoices() const noexcept { return lastActive; }
 
     /** Times a stroke had to take a slot from a voice that was still sounding,
@@ -70,6 +91,15 @@ private:
     struct Sample
     {
         std::vector<float> left, right;
+        /** Samples from the start of the recording to where the stroke is heard
+            as happening. A shaker is not a click: measured on the bundled
+            library its energy needs ten to thirteen milliseconds to get where a
+            slap gets in two, and a voice started on the beat therefore *sounds*
+            that much after it. Held per sample because it is a property of the
+            recording, not of the articulation - a different library would have
+            different numbers, and hard-coding these would silently stop being
+            true the day the assets change. */
+        int attack = 0;
     };
 
     struct Voice
@@ -91,6 +121,7 @@ private:
 
     bool   loadRecordedStroke (Stroke stroke, std::vector<float>& mono) noexcept;
     void   buildBank() noexcept;
+    void   measureBankAttacks() noexcept;
     void   layerFromRecording (Sample& dest, const std::vector<float>& src,
                                Stroke stroke, int layer, std::uint32_t seed) noexcept;
     Voice& allocateVoice() noexcept;
@@ -114,6 +145,7 @@ private:
     float reverbAmount = 0.30f;
     float grooveBpm = 120.0f;
     int groovePulses = 4;
+    int bankAttackLead = 0;
     bool enabled = true;
     int totalHits = 0;
     int hardStealCount = 0;
