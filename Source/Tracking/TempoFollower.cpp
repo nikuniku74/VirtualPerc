@@ -15,7 +15,6 @@ void TempoFollower::prepare (double sr) noexcept
 void TempoFollower::reset() noexcept
 {
     phase = 0.0;
-    lastPulsePhase = 0.0;
     tempo = 120.0f;
     target = 120.0f;
     conf = 0.0f;
@@ -33,13 +32,11 @@ void TempoFollower::reset() noexcept
     primed = false;
     havePhaseObservation = false;
     tempoTrimEnabled = false;
-    frozenLatencyMs = -1.0f;
 }
 
 void TempoFollower::resetClock() noexcept
 {
     phase = 0.0;
-    lastPulsePhase = 0.0;
     beatInBar = 0;
     sameSignCount = 0;
     lastPhaseErr = 0.0f;
@@ -51,13 +48,6 @@ void TempoFollower::resetClock() noexcept
     samplesSinceObservation = 0;
     havePhaseObservation = false;
     primed = true;
-}
-
-void TempoFollower::setLatencyCompensationMs (float ms) noexcept
-{
-    latencyMs = std::clamp (ms, 0.0f, 90.0f);
-    if (frozenLatencyMs < 0.0f && latencyMs > 1.0f)
-        frozenLatencyMs = latencyMs;
 }
 
 void TempoFollower::setTempoTrimEnabled (bool on) noexcept
@@ -106,7 +96,6 @@ void TempoFollower::setGridPhase (float targetPhase, float amount) noexcept
 void TempoFollower::snapPhase (float targetPhase) noexcept
 {
     phase = static_cast<double> (wrap01 (targetPhase));
-    lastPulsePhase = phase;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     sameSignCount = 0;
@@ -322,7 +311,6 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         ++tick.pulsesFired;
     }
 
-    lastPulsePhase = phase;
     tick.tempoBpm = tempo;
     return tick;
 }

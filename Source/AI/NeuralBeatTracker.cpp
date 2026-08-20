@@ -5,7 +5,9 @@
 #include "AI/OnnxBeatModel.h"
 #include "AI/StubBeatModel.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 namespace vp
 {
@@ -40,8 +42,10 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     features.prepare (kBeatModelSampleRate, kBeatModelHop);
     decoder.prepare (kBeatModelSampleRate / static_cast<double> (kBeatModelHop));
     inputSamplesPerModelSample = deviceSr / kBeatModelSampleRate;
+    hopInDeviceSamples = static_cast<int> (std::ceil (kBeatModelHop * inputSamplesPerModelSample));
     fedTotal.store (0, std::memory_order_relaxed);
     gapCount.store (0, std::memory_order_relaxed);
+    wakeCount.store (0, std::memory_order_relaxed);
     seenDropped = 0;
     modelRefill = 0;
     if (! model->prepare (LogSpectFeatures::kDim))
@@ -82,10 +86,17 @@ void NeuralBeatTracker::workerLoop()
 
     while (! stopFlag.load (std::memory_order_relaxed))
     {
-        // An overrun means the producer overwrote audio this thread never read.
-        // The timestamps already account for it, but the feature extractor, the
-        // LSTM and the decoder would otherwise carry straight on across the hole
-        // and read the splice as an onset. Re-prime them first.
+        decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
+
+        const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
+
+        // An overrun means the producer overwrote audio this thread never read,
+        // and the FIFO reports it at the moment this thread steps over the hole
+        // - which is this pop, carrying the first audio from after it. The
+        // timestamps already account for the gap, but the feature extractor,
+        // the LSTM and the decoder would otherwise carry straight on across it
+        // and read the splice as an onset, so they are re-primed before that
+        // audio reaches them rather than after.
         const uint64_t droppedNow = fifo.droppedSamples();
         if (droppedNow != seenDropped)
         {
@@ -100,28 +111,41 @@ void NeuralBeatTracker::workerLoop()
             gapCount.fetch_add (1, std::memory_order_relaxed);
         }
 
-        decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
-
-        const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
-        if (n <= 0)
+        if (n > 0)
         {
-            std::this_thread::sleep_for (std::chrono::milliseconds (1));
-            continue;
+            const int nr = resampler.process (popBuf.data(), n, resampled.data(),
+                                              static_cast<int> (resampled.size()));
+            features.process (resampled.data(), nr);
+
+            while (features.popFrame (frame))
+            {
+                if (model == nullptr || ! model->infer (frame, LogSpectFeatures::kDim, act))
+                    continue;
+
+                auto h = decoder.observe (act[0], act[1], act[2]);
+                h.analysisSample = analysisSampleFor (h.frameIndex);
+                slot.publish (h);
+            }
         }
 
-        const int nr = resampler.process (popBuf.data(), n, resampled.data(),
-                                          static_cast<int> (resampled.size()));
-        features.process (resampled.data(), nr);
-
-        while (features.popFrame (frame))
+        // Wait for about as much new audio as it takes to make one more frame.
+        //
+        // Nothing at all can come out of this chain until a whole hop has
+        // arrived - twenty milliseconds of it - so polling every millisecond
+        // meant waking nineteen times out of twenty to find nothing to do. On a
+        // device running on a battery that is the wakeups, not the arithmetic,
+        // that cost something. The wait adds no error: every timestamp here is
+        // derived from the frame index, and the delay the audio thread leads by
+        // is measured rather than assumed, so it simply reads a little larger.
+        const int have = fifo.available();
+        const int wantMore = hopInDeviceSamples - have;
+        if (wantMore > 0)
         {
-            if (model == nullptr || ! model->infer (frame, LogSpectFeatures::kDim, act))
-                continue;
-
-            auto h = decoder.observe (act[0], act[1], act[2]);
-            h.analysisSample = analysisSampleFor (h.frameIndex);
-            slot.publish (h);
+            const double sec = static_cast<double> (wantMore) / deviceSr;
+            const auto us = static_cast<long long> (std::clamp (sec * 1.0e6, 500.0, 8000.0));
+            std::this_thread::sleep_for (std::chrono::microseconds (us));
         }
+        wakeCount.fetch_add (1, std::memory_order_relaxed);
     }
 }
 

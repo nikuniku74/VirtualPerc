@@ -228,6 +228,25 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPCpu
+        PRODUCT_NAME "VPCpu"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPCpu PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPCpu PRIVATE ${VP_CORE_SOURCES} scripts/probe_cpu.cpp)
+    target_include_directories (VPCpu PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPCpu PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPCpu PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPDecoderProbe
         PRODUCT_NAME "VPDecoderProbe"
         NEEDS_WEB_BROWSER FALSE
@@ -350,6 +369,10 @@ endif()
 if (TARGET VPDecoderProbe)
     vp_apply_ai_options (VPDecoderProbe)
 endif()
+if (TARGET VPCpu)
+    vp_apply_ai_options (VPCpu)
+endif()
+
 if (TARGET VPTiming)
     vp_apply_ai_options (VPTiming)
 endif()

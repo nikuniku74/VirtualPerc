@@ -236,14 +236,27 @@ bool OnnxSession::run (const float* features, int dim, float* logits, int numLog
 
     if (config.hasLstmState)
     {
-        api->CreateTensorWithDataAsOrtValue (
+        // Both statuses are checked. Ignoring them leaks the status object on
+        // failure and then hands Run a null input, which fails anyway - so the
+        // cost of not looking was a leak per frame, fifty times a second, for
+        // as long as whatever went wrong lasted.
+        OrtStatus* sh = api->CreateTensorWithDataAsOrtValue (
             impl->mem, impl->h.data(), impl->h.size() * sizeof (float),
             impl->stateShape.data(), impl->stateShape.size(),
             ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &hIn);
-        api->CreateTensorWithDataAsOrtValue (
+        OrtStatus* sc = api->CreateTensorWithDataAsOrtValue (
             impl->mem, impl->c.data(), impl->c.size() * sizeof (float),
             impl->stateShape.data(), impl->stateShape.size(),
             ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &cIn);
+        if (sh != nullptr) api->ReleaseStatus (sh);
+        if (sc != nullptr) api->ReleaseStatus (sc);
+        if (hIn == nullptr || cIn == nullptr)
+        {
+            api->ReleaseValue (inTensor);
+            if (hIn != nullptr) api->ReleaseValue (hIn);
+            if (cIn != nullptr) api->ReleaseValue (cIn);
+            return false;
+        }
         inputNames[1] = config.stateInH;
         inputNames[2] = config.stateInC;
         inputs[1] = hIn;
@@ -269,6 +282,10 @@ bool OnnxSession::run (const float* features, int dim, float* logits, int numLog
     if (st != nullptr)
     {
         api->ReleaseStatus (st);
+        // A failed Run may still have filled some of the output slots.
+        for (size_t i = 0; i < nOut; ++i)
+            if (outputs[i] != nullptr)
+                api->ReleaseValue (outputs[i]);
         return false;
     }
 
@@ -284,9 +301,19 @@ bool OnnxSession::run (const float* features, int dim, float* logits, int numLog
             api->GetTensorShapeElementCount (info, &elem);
             api->ReleaseTensorTypeAndShapeInfo (info);
         }
-        const size_t take = static_cast<size_t> (config.numClasses);
-        const size_t off = elem >= take ? elem - take : 0;
-        std::memcpy (logits, outData + off, take * sizeof (float));
+        // Read the last numClasses values. A tensor holding fewer than that is
+        // a model that is not the one this was configured for, and it used to
+        // be copied out of anyway - past the end of ONNX Runtime's own buffer.
+        // Fail closed instead, the same as a model that would not load.
+        const size_t want = static_cast<size_t> (config.numClasses);
+        if (elem < want)
+        {
+            for (size_t i = 0; i < nOut; ++i)
+                if (outputs[i] != nullptr)
+                    api->ReleaseValue (outputs[i]);
+            return false;
+        }
+        std::memcpy (logits, outData + (elem - want), want * sizeof (float));
     }
 
     if (config.hasLstmState && outputs[1] != nullptr && outputs[2] != nullptr)

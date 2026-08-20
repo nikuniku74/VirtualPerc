@@ -4,6 +4,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <type_traits>
 
 namespace vp
 {
@@ -68,15 +70,47 @@ struct BeatHypothesis
     bool     levelSettled = false;
 };
 
+/**
+    One hypothesis handed from the analysis worker to the audio thread, without
+    either of them ever waiting for the other.
+
+    A sequence counter goes odd while the payload is being written and even
+    again when it is whole, so a reader that sees the same even count on both
+    sides of its copy knows the copy is one moment rather than two halves of
+    different ones. Two details in that are easy to get wrong and were:
+
+    - **The counter has to be ordered against the payload in both directions.**
+      A release store only stops earlier writes from moving later; it does not
+      stop the payload from moving *earlier*, past the odd marker. On a machine
+      that reorders stores - every ARM, which is what this ships on - the reader
+      could then copy a half-written payload while the counter still read even,
+      and its own check would tell it the copy was sound. Explicit fences on
+      both sides are what actually holds the order, so they are what is used.
+
+    - **The payload cannot be a plain struct.** Two threads touching the same
+      non-atomic object is a data race whatever the counter says, and a compiler
+      is entitled to assume races do not happen. Held as relaxed atomic words it
+      is a defined concurrent access, and the sequence counter goes back to
+      being what it is meant to be: a validity check on the copy, not the thing
+      preventing the race.
+
+    The cost is ten word copies per publish, at fifty publishes a second.
+*/
 class HypothesisSlot
 {
 public:
     void publish (const BeatHypothesis& h) noexcept
     {
+        Words staging {};
+        std::memcpy (staging.raw, &h, sizeof (BeatHypothesis));
+
         const uint32_t s = seq.load (std::memory_order_relaxed);
-        seq.store (s + 1u, std::memory_order_release);
-        value = h;
-        seq.store (s + 2u, std::memory_order_release);
+        seq.store (s + 1u, std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        for (size_t i = 0; i < kWords; ++i)
+            words[i].store (staging.raw[i], std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        seq.store (s + 2u, std::memory_order_relaxed);
     }
 
     bool load (BeatHypothesis& out) const noexcept
@@ -86,11 +120,15 @@ public:
             const uint32_t a = seq.load (std::memory_order_acquire);
             if ((a & 1u) != 0)
                 continue;
-            const BeatHypothesis copy = value;
-            const uint32_t b = seq.load (std::memory_order_acquire);
-            if (a == b)
+
+            Words staging {};
+            for (size_t k = 0; k < kWords; ++k)
+                staging.raw[k] = words[k].load (std::memory_order_relaxed);
+
+            std::atomic_thread_fence (std::memory_order_acquire);
+            if (seq.load (std::memory_order_relaxed) == a)
             {
-                out = copy;
+                std::memcpy (&out, staging.raw, sizeof (BeatHypothesis));
                 return a != 0;
             }
         }
@@ -98,8 +136,18 @@ public:
     }
 
 private:
+    static_assert (std::is_trivially_copyable<BeatHypothesis>::value,
+                   "the slot copies the hypothesis as raw words");
+    static constexpr size_t kWords = (sizeof (BeatHypothesis) + sizeof (uint64_t) - 1)
+                                     / sizeof (uint64_t);
+    union Words
+    {
+        uint64_t raw[kWords];
+        unsigned char bytes[kWords * sizeof (uint64_t)];
+    };
+
     alignas (64) std::atomic<uint32_t> seq { 0 };
-    BeatHypothesis value {};
+    std::atomic<uint64_t> words[kWords] {};
 };
 
 } // namespace vp

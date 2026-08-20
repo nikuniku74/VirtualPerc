@@ -554,7 +554,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                           || currentState == TrackingState::lowConfidence
                           || currentState == TrackingState::recovering));
 
-    follower.setLatencyCompensationMs (reportedLatencyMs + 20.0f);
+    // The clock's lead is applied where it is measured - in `songPhase` above,
+    // from the pipeline delay plus the device round trip. The follower used to
+    // be handed a latency figure of its own as well, which it stored and never
+    // used: two names for one correction, one of them doing nothing.
     follower.setLocked (holding && currentState != TrackingState::listening);
 
     // Trim exists to close a standing rate error the tempo source cannot see.
@@ -790,6 +793,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.barPhase = follower.barPhase();
     barDeclaredSamples = std::max (0, barDeclaredSamples - numSamples);
     out.barDeclared = barDeclaredSamples > 0;
+    out.analysisGaps = neural.discontinuities();
+    out.analysisWakeups = neural.wakeups();
+    out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
 
     const bool canPlay = armed

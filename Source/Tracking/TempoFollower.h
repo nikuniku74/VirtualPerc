@@ -30,7 +30,6 @@ public:
     void setFollowStrength (FollowStrength s) noexcept { follow = s; }
     void setLocked (bool on) noexcept { locked = on; }
     void setTempoTrimEnabled (bool on) noexcept;
-    void setLatencyCompensationMs (float ms) noexcept;
     void resetClock() noexcept;
 
     void setGridPhase (float targetPhase, float amount) noexcept;
@@ -56,7 +55,6 @@ public:
 private:
     double sampleRate = 48000.0;
     double phase = 0.0;
-    double lastPulsePhase = 0.0;
     float tempo = 120.0f;
     float target = 120.0f;
     float conf = 0.0f;
@@ -71,8 +69,6 @@ private:
     float tempoTrim = 0.0f;
     float phaseCorrectionSinceObservation = 0.0f;
     int samplesSinceObservation = 0;
-    float latencyMs = 0.0f;
-    float frozenLatencyMs = -1.0f;
     bool locked = false;
     bool primed = false;
     bool havePhaseObservation = false;

@@ -67,6 +67,14 @@ public:
             UI can show that the gesture landed rather than leaving the player
             guessing whether the bar moved because of them. */
         bool          barDeclared = false;
+        /** Times the analysis lost audio because the worker fell behind, and
+            how many loops that worker has run. Both are diagnostics, and both
+            are worth having: a gap costs the recent evidence, and a worker
+            spinning is a battery draining. */
+        int64_t       analysisGaps = 0;
+        int64_t       analysisWakeups = 0;
+        /** Input samples fed but not yet analysed. */
+        int           analysisBacklog = 0;
     };
 
     void start() noexcept;

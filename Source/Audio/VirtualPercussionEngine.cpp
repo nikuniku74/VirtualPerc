@@ -1,5 +1,7 @@
 #include "Audio/VirtualPercussionEngine.h"
 
+#include <juce_audio_basics/juce_audio_basics.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -230,7 +232,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
 
     for (int i = 0; i < n; ++i)
     {
-        const int ri = (ringWrite - delay + i + ringSize) % ringSize;
+        const int ri = (ringWrite - delay + i + ringSize) & (ringSize - 1);
         const float y = outRing[static_cast<size_t> (ri)];
         leakLp += 0.18f * (y - leakLp);
         const float hp = y - leakLp;
@@ -299,7 +301,7 @@ void VirtualPercussionEngine::pushOutputToRing (int numSamples) noexcept
     {
         const float y = 0.5f * (outL[static_cast<size_t> (i)] + outR[static_cast<size_t> (i)]);
         outRing[static_cast<size_t> (ringWrite)] = y;
-        ringWrite = (ringWrite + 1) % ringSize;
+        ringWrite = (ringWrite + 1) & (ringSize - 1);
     }
 }
 
@@ -307,12 +309,61 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
                                        float* const* outputs, int numOutputs,
                                        int numSamples) noexcept
 {
-    const auto t0 = std::chrono::steady_clock::now();
+    // Denormals. Every filter in here has a tail that decays towards zero - the
+    // leak canceller, the level envelope, the reverb - and a float that falls
+    // into the denormal range costs a hundred times what a normal one does on
+    // some cores. Silence after a loud passage is exactly when that happens,
+    // and a callback that overruns its budget is a dropout.
+    const juce::ScopedNoDenormals noDenormals;
 
-    if (numSamples > maxBlock)
-        numSamples = maxBlock;
     if (numSamples <= 0)
         return;
+
+    // A host is entitled to hand over a longer block than it announced - a
+    // screen lock, a route change, an AirPlay hop. Split it rather than
+    // truncating: the tail of a truncated block is left holding whatever the
+    // host had in the buffer.
+    int offset = 0;
+    while (offset < numSamples)
+    {
+        const int chunk = std::min (maxBlock, numSamples - offset);
+        const float* inPtrs[kMaxSplitChannels];
+        float* outPtrs[kMaxSplitChannels];
+        const float* const* in = inputs;
+        float* const* out = outputs;
+
+        if (offset > 0 || numSamples > maxBlock)
+        {
+            const int nIn = std::min (numInputs, kMaxSplitChannels);
+            const int nOut = std::min (numOutputs, kMaxSplitChannels);
+            for (int c = 0; c < nIn; ++c)
+                inPtrs[c] = (inputs != nullptr && inputs[c] != nullptr) ? inputs[c] + offset : nullptr;
+            for (int c = 0; c < nOut; ++c)
+                outPtrs[c] = (outputs != nullptr && outputs[c] != nullptr) ? outputs[c] + offset : nullptr;
+            in = inputs != nullptr ? inPtrs : nullptr;
+            out = outputs != nullptr ? outPtrs : nullptr;
+            processBlock (in, nIn, out, nOut, chunk);
+
+            // More channels than the split path carries: silence the rest
+            // rather than leave the host's buffer as it was.
+            if (outputs != nullptr)
+                for (int c = nOut; c < numOutputs; ++c)
+                    if (outputs[c] != nullptr)
+                        std::fill (outputs[c] + offset, outputs[c] + offset + chunk, 0.0f);
+        }
+        else
+        {
+            processBlock (in, numInputs, out, numOutputs, chunk);
+        }
+        offset += chunk;
+    }
+}
+
+void VirtualPercussionEngine::processBlock (const float* const* inputs, int numInputs,
+                                            float* const* outputs, int numOutputs,
+                                            int numSamples) noexcept
+{
+    const auto t0 = std::chrono::steady_clock::now();
 
     lastBuffer.store (numSamples, std::memory_order_relaxed);
 
@@ -353,9 +404,31 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     // The manual setting is the override; on auto the music decides.
 
     mixInputs (inputs, numInputs, numSamples);
+
+    // Whatever the microphone hands over, it stops being able to hurt anything
+    // here. One infinity reaching the level envelope poisons it for the rest of
+    // the session - the envelope has a four second release, and inf minus inf
+    // is a NaN it never leaves - and with it the gain the network is fed. Note
+    // that a peak taken with std::max hides this rather than catching it:
+    // max(x, NaN) is x, so the bad sample passes straight through into the
+    // analysis while every meter still reads normal.
     float peak = 0.0f;
+    int bad = 0;
     for (int i = 0; i < numSamples; ++i)
-        peak = std::max (peak, std::abs (mono[static_cast<size_t> (i)]));
+    {
+        float x = mono[static_cast<size_t> (i)];
+        if (! std::isfinite (x))
+        {
+            x = 0.0f;
+            mono[static_cast<size_t> (i)] = 0.0f;
+            ++bad;
+        }
+        const float a = std::abs (x);
+        if (a > peak)
+            peak = a;
+    }
+    if (bad > 0)
+        badInputSamples.fetch_add (bad, std::memory_order_relaxed);
     if (speaker)
         subtractSpeakerLeak (numSamples);
     maybeInjectClick (numSamples);
@@ -365,6 +438,11 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
         analysisPeak = std::max (analysisPeak, std::abs (mono[static_cast<size_t> (i)]));
 
     const unsigned int tw = tapWrite.load (std::memory_order_acquire);
+    // More taps than the queue holds arrived since the last callback: the oldest
+    // are gone, and reading them anyway means reading slots that now hold new
+    // taps, out of order. Skip to what is still there.
+    if (tw - tapRead > static_cast<unsigned int> (tapQSize))
+        tapRead = tw - static_cast<unsigned int> (tapQSize);
     while (tapRead != tw)
     {
         tracker.tap (tapTimes[tapRead % static_cast<unsigned int> (tapQSize)]);
@@ -438,8 +516,11 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
     lastBarDeclared.store (tr.barDeclared, std::memory_order_relaxed);
+    lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
+    lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
     lastPeak.store (peak, std::memory_order_relaxed);
     lastAnalysisPeak.store (analysisPeak, std::memory_order_relaxed);
+    lastAnalysisGain.store (makeupGain, std::memory_order_relaxed);
     lastState.store (static_cast<int> (tr.state), std::memory_order_relaxed);
     lastSub.store (static_cast<int> (tr.subdivision), std::memory_order_relaxed);
     lastBeats.store (tr.beatsElapsed, std::memory_order_relaxed);
@@ -457,6 +538,21 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
     lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
+    // Everything the UI shows is published from here. Reading it off the
+    // objects instead - as the style features and the hit count were - is the
+    // message thread reading five floats while this thread writes them, which
+    // is a race whose visible form is a meter showing a number that was never
+    // true at any single moment.
+    {
+        const auto f = styleDetector.features();
+        lastStyleEvenKick.store (f.evenKick, std::memory_order_relaxed);
+        lastStyleBackbeat.store (f.alternation, std::memory_order_relaxed);
+        lastStyleOffHigh.store (f.offHigh, std::memory_order_relaxed);
+        lastStyleSync.store (f.syncopation, std::memory_order_relaxed);
+        lastStyleOccupancy.store (f.occupancy, std::memory_order_relaxed);
+    }
+    lastHits.store (percussion.hitsFired(), std::memory_order_relaxed);
+    lastAttackLeadMs.store (percussion.attackLeadMs(), std::memory_order_relaxed);
 
     const auto t1 = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli> (t1 - t0).count();
@@ -494,8 +590,12 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.neuralBpm = lastNeuralBpm.load (std::memory_order_relaxed);
     s.pBeat = lastPBeat.load (std::memory_order_relaxed);
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
+    s.analysisGain = lastAnalysisGain.load (std::memory_order_relaxed);
+    s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
+    s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
+    s.analysisBacklog = lastBacklog.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
-    s.attackLeadMs = percussion.attackLeadMs();
+    s.attackLeadMs = lastAttackLeadMs.load (std::memory_order_relaxed);
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
     s.combBpm = lastCombBpm.load (std::memory_order_relaxed);
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
@@ -503,12 +603,11 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
 
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
-    const auto f = styleDetector.features();
-    s.styleEvenKick = f.evenKick;
-    s.styleBackbeat = f.alternation;
-    s.styleOffHigh = f.offHigh;
-    s.styleSync = f.syncopation;
-    s.styleOccupancy = f.occupancy;
+    s.styleEvenKick = lastStyleEvenKick.load (std::memory_order_relaxed);
+    s.styleBackbeat = lastStyleBackbeat.load (std::memory_order_relaxed);
+    s.styleOffHigh = lastStyleOffHigh.load (std::memory_order_relaxed);
+    s.styleSync = lastStyleSync.load (std::memory_order_relaxed);
+    s.styleOccupancy = lastStyleOccupancy.load (std::memory_order_relaxed);
     return s;
 }
 

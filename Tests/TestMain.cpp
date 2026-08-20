@@ -58,7 +58,6 @@ int main()
         clock.setPulsesPerBeat (4);
         clock.setTargetTempo (120.0f, 1.0f);
         clock.setLocked (true);
-        clock.setLatencyCompensationMs (80.0f);
         clock.snapPhase (0.0f);
 
         auto wrap01 = [] (float x)

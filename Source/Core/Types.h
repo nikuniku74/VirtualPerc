@@ -162,6 +162,15 @@ struct EngineSnapshot
     float neuralBpm            = 0.0f;
     float pBeat                = 0.0f;
     float analysisPeak         = 0.0f;
+    /** Gain the analysis signal is being held at for the network, and how many
+        input samples had to be replaced because they were not finite. */
+    float analysisGain         = 1.0f;
+    int   badInputSamples      = 0;
+    /** Times the analysis lost audio because its worker fell behind. Zero on a
+        healthy run; anything else is a dropout in the tracking, not the sound. */
+    int   analysisGaps         = 0;
+    /** Input samples fed but not yet analysed; zero means the worker is caught up. */
+    int   analysisBacklog      = 0;
     /** Measured analysis-plus-output delay the clock runs ahead by, so that what
         is played lands on the pulse the listener hears. */
     float leadMs               = 0.0f;

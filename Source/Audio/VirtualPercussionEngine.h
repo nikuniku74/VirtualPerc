@@ -33,23 +33,37 @@ public:
 
     void setReportedLatencyMs (float ms) noexcept { latencyMs.store (ms, std::memory_order_relaxed); }
 
+    /** Accepts any block length. Anything longer than the size prepare() was
+        given is split - never truncated: a truncated block leaves the tail of
+        the host's output buffer holding whatever was in it, which is a burst of
+        noise at full scale, and drops the input it should have analysed. */
     void process (const float* const* inputs, int numInputs,
                   float* const* outputs, int numOutputs,
                   int numSamples) noexcept;
 
     EngineSnapshot snapshot() const noexcept;
-    int shakerHits() const noexcept { return percussion.hitsFired(); }
-    TrackingState state() const noexcept { return tracker.state(); }
+    int shakerHits() const noexcept { return lastHits.load (std::memory_order_relaxed); }
+    TrackingState state() const noexcept
+    { return static_cast<TrackingState> (lastState.load (std::memory_order_relaxed)); }
 
     void setClickInjectBpm (float bpm) noexcept { clickBpm.store (bpm, std::memory_order_relaxed); }
     void setClickInjectEnabled (bool on) noexcept { clickEnabled.store (on, std::memory_order_relaxed); }
 
     bool tryLoadNeuralHypothesis (BeatHypothesis& out) const noexcept;
 
+    /** Loop-kit playback (see docs/ARCHITECTURE.md). Nothing calls these yet.
+        Both allocate, so they may only be called while the device is closed -
+        that is, before prepare() or after releaseResources(). Calling either
+        one while the audio callback is running reallocates the buffers the
+        stretcher is reading from. If this is ever wired to a control the user
+        can touch mid-song, it needs a handoff rather than a direct load. */
     void loadPercussionLoop (const float* left, const float* right, int frames, float nativeBpm);
     void clearPercussionLoop();
 
 private:
+    void processBlock (const float* const* inputs, int numInputs,
+                       float* const* outputs, int numOutputs,
+                       int numSamples) noexcept;
     void mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept;
     void maybeInjectClick (int numSamples) noexcept;
     void subtractSpeakerLeak (int numSamples) noexcept;
@@ -97,6 +111,13 @@ private:
     std::atomic<float> lastNeuralBpm { 0.0f };
     std::atomic<float> lastPBeat { 0.0f };
     std::atomic<float> lastAnalysisPeak { 0.0f };
+    std::atomic<float> lastAnalysisGain { 1.0f };
+    /** Input samples that arrived non-finite and were replaced with silence.
+        Never zero on a healthy device; worth showing, because a driver that
+        does this is a driver whose other numbers are also suspect. */
+    std::atomic<int>   badInputSamples { 0 };
+    std::atomic<int>   lastGaps { 0 };
+    std::atomic<int>   lastBacklog { 0 };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };
     std::atomic<float> lastCombBpm { 0.0f };
@@ -105,6 +126,13 @@ private:
 
     std::atomic<int>   lastStyle { 0 };
     std::atomic<float> lastStyleConf { 0.0f };
+    std::atomic<float> lastStyleEvenKick { 0.0f };
+    std::atomic<float> lastStyleBackbeat { 0.0f };
+    std::atomic<float> lastStyleOffHigh { 0.0f };
+    std::atomic<float> lastStyleSync { 0.0f };
+    std::atomic<float> lastStyleOccupancy { 0.0f };
+    std::atomic<int>   lastHits { 0 };
+    std::atomic<float> lastAttackLeadMs { 0.0f };
 
     std::atomic<float> clickBpm { 120.0f };
     std::atomic<bool>  clickEnabled { false };
@@ -113,7 +141,13 @@ private:
     float peakEnv = 0.0f;
     float makeupGain = 1.0f;
     int ringWrite = 0;
+    /** Power of two: the wrap is a mask, not a divide. */
     static constexpr int ringSize = 32768;
+    static_assert ((ringSize & (ringSize - 1)) == 0, "ringSize must be a power of two");
+
+    /** Channels the block splitter can carry offset pointers for. Devices have
+        one or two; anything past this is silenced rather than left as it was. */
+    static constexpr int kMaxSplitChannels = 16;
 
     static constexpr int tapQSize = 16;
     std::atomic<unsigned int> tapWrite { 0 };

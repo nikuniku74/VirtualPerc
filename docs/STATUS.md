@@ -16,7 +16,10 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **85 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
+| Host `VPTests` | **91 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
+| ASan + UBSan | Suite intera, **zero segnalazioni** nel nostro codice (restano 64 byte una tantum dentro `libonnxruntime`) |
+| ThreadSanitizer | Suite intera, **zero corse**, 91 test passati |
+| CPU (`VPCpu`) | Callback allo **0,35%** del suo budget; app intera al **2,0% di un core** |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -474,6 +477,198 @@ dichiarazione tolta dal codice, su tre esecuzioni.
 
 Il timing non è cambiato: attacco sentito +3.01 ms, identico a prima del riff.
 
+## Revisione del core: affidabilita' e prestazioni (20 agosto)
+
+Un giro fatto con gli strumenti invece che leggendo: sanitizer sull'intera
+suite, e una sonda che misura quanto costa davvero il callback audio.
+
+### Prima cosa: le prestazioni non erano il problema
+
+`VPCpu` misura il callback contro il suo budget e la CPU totale contro i
+secondi di audio.
+
+| | |
+|---|---|
+| Callback (buffer 256, budget 5333 us) | media **18,8 us = 0,35%** del budget |
+| | p95 32 us, p99 51 us, peggiore 149 us (2,8%) |
+| App intera, callback piu' worker | **2,0% di un core** per secondo di audio |
+
+Con questi numeri ottimizzare il ciclo delle voci o l'autocorrelazione sarebbe
+stato lavoro speso dove non serve, e rischio di regressione in cambio di niente.
+Quindi non e' stato fatto. L'unica cosa che costava davvero e' finita in fondo a
+questa sezione, ed era il numero di risvegli del thread, non l'aritmetica.
+
+### La FIFO fra thread audio e worker aveva una corsa vera
+
+`push` (thread audio) e `pop` (worker) scrivevano **entrambi** il puntatore di
+lettura. Quando il produttore sorpassa il consumatore e sposta avanti quel
+puntatore, il consumatore puo' scriverci sopra una posizione gia' superata: la
+lettura torna indietro e gli stessi campioni vengono consegnati due volte, con
+il conteggio di quelli persi sbagliato di conseguenza — e da quel conteggio
+dipende ogni timestamp a valle, cioe' l'anticipo con cui l'orologio suona.
+
+Non e' teoria. Un test con i due thread a tutta velocita' su un buffer piccolo
+apposta, prima:
+
+    fifo-race  letti 396608 di 400000, persi 296575, all'indietro 288, misti 69
+
+Ora il puntatore di lettura appartiene al solo consumatore: il produttore scrive
+e tira dritto, il consumatore si accorge del sorpasso, salta il buco e lo mette
+in conto. Dopo la copia verifica di non essere stato sorpassato *durante*, e in
+quel caso la butta invece di consegnare un blocco fatto di due momenti diversi.
+Con lo stesso test, quattro esecuzioni:
+
+    all'indietro 0, misti 0   (continuando a passare dal percorso di overrun)
+
+Le celle stesse sono lette e scritte tramite `std::atomic_ref`: un anello che
+sovrascrive puo' sempre avere il produttore dentro la zona che il consumatore
+sta copiando, ed e' quello che la verifica serve a intercettare — ma dev'essere
+un accesso concorrente **definito**, non una corsa che il compilatore ha il
+diritto di dare per impossibile. ThreadSanitizer sulla suite intera: da 1
+segnalazione a **0**.
+
+Il margine di risincronizzazione e' dimensionato sulla lettura, non sul buffer.
+Una prima versione lasciava mezzo buffer di margine: sono **5,5 secondi** di
+audio buttati a ogni overrun. Per spoilare una copia il produttore dovrebbe
+scrivere una lettura intera di campioni nel tempo che ci vuole a copiarne
+altrettanti, cosa che non gli riesce nemmeno da lontano; secondi di audio
+buttati invece sono un tracker peggiore di quello che si voleva evitare.
+
+### Nota sul confronto con la sonda a 30 brani
+
+Ho provato a validare questo giro con `VPProbe` e la prima lettura diceva
+peggioramento (span medio da 17 a 24 BPM). Era rumore. Due cose lo dimostrano:
+
+- lo **stesso** binario, sei esecuzioni, va da **15,6 a 24,4** BPM di span medio
+  — il worker gira su un thread suo e quanto resta indietro lo decide lo
+  scheduler dell'host, non il codice;
+- la colonna `gaps` che ho aggiunto dice **0 su 30 brani**: la sonda non passa
+  *mai* dal percorso di overrun, quindi tutto il lavoro sulla FIFO li' dentro e'
+  inerte per definizione.
+
+Lo stesso vale per il resto: i blocchi della sonda stanno sotto `maxBlock`
+(niente divisione), l'ingresso e' sempre finito (niente guardia che scatti), il
+worker non resta mai a corto di audio (niente attesa). L'unica differenza
+davvero attiva e' il flush dei denormali, che sposta i bit dell'ultima cifra.
+
+Quindi: **questo giro non tocca i numeri del tracking**, e va letto cosi'. La
+sonda resta utile per il tempo, ma una singola esecuzione non e' un confronto —
+e adesso la sua intestazione lo dice.
+
+### Lo slot dell'ipotesi non era ordinato nel verso che serve
+
+Il contatore di sequenza va dispari mentre si scrive e pari quando il dato e'
+intero. Ma una `store` release impedisce solo alle scritture *precedenti* di
+scavalcarla in avanti: non impedisce al dato di scavalcarla **all'indietro**,
+passando davanti al marcatore dispari. Su una macchina che riordina le
+scritture — cioe' ogni ARM, cioe' l'iPad — il lettore poteva copiare un dato a
+meta' con il contatore ancora pari, e il suo stesso controllo gli avrebbe detto
+che la copia era buona. Il risultato e' un bpm di un frame con la posizione
+campione di un altro: un bersaglio di fase che punta nel posto sbagliato.
+
+Ora ci sono barriere esplicite da entrambe le parti, e il dato e' tenuto come
+parole atomiche invece che come struct normale, perche' due thread che toccano
+lo stesso oggetto non atomico sono una corsa qualunque cosa dica il contatore.
+Costa dieci copie di parola cinquanta volte al secondo.
+
+Onesta' sulla verifica: su x86 l'hardware non riordina le scritture, quindi il
+test che ho aggiunto **non puo'** fallire qui per quel motivo. Vale su ARM. Il
+test verifica quello che vale ovunque, cioe' che il contatore validi la copia.
+
+### Un blocco piu' lungo del previsto veniva troncato
+
+`process()` tagliava a `maxBlock` e usciva. La coda del buffer di uscita
+dell'host restava con dentro quello che c'era — a piena scala — e l'ingresso che
+avrebbe dovuto analizzare spariva. Un host ha il diritto di consegnare un blocco
+piu' lungo di quello che ha annunciato: cambio di rotta audio, blocco schermo,
+AirPlay. Ora viene diviso. Test: 1061 campioni chiesti con buffer preparato a
+256, 0 lasciati intatti.
+
+### Un campione non finito dal microfono avvelenava l'analisi per sempre
+
+Un solo infinito entrava nell'inviluppo di livello, che ha un rilascio di
+quattro secondi: infinito meno infinito e' un NaN da cui non esce piu', e con
+lui il guadagno a cui la rete viene alimentata. Peggio, un picco preso con
+`std::max` **nasconde** il problema invece di trovarlo — `max(x, NaN)` e' `x` —
+quindi il campione cattivo passava dritto nell'analisi mentre tutti i misuratori
+segnavano normale.
+
+Ora i campioni non finiti diventano silenzio e vengono contati (`badInputSamples`
+nello snapshot, insieme al guadagno dell'analisi). Con la guardia il guadagno
+resta a 9,88 dopo il buffer cattivo; senza, 1,07.
+
+### Denormali
+
+Nessun `ScopedNoDenormals` nel callback. Ogni filtro qui dentro ha una coda che
+scende verso zero — il cancellatore del rientro dalle casse, l'inviluppo di
+livello, il riverbero — e un float che finisce nell'intervallo denormale costa
+cento volte uno normale su certi core. Il silenzio dopo un pezzo forte e'
+esattamente quando succede, e un callback che sfora il budget e' un buco.
+
+### Numeri letti da un thread mentre un altro li scriveva
+
+Le cinque feature dello style detector e il conteggio dei colpi venivano letti
+dalla UI direttamente dagli oggetti, mentre il thread audio li scriveva. Ora,
+come tutto il resto, sono pubblicati dal thread audio in atomiche.
+
+Anche la coda dei TAP: piu' tocchi di quanti ne contiene fra due callback
+lasciavano il lettore puntato su celle gia' riusate.
+
+### ONNX Runtime
+
+Tre punti nel percorso del modello: due `OrtStatus` ignorati (una perdita per
+frame, cinquanta volte al secondo, finche' dura il guasto), gli `OrtValue` di
+uscita non liberati quando `Run` fallisce, e — la piu' seria — la lettura dei
+logit che copiava `numClasses` float **anche se il tensore ne conteneva meno**,
+cioe' leggeva oltre la fine del buffer di ONNX Runtime. Tutti e tre chiusi.
+
+AddressSanitizer + UndefinedBehaviorSanitizer sulla suite: 91 test, zero
+segnalazioni nel nostro codice. Le uniche perdite sono 64 byte una tantum dentro
+`libonnxruntime` stessa.
+
+### Il worker si svegliava mille volte al secondo
+
+Non puo' uscire niente dalla catena finche' non e' arrivato un hop intero di
+audio, che sono venti millisecondi. Il worker interrogava la FIFO ogni
+millisecondo: **diciannove risvegli su venti** non trovavano niente da fare. Su
+un dispositivo a batteria e' quello che costa, non i conti.
+
+Ora aspetta all'incirca il tempo che manca al prossimo hop. Misurato,
+alimentandolo a velocita' reale: **da 980 a 108 giri al secondo**. Non aggiunge
+errore — ogni timestamp qui viene dall'indice di frame, e l'anticipo del thread
+audio e' misurato, non assunto, quindi si limita a leggere un filo piu' grande.
+Quando l'audio abbonda (come nella sonda, che gira venti volte piu' veloce del
+tempo reale) non dorme affatto.
+
+### Un effetto collaterale utile: la battuta regge anche affamando l'analisi
+
+Sotto ThreadSanitizer il worker gira un ordine di grandezza piu' lento del tempo
+reale, e in quelle condizioni la FIFO va in overrun per davvero. Il test
+`bar-integrity` ora stampa quante volte e' successo, ed e' un dato che vale la
+pena avere:
+
+    bar-integrity  advances=23  earlyRestarts=0  span=0.35 BPM  gaps=83
+
+Ottantatre buchi nell'audio analizzato, e la battuta non e' mai ripartita prima
+del quarto movimento. E' il "uno, due, uno" di cui si lamentava l'utente, messo
+alla prova nel modo piu' cattivo disponibile.
+
+### Roba morta tolta
+
+`TempoFollower` aveva tre membri scritti e mai letti, fra cui una compensazione
+di latenza con tanto di setter chiamato dal tracker: due nomi per una correzione
+sola, uno dei quali non faceva niente. L'anticipo vero e' quello misurato in
+`songPhase`.
+
+### Cosa **non** e' stato sistemato
+
+`loadPercussionLoop` / `clearPercussionLoop` allocano e nessuno le chiama: il
+percorso dei loop kit e' in architettura ma non ancora collegato. Chiamarle
+mentre il callback gira rialloca i buffer che lo stretcher sta leggendo. Il
+vincolo e' ora scritto nell'header. Se un giorno finiscono sotto un comando che
+l'utente puo' toccare a brano in corso, serve un passaggio di consegne, non una
+`assign` diretta.
+
 ## L'interfaccia (19 agosto, sera)
 
 Due linee di lavoro unite: da `main` il **linguaggio visivo e il tema
@@ -619,7 +814,30 @@ cmake --build build-host --target VPActivations VPReplay
 ./build-host/VPActivations_artefacts/Release/VPActivations 104 straight > act.txt
 ./build-host/VPReplay_artefacts/Release/VPReplay act.txt              # solo il decoder
 ./build-host/VPReplay_artefacts/Release/VPReplay --levels act.txt     # la lite sulle ottave
+
+cmake --build build-host --target VPTiming VPCpu
+./build-host/VPTiming_artefacts/Release/VPTiming   # dove cade il colpo nell'audio prodotto
+./build-host/VPCpu_artefacts/Release/VPCpu 256     # callback contro il suo budget, e CPU totale
 ```
+
+Sanitizer (lenti, ma trovano quello che rileggere il codice non trova):
+
+```bash
+cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVP_BUILD_TESTS=ON \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build-asan --target VPTests && ./build-asan/VPTests_artefacts/RelWithDebInfo/VPTests
+
+cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVP_BUILD_TESTS=ON \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+cmake --build build-tsan --target VPTests && ./build-tsan/VPTests_artefacts/RelWithDebInfo/VPTests
+```
+
+Sotto TSan il worker gira un ordine di grandezza piu' lento del tempo reale, la
+FIFO va in overrun di continuo e la battuta non si ferma mai: `tap-downbeat` in
+quel caso stampa INCONCLUSIVE invece di fallire, perche' la sua premessa (un
+orologio fermo da cui scegliere il movimento su cui battere) non regge.
 
 `VPProbe` vuole ONNX Runtime host (`./scripts/fetch_onnxruntime.sh`): senza, gira
 lo stub e non misura niente di utile.

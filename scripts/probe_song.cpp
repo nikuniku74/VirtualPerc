@@ -16,6 +16,7 @@
 //   oct        reported / true, as an octave ratio
 //   bar-break  bars that restarted before beat four - "one, two, one"
 //   phase      mean and worst distance from the notated beat
+#include "AI/BeatModelConfig.h"
 #include "Audio/VirtualPercussionEngine.h"
 
 #include "probe_song_render.h"
@@ -48,6 +49,7 @@ struct Result
     int    bigJumps = 0;
     float  phaseMean = 0.0f;
     float  phaseWorst = 0.0f;
+    int    gaps = 0;
 };
 
 Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool trace)
@@ -157,7 +159,18 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
                          vp::toString (snap.state), static_cast<double> (snap.barPhase));
 
         r.bpmEnd = snap.bpm;
+        r.gaps = snap.analysisGaps;
         pos += block;
+
+        // Note what this pacing does and does not give you. The worker runs on
+        // its own thread, so how far behind it happens to be is decided by the
+        // host's scheduler - and that decides which activations the decoder
+        // sees for a given block. The same build measured six times came out
+        // anywhere between 15.6 and 24.4 BPM of mean span. Read a single run as
+        // an indication, never as a comparison; and when comparing two builds,
+        // check first whether the code that changed is even on this path (the
+        // `gaps` column says whether the analysis ever lost audio, which is the
+        // usual answer to "did the FIFO have anything to do with it").
         if ((++blocks % 8) == 0)
             std::this_thread::sleep_for (std::chrono::milliseconds (2));
     }
@@ -204,10 +217,10 @@ int main (int argc, char** argv)
 
     const float tempos[] = { 76.0f, 92.0f, 104.0f, 118.0f, 128.0f, 140.0f };
 
-    std::printf ("%-11s %-6s %-7s %-7s %-8s %-7s %-6s %-6s %-6s %-7s\n",
-                 "style", "bpm", "t_lock", "t_2%", "bpm_end", "span", "spanNN", "jumps", "bars", "phase");
+    std::printf ("%-11s %-6s %-7s %-7s %-8s %-7s %-6s %-6s %-6s %-7s %-5s\n",
+                 "style", "bpm", "t_lock", "t_2%", "bpm_end", "span", "spanNN", "jumps", "bars", "phase", "gaps");
 
-    int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0;
+    int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0, totalGaps = 0;
     double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0;
 
     for (const auto& style : styles)
@@ -232,11 +245,12 @@ int main (int argc, char** argv)
             wobbleAcc += r.wobble;
             if (r.tLock >= 0.0) lockAcc += r.tLock;
 
-            std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-8.2f %-7.2f %-6.2f %-6d %-6d %-7.3f %s%s%s\n",
+            totalGaps += r.gaps;
+            std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-8.2f %-7.2f %-6.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
                          styleName (o), static_cast<double> (bpm), r.tLock, r.t2pct,
                          static_cast<double> (r.bpmEnd), static_cast<double> (r.span),
                          static_cast<double> (r.spanNn), r.bigJumps, r.barBreaks,
-                         static_cast<double> (r.phaseMean),
+                         static_cast<double> (r.phaseMean), r.gaps,
                          octaveBad ? "OCT " : "", unstable ? "WOBBLE " : "", slow ? "SLOW" : "");
             std::fflush (stdout);
         }
@@ -247,6 +261,7 @@ int main (int argc, char** argv)
     std::printf ("unstable (>1.5)   %d\n", nUnstable);
     std::printf ("slow (>12s / never) %d\n", nSlow);
     std::printf ("bar restarts      %d\n", totalBars);
+    std::printf ("analysis gaps     %d\n", totalGaps);
     std::printf ("bpm jumps >1      %d\n", totalJumps);
     std::printf ("mean span         %.2f BPM\n", spanAcc / nRuns);
     std::printf ("mean wobble       %.2f BPM/0.5s\n", wobbleAcc / nRuns);

@@ -53,6 +53,18 @@ public:
         clean run. */
     int64_t discontinuities() const noexcept { return gapCount.load (std::memory_order_relaxed); }
 
+    /** Times the worker has gone round its loop. Compared against the number of
+        analysis frames it produced, this says whether it is doing work or
+        spinning: on a battery the wakeups cost more than the arithmetic. */
+    int64_t wakeups() const noexcept { return wakeCount.load (std::memory_order_relaxed); }
+
+    /** Input samples fed but not yet analysed. Zero means the worker is caught
+        up with the audio thread. The probes wait on this to make a run
+        repeatable: otherwise how far behind the worker happens to be is decided
+        by the host's scheduler, and the same build measures differently from
+        one run to the next. */
+    int backlog() const noexcept { return fifo.available(); }
+
 private:
     void workerLoop();
     int64_t analysisSampleFor (uint64_t frameIndex) noexcept;
@@ -72,6 +84,7 @@ private:
     std::atomic<bool> onnxFlag { false };
     std::atomic<int64_t> fedTotal { 0 };
     std::atomic<int64_t> gapCount { 0 };
+    std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across
@@ -81,6 +94,8 @@ private:
     int64_t modelRefill = 0;
     double deviceSr = 48000.0;
     double inputSamplesPerModelSample = 1.0;
+    /** Device samples that make one analysis hop: the unit of useful work. */
+    int    hopInDeviceSamples = 960;
 };
 
 } // namespace vp
