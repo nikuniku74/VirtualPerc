@@ -144,18 +144,26 @@ struct Landing
     int    trueRot = -1;    // what it should have said
 };
 
-Landing measureLanding (const SongOptions& opt, double sr, unsigned seed, bool trace)
+// Which of the two the app is listening through. IPAD puts its own speaker, the
+// room and its microphone in front of the arrangement; MIXER is a line feed.
+// Both ship, so the stroke has to land on the beat in both.
+enum class Listening { ipad, mixer };
+
+Landing measureLanding (const SongOptions& opt, double sr, unsigned seed, bool trace,
+                        Listening mode)
 {
     const int block = 256;
     const int n = static_cast<int> (sr * 60.0);
 
     std::vector<float> song (static_cast<size_t> (n), 0.0f);
     renderSong (song, opt, sr, seed);
-    speakerRoomMic (song, sr, seed, 0.55f);
+    if (mode == Listening::ipad)
+        speakerRoomMic (song, sr, seed, 0.55f);
 
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
-    eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+    eng.settings().followSource.store (static_cast<int> (
+        mode == Listening::ipad ? vp::FollowSource::speaker : vp::FollowSource::kitMic));
     // Isolate the shaker on the quarters: one stroke per beat, no conga, no
     // feel scatter and no reverb tail, so every onset in the output is a stroke
     // that should be sitting exactly on a notated beat.
@@ -310,13 +318,22 @@ Landing measureLanding (const SongOptions& opt, double sr, unsigned seed, bool t
 int main (int argc, char** argv)
 {
     const double sr = 48000.0;
-    const bool attacksOnly = argc > 1 && std::strcmp (argv[1], "--attacks") == 0;
+    bool attacksOnly = false;
+    Listening mode = Listening::ipad;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp (argv[i], "--attacks") == 0) attacksOnly = true;
+        else if (std::strcmp (argv[i], "--mixer") == 0) mode = Listening::mixer;
+        else if (std::strcmp (argv[i], "--ipad") == 0) mode = Listening::ipad;
+    }
 
     measureAttacks (sr);
     if (attacksOnly)
         return 0;
 
-    std::printf ("--- dove cade il colpo, sull'audio prodotto ---\n");
+    std::printf ("--- dove cade il colpo, sull'audio prodotto (%s) ---\n",
+                 mode == Listening::ipad ? "IPAD, cassa -> stanza -> microfono"
+                                         : "MIXER, linea");
     std::printf ("%-11s %-5s %-9s %-9s %-8s %-9s %-7s %-8s %-7s %-6s\n",
                  "style", "bpm", "inizio", "SENTITO", "spread", "colpi", "clock", "bar_off",
                  "bar_ok", "entra");
@@ -337,7 +354,8 @@ int main (int argc, char** argv)
         {
             SongOptions o = style;
             o.bpm = bpm;
-            const Landing L = measureLanding (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, false);
+            const Landing L = measureLanding (o, sr, static_cast<unsigned> (bpm) * 7u + 13u,
+                                              false, mode);
             ++nRuns;
             soundAcc += L.medianMs;
             heardAcc += L.heardMs;

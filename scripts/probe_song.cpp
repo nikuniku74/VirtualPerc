@@ -52,7 +52,17 @@ struct Result
     int    gaps = 0;
 };
 
-Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool trace)
+// The two ways the app can be listening, and they are not the same measurement.
+//
+// IPAD is the hard one: the app's own speaker into the room and back through
+// its microphone, which is where the level, the comb filtering and the leak all
+// come from. MIXER is a line feed - the same arrangement with none of that in
+// front of it - so it is what the tracker can do when the signal is not the
+// problem. Both are shipped, so both get measured.
+enum class Listening { ipad, mixer };
+
+Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool trace,
+            Listening mode)
 {
     const int block = 256;
     const double seconds = 60.0;
@@ -60,11 +70,13 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
 
     std::vector<float> song (static_cast<size_t> (n), 0.0f);
     renderSong (song, opt, sr, seed);
-    speakerRoomMic (song, sr, seed, level);
+    if (mode == Listening::ipad)
+        speakerRoomMic (song, sr, seed, level);
 
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
-    eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+    eng.settings().followSource.store (static_cast<int> (
+        mode == Listening::ipad ? vp::FollowSource::speaker : vp::FollowSource::kitMic));
     eng.start();
 
     std::vector<float> oL (static_cast<size_t> (block), 0.0f);
@@ -187,20 +199,32 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
 
 int main (int argc, char** argv)
 {
-    const bool trace = argc > 1 && std::strcmp (argv[1], "--trace") == 0;
+    bool trace = false;
+    Listening mode = Listening::ipad;
+    std::vector<const char*> rest;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp (argv[i], "--trace") == 0) trace = true;
+        else if (std::strcmp (argv[i], "--mixer") == 0) mode = Listening::mixer;
+        else if (std::strcmp (argv[i], "--ipad") == 0) mode = Listening::ipad;
+        else rest.push_back (argv[i]);
+    }
+    const char* modeName = mode == Listening::ipad ? "IPAD (cassa -> stanza -> microfono)"
+                                                   : "MIXER (linea, nessuna stanza)";
     const double sr = 48000.0;
 
     // --trace <style> <bpm> runs one case with a full trace, for looking at how
     // a single track behaves rather than at the aggregate.
-    if (trace && argc >= 4)
+    if (trace && rest.size() >= 2)
     {
         SongOptions o;
-        const std::string st = argv[2];
+        const std::string st = rest[0];
         o.syncopated = st == "syncopated" || st == "sync+pad";
         o.sustained = st == "pad" || st == "sync+pad" || st == "half-time";
         o.halfTimeFeel = st == "half-time";
-        o.bpm = static_cast<float> (std::atof (argv[3]));
-        const Result r = run (o, sr, static_cast<unsigned> (o.bpm) * 7u + 13u, 0.55f, true);
+        o.bpm = static_cast<float> (std::atof (rest[1]));
+        std::printf ("# %s\n", modeName);
+        const Result r = run (o, sr, static_cast<unsigned> (o.bpm) * 7u + 13u, 0.55f, true, mode);
         std::printf ("\n%s %.0f: lock=%.1f t2=%.1f end=%.2f span=%.2f bars=%d jumps=%d\n",
                      st.c_str(), static_cast<double> (o.bpm), r.tLock, r.t2pct,
                      static_cast<double> (r.bpmEnd), static_cast<double> (r.span),
@@ -217,6 +241,7 @@ int main (int argc, char** argv)
 
     const float tempos[] = { 76.0f, 92.0f, 104.0f, 118.0f, 128.0f, 140.0f };
 
+    std::printf ("# ascolto: %s\n", modeName);
     std::printf ("%-11s %-6s %-7s %-7s %-8s %-7s %-6s %-6s %-6s %-7s %-5s\n",
                  "style", "bpm", "t_lock", "t_2%", "bpm_end", "span", "spanNN", "jumps", "bars", "phase", "gaps");
 
@@ -229,7 +254,7 @@ int main (int argc, char** argv)
         {
             SongOptions o = style;
             o.bpm = bpm;
-            const Result r = run (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, 0.55f, trace);
+            const Result r = run (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, 0.55f, trace, mode);
 
             const bool octaveBad = std::fabs (r.octave) > 0.20f;
             const bool unstable = r.span > 1.5f;
@@ -256,7 +281,7 @@ int main (int argc, char** argv)
         }
     }
 
-    std::printf ("\n=== %d runs ===\n", nRuns);
+    std::printf ("\n=== %d runs, %s ===\n", nRuns, modeName);
     std::printf ("wrong octave      %d\n", nOctave);
     std::printf ("unstable (>1.5)   %d\n", nUnstable);
     std::printf ("slow (>12s / never) %d\n", nSlow);

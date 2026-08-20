@@ -16,10 +16,12 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 | Check | Esito |
 |---|---|
-| Host `VPTests` | **91 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
+| Host `VPTests` | **97 passed, 0 failed** — kit/CLICK/quiet SPEAKER 120.0 stabile; TAP e falso aggancio provati in MIXER **e** in IPAD; aggancio di fase a 78/100/138 BPM entro 1 ms; battuta che non riparte; tempo fisso che si ferma; riff lunghi una battuta e frase di quattro; il tap dichiara l'uno |
 | ASan + UBSan | Suite intera, **zero segnalazioni** nel nostro codice (restano 64 byte una tantum dentro `libonnxruntime`) |
-| ThreadSanitizer | Suite intera, **zero corse**, 91 test passati |
+| ThreadSanitizer | Suite intera, **zero corse** |
 | CPU (`VPCpu`) | Callback allo **0,35%** del suo budget; app intera al **2,0% di un core** |
+| Tracking, MIXER | span medio **7,8 BPM**, attacco sentito **+1,4 ms**, battuta allineata **10/12** |
+| Tracking, IPAD | span medio 27,8 BPM, attacco sentito +3,1 ms, battuta allineata 5/12 |
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
@@ -231,6 +233,7 @@ Cinque difetti distinti, tutti nel percorso di riproduzione:
 - Sopra ~168 BPM e sui groove in **half-time** il tracker preferisce il livello lento (84 invece di 168). Per un orologio di percussioni è spesso la lettura più utile, ma è una scelta, non una certezza.
 - Sotto ~92 BPM con ottavi pieni può ancora raddoppiare — vedi la sezione del 19 agosto sera, dove è misurato e spiegato perché non si corregge spostando le soglie.
 - Restano numeri su materiale **sintetico**, per quanto il percorso cassa → stanza → microfono sia simulato: la prova sul device con Spotify vero è ancora da fare.
+- Quasi tutto quello che sopra è dato per storto, è storto **in modalità IPAD**. In MIXER lo span medio è 7,8 BPM contro 27,8 e la battuta è allineata 10 volte su 12 contro 5. Se il timing conta, MIXER.
 
 ## Cosa locka oggi
 
@@ -399,6 +402,12 @@ no.
 tasti d'ottava: una misura che non viene fuori si offre a chi ascolta invece di
 tirarla a indovinare.
 
+> **Aggiunta del 20 agosto.** Tutte le misure di questa sezione sono state fatte
+> in modalità IPAD. Rifatte in MIXER la battuta è allineata **10 volte su 12** e
+> la percussione entra sull'uno **7 volte su 12**. Non è il rilevamento del
+> downbeat a non funzionare: è il percorso cassa → stanza → microfono che lo
+> distrugge. Vedi «MIXER e IPAD sono due prodotti diversi».
+
 ### Il materiale di prova aveva un difetto
 
 I brani della sonda avevano il kick identico su 1 e 3, il rullante identico su 2
@@ -476,6 +485,119 @@ anticipo. Risultato: **0% prima del tap, 100% dopo**, e **0% dopo** con la
 dichiarazione tolta dal codice, su tre esecuzioni.
 
 Il timing non è cambiato: attacco sentito +3.01 ms, identico a prima del riff.
+
+## MIXER e IPAD sono due prodotti diversi (20 agosto)
+
+Fino a qui **ogni** sonda girava in modalita' IPAD: cassa dell'iPad, stanza,
+microfono. La modalita' MIXER — una mandata di linea, senza niente davanti — era
+coperta solo dai test che non impostano la sorgente e quindi ereditano il valore
+di default. Adesso `VPProbe` e `VPTiming` prendono `--ipad` / `--mixer` e sono
+state misurate tutte e due.
+
+### Il TAP non prendeva il tempo in MIXER
+
+Difetto vero, e c'era dal primo commit:
+
+```cpp
+const bool tapOwnsTempo = tapEstablished && speakerFollow && heldBpm > 50.0f;
+```
+
+Il TAP e' lo stesso tasto nelle due modalita' e chi lo preme sta dicendo la
+stessa cosa in tutte e due: il tempo lo so io meglio dell'analisi. Ma era
+onorato solo mentre si seguiva la cassa dell'iPad — il caso attorno a cui il
+flusso del TAP era stato pensato. Su una mandata di mixer quattro tocchi
+mettevano il tempo e la rete se lo riprendeva subito.
+
+Misurato su un brano a 100 BPM, con quattro tocchi a 132:
+
+| | tiene il tempo battuto |
+|---|---|
+| IPAD | 100% del tempo |
+| MIXER | **0%** |
+
+Tolto il vincolo, tutte e due al 100%.
+
+### E poi: in MIXER il tracker e' un'altra cosa
+
+Trenta brani a tempo fisso, stesso materiale, cambia solo cosa c'e' davanti al
+microfono:
+
+| | MIXER | IPAD |
+|---|---|---|
+| span medio a regime | **7,8 BPM** | 27,8 BPM |
+| instabili (>1,5) | 9/30 | 21/30 |
+| lenti (>12 s) | 6/30 | 19/30 |
+| ottava sbagliata | 1/30 | 4/30 |
+| salti > 1 BPM | 67 | 244 |
+| t_lock medio | 5,8 s | 4,6 s |
+
+E il timing, dodici brani:
+
+| | MIXER | IPAD |
+|---|---|---|
+| attacco sentito | **+1,41 ms** | +3,13 ms |
+| errore medio dell'orologio | **-0,56 ms** | +12,70 ms |
+| battuta allineata | **10/12** (70% del tempo) | 5/12 (38%) |
+| entra sull'uno | **7/12** | 2/12 |
+
+Su materiale dritto e sincopato, in MIXER lo span sta sotto 1,5 BPM quasi
+ovunque e l'aggancio arriva in 5-7 secondi. Quello che resta storto sono i pad a
+76 e 140, e half-time a 128 e 140 — cioe' gli stessi casi limite gia' descritti
+sopra, non un problema di modalita'.
+
+**Questo cambia una conclusione precedente.** L'uno automatico era stato
+dichiarato "al livello del caso", e lo e' — ma quella misura era stata fatta
+tutta in IPAD. In MIXER la battuta e' allineata 10 volte su 12 e la percussione
+entra sull'uno 7 volte su 12. Non e' il rilevamento del downbeat a non
+funzionare: e' il percorso acustico che lo distrugge. Il tasto `SPOSTA L'1` e il
+tap sull'uno restano quello che servono in IPAD; in MIXER servono molto meno.
+
+Stessa storia per l'orologio: in MIXER l'errore residuo e' **mezzo
+millisecondo**, in IPAD dodici. Dodici millisecondi sono il ritardo che la
+stanza aggiunge all'attacco che la rete sente, e l'app non ha modo di
+conoscerlo. Si potrebbe aggiungere un anticipo fisso in modalita' IPAD e i
+numeri della sonda migliorerebbero — ma sarebbe una costante tarata su una
+*simulazione* di stanza che nessuno ha ancora confrontato con un iPad vero in
+una stanza vera, cioe' esattamente il tipo di numero che smette di essere vero
+senza dirlo. Non l'ho fatto.
+
+**In pratica: se il timing conta, MIXER.** IPAD resta la modalita' comoda, e il
+limite li' e' il segnale, non il tracker.
+
+### La battuta quando l'analisi perde audio: trovata, non risolta
+
+Sotto ThreadSanitizer il worker resta cosi' indietro che la FIFO va in overrun
+per davvero, ed e' l'unica condizione in cui ho visto la battuta ripartire prima
+del quarto movimento — cioe' il "uno, due, uno" di cui si lamentava l'utente.
+Non e' una condizione che un dispositivo raggiunge: la sonda a 30 brani segna
+zero buchi e la FIFO tiene undici secondi.
+
+Serviva un modo di arrivarci senza sanitizer, e adesso c'e': `bar-starved`
+alimenta il motore piu' in fretta di quanto il worker riesca a consumare.
+Centoquaranta buchi in un minuto di analisi, con la battuta ancora osservabile.
+
+Ho provato la correzione ovvia — dimezzare i voti del downbeat a ogni buco, cosi'
+che la battuta non venga spostata su prove raccolte *prima* del buco e usate
+*dopo* — e **non funziona**. Con e senza, su una dozzina di esecuzioni, le
+ripartenze anticipate stanno fra zero e una in entrambi i casi. Non ho tenuto la
+modifica: una patch non dimostrata nella logica piu' delicata del tracker e'
+esattamente il genere di cosa che poi peggiora qualcos'altro in silenzio.
+
+Quindi il test asserisce quello che la misura sostiene, non di piu': che il
+percorso e' raggiungibile, e che le ripartenze restano rare (soglia due; dieci
+farebbero fallire). Il difetto resta aperto e scritto qui.
+
+### Cosa ho controllato e lasciato com'era
+
+Il recupero dal falso aggancio (`speakerFollow && ! armed && ...`) e' anch'esso
+solo in modalita' cassa. Ho aggiunto un test che prova le due modalita' con del
+rumore di fondo prima di START, a quattro livelli diversi attorno alle soglie:
+LOCKING 0% del tempo in tutte e otto le combinazioni. Non ho evidenza che quel
+vincolo faccia danno, quindi non l'ho toccato — il test resta come guardia.
+
+Le soglie di rumorosita' sono diverse fra le due (`0,0010` contro `0,0020`, e
+`0,004` contro `0,020`) ed e' voluto: un microfono che sente una cassa a mezzo
+metro parte molto piu' basso di una mandata di linea.
 
 ## Revisione del core: affidabilita' e prestazioni (20 agosto)
 
@@ -640,19 +762,6 @@ audio e' misurato, non assunto, quindi si limita a leggere un filo piu' grande.
 Quando l'audio abbonda (come nella sonda, che gira venti volte piu' veloce del
 tempo reale) non dorme affatto.
 
-### Un effetto collaterale utile: la battuta regge anche affamando l'analisi
-
-Sotto ThreadSanitizer il worker gira un ordine di grandezza piu' lento del tempo
-reale, e in quelle condizioni la FIFO va in overrun per davvero. Il test
-`bar-integrity` ora stampa quante volte e' successo, ed e' un dato che vale la
-pena avere:
-
-    bar-integrity  advances=23  earlyRestarts=0  span=0.35 BPM  gaps=83
-
-Ottantatre buchi nell'audio analizzato, e la battuta non e' mai ripartita prima
-del quarto movimento. E' il "uno, due, uno" di cui si lamentava l'utente, messo
-alla prova nel modo piu' cattivo disponibile.
-
 ### Roba morta tolta
 
 `TempoFollower` aveva tre membri scritti e mai letti, fra cui una compensazione
@@ -807,8 +916,9 @@ Diagnostica del tracking (host, non fanno parte della suite — sono lenti):
 
 ```bash
 cmake --build build-host --target VPProbe        # 30 brani a tempo fisso, motore intero
-./build-host/VPProbe_artefacts/Release/VPProbe
-./build-host/VPProbe_artefacts/Release/VPProbe --trace straight 104   # un caso solo
+./build-host/VPProbe_artefacts/Release/VPProbe --ipad     # cassa -> stanza -> microfono
+./build-host/VPProbe_artefacts/Release/VPProbe --mixer    # mandata di linea
+./build-host/VPProbe_artefacts/Release/VPProbe --trace --mixer straight 104   # un caso solo
 
 cmake --build build-host --target VPActivations VPReplay
 ./build-host/VPActivations_artefacts/Release/VPActivations 104 straight > act.txt
@@ -816,7 +926,8 @@ cmake --build build-host --target VPActivations VPReplay
 ./build-host/VPReplay_artefacts/Release/VPReplay --levels act.txt     # la lite sulle ottave
 
 cmake --build build-host --target VPTiming VPCpu
-./build-host/VPTiming_artefacts/Release/VPTiming   # dove cade il colpo nell'audio prodotto
+./build-host/VPTiming_artefacts/Release/VPTiming --ipad    # dove cade il colpo, per modalita'
+./build-host/VPTiming_artefacts/Release/VPTiming --mixer
 ./build-host/VPCpu_artefacts/Release/VPCpu 256     # callback contro il suo budget, e CPU totale
 ```
 
@@ -834,10 +945,12 @@ cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVP_BUILD_T
 cmake --build build-tsan --target VPTests && ./build-tsan/VPTests_artefacts/RelWithDebInfo/VPTests
 ```
 
-Sotto TSan il worker gira un ordine di grandezza piu' lento del tempo reale, la
-FIFO va in overrun di continuo e la battuta non si ferma mai: `tap-downbeat` in
-quel caso stampa INCONCLUSIVE invece di fallire, perche' la sua premessa (un
-orologio fermo da cui scegliere il movimento su cui battere) non regge.
+Sotto TSan il worker gira un ordine di grandezza piu' lento del tempo reale e la
+FIFO va in overrun di continuo. Due test dicono INCONCLUSIVE invece di fallire,
+perche' la loro premessa non regge in quelle condizioni e non e' quella che
+stanno misurando: `tap-downbeat` (serve un orologio fermo da cui scegliere il
+movimento su cui battere) e `bar-integrity` (serve un'analisi che non stia
+perdendo audio — quel caso e' di `bar-starved`, che lo cerca apposta).
 
 `VPProbe` vuole ONNX Runtime host (`./scripts/fetch_onnxruntime.sh`): senza, gira
 lo stub e non misura niente di utile.

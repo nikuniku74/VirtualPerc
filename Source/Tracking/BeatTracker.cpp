@@ -548,7 +548,13 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // last looked at it.
     const float songPhase = wrap01 (hyp.beatPhase + leadBeats);
 
-    const bool tapOwnsTempo = tapEstablished && speakerFollow && heldBpm > 50.0f;
+    // TAP is the same button in both modes and means the same thing in both:
+    // the listener knows the tempo better than the analysis does. It used to be
+    // honoured only while following the iPad's own speaker - the case the tap
+    // flow was designed around - so on a mixer feed four taps set the tempo and
+    // the network took it straight back. Measured on a 100 BPM track tapped at
+    // 132: held 100% of the time in IPAD, 0% in MIXER.
+    const bool tapOwnsTempo = tapEstablished && heldBpm > 50.0f;
     const bool holding = tapHold || tapOwnsTempo || (! retuning
                       && (currentState == TrackingState::following
                           || currentState == TrackingState::lowConfidence
