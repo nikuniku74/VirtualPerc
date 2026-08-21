@@ -2421,66 +2421,57 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // tempo double is a perfectly ordinary answer, so that is where this
             // has to be measured.
             {
-                constexpr float slowBpm = 80.0f;
-                const int nSlow = static_cast<int> (sr * 30.0);
-                const double incSlow = static_cast<double> (slowBpm) / 60.0 / sr;
-                std::vector<float> slow (static_cast<size_t> (nSlow), 0.0f);
+                // Where the doubling starts, and whether it is the tempo that
+                // decides it or this bench's own signal.
+                //
+                // Reading one tempo cannot tell those apart: a synthetic song
+                // has edges a real recording does not, and a bench that doubles
+                // everything would send any "fix" built on it straight into the
+                // material that already works. What the documented behaviour
+                // says is that the level goes wrong below about 92 BPM and is
+                // solid above it, so that boundary is the thing to look for. If
+                // it shows up here, the bench is measuring the real effect.
+                auto slowSong = [&] (float songBpm, std::vector<float>& dst, int nSamp)
                 {
+                    dst.assign (static_cast<size_t> (nSamp), 0.0f);
+                    const double incS = static_cast<double> (songBpm) / 60.0 / sr;
                     double p3 = 0.0;
-                    for (int i = 0; i < nSlow; ++i)
+                    for (int i = 0; i < nSamp; ++i)
                     {
                         const double beat = p3 - std::floor (p3);
                         const int bi = static_cast<int> (std::floor (p3));
-                        const float tBeat = static_cast<float> (beat) / (slowBpm / 60.0f);
-                        if (bi % 2 == 0 && beat < 0.06)
-                            slow[static_cast<size_t> (i)] +=
+                        const float tBeat = static_cast<float> (beat) / (songBpm / 60.0f);
+                        if (bi % 2 == 0)
+                            dst[static_cast<size_t> (i)] +=
                                 std::sin (2.0f * 3.14159265f * 55.0f * tBeat) * std::exp (-tBeat * 22.0f);
-                        if (bi % 2 == 1 && beat < 0.05)
-                            slow[static_cast<size_t> (i)] +=
+                        if (bi % 2 == 1)
+                            dst[static_cast<size_t> (i)] +=
                                 (0.35f * ((i % 17) / 17.0f - 0.5f)
                                  + 0.2f * std::sin (2.0f * 3.14159265f * 180.0f * tBeat))
                                 * std::exp (-tBeat * 18.0f);
-                        if (beat < 0.12)
-                            slow[static_cast<size_t> (i)] +=
-                                0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
-                                * std::exp (-tBeat * 8.0f);
-                        p3 += incSlow;
+                        dst[static_cast<size_t> (i)] +=
+                            0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
+                            * std::exp (-tBeat * 8.0f);
+                        p3 += incS;
                     }
-                }
+                };
 
-                auto runSlow = [&] (bool partOn, float leakGain, float& outComb)
+                auto readTempo = [&] (const std::vector<float>& song, int nSamp, float& comb)
                 {
                     vp::VirtualPercussionEngine e;
                     e.prepare (sr, block, 1);
-                    e.settings().shakerEnabled.store (partOn);
-                    e.settings().congasEnabled.store (partOn);
+                    e.settings().shakerEnabled.store (false);
+                    e.settings().congasEnabled.store (false);
                     e.start();
-
-                    const int acoustic = static_cast<int> (sr * 0.007);
-                    std::vector<float> echo (static_cast<size_t> (nSlow + block + acoustic), 0.0f);
-                    std::vector<float> in (static_cast<size_t> (block), 0.0f);
                     std::vector<float> eL (static_cast<size_t> (block), 0.0f);
                     std::vector<float> eR (static_cast<size_t> (block), 0.0f);
                     float* eOuts[2] = { eL.data(), eR.data() };
-
                     vp::EngineSnapshot snap {};
-                    int p = 0;
-                    while (p + block <= nSlow)
+                    for (int p = 0; p + block <= nSamp; p += block)
                     {
-                        for (int i = 0; i < block; ++i)
-                            in[static_cast<size_t> (i)] = slow[static_cast<size_t> (p + i)]
-                                                          + echo[static_cast<size_t> (p + i)];
-                        const float* ins[1] = { in.data() };
+                        const float* ins[1] = { song.data() + p };
                         e.process (ins, 1, eOuts, 2, block);
-                        for (int i = 0; i < block; ++i)
-                        {
-                            const size_t at = static_cast<size_t> (p + block + acoustic + i);
-                            if (at < echo.size())
-                                echo[at] += leakGain * 0.5f * (eL[static_cast<size_t> (i)]
-                                                               + eR[static_cast<size_t> (i)]);
-                        }
                         snap = e.snapshot();
-                        p += block;
                         for (int spin = 0; spin < 400; ++spin)
                         {
                             if (e.snapshot().analysisBacklog <= 960)
@@ -2488,36 +2479,60 @@ void vpRunAiBeatTests (int& passed, int& failed)
                             std::this_thread::sleep_for (std::chrono::microseconds (50));
                         }
                     }
-                    outComb = snap.combBpm;
+                    comb = snap.combBpm;
                     return snap.bpm;
                 };
 
-                float combOff = 0.0f, combOn = 0.0f;
-                const float bpmOff = runSlow (false, 0.00f, combOff);
-                const float bpmOn = runSlow (true, 0.55f, combOn);
-                std::printf ("slow-selfdrive  want=%.1f  STOP bpm=%.1f comb=%.1f  "
-                             "START bpm=%.1f comb=%.1f\n",
-                             static_cast<double> (slowBpm),
-                             static_cast<double> (bpmOff), static_cast<double> (combOff),
-                             static_cast<double> (bpmOn), static_cast<double> (combOn));
-                // Measured twice over, this bench says something other than what
-                // it was built to look for, so it reports rather than asserts.
+                const int nSlow = static_cast<int> (sr * 26.0);
+                std::vector<float> song;
+                int doubledBelow = 0, doubledAbove = 0, checkedAbove = 0;
+                int midRangeRight = 0, checkedMid = 0;
+                for (float songBpm : { 60.0f, 72.0f, 96.0f, 132.0f, 168.0f, 190.0f })
+                {
+                    slowSong (songBpm, song, nSlow);
+                    float comb = 0.0f;
+                    const float got = readTempo (song, nSlow, comb);
+                    const bool onIt = std::fabs (got - songBpm) < 6.0f;
+                    const bool doubled = std::fabs (got - songBpm * 2.0f) < 10.0f;
+                    std::printf ("octave-sweep  song=%5.1f  read=%6.1f  comb=%6.1f  %s\n",
+                                 static_cast<double> (songBpm), static_cast<double> (got),
+                                 static_cast<double> (comb),
+                                 onIt ? "on it" : (doubled ? "DOUBLED" : "elsewhere"));
+                    if (songBpm >= 92.0f && songBpm <= 170.0f)
+                    {
+                        ++checkedMid;
+                        midRangeRight += onIt ? 1 : 0;
+                    }
+                    const bool halved = std::fabs (got - songBpm * 0.5f) < 6.0f;
+                    if (halved)
+                        std::printf ("               (halved)\n");
+                    if (songBpm < 92.0f)
+                        doubledBelow += doubled ? 1 : 0;
+                    else
+                    {
+                        ++checkedAbove;
+                        doubledAbove += (doubled || halved) ? 1 : 0;
+                    }
+                }
+                std::printf ("octave-sweep  wrong level below 92: %d/2   wrong above: %d/%d\n",
+                             doubledBelow, doubledAbove, checkedAbove);
+
+                // Asserted: the middle of the range, where the tracker is meant
+                // to be right and is. Reported, not asserted: the two ends.
                 //
-                // With nothing playing the eighty BPM song reads 160.0 and the
-                // fold 160.2, both runs: the documented doubling below ~92 BPM,
-                // reproduced here on demand rather than only in the field. With
-                // the part playing it read 80.1 once and 157.5 the next time -
-                // variance, not a direction, so the part is not what decides it
-                // and the run-to-run coin toss on which level it locks to is.
-                //
-                // What this is for: the doubling now has a bench. Anything that
-                // claims to improve the slow case has to move the STOP line off
-                // 160, repeatably, and this is where that gets checked.
-                std::printf ("                (STOP is the documented sub-92 doubling; "
-                             "START varies run to run)\n");
-                expect (std::fabs (bpmOff - slowBpm) < 8.0f
-                            || std::fabs (bpmOff - slowBpm * 2.0f) < 8.0f,
-                        "the slow bench lands on a metrical level of the song, not somewhere else");
+                // Both ends were measured here and both are the documented
+                // behaviour rather than news - 60 and 72 read as their double,
+                // 190 as its half, which is the state space being pulled toward
+                // the middle of the range at the extremes. Widening its prior
+                // from 0.40 to 0.90 octaves was tried against this bench: it
+                // fixed 72 and left 60 and 190 exactly where they were, and it
+                // broke "strong eighths are not the beat", which is the thing
+                // anchoring the level on the state space exists to guarantee.
+                // The narrow prior is load-bearing; that trade is the one the
+                // header on setLevelAnchor already describes, and this measured
+                // it rather than assuming it. Reverted.
+                expect (midRangeRight == checkedMid && checkedMid >= 3,
+                        "the tracker reads ordinary tempi at the level they are played");
             }
 
 
