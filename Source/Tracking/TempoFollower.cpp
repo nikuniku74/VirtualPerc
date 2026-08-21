@@ -20,16 +20,17 @@ void TempoFollower::reset() noexcept
     conf = 0.0f;
     beatInBar = 0;
     totalBeats = 0;
-    sameSignCount = 0;
-    lastPhaseErr = 0.0f;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
+    // Nothing has played, so nothing can be flammed against: a clock starting
+    // from here must be free to place its first pulse immediately.
+    samplesSincePulse = static_cast<int> (sampleRate * 30.0);
     locked = false;
-    primed = false;
+    reanchor = false;
     havePhaseObservation = false;
     tempoTrimEnabled = false;
 }
@@ -38,16 +39,15 @@ void TempoFollower::resetClock() noexcept
 {
     phase = 0.0;
     beatInBar = 0;
-    sameSignCount = 0;
-    lastPhaseErr = 0.0f;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
+    samplesSincePulse = static_cast<int> (sampleRate * 30.0);
     havePhaseObservation = false;
-    primed = true;
+    reanchor = true;
 }
 
 void TempoFollower::setTempoTrimEnabled (bool on) noexcept
@@ -68,6 +68,21 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
     {
         if (std::fabs (bpm - target) > 3.0f)
             tempoTrim = 0.0f;
+
+        // Half or double is not a change of tempo, it is the same pulse counted
+        // at another metrical level: every stroke the part is already playing
+        // stays exactly where it is and only their spacing changes. Gliding into
+        // it walks the grid through half a second of tempos the music is not at
+        // - measured at 76 -> 152, the clock spent ~500 ms between the two - and
+        // that is heard as the percussion running away and catching up. The
+        // level is taken at once instead, leaving the phase alone, so the grid
+        // stays continuous through it.
+        if (tempo > 40.0f)
+        {
+            const float ratio = bpm / tempo;
+            if (std::fabs (ratio - 2.0f) < 0.08f || std::fabs (ratio - 0.5f) < 0.02f)
+                tempo = bpm;
+        }
         target = bpm;
     }
     conf = clamp01 (confidence);
@@ -98,13 +113,18 @@ void TempoFollower::snapPhase (float targetPhase) noexcept
     phase = static_cast<double> (wrap01 (targetPhase));
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
-    sameSignCount = 0;
-    lastPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
-    primed = false;
+    // Re-anchor rather than resume. A snap moves the grid under a part that is
+    // already playing, and the pulse sitting at the new phase is the whole point
+    // of the gesture - it is the "here is the one" the listener just tapped.
+    // Suppressing it left the stroke on the one missing and stretched the gap
+    // around the correction to as much as 1.9x the sixteenth being played, which
+    // is heard as the shaker stumbling. `advance` decides whether the pulse
+    // would flam against the one before it; that is the only reason to drop it.
+    reanchor = true;
 }
 
 void TempoFollower::snapDownbeat (float targetPhase) noexcept
@@ -164,11 +184,6 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
     samplesSinceObservation = 0;
     havePhaseObservation = true;
 
-    if (err * lastPhaseErr > 0.0f)
-        ++sameSignCount;
-    else
-        sameSignCount = 1;
-    lastPhaseErr = err;
     phaseErrEma = phaseErrEma * 0.80f + err * 0.20f;
 }
 
@@ -178,6 +193,8 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
     samplesSinceObservation = std::min (samplesSinceObservation + numSamples,
                                         static_cast<int> (sampleRate * 30.0));
+    samplesSincePulse = std::min (samplesSincePulse + numSamples,
+                                  static_cast<int> (sampleRate * 30.0));
     if (samplesSinceObservation > static_cast<int> (sampleRate * 2.5))
     {
         const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
@@ -187,17 +204,23 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
     const float effectiveTarget = target + tempoTrim;
     const float err = effectiveTarget - tempo;
-    if (locked && std::fabs (err) <= 2.5f)
+
+    // A small correction used to be applied whole, on the block it arrived. That
+    // is a step in the rate of the grid, and the decoder refreshes six times a
+    // second, so every wobble inside the window went straight through to the
+    // part and the tempo was never actually still. It is still fast - a couple
+    // of BPM closes in about a fifth of a second, which no listener hears as a
+    // change of speed - but it is a glide now rather than a jump.
+    const float tau = std::fabs (err) <= (locked ? 2.5f : 1.2f)
+                          ? 0.045f
+                          : (locked ? 0.55f : 0.90f);
+    const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                     / (tau * static_cast<float> (sampleRate)));
+    tempo += err * a;
+    // Settle rather than approach forever, so `currentTempo` still reads as the
+    // round number the rest of the engine compares against.
+    if (std::fabs (effectiveTarget - tempo) < 0.02f)
         tempo = effectiveTarget;
-    else if (std::fabs (err) <= 1.2f)
-        tempo = effectiveTarget;
-    else
-    {
-        const float tau = locked ? 0.55f : 0.90f;
-        const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
-                                         / (tau * static_cast<float> (sampleRate)));
-        tempo += err * a;
-    }
 
     if (tempo < 40.0f) tempo = 40.0f;
     if (tempo > 220.0f) tempo = 220.0f;
@@ -276,12 +299,36 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
             tick.wrappedBar = true;
     }
 
-    const double prevOut = primed ? -1.0e-9 : prevPhase;
-    const double curOut  = (primed ? 0.0 : prevPhase) + beats;
-    primed = false;
+    const double ppb = static_cast<double> (pulsesPerBeat);
+    double prevPulse = prevPhase * ppb;
 
-    const double prevPulse = prevOut * static_cast<double> (pulsesPerBeat);
-    const double curPulse  = curOut * static_cast<double> (pulsesPerBeat);
+    // The span of grid positions this block covers is half-open, so a pulse
+    // landing exactly on where the block starts belongs to the block before it.
+    // That is right while the clock is free-running and wrong immediately after
+    // a snap, where the phase was *placed* on a pulse and nothing has played it
+    // yet. Reaching back by a hair puts that pulse inside this block.
+    if (reanchor)
+    {
+        // Just enough to bring a pulse sitting exactly on the new phase inside
+        // the span, and no more: a snap onto a grid position lands on it
+        // exactly, while a snap to some phase between two of them - a re-lock
+        // onto the song rather than a declared downbeat - must not conjure a
+        // pulse that was never due.
+        constexpr double kAnchorTol = 1.0e-9;
+
+        // Only if it would still be heard as a stroke. Under half a pulse - and
+        // never under 20 ms - it fuses with the one just played into a single
+        // thick attack, so the grid re-anchors silently and the next pulse
+        // carries the correction instead.
+        const double pulseSeconds = 60.0 / static_cast<double> (std::max (40.0f, tempo)) / ppb;
+        const double refractory = std::max (sampleRate * 0.020,
+                                            sampleRate * pulseSeconds * 0.5);
+        if (static_cast<double> (samplesSincePulse) >= refractory)
+            prevPulse -= kAnchorTol;
+    }
+    reanchor = false;
+
+    const double curPulse = (prevPhase + beats) * ppb;
     const int from = static_cast<int> (std::floor (prevPulse));
     const int to = static_cast<int> (std::floor (curPulse));
     const double span = std::max (1.0e-12, curPulse - prevPulse);
@@ -309,6 +356,9 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         tick.pulseBeatInBar[tick.pulsesFired] = barBeat;
         tick.barPulse[tick.pulsesFired] = barBeat * pulsesPerBeat + idx;
         ++tick.pulsesFired;
+        // Counted from where the pulse actually sits in the block, not from its
+        // end, so the next re-anchor measures a real interval.
+        samplesSincePulse = -offset;
     }
 
     tick.tempoBpm = tempo;

@@ -61,16 +61,20 @@ private:
     int beatInBar = 0;
     int totalBeats = 0;
     int pulsesPerBeat = 4; // 4 = 16th notes per quarter
-    int sameSignCount = 0;
-    float lastPhaseErr = 0.0f;
     float phaseErrEma = 0.0f;
     float prevPhaseErr = 0.0f;
     float lastObservedPhaseErr = 0.0f;
     float tempoTrim = 0.0f;
     float phaseCorrectionSinceObservation = 0.0f;
     int samplesSinceObservation = 0;
+    // Time since a pulse was last emitted, so that a re-anchor can tell whether
+    // the pulse it is about to place would be heard as a stroke of its own or as
+    // a flam on the one before it.
+    int samplesSincePulse = 0;
     bool locked = false;
-    bool primed = false;
+    // Set by a snap: the next block re-anchors the pulse grid to the new phase
+    // and emits the pulse sitting at it, instead of waiting for the next one.
+    bool reanchor = false;
     bool havePhaseObservation = false;
     bool tempoTrimEnabled = false;
     FollowStrength follow = FollowStrength::medium;

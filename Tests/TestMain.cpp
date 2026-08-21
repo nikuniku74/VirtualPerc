@@ -156,6 +156,166 @@ int main()
                 "PLL correction across zero preserves the quarter counter");
     }
 
+    // A tap moves the grid under a part that is already playing. What the
+    // listener asked for is a stroke on the one they just tapped; what they used
+    // to get was a hole where it should have been, because a pulse landing
+    // exactly on the newly snapped phase fell outside the half-open span the
+    // block emits from and was dropped. Measured over 32 snap positions at 76
+    // BPM the gap around the correction reached 1.89x the sixteenth being
+    // played - very nearly a skipped stroke - which is heard as the shaker
+    // stumbling rather than re-aligning.
+    {
+        auto snapFrom = [&] (float bpm, float stopAt)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (bpm);
+            clock.setTargetTempo (bpm, 1.0f);
+            clock.setLocked (true);
+            clock.resetClock();
+            for (int i = 0; i < 40000; ++i)
+            {
+                if (clock.beatPhase() >= stopAt && clock.beatPhase() < stopAt + 0.01f)
+                    break;
+                clock.advance (block);
+            }
+            clock.snapPhase (0.0f);
+            return clock.advance (block);
+        };
+
+        // Far enough past the last sixteenth that a stroke on the one is a
+        // stroke and not a thickening of the one before it.
+        const auto declared = snapFrom (100.0f, 0.40f);
+        expect (declared.pulsesFired > 0 && declared.pulseIndex[0] == 0
+                    && declared.pulseOffset[0] == 0,
+                "a tap snap plays the downbeat it just declared");
+
+        // The one case where dropping it is right: the previous pulse sounded
+        // ~17 ms ago, and two strokes that close fuse into one thick attack.
+        const auto crowded = snapFrom (100.0f, 0.78f);
+        expect (crowded.pulsesFired == 0 || crowded.pulseOffset[0] > 0,
+                "a snap landing on top of a pulse does not double it");
+    }
+
+    // The spacing either side of a re-align, swept across every position in the
+    // beat the tap could fall on. Half a pulse is the floor this can reach: the
+    // grid either plays the declared one early or waits for the next, and the
+    // guard sits at the midpoint, so neither branch can be worse than the other.
+    {
+        for (float bpm : { 60.0f, 76.0f, 120.0f, 168.0f })
+        {
+            const double pulseSec = 60.0 / static_cast<double> (bpm) / 4.0;
+            double worst = 0.0;
+            for (int k = 0; k < 64; ++k)
+            {
+                vp::TempoFollower clock;
+                clock.prepare (sr);
+                clock.setPulsesPerBeat (4);
+                clock.forceTempo (bpm);
+                clock.setTargetTempo (bpm, 1.0f);
+                clock.setLocked (true);
+                clock.resetClock();
+
+                const float at = static_cast<float> (k) / 64.0f;
+                double last = -1.0, firstAfter = -1.0;
+                bool snapped = false;
+                for (int i = 0; i < 40000 && firstAfter < 0.0; ++i)
+                {
+                    const double t = static_cast<double> (i * block) / sr;
+                    if (! snapped && t > 4.0 && clock.beatPhase() >= at
+                        && clock.beatPhase() < at + 0.02f)
+                    {
+                        clock.snapPhase (0.0f);
+                        snapped = true;
+                    }
+                    const auto tick = clock.advance (block);
+                    for (int p = 0; p < tick.pulsesFired; ++p)
+                    {
+                        const double pt = t + static_cast<double> (tick.pulseOffset[p]) / sr;
+                        if (! snapped)
+                            last = pt;
+                        else if (firstAfter < 0.0)
+                            firstAfter = pt;
+                    }
+                }
+                if (last > 0.0 && firstAfter > 0.0)
+                    worst = std::max (worst,
+                                      std::fabs (firstAfter - last - pulseSec) / pulseSec);
+            }
+            std::printf ("tap-realign  %.0f BPM  worst spacing error=%.0f%%\n",
+                         static_cast<double> (bpm), worst * 100.0);
+            expect (worst < 0.55,
+                    "re-aligning never stretches or crowds a pulse by more than half");
+        }
+    }
+
+    // Half and double are the same pulse counted at another level, so every
+    // stroke the part is playing stays exactly where it is and only the spacing
+    // changes. Easing between them walks the grid through half a second of
+    // tempos the music is not at, which is heard as the percussion running away
+    // and catching up. A tempo the band actually moved to is still eased into.
+    {
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (76.0f);
+        clock.setTargetTempo (76.0f, 1.0f);
+        clock.setLocked (true);
+        clock.resetClock();
+        for (int i = 0; i < 800; ++i)
+            clock.advance (block);
+
+        clock.setTargetTempo (152.0f, 1.0f);
+        bool between = false;
+        for (int i = 0; i < 400; ++i)
+        {
+            const auto tick = clock.advance (block);
+            if (tick.tempoBpm > 80.0f && tick.tempoBpm < 148.0f)
+                between = true;
+        }
+        std::printf ("octave-switch  tempo=%.1f  passedThrough=%s\n",
+                     static_cast<double> (clock.currentTempo()), between ? "yes" : "no");
+        expect (! between && std::fabs (clock.currentTempo() - 152.0f) < 0.1f,
+                "an octave flip is taken at once, not glided through");
+
+        clock.setTargetTempo (164.0f, 1.0f);
+        const auto eased = clock.advance (block);
+        expect (eased.tempoBpm > 152.0f && eased.tempoBpm < 155.0f,
+                "a tempo the band really moved to is still eased into");
+    }
+
+    // The decoder refreshes six times a second and its estimate wobbles inside
+    // its own tolerance. That wobble used to be applied whole, on the block it
+    // arrived: anything inside 2.5 BPM was assigned straight to the clock, so
+    // the grid rate was stepping several times a second and the part never sat
+    // still. It is still fast enough to be inaudible as a lag.
+    {
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (100.0f);
+        clock.setTargetTempo (100.0f, 1.0f);
+        clock.setLocked (true);
+        clock.resetClock();
+        for (int i = 0; i < 400; ++i)
+            clock.advance (block);
+
+        float worstStep = 0.0f;
+        float prev = clock.currentTempo();
+        for (int i = 0; i < 1200; ++i)
+        {
+            clock.setTargetTempo (i % 2 == 0 ? 101.8f : 98.2f, 1.0f);
+            const auto tick = clock.advance (block);
+            worstStep = std::max (worstStep, std::fabs (tick.tempoBpm - prev));
+            prev = tick.tempoBpm;
+        }
+        std::printf ("tempo-wobble  worst single-block step=%.3f BPM\n",
+                     static_cast<double> (worstStep));
+        expect (worstStep < 0.5f,
+                "decoder wobble inside its tolerance no longer steps the grid");
+    }
+
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, block, 1);
