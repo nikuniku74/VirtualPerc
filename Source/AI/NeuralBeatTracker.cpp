@@ -28,15 +28,6 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     stop();
     deviceSr = deviceSampleRate > 1.0 ? deviceSampleRate : 48000.0;
 
-    if (! model)
-    {
-        auto onnx = std::make_unique<OnnxBeatModel>();
-        if (loadDefaultBeatModel (*onnx))
-            model = std::move (onnx);
-        else
-            model = std::make_unique<StubBeatModel>();
-    }
-
     fifo.prepare (1 << 19);
     resampler.prepare (deviceSr, kBeatModelSampleRate);
     features.prepare (kBeatModelSampleRate, kBeatModelHop);
@@ -51,16 +42,19 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     wakeCount.store (0, std::memory_order_relaxed);
     seenDropped = 0;
     modelRefill = 0;
-    if (! model->prepare (LogSpectFeatures::kDim))
-        return false;
-    model->reset();
-    onnxFlag.store (model->usesOnnx(), std::memory_order_relaxed);
 
     popBuf.assign (4096, 0.0f);
     resampled.assign (4096, 0.0f);
 
     stopFlag.store (false, std::memory_order_relaxed);
     armed.store (true, std::memory_order_release);
+    // Building the network reads the weights and hands them to the runtime to
+    // compile, which takes long enough that Xcode flags it: `start` is reached
+    // from prepareToPlay, and on iOS that runs on the thread which draws the
+    // UI, so opening the audio device froze the interface for as long as the
+    // model took. The worker does it on its own first pass instead - it is the
+    // only thread that ever touches the model afterwards - and the loop it
+    // then enters already knows how to have no model yet.
     worker = std::thread ([this] { workerLoop(); });
     return true;
 }
@@ -86,6 +80,34 @@ void NeuralBeatTracker::workerLoop()
 {
     float frame[LogSpectFeatures::kDim];
     float act[3] {};
+
+    // Built here rather than in `start` so that opening the audio device never
+    // blocks the thread drawing the UI. Until this returns the loop below runs
+    // with no model and publishes no hypothesis, which is the state it is in
+    // anyway until the first hop of audio has arrived. Audio fed meanwhile is
+    // waiting in the FIFO, which holds eleven seconds.
+    if (! model)
+    {
+        auto onnx = std::make_unique<OnnxBeatModel>();
+        if (loadDefaultBeatModel (*onnx))
+            model = std::move (onnx);
+        else
+            model = std::make_unique<StubBeatModel>();
+    }
+    if (! model->prepare (LogSpectFeatures::kDim))
+    {
+        // A network that will not build is not a reason to stop listening: on
+        // the stub the tap and the clock still work, and the UI already says
+        // which of the two is running.
+        model = std::make_unique<StubBeatModel>();
+        if (! model->prepare (LogSpectFeatures::kDim))
+            model.reset();
+    }
+    if (model != nullptr)
+    {
+        model->reset();
+        onnxFlag.store (model->usesOnnx(), std::memory_order_relaxed);
+    }
 
     while (! stopFlag.load (std::memory_order_relaxed))
     {

@@ -691,7 +691,6 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     std::fill (left, left + numSamples, 0.0f);
     std::fill (right, right + numSamples, 0.0f);
 
-    if (enabled && audible)
     {
         // A guard against firing the same grid position twice - which the clock
         // can do when a phase correction steps the grid backwards - and nothing
@@ -702,6 +701,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         const int minGap = static_cast<int> (sampleRate * kRetriggerGuardSec);
         const float beatSamples = 60.0f / std::max (40.0f, grooveBpm)
                                   * static_cast<float> (sampleRate);
+        const bool playing = enabled && audible;
 
         for (int i = 0; i < tick.pulsesFired; ++i)
         {
@@ -710,8 +710,6 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                 offset = 0;
             if (offset >= numSamples)
                 offset = numSamples - 1;
-            if (samplesSinceHit + offset < minGap)
-                continue;
 
             const int barBeat = tick.pulseBeatInBar[i];
             const int idx = tick.pulseIndex[i];
@@ -719,10 +717,26 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             // Bars are counted off the beat-in-bar wrapping back to zero, so
             // the two-bar phrase and the fill stay aligned to the song's bar
             // even across a re-lock.
+            //
+            // This is bookkeeping about where the *song* is, so it has to run on
+            // every pulse the clock emits - including the ones nothing is played
+            // on. It used to sit below both the guard below and the audible
+            // check that wrapped this whole loop, so the count stopped dead
+            // whenever the part was switched off or was waiting to come in, and
+            // started again from wherever it had been left. Measured with the
+            // part muted for two bars, the phrase came back two bars behind the
+            // song and stayed there: the four-bar figure was playing the wrong
+            // bar and the fill landed in the middle of the phrase, which is
+            // heard as the percussion having lost the form.
             if (barBeat == 0 && idx == 0 && lastBarBeat != 0)
                 ++barCounter;
             if (idx == 0)
                 lastBarBeat = barBeat;
+
+            if (! playing)
+                continue;
+            if (samplesSinceHit + offset < minGap)
+                continue;
 
             // Map the clock's pulse onto the groove's sixteenth grid, whatever
             // resolution the clock is running at.

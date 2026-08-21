@@ -512,6 +512,129 @@ int main()
                 "speaker-leak subtraction covers a block larger than the old 2048 cap");
     }
 
+    // Same music, two buffer sizes. A small block puts one pulse in each
+    // callback; a large one puts several into the same callback, where the
+    // retrigger guard measures them against each other rather than against the
+    // block before. The part is the same music either way, so the hit counts
+    // have to match: a guard that fires on a legitimate pulse would show up
+    // here as the large buffer playing less than the small one.
+    {
+        auto run = [&] (int blk, float bpm, int styleIdx)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (bpm);
+            clock.setTargetTempo (bpm, 1.0f);
+            clock.setLocked (true);
+            clock.resetClock();
+
+            vp::PercussionEngine perc;
+            perc.prepare (sr);
+            perc.setReverbAmount (0.0f);
+            perc.setHumanization (0.0f);
+            perc.setSwing (0.0f);
+            perc.setGroove (bpm, 4);
+            perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+            perc.setGrooveStyle (static_cast<vp::GrooveStyle> (styleIdx));
+
+            std::vector<float> L (static_cast<size_t> (blk)), R (static_cast<size_t> (blk));
+            const int total = static_cast<int> (sr * 20.0);
+            int pulses = 0;
+            for (int pos = 0; pos + blk <= total; pos += blk)
+            {
+                const auto tick = clock.advance (blk);
+                pulses += tick.pulsesFired;
+                perc.render (L.data(), R.data(), blk, tick, true);
+            }
+            std::printf ("    blk=%5d  pulses=%5d  hits=%5d\n", blk, pulses, perc.hitsFired());
+            return perc.hitsFired();
+        };
+
+        bool sameEitherWay = true;
+        for (float bpm : { 100.0f, 168.0f, 200.0f })
+        {
+            const int small = run (128, bpm, 0);
+            const int big   = run (4096, bpm, 0);
+            std::printf ("buffer-size  %.0f BPM  small=%d big=%d\n",
+                         static_cast<double> (bpm), small, big);
+            if (small != big)
+                sameEitherWay = false;
+        }
+        expect (sameEitherWay,
+                "the part does not change with the size of the audio buffer");
+    }
+
+    // The phrase has to survive the part being switched off and back on. Every
+    // bar of the four-bar sentence plays a different figure and the fourth takes
+    // a fill, so where the count is matters as much as where the beat is.
+    //
+    // The bar count used to live inside the branch that decides whether anything
+    // is audible, so it stopped dead whenever the congas were switched off, the
+    // part was waiting to come in, or playback was paused - and picked up again
+    // from wherever it had been left. Measured with the part muted for two bars,
+    // the phrase came back exactly two bars behind the song and stayed there:
+    // the figure belonged to the wrong bar and the fill landed mid-sentence,
+    // which is heard as the percussion having lost the form rather than as one
+    // wrong stroke.
+    {
+        auto hitsPerBar = [&] (bool withGap, int muteFromBar, int muteBars)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (120.0f);
+            clock.setTargetTempo (120.0f, 1.0f);
+            clock.setLocked (true);
+            clock.resetClock();
+
+            vp::PercussionEngine perc;
+            perc.prepare (sr);
+            perc.setReverbAmount (0.0f);
+            perc.setHumanization (0.0f);
+            perc.setSwing (0.0f);
+            // Ghost notes are a coin toss per sixteenth, so they would swamp the
+            // thing being measured. At zero intensity the part is deterministic.
+            perc.setIntensity (0.0f);
+            perc.setGroove (120.0f, 4);
+            perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+
+            std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+            std::vector<int> perBar;
+            int bar = 0, inBar = 0;
+            const int total = static_cast<int> (sr * 40.0);
+            for (int pos = 0; pos + block <= total; pos += block)
+            {
+                const auto tick = clock.advance (block);
+                const bool muted = withGap && bar >= muteFromBar && bar < muteFromBar + muteBars;
+                const int before = perc.hitsFired();
+                perc.render (L.data(), R.data(), block, tick, ! muted);
+                inBar += perc.hitsFired() - before;
+                if (tick.wrappedBar)
+                {
+                    perBar.push_back (muted ? -1 : inBar);
+                    inBar = 0;
+                    ++bar;
+                }
+            }
+            return perBar;
+        };
+
+        const auto clean = hitsPerBar (false, 0, 0);
+        const auto gapped = hitsPerBar (true, 4, 2);
+        int mismatches = 0, compared = 0;
+        for (size_t i = 6; i < clean.size() && i < gapped.size(); ++i)
+        {
+            ++compared;
+            if (clean[i] != gapped[i])
+                ++mismatches;
+        }
+        std::printf ("phrase-across-mute  bars compared=%d  mismatched=%d\n",
+                     compared, mismatches);
+        expect (compared > 8 && mismatches == 0,
+                "the phrase comes back where the song is, not where it was muted");
+    }
+
     vpRunAiBeatTests (gPassed, gFailed);
 
     std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
