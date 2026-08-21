@@ -139,6 +139,9 @@ private:
     juce::Label  swingLabel { {}, "SWING" };
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
+    juce::Slider shakerVolumeSlider;
+    juce::Label  shakerVolumeLabel { {}, "SHAKER" };
+    juce::Label  shakerVolumeValue { {}, "100%" };
 
     juce::AudioBuffer<float> inputScratch;
 

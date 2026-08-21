@@ -137,39 +137,84 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
     drawFlatButton (g, button, backgroundColour, shouldDrawButtonAsDown);
 }
 
-int MainComponent::AppLookAndFeel::getSliderThumbRadius (juce::Slider&)
+int MainComponent::AppLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
 {
-    return 15;
+    return slider.isVertical() ? 13 : 18;
 }
 
 void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
-                                                      float sliderPos, float, float,
-                                                      juce::Slider::SliderStyle, juce::Slider&)
+                                                      float sliderPos, float minSliderPos, float maxSliderPos,
+                                                      juce::Slider::SliderStyle style, juce::Slider&)
 {
-    const float trackH = 6.0f;
+    const bool vertical = style == juce::Slider::LinearVertical
+                          || style == juce::Slider::LinearBarVertical;
+
+    if (vertical)
+    {
+        const float trackW = 10.0f;
+        const float cx = static_cast<float> (x) + 0.5f * static_cast<float> (width);
+        juce::Rectangle<float> track (cx - trackW * 0.5f, static_cast<float> (y),
+                                      trackW, static_cast<float> (height));
+
+        g.setColour (text().withAlpha (0.10f));
+        g.fillRoundedRectangle (track.expanded (2.0f, 1.0f), 7.0f);
+        g.setColour (sliderTrack());
+        g.fillRoundedRectangle (track, 5.0f);
+
+        const float bottom = juce::jmax (track.getY(), maxSliderPos);
+        const float top = juce::jlimit (track.getY(), track.getBottom(), sliderPos);
+        juce::ignoreUnused (minSliderPos);
+        auto filled = juce::Rectangle<float>::leftTopRightBottom (track.getX(), top,
+                                                                  track.getRight(), bottom);
+        if (filled.getHeight() > 1.0f)
+        {
+            juce::ColourGradient fill (fuchsia().darker (0.08f), filled.getX(), filled.getBottom(),
+                                       fuchsia().brighter (0.18f), filled.getX(), filled.getY(), false);
+            g.setGradientFill (fill);
+            g.fillRoundedRectangle (filled, 5.0f);
+        }
+
+        const float capW = 34.0f;
+        const float capH = 16.0f;
+        juce::Rectangle<float> cap (cx - capW * 0.5f, sliderPos - capH * 0.5f, capW, capH);
+        paintRadial (g, { cx, sliderPos }, 22.0f, fuchsia(), 0.28f);
+        g.setColour (gDarkMode ? juce::Colour (0xff2a2a30) : juce::Colour (0xfff3eef4));
+        g.fillRoundedRectangle (cap.translated (0.0f, 1.5f), 4.0f);
+        g.setColour (juce::Colours::white);
+        g.fillRoundedRectangle (cap, 4.0f);
+        g.setColour (fuchsia());
+        g.fillRoundedRectangle (cap.removeFromTop (3.5f), 2.0f);
+        return;
+    }
+
+    const float trackH = 12.0f;
     const float cy = static_cast<float> (y) + 0.5f * static_cast<float> (height);
     juce::Rectangle<float> track (static_cast<float> (x), cy - trackH * 0.5f,
                                   static_cast<float> (width), trackH);
 
-    g.setColour (text().withAlpha (0.12f));
-    g.fillRoundedRectangle (track.expanded (1.0f), 4.0f);
+    g.setColour (text().withAlpha (0.10f));
+    g.fillRoundedRectangle (track.expanded (1.5f), 8.0f);
     g.setColour (sliderTrack());
-    g.fillRoundedRectangle (track, 3.0f);
+    g.fillRoundedRectangle (track, 6.0f);
 
-    auto filled = track.withWidth (juce::jmax (trackH, sliderPos - static_cast<float> (x)));
-    juce::ColourGradient fill (fuchsia().brighter (0.15f), filled.getX(), filled.getY(),
-                               fuchsia().darker (0.1f), filled.getRight(), filled.getY(), false);
-    g.setGradientFill (fill);
-    g.fillRoundedRectangle (filled, 3.0f);
+    const float fillW = juce::jmax (0.0f, sliderPos - track.getX());
+    if (fillW > 1.0f)
+    {
+        auto filled = track.withWidth (fillW);
+        juce::ColourGradient fill (fuchsia().brighter (0.18f), filled.getX(), filled.getY(),
+                                   fuchsia(), filled.getRight(), filled.getY(), false);
+        g.setGradientFill (fill);
+        g.fillRoundedRectangle (filled, 6.0f);
+    }
 
-    const float tr = 15.0f;
-    paintRadial (g, { sliderPos, cy }, 28.0f, fuchsia(), 0.35f);
+    juce::ignoreUnused (minSliderPos, maxSliderPos);
+
+    const float tr = 16.0f;
+    paintRadial (g, { sliderPos, cy }, 26.0f, fuchsia(), 0.22f);
     g.setColour (fuchsia());
-    g.drawEllipse (sliderPos - tr, cy - tr, tr * 2.0f, tr * 2.0f, 2.0f);
+    g.drawEllipse (sliderPos - tr, cy - tr, tr * 2.0f, tr * 2.0f, 2.4f);
     g.setColour (juce::Colours::white);
-    g.fillEllipse (sliderPos - tr + 3.0f, cy - tr + 3.0f, (tr - 3.0f) * 2.0f, (tr - 3.0f) * 2.0f);
-    g.setColour (fuchsia());
-    g.fillEllipse (sliderPos - 3.5f, cy - 3.5f, 7.0f, 7.0f);
+    g.fillEllipse (sliderPos - tr + 2.6f, cy - tr + 2.6f, (tr - 2.6f) * 2.0f, (tr - 2.6f) * 2.0f);
 }
 
 juce::Font MainComponent::TapLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
@@ -313,42 +358,70 @@ MainComponent::MainComponent()
     sub8.onClick    = [this] { applySubdivision (vp::Subdivision::eighth); };
     sub16.onClick   = [this] { applySubdivision (vp::Subdivision::sixteenth); };
 
-    addAndMakeVisible (reverbLabel);
-    reverbLabel.setJustificationType (juce::Justification::centredLeft);
-    reverbLabel.setColour (juce::Label::textColourId, mute());
-    reverbLabel.setFont (fontUi (13.0f));
-
-    addAndMakeVisible (reverbSlider);
-    reverbSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    reverbSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    reverbSlider.setRange (0.0, 1.0, 0.01);
-    reverbSlider.setValue (0.30, juce::dontSendNotification);
-    reverbSlider.onValueChange = [this]
+    auto caption = [] (juce::Label& lab, const char* name, double value)
     {
-        engine.settings().reverbAmount.store (static_cast<float> (reverbSlider.getValue()));
+        lab.setText (juce::String (name) + "    "
+                         + juce::String (juce::roundToInt (value * 100.0)) + "%",
+                     juce::dontSendNotification);
     };
 
-    auto setupTrim = [this] (juce::Slider& s, juce::Label& lab, double initial,
-                             std::function<void (float)> apply)
+    auto setupTrim = [this, caption] (juce::Slider& s, juce::Label& lab, const char* name,
+                                      double initial, std::function<void (float)> apply)
     {
         addAndMakeVisible (lab);
         lab.setJustificationType (juce::Justification::centredLeft);
         lab.setColour (juce::Label::textColourId, mute());
-        lab.setFont (fontUi (12.0f));
+        lab.setFont (fontUi (13.0f));
+        lab.setInterceptsMouseClicks (false, false);
 
         addAndMakeVisible (s);
         s.setSliderStyle (juce::Slider::LinearHorizontal);
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         s.setRange (0.0, 1.0, 0.01);
         s.setValue (initial, juce::dontSendNotification);
+        caption (lab, name, initial);
         auto* sp = &s;
-        s.onValueChange = [sp, apply] { apply (static_cast<float> (sp->getValue())); };
+        auto* lp = &lab;
+        s.onValueChange = [sp, lp, name, apply, caption]
+        {
+            const float v = static_cast<float> (sp->getValue());
+            apply (v);
+            caption (*lp, name, v);
+        };
     };
 
-    setupTrim (swingSlider, swingLabel, 0.00,
+    setupTrim (swingSlider, swingLabel, "SWING", 0.00,
                [this] (float v) { engine.settings().swing.store (v); });
-    setupTrim (intensitySlider, intensityLabel, 0.50,
+    setupTrim (intensitySlider, intensityLabel, "ENERGIA", 0.50,
                [this] (float v) { engine.settings().intensity.store (v); });
+    setupTrim (reverbSlider, reverbLabel, "REVERB", 0.30,
+               [this] (float v) { engine.settings().reverbAmount.store (v); });
+
+    addAndMakeVisible (shakerVolumeLabel);
+    shakerVolumeLabel.setJustificationType (juce::Justification::centred);
+    shakerVolumeLabel.setColour (juce::Label::textColourId, mute());
+    shakerVolumeLabel.setFont (fontUi (11.0f));
+    shakerVolumeLabel.setInterceptsMouseClicks (false, false);
+
+    addAndMakeVisible (shakerVolumeValue);
+    shakerVolumeValue.setJustificationType (juce::Justification::centred);
+    shakerVolumeValue.setColour (juce::Label::textColourId, fuchsia());
+    shakerVolumeValue.setFont (fontUi (13.0f));
+    shakerVolumeValue.setInterceptsMouseClicks (false, false);
+
+    addAndMakeVisible (shakerVolumeSlider);
+    shakerVolumeSlider.setSliderStyle (juce::Slider::LinearVertical);
+    shakerVolumeSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    shakerVolumeSlider.setRange (0.0, 1.0, 0.01);
+    shakerVolumeSlider.setValue (1.00, juce::dontSendNotification);
+    shakerVolumeSlider.setDoubleClickReturnValue (true, 1.0);
+    shakerVolumeSlider.onValueChange = [this]
+    {
+        const float v = static_cast<float> (shakerVolumeSlider.getValue());
+        engine.settings().percussionVolume.store (v);
+        shakerVolumeValue.setText (juce::String (juce::roundToInt (v * 100.0)) + "%",
+                                   juce::dontSendNotification);
+    };
 
    #if JUCE_IOS
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
@@ -364,6 +437,7 @@ MainComponent::MainComponent()
     engine.settings().intensity.store (0.50f);
     engine.settings().swing.store (0.00f);
     engine.settings().masterVolume.store (0.90f);
+    engine.settings().percussionVolume.store (1.00f);
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
@@ -435,6 +509,8 @@ void MainComponent::refreshThemeColours()
     reverbLabel.setColour (juce::Label::textColourId, mute());
     swingLabel.setColour (juce::Label::textColourId, mute());
     intensityLabel.setColour (juce::Label::textColourId, mute());
+    shakerVolumeLabel.setColour (juce::Label::textColourId, mute());
+    shakerVolumeValue.setColour (juce::Label::textColourId, fuchsia());
     themeButton.setButtonText (darkMode ? "DARK" : "LIGHT");
     themeButton.setToggleState (! darkMode, juce::dontSendNotification);
 
@@ -837,9 +913,9 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     };
 
     const int n = area.getHeight();
-    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.30f);
-    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.16f);
-    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.22f);
+    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.26f);
+    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.14f);
+    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.18f);
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
@@ -875,14 +951,25 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     }
 
     {
-        // Whatever is left goes to feel. Three sliders always fit, because
-        // three sliders will squeeze; the alternative was hiding them.
+        // Fader on the left, the three sends stacked beside it. The fader is
+        // the output level of the shaker; the sliders are feel, not another
+        // row of the same control drawn smaller.
         auto body = card (area, "FEEL");
+        const int faderW = juce::jlimit (56, 88, body.getWidth() / 5);
+        auto fader = body.removeFromLeft (faderW);
+        body.removeFromLeft (10);
+
+        shakerVolumeValue.setBounds (fader.removeFromTop (18));
+        shakerVolumeLabel.setBounds (fader.removeFromBottom (16));
+        shakerVolumeSlider.setBounds (fader.reduced (4, 2));
+
         const int rowH = body.getHeight() / 3;
         auto slider = [] (juce::Label& label, juce::Slider& s, juce::Rectangle<int> row)
         {
-            label.setBounds (row.removeFromLeft (96).reduced (4, 4));
-            s.setBounds (row.reduced (8, 3));
+            const int head = juce::jlimit (16, 22, row.getHeight() / 3);
+            label.setBounds (row.removeFromTop (head).reduced (2, 0));
+            const int padY = juce::jmax (2, (row.getHeight() - 36) / 2);
+            s.setBounds (row.reduced (2, padY));
         };
         slider (swingLabel, swingSlider, body.removeFromTop (rowH));
         slider (intensityLabel, intensitySlider, body.removeFromTop (rowH));
@@ -893,6 +980,9 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     swingLabel.setVisible (true);
     intensitySlider.setVisible (true);
     intensityLabel.setVisible (true);
+    shakerVolumeSlider.setVisible (true);
+    shakerVolumeLabel.setVisible (true);
+    shakerVolumeValue.setVisible (true);
     return area;
 }
 

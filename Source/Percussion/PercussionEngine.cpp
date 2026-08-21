@@ -768,6 +768,8 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));
+        const bool shaker = v.stroke == Stroke::shakerDown || v.stroke == Stroke::shakerUp;
+        const float voiceGain = shaker ? g : 1.0f;
         for (int n = 0; n < numSamples; ++n)
         {
             const int p = v.pos + n;
@@ -788,7 +790,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                     break;
                 }
             }
-            const float a = v.fade * g;
+            const float a = v.fade * voiceGain;
             left[n]  += bL[static_cast<size_t> (p)] * v.gainL * a;
             right[n] += bR[static_cast<size_t> (p)] * v.gainR * a;
         }

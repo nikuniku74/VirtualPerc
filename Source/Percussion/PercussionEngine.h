@@ -21,6 +21,7 @@ public:
     void setHumanization (float amount) noexcept;
     void setSwing (float amount) noexcept;
     void setIntensity (float amount) noexcept;
+    /** Output level of the shaker only. Congas are not scaled with it. */
     void setVolume (float v) noexcept { volume = clamp01 (v); }
     void setReverbAmount (float amount) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }

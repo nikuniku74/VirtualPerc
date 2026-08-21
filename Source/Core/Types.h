@@ -200,6 +200,8 @@ struct EngineSnapshot
 struct EngineSettings
 {
     std::atomic<float> masterVolume    { 0.90f };
+    // Output fader for the shaker. Congas stay at unity so the two can be
+    // balanced by ear rather than scaled together.
     std::atomic<float> percussionVolume{ 1.00f };
     std::atomic<float> reverbAmount    { 0.30f };
     // A percussionist is not on the grid and is not evenly loud. 0 is a
