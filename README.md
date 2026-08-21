@@ -10,6 +10,13 @@ Microphone → neural beat / tempo / phase → AUTO lock → adaptive shaker.
 
 ## Build (Mac host tests)
 
+JUCE is a submodule, so a plain `git clone` leaves `third_party/JUCE` empty and
+CMake fails at configure time. Once per checkout:
+
+```bash
+git submodule update --init --filter=blob:none third_party/JUCE
+```
+
 ```bash
 ./scripts/setup-ai.sh   # ONNX Runtime + Assets/Models/beatnet.onnx
 ./scripts/run-tests.sh
@@ -22,6 +29,24 @@ cmake -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-host --target VPTests
 ./build-host/VPTests_artefacts/Release/VPTests
 ```
+
+### Linux host
+
+`VPTests` is a console target, but JUCE builds `juceaide` before anything else
+and that one links the GUI modules, so the X11 headers have to be there even
+though nothing on this host opens a window:
+
+```bash
+sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev \
+    libxcursor-dev libxcomposite-dev libfreetype6-dev libfontconfig1-dev \
+    libasound2-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target VPTests -j"$(nproc)"
+./build/VPTests_artefacts/Release/VPTests
+```
+
+`gl`, `libcurl` and `webkit2gtk` are reported missing at configure time and can
+stay missing: no target the tests need links them.
 
 ## iPad (iPad Air M1)
 
