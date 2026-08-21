@@ -133,6 +133,8 @@ private:
     juce::TextButton styleAuto { "AUTO" };
     juce::TextButton styleMarcha { "MARCHA" }, styleRock { "ROCK" };
     juce::TextButton styleDance { "DANCE" }, stylePop { "POP" };
+    juce::TextButton styleSamba { "SAMBA" }, styleFunk { "FUNK" };
+    juce::TextButton styleReggae { "REGGAE" }, styleBossa { "BOSSA" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Slider swingSlider;
@@ -140,7 +142,7 @@ private:
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Slider shakerVolumeSlider;
-    juce::Label  shakerVolumeLabel { {}, "SHAKER" };
+    juce::Label  shakerVolumeLabel { {}, "VOLUME" };
     juce::Label  shakerVolumeValue { {}, "100%" };
 
     juce::AudioBuffer<float> inputScratch;

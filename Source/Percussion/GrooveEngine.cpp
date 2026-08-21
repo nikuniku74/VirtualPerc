@@ -64,6 +64,19 @@ namespace
         { 14, Stroke::open,  0.95f },
         { 15, Stroke::slap,  0.78f },
     };
+    // Fourth bar of the eight-bar sentence. The opens still close the bar -
+    // that is the marcha - but the tumba answers early, so this is a different
+    // riff rather than C played again.
+    constexpr Hit kMarchaD[] = {
+        {  0, Stroke::heel,  0.30f },
+        {  2, Stroke::toe,   0.28f },
+        {  4, Stroke::slap,  0.88f },
+        {  5, Stroke::heel,  0.22f },
+        {  8, Stroke::tumba, 0.74f },
+        { 10, Stroke::open,  0.50f },
+        { 12, Stroke::open,  0.82f },
+        { 14, Stroke::open,  0.94f },
+    };
 
     // ------------------------------------------------------------------ rock
     //
@@ -105,6 +118,16 @@ namespace
         { 13, Stroke::open,  0.80f },
         { 14, Stroke::slap,  0.88f },
         { 15, Stroke::open,  0.94f },
+    };
+    // Still off 2 and 4. A slap on the "a" of 2 is a pickup, not a backbeat.
+    constexpr Hit kRockD[] = {
+        {  0, Stroke::tumba, 0.84f },
+        {  2, Stroke::heel,  0.22f },
+        {  6, Stroke::open,  0.70f },
+        {  7, Stroke::slap,  0.42f },
+        {  8, Stroke::tumba, 0.58f },
+        { 11, Stroke::toe,   0.24f },
+        { 14, Stroke::open,  0.88f },
     };
 
     // ----------------------------------------------------------------- dance
@@ -155,6 +178,17 @@ namespace
         { 14, Stroke::slap,  0.88f },
         { 15, Stroke::open,  0.96f },
     };
+    // The "a" of every beat stays. The first kick-side tumba is dropped so the
+    // bar leans even harder into the offbeats.
+    constexpr Hit kDanceD[] = {
+        {  1, Stroke::toe,   0.28f },
+        {  3, Stroke::open,  0.84f },
+        {  6, Stroke::slap,  0.62f },
+        {  7, Stroke::open,  0.88f },
+        { 11, Stroke::open,  0.82f },
+        { 13, Stroke::slap,  0.58f },
+        { 15, Stroke::open,  0.92f },
+    };
 
     // ------------------------------------------------------------------- pop
     //
@@ -185,6 +219,214 @@ namespace
         { 14, Stroke::open,  0.86f },
         { 15, Stroke::slap,  0.62f },
     };
+    // Still mostly space. A muffled tone on 3 is as busy as this part gets.
+    constexpr Hit kPopD[] = {
+        {  0, Stroke::tumba, 0.72f },
+        {  4, Stroke::heel,  0.22f },
+        {  8, Stroke::muff,  0.36f },
+        { 14, Stroke::open,  0.82f },
+        { 15, Stroke::toe,   0.30f },
+    };
+
+    // ----------------------------------------------------------------- samba
+    //
+    // Brazilian weight sits on 2 and 4, not on the tumbao's 3. The opens are
+    // syncopated around those two posts rather than paired at the end of the
+    // bar, which is the whole difference between this and a marcha.
+    constexpr Hit kSambaA[] = {
+        {  0, Stroke::heel,  0.28f },
+        {  2, Stroke::toe,   0.32f },
+        {  4, Stroke::tumba, 0.90f },   // samba 2
+        {  6, Stroke::open,  0.70f },
+        {  7, Stroke::slap,  0.48f },
+        { 10, Stroke::toe,   0.28f },
+        { 12, Stroke::tumba, 0.86f },   // samba 4
+        { 14, Stroke::open,  0.78f },
+        { 15, Stroke::open,  0.58f },
+    };
+    constexpr Hit kSambaB[] = {
+        {  0, Stroke::heel,  0.26f },
+        {  3, Stroke::open,  0.52f },
+        {  4, Stroke::tumba, 0.88f },
+        {  6, Stroke::open,  0.66f },
+        {  8, Stroke::heel,  0.24f },
+        { 11, Stroke::slap,  0.50f },
+        { 12, Stroke::tumba, 0.84f },
+        { 14, Stroke::open,  0.82f },
+    };
+    constexpr Hit kSambaC[] = {
+        {  1, Stroke::toe,   0.26f },
+        {  4, Stroke::tumba, 0.92f },
+        {  6, Stroke::open,  0.72f },
+        {  9, Stroke::heel,  0.24f },
+        { 12, Stroke::tumba, 0.80f },
+        { 13, Stroke::slap,  0.56f },
+        { 14, Stroke::open,  0.84f },
+        { 15, Stroke::open,  0.70f },
+    };
+    constexpr Hit kSambaD[] = {
+        {  0, Stroke::tumba, 0.46f },
+        {  2, Stroke::toe,   0.30f },
+        {  4, Stroke::tumba, 0.86f },
+        {  7, Stroke::open,  0.64f },
+        { 10, Stroke::slap,  0.52f },
+        { 12, Stroke::tumba, 0.88f },
+        { 14, Stroke::open,  0.76f },
+    };
+    constexpr Hit kSambaFill[] = {
+        {  8, Stroke::open,  0.62f },
+        {  9, Stroke::slap,  0.70f },
+        { 10, Stroke::open,  0.66f },
+        { 11, Stroke::tumba, 0.74f },
+        { 12, Stroke::open,  0.80f },
+        { 13, Stroke::slap,  0.84f },
+        { 14, Stroke::open,  0.90f },
+        { 15, Stroke::tumba, 0.94f },
+    };
+
+    // ------------------------------------------------------------------ funk
+    //
+    // The snare still owns 2 and 4, so those stay empty of loud congas. What
+    // makes it funk rather than rock is the sixteenth slaps *around* them and
+    // the open that lands on the "a" of 4 - the one a horn section would hit.
+    constexpr Hit kFunkA[] = {
+        {  0, Stroke::tumba, 0.78f },
+        {  2, Stroke::heel,  0.22f },
+        {  3, Stroke::slap,  0.50f },   // e of 1
+        {  6, Stroke::open,  0.62f },
+        { 10, Stroke::toe,   0.26f },
+        { 11, Stroke::slap,  0.46f },
+        { 14, Stroke::muff,  0.38f },
+        { 15, Stroke::open,  0.88f },   // a of 4
+    };
+    constexpr Hit kFunkB[] = {
+        {  0, Stroke::tumba, 0.74f },
+        {  1, Stroke::heel,  0.20f },
+        {  3, Stroke::slap,  0.48f },
+        {  6, Stroke::open,  0.58f },
+        {  7, Stroke::toe,   0.24f },
+        { 11, Stroke::slap,  0.52f },
+        { 15, Stroke::open,  0.90f },
+    };
+    constexpr Hit kFunkC[] = {
+        {  0, Stroke::tumba, 0.80f },
+        {  3, Stroke::slap,  0.54f },
+        {  6, Stroke::open,  0.64f },
+        {  9, Stroke::heel,  0.22f },
+        { 11, Stroke::open,  0.50f },
+        { 13, Stroke::slap,  0.44f },
+        { 15, Stroke::open,  0.92f },
+    };
+    constexpr Hit kFunkD[] = {
+        {  0, Stroke::tumba, 0.76f },
+        {  3, Stroke::slap,  0.56f },
+        {  5, Stroke::toe,   0.24f },
+        {  6, Stroke::open,  0.60f },
+        { 10, Stroke::muff,  0.34f },
+        { 11, Stroke::slap,  0.48f },
+        { 14, Stroke::open,  0.52f },
+        { 15, Stroke::open,  0.86f },
+    };
+    constexpr Hit kFunkFill[] = {
+        {  8, Stroke::slap,  0.58f },
+        {  9, Stroke::open,  0.54f },
+        { 10, Stroke::slap,  0.66f },
+        { 11, Stroke::open,  0.62f },
+        { 12, Stroke::slap,  0.74f },
+        { 13, Stroke::open,  0.78f },
+        { 14, Stroke::slap,  0.84f },
+        { 15, Stroke::open,  0.94f },
+    };
+
+    // ---------------------------------------------------------------- reggae
+    //
+    // One-drop: the one is empty. The three is the post. The shaker skanks on
+    // the offbeat the way a guitar would, and the congas stay out of the way
+    // of both.
+    constexpr Hit kReggaeA[] = {
+        {  2, Stroke::open,  0.58f },
+        {  6, Stroke::toe,   0.28f },
+        {  8, Stroke::tumba, 0.90f },   // the three
+        { 10, Stroke::open,  0.64f },
+        { 14, Stroke::slap,  0.50f },
+    };
+    constexpr Hit kReggaeB[] = {
+        {  2, Stroke::open,  0.54f },
+        {  4, Stroke::heel,  0.22f },
+        {  6, Stroke::toe,   0.26f },
+        {  8, Stroke::tumba, 0.86f },
+        { 10, Stroke::open,  0.68f },
+        { 14, Stroke::open,  0.56f },
+    };
+    constexpr Hit kReggaeC[] = {
+        {  2, Stroke::open,  0.60f },
+        {  6, Stroke::slap,  0.40f },
+        {  8, Stroke::tumba, 0.88f },
+        { 11, Stroke::toe,   0.26f },
+        { 14, Stroke::open,  0.62f },
+        { 15, Stroke::open,  0.48f },
+    };
+    constexpr Hit kReggaeD[] = {
+        {  2, Stroke::open,  0.56f },
+        {  3, Stroke::heel,  0.20f },
+        {  8, Stroke::tumba, 0.84f },
+        { 10, Stroke::open,  0.70f },
+        { 12, Stroke::muff,  0.32f },
+        { 14, Stroke::slap,  0.52f },
+    };
+    constexpr Hit kReggaeFill[] = {
+        {  8, Stroke::tumba, 0.70f },
+        { 10, Stroke::open,  0.62f },
+        { 11, Stroke::slap,  0.58f },
+        { 12, Stroke::open,  0.74f },
+        { 13, Stroke::tumba, 0.66f },
+        { 14, Stroke::open,  0.82f },
+        { 15, Stroke::slap,  0.78f },
+    };
+
+    // ----------------------------------------------------------------- bossa
+    //
+    // The 3-2 bossa clave, stated as conga tones rather than as a stick: on 1,
+    // the "a" of 1, the "and" of 2, the "and" of 3, the "and" of 4. Sparse
+    // enough to sit under a vocal, clave-shaped enough not to be pop.
+    constexpr Hit kBossaA[] = {
+        {  0, Stroke::tumba, 0.70f },
+        {  3, Stroke::open,  0.62f },
+        {  6, Stroke::muff,  0.40f },
+        { 10, Stroke::open,  0.68f },
+        { 14, Stroke::open,  0.78f },
+    };
+    constexpr Hit kBossaB[] = {
+        {  0, Stroke::tumba, 0.66f },
+        {  3, Stroke::open,  0.58f },
+        {  6, Stroke::toe,   0.28f },
+        { 10, Stroke::open,  0.72f },
+        { 12, Stroke::heel,  0.24f },
+        { 14, Stroke::open,  0.80f },
+    };
+    constexpr Hit kBossaC[] = {
+        {  0, Stroke::tumba, 0.72f },
+        {  3, Stroke::open,  0.64f },
+        {  7, Stroke::slap,  0.36f },
+        { 10, Stroke::open,  0.66f },
+        { 14, Stroke::open,  0.82f },
+        { 15, Stroke::toe,   0.28f },
+    };
+    constexpr Hit kBossaD[] = {
+        {  0, Stroke::tumba, 0.68f },
+        {  3, Stroke::open,  0.60f },
+        {  6, Stroke::muff,  0.38f },
+        {  8, Stroke::heel,  0.22f },
+        { 10, Stroke::open,  0.70f },
+        { 14, Stroke::open,  0.76f },
+    };
+    constexpr Hit kBossaFill[] = {
+        { 10, Stroke::open,  0.56f },
+        { 12, Stroke::tumba, 0.62f },
+        { 13, Stroke::open,  0.70f },
+        { 14, Stroke::open,  0.82f },
+        { 15, Stroke::slap,  0.66f },
+    };
 
     // The shaker, as a velocity per sixteenth. Zero is silence. The subdivision
     // setting thins this down; it never adds to it.
@@ -207,6 +449,7 @@ namespace
         const Hit* barA; int nA;
         const Hit* barB; int nB;
         const Hit* barC; int nC;
+        const Hit* barD; int nD;
         const Hit* fill; int nFill;
         float shaker[GrooveEngine::kStepsPerBar];
         // Where the weight sits across the bar. This belongs to the style and
@@ -225,6 +468,7 @@ namespace
         { kMarchaA, static_cast<int> (std::size (kMarchaA)),
           kMarchaB, static_cast<int> (std::size (kMarchaB)),
           kMarchaC, static_cast<int> (std::size (kMarchaC)),
+          kMarchaD, static_cast<int> (std::size (kMarchaD)),
           kMarchaFill, static_cast<int> (std::size (kMarchaFill)),
           { 0.90f, 0.36f, 0.54f, 0.36f,  0.74f, 0.36f, 0.63f, 0.42f,
             0.86f, 0.36f, 0.54f, 0.36f,  0.70f, 0.42f, 0.80f, 0.48f },
@@ -235,6 +479,7 @@ namespace
         { kRockA, static_cast<int> (std::size (kRockA)),
           kRockB, static_cast<int> (std::size (kRockB)),
           kRockC, static_cast<int> (std::size (kRockC)),
+          kRockD, static_cast<int> (std::size (kRockD)),
           kRockFill, static_cast<int> (std::size (kRockFill)),
           { 0.78f, 0.28f, 0.58f, 0.28f,  0.90f, 0.28f, 0.60f, 0.28f,
             0.76f, 0.28f, 0.64f, 0.32f,  0.96f, 0.32f, 0.72f, 0.38f },
@@ -245,6 +490,7 @@ namespace
         { kDanceA, static_cast<int> (std::size (kDanceA)),
           kDanceB, static_cast<int> (std::size (kDanceB)),
           kDanceC, static_cast<int> (std::size (kDanceC)),
+          kDanceD, static_cast<int> (std::size (kDanceD)),
           kDanceFill, static_cast<int> (std::size (kDanceFill)),
           { 0.70f, 0.40f, 0.88f, 0.40f,  0.58f, 0.52f, 0.90f, 0.62f,
             0.72f, 0.38f, 0.86f, 0.46f,  0.54f, 0.60f, 0.94f, 0.74f },
@@ -255,11 +501,56 @@ namespace
         { kPopA, static_cast<int> (std::size (kPopA)),
           kPopB, static_cast<int> (std::size (kPopB)),
           kPopC, static_cast<int> (std::size (kPopC)),
+          kPopD, static_cast<int> (std::size (kPopD)),
           kPopFill, static_cast<int> (std::size (kPopFill)),
           { 0.74f, 0.22f, 0.50f, 0.22f,  0.60f, 0.24f, 0.54f, 0.26f,
             0.70f, 0.22f, 0.50f, 0.22f,  0.58f, 0.26f, 0.62f, 0.30f },
           { 1.00f, 0.88f, 0.94f, 0.90f },
           0.10f, 8 },
+
+        // samba - sixteenths, weight on 2 and 4
+        { kSambaA, static_cast<int> (std::size (kSambaA)),
+          kSambaB, static_cast<int> (std::size (kSambaB)),
+          kSambaC, static_cast<int> (std::size (kSambaC)),
+          kSambaD, static_cast<int> (std::size (kSambaD)),
+          kSambaFill, static_cast<int> (std::size (kSambaFill)),
+          { 0.72f, 0.34f, 0.58f, 0.40f,  0.94f, 0.36f, 0.70f, 0.48f,
+            0.68f, 0.32f, 0.56f, 0.38f,  0.90f, 0.44f, 0.76f, 0.58f },
+          { 0.90f, 1.00f, 0.88f, 1.00f },
+          0.28f, 8 },
+
+        // funk - sixteenths, snappy, leaning into the "a"
+        { kFunkA, static_cast<int> (std::size (kFunkA)),
+          kFunkB, static_cast<int> (std::size (kFunkB)),
+          kFunkC, static_cast<int> (std::size (kFunkC)),
+          kFunkD, static_cast<int> (std::size (kFunkD)),
+          kFunkFill, static_cast<int> (std::size (kFunkFill)),
+          { 0.88f, 0.42f, 0.56f, 0.50f,  0.70f, 0.38f, 0.62f, 0.54f,
+            0.80f, 0.36f, 0.58f, 0.48f,  0.64f, 0.52f, 0.60f, 0.78f },
+          { 1.00f, 0.92f, 0.96f, 0.94f },
+          0.45f, 8 },
+
+        // reggae - offbeat skank, quieter on the pulse
+        { kReggaeA, static_cast<int> (std::size (kReggaeA)),
+          kReggaeB, static_cast<int> (std::size (kReggaeB)),
+          kReggaeC, static_cast<int> (std::size (kReggaeC)),
+          kReggaeD, static_cast<int> (std::size (kReggaeD)),
+          kReggaeFill, static_cast<int> (std::size (kReggaeFill)),
+          { 0.42f, 0.22f, 0.90f, 0.22f,  0.38f, 0.40f, 0.84f, 0.50f,
+            0.48f, 0.22f, 0.92f, 0.28f,  0.36f, 0.32f, 0.80f, 0.62f },
+          { 0.82f, 0.90f, 1.00f, 0.88f },
+          0.08f, 8 },
+
+        // bossa - level eighths, a little extra on the clave "a"
+        { kBossaA, static_cast<int> (std::size (kBossaA)),
+          kBossaB, static_cast<int> (std::size (kBossaB)),
+          kBossaC, static_cast<int> (std::size (kBossaC)),
+          kBossaD, static_cast<int> (std::size (kBossaD)),
+          kBossaFill, static_cast<int> (std::size (kBossaFill)),
+          { 0.70f, 0.24f, 0.52f, 0.36f,  0.58f, 0.22f, 0.56f, 0.28f,
+            0.66f, 0.24f, 0.54f, 0.32f,  0.56f, 0.28f, 0.64f, 0.40f },
+          { 1.00f, 0.88f, 0.92f, 0.90f },
+          0.12f, 8 },
     };
 
     // A triplet-feel off-eighth sits two thirds of the way through the beat
@@ -380,13 +671,12 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
 
     if (congasOn)
     {
-        // A four-bar sentence: state it, answer it, state it again, go
-        // somewhere. Two bars alternating is a loop whose seam you hear after
-        // twenty seconds; this puts the change where a listener is already
-        // expecting one, and the fill every eighth bar closes the pair of
-        // sentences rather than interrupting one.
+        // An eight-bar sentence: A B A C  D B A, then the fill. The first four
+        // bars are still the original phrase - state it, answer it, state it,
+        // go somewhere - and D is the extra riff that stops the second half
+        // from being the first half again.
         const bool fill = isFillBar (barIndex);
-        const int inPhrase = wrapBar (barIndex, 4);
+        const int inPhrase = wrapBar (barIndex, 8);
         const Hit* bar = spec.barA;
         int count = spec.nA;
         if (fill)
@@ -394,7 +684,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
             bar = spec.fill;
             count = spec.nFill;
         }
-        else if (inPhrase == 1)
+        else if (inPhrase == 1 || inPhrase == 5)
         {
             bar = spec.barB;
             count = spec.nB;
@@ -403,6 +693,11 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         {
             bar = spec.barC;
             count = spec.nC;
+        }
+        else if (inPhrase == 4)
+        {
+            bar = spec.barD;
+            count = spec.nD;
         }
 
         for (int i = 0; i < count && n < maxOut; ++i)

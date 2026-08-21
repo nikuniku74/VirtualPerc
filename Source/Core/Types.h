@@ -41,6 +41,10 @@ enum class GrooveStyle : int
     rock,         // sparse, locked to the backbeat, pushing into the one
     dance,        // busy sixteenths, syncopated, offbeat-accented
     pop,          // tasteful and out of the way
+    samba,        // brazilian: weight on 2 and 4, syncopated opens
+    funk,         // sixteenth ghosts, snare-side slaps off the beat
+    reggae,       // one-drop: space on 1, the three, offbeat skank
+    bossa,        // clave-shaped, mostly space, pulling on the ands
     count
 };
 
@@ -52,6 +56,10 @@ inline const char* toString (GrooveStyle s) noexcept
         case GrooveStyle::rock:   return "ROCK";
         case GrooveStyle::dance:  return "DANCE";
         case GrooveStyle::pop:    return "POP";
+        case GrooveStyle::samba:  return "SAMBA";
+        case GrooveStyle::funk:   return "FUNK";
+        case GrooveStyle::reggae: return "REGGAE";
+        case GrooveStyle::bossa:  return "BOSSA";
         case GrooveStyle::count:  break;
     }
     return "?";
@@ -200,8 +208,6 @@ struct EngineSnapshot
 struct EngineSettings
 {
     std::atomic<float> masterVolume    { 0.90f };
-    // Output fader for the shaker. Congas stay at unity so the two can be
-    // balanced by ear rather than scaled together.
     std::atomic<float> percussionVolume{ 1.00f };
     std::atomic<float> reverbAmount    { 0.30f };
     // A percussionist is not on the grid and is not evenly loud. 0 is a

@@ -275,6 +275,10 @@ MainComponent::MainComponent()
     setupBtn (styleRock, ink());
     setupBtn (styleDance, ink());
     setupBtn (stylePop, ink());
+    setupBtn (styleSamba, ink());
+    setupBtn (styleFunk, ink());
+    setupBtn (styleReggae, ink());
+    setupBtn (styleBossa, ink());
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
@@ -352,6 +356,10 @@ MainComponent::MainComponent()
     styleRock.onClick   = [this] { applyStyle (vp::GrooveStyle::rock); };
     styleDance.onClick  = [this] { applyStyle (vp::GrooveStyle::dance); };
     stylePop.onClick    = [this] { applyStyle (vp::GrooveStyle::pop); };
+    styleSamba.onClick  = [this] { applyStyle (vp::GrooveStyle::samba); };
+    styleFunk.onClick   = [this] { applyStyle (vp::GrooveStyle::funk); };
+    styleReggae.onClick = [this] { applyStyle (vp::GrooveStyle::reggae); };
+    styleBossa.onClick  = [this] { applyStyle (vp::GrooveStyle::bossa); };
 
     subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
@@ -495,7 +503,8 @@ void MainComponent::refreshThemeColours()
         &startButton, &stopButton, &tapButton, &shakerButton, &debugButton,
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
-        &styleDance, &stylePop, &halveButton, &doubleButton, &barButton
+        &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
+        &styleBossa, &halveButton, &doubleButton, &barButton
     };
     for (auto* button : buttons)
     {
@@ -716,6 +725,14 @@ void MainComponent::refreshStyleButtons()
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::dance));
     paint (stylePop, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::pop),
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::pop));
+    paint (styleSamba, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::samba),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::samba));
+    paint (styleFunk, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::funk),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::funk));
+    paint (styleReggae, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::reggae),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::reggae));
+    paint (styleBossa, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::bossa),
+           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::bossa));
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -913,9 +930,9 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     };
 
     const int n = area.getHeight();
-    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.26f);
-    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.14f);
-    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.18f);
+    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.23f);
+    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.22f);
+    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.16f);
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
@@ -928,12 +945,18 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     {
         auto body = card (area.removeFromTop (hPart), "PARTE");
-        const int w = body.getWidth() / 5;
-        styleAuto.setBounds (body.removeFromLeft (w).reduced (3));
-        styleMarcha.setBounds (body.removeFromLeft (w).reduced (3));
-        styleRock.setBounds (body.removeFromLeft (w).reduced (3));
-        styleDance.setBounds (body.removeFromLeft (w).reduced (3));
-        stylePop.setBounds (body.reduced (3));
+        auto top = body.removeFromTop (body.getHeight() / 2);
+        const int wTop = top.getWidth() / 5;
+        styleAuto.setBounds (top.removeFromLeft (wTop).reduced (3));
+        styleMarcha.setBounds (top.removeFromLeft (wTop).reduced (3));
+        styleRock.setBounds (top.removeFromLeft (wTop).reduced (3));
+        styleDance.setBounds (top.removeFromLeft (wTop).reduced (3));
+        stylePop.setBounds (top.reduced (3));
+        const int wBot = body.getWidth() / 4;
+        styleSamba.setBounds (body.removeFromLeft (wBot).reduced (3));
+        styleFunk.setBounds (body.removeFromLeft (wBot).reduced (3));
+        styleReggae.setBounds (body.removeFromLeft (wBot).reduced (3));
+        styleBossa.setBounds (body.reduced (3));
         area.removeFromTop (gap);
     }
 
@@ -952,7 +975,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     {
         // Fader on the left, the three sends stacked beside it. The fader is
-        // the output level of the shaker; the sliders are feel, not another
+        // the output level of shaker and congas together.
         // row of the same control drawn smaller.
         auto body = card (area, "FEEL");
         const int faderW = juce::jlimit (56, 88, body.getWidth() / 5);

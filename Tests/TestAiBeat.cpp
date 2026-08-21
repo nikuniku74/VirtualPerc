@@ -1086,17 +1086,30 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && ! sameShape (rock, pop) && ! sameShape (dance, pop),
                 "the four styles are four different parts");
 
-        // Every style keeps the two-bar phrase and the fill.
-        for (auto st : { vp::GrooveStyle::marcha, vp::GrooveStyle::rock,
-                         vp::GrooveStyle::dance, vp::GrooveStyle::pop })
+        // Every style keeps the two-bar phrase, the fill, and a fourth riff
+        // on bar 4 so the second half of the eight-bar sentence is not the
+        // first half again.
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
         {
-            std::vector<vp::GrooveEvent> a, b, f;
-            strokesOfBar (st, 0, a);
-            strokesOfBar (st, 1, b);
-            strokesOfBar (st, 7, f);
-            expect (! sameShape (a, b) && ! sameShape (a, f),
-                    "every style has a two-bar phrase and a fill");
+            std::vector<vp::GrooveEvent> a, b, d, f;
+            const auto style = static_cast<vp::GrooveStyle> (st);
+            strokesOfBar (style, 0, a);
+            strokesOfBar (style, 1, b);
+            strokesOfBar (style, 4, d);
+            strokesOfBar (style, 7, f);
+            expect (! sameShape (a, b) && ! sameShape (a, f) && ! sameShape (a, d),
+                    "every style has a two-bar phrase, a fourth riff, and a fill");
         }
+
+        std::vector<vp::GrooveEvent> all[static_cast<int> (vp::GrooveStyle::count)];
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            strokesOfBar (static_cast<vp::GrooveStyle> (st), 0, all[st]);
+        bool allDistinct = true;
+        for (int i = 0; i < static_cast<int> (vp::GrooveStyle::count) && allDistinct; ++i)
+            for (int j = i + 1; j < static_cast<int> (vp::GrooveStyle::count); ++j)
+                if (sameShape (all[i], all[j]))
+                    allDistinct = false;
+        expect (allDistinct, "every style is a different part");
     }
 
     {
