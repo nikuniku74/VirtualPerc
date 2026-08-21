@@ -2409,74 +2409,66 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (leakHeld,
                     "the tracker holds the song while hearing its own part come back");
 
-            // And the case that being fed your own playing really threatens:
-            // getting *out* of a wrong answer. While the tracker is right its
-            // own part agrees with the song and the leak is harmless. Once the
-            // song moves, the part is still sitting on the old grid, and it is
-            // the loudest, cleanest, most regular thing in the room - so the
-            // evidence for the answer the tracker has just stopped being right
-            // about is coming from the tracker itself.
+            // The case the one above cannot reach, and the one a listener
+            // reports as "on STOP it holds, on START it runs away".
+            //
+            // The part plays eighths and sixteenths. Those are exactly the
+            // dense subdivision that makes the fold name a faster level than
+            // the one being played - the same ambiguity that is documented for
+            // slow material with full eighths in the song itself. Here the app
+            // is supplying it. At 120 the trap cannot spring, because twice 120
+            // is past the top of the reported range and gets clamped; at a slow
+            // tempo double is a perfectly ordinary answer, so that is where this
+            // has to be measured.
             {
-                // Long enough to contain the change and then enough of the new
-                // tempo to lock to it. The first cut of this ran on the ten
-                // second song above and put the change at twenty seconds, so it
-                // never happened: the tracker read 120 on a song that was 120
-                // throughout, and the test called that a failure to follow.
-                const int nShift = static_cast<int> (sr * 40.0);
-                const float shiftAt = 20.0f;
-                std::vector<float> shift (static_cast<size_t> (nShift), 0.0f);
+                constexpr float slowBpm = 80.0f;
+                const int nSlow = static_cast<int> (sr * 30.0);
+                const double incSlow = static_cast<double> (slowBpm) / 60.0 / sr;
+                std::vector<float> slow (static_cast<size_t> (nSlow), 0.0f);
                 {
-                    double p2 = 0.0;
-                    for (int i = 0; i < nShift; ++i)
+                    double p3 = 0.0;
+                    for (int i = 0; i < nSlow; ++i)
                     {
-                        const float when = static_cast<float> (i) / static_cast<float> (sr);
-                        const float bpmNow = when < shiftAt ? bpm : bpm * 0.83f;   // 120 -> 99.6
-                        const double inc2 = static_cast<double> (bpmNow) / 60.0 / sr;
-                        const double beat = p2 - std::floor (p2);
-                        const int bi = static_cast<int> (std::floor (p2));
-                        const float tBeat = static_cast<float> (beat) / (bpmNow / 60.0f);
-                        const double eighth = beat * 2.0 - std::floor (beat * 2.0);
+                        const double beat = p3 - std::floor (p3);
+                        const int bi = static_cast<int> (std::floor (p3));
+                        const float tBeat = static_cast<float> (beat) / (slowBpm / 60.0f);
                         if (bi % 2 == 0 && beat < 0.06)
-                            shift[static_cast<size_t> (i)] +=
+                            slow[static_cast<size_t> (i)] +=
                                 std::sin (2.0f * 3.14159265f * 55.0f * tBeat) * std::exp (-tBeat * 22.0f);
                         if (bi % 2 == 1 && beat < 0.05)
-                            shift[static_cast<size_t> (i)] +=
+                            slow[static_cast<size_t> (i)] +=
                                 (0.35f * ((i % 17) / 17.0f - 0.5f)
                                  + 0.2f * std::sin (2.0f * 3.14159265f * 180.0f * tBeat))
                                 * std::exp (-tBeat * 18.0f);
-                        if (eighth < 0.02)
-                            shift[static_cast<size_t> (i)] += 0.18f * ((i % 11) / 11.0f - 0.5f)
-                                * std::exp (static_cast<float> (-eighth) * 70.0f);
                         if (beat < 0.12)
-                            shift[static_cast<size_t> (i)] +=
+                            slow[static_cast<size_t> (i)] +=
                                 0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
                                 * std::exp (-tBeat * 8.0f);
-                        p2 += inc2;
+                        p3 += incSlow;
                     }
                 }
 
-                auto recover = [&] (bool partOn, float leakGain, vp::FollowSource src)
+                auto runSlow = [&] (bool partOn, float leakGain, float& outComb)
                 {
                     vp::VirtualPercussionEngine e;
                     e.prepare (sr, block, 1);
-                    e.settings().followSource.store (static_cast<int> (src));
                     e.settings().shakerEnabled.store (partOn);
                     e.settings().congasEnabled.store (partOn);
                     e.start();
 
                     const int acoustic = static_cast<int> (sr * 0.007);
-                    std::vector<float> echo (static_cast<size_t> (nShift + block + acoustic), 0.0f);
+                    std::vector<float> echo (static_cast<size_t> (nSlow + block + acoustic), 0.0f);
                     std::vector<float> in (static_cast<size_t> (block), 0.0f);
                     std::vector<float> eL (static_cast<size_t> (block), 0.0f);
                     std::vector<float> eR (static_cast<size_t> (block), 0.0f);
                     float* eOuts[2] = { eL.data(), eR.data() };
 
                     vp::EngineSnapshot snap {};
-                    int p = 0, blk = 0;
-                    while (p + block <= nShift)
+                    int p = 0;
+                    while (p + block <= nSlow)
                     {
                         for (int i = 0; i < block; ++i)
-                            in[static_cast<size_t> (i)] = shift[static_cast<size_t> (p + i)]
+                            in[static_cast<size_t> (i)] = slow[static_cast<size_t> (p + i)]
                                                           + echo[static_cast<size_t> (p + i)];
                         const float* ins[1] = { in.data() };
                         e.process (ins, 1, eOuts, 2, block);
@@ -2489,51 +2481,45 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         }
                         snap = e.snapshot();
                         p += block;
-                        if ((++blk % 10) == 0)
-                            std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                        for (int spin = 0; spin < 400; ++spin)
+                        {
+                            if (e.snapshot().analysisBacklog <= 960)
+                                break;
+                            std::this_thread::sleep_for (std::chrono::microseconds (50));
+                        }
                     }
-                    std::printf ("    [%s leak=%.2f]  bpm=%.1f  nn=%.1f  comb=%.1f  "
-                                 "regime=%s  settled=%d  conf=%.2f\n",
-                                 src == vp::FollowSource::speaker ? "IPAD" : "MIX ",
-                                 static_cast<double> (leakGain),
-                                 static_cast<double> (snap.bpm),
-                                 static_cast<double> (snap.neuralBpm),
-                                 static_cast<double> (snap.combBpm),
-                                 vp::regimeLabel (snap.tempoRegime),
-                                 snap.levelSettled ? 1 : 0,
-                                 static_cast<double> (snap.confidence));
+                    outComb = snap.combBpm;
                     return snap.bpm;
                 };
 
-                const float want = bpm * 0.83f;
-                const float silent = recover (false, 0.0f, vp::FollowSource::kitMic);
-                const float mixLeak = recover (true, 0.55f, vp::FollowSource::kitMic);
-                const float ipadLeak = recover (true, 0.55f, vp::FollowSource::speaker);
-                std::printf ("self-leak-recover  want=%.1f  silent=%.1f  MIX=%.1f  IPAD=%.1f\n",
-                             static_cast<double> (want), static_cast<double> (silent),
-                             static_cast<double> (mixLeak), static_cast<double> (ipadLeak));
-
-                // Reported, not asserted, and deliberately so: this measures a
-                // known open problem rather than guarding a fixed one, and a
-                // red suite that is expected to be red teaches nobody anything.
+                float combOff = 0.0f, combOn = 0.0f;
+                const float bpmOff = runSlow (false, 0.00f, combOff);
+                const float bpmOn = runSlow (true, 0.55f, combOn);
+                std::printf ("slow-selfdrive  want=%.1f  STOP bpm=%.1f comb=%.1f  "
+                             "START bpm=%.1f comb=%.1f\n",
+                             static_cast<double> (slowBpm),
+                             static_cast<double> (bpmOff), static_cast<double> (combOff),
+                             static_cast<double> (bpmOn), static_cast<double> (combOn));
+                // Measured twice over, this bench says something other than what
+                // it was built to look for, so it reports rather than asserts.
                 //
-                // Measured on a 120 -> 99.6 change twenty seconds into a forty
-                // second song, with the part silent, the fold names the new
-                // tempo correctly (comb 99.7) while the tempo actually used
-                // stays at 120.9 - the evidence arrives and the output does not
-                // follow it within the twenty seconds that are left. Feeding the
-                // app's own part back in then drags the fold itself off the
-                // answer, to 110.1 on a line feed and 111.5 through the room,
-                // because the loudest regular thing in the analysis signal is
-                // the part still playing at the tempo the tracker is trying to
-                // leave. That second half is the thing a listener describes as
-                // the tracker going out and not coming back.
+                // With nothing playing the eighty BPM song reads 160.0 and the
+                // fold 160.2, both runs: the documented doubling below ~92 BPM,
+                // reproduced here on demand rather than only in the field. With
+                // the part playing it read 80.1 once and 157.5 the next time -
+                // variance, not a direction, so the part is not what decides it
+                // and the run-to-run coin toss on which level it locks to is.
                 //
-                // Neither is a small fix: the first is in how the decoder's beat
-                // fit follows the fold, the second wants the leak canceller to
-                // work on a line feed too, which today it does not. See the
-                // numbers above rather than guessing when either is attempted.
+                // What this is for: the doubling now has a bench. Anything that
+                // claims to improve the slow case has to move the STOP line off
+                // 160, repeatably, and this is where that gets checked.
+                std::printf ("                (STOP is the documented sub-92 doubling; "
+                             "START varies run to run)\n");
+                expect (std::fabs (bpmOff - slowBpm) < 8.0f
+                            || std::fabs (bpmOff - slowBpm * 2.0f) < 8.0f,
+                        "the slow bench lands on a metrical level of the song, not somewhere else");
             }
+
 
             std::vector<float> quiet (kit.size(), 0.0f);
             float quietPeak = 0.0f;
