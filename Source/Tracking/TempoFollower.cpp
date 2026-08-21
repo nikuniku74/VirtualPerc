@@ -228,57 +228,70 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     const float dErr = wrapCentered (phaseErrEma - prevPhaseErr);
     prevPhaseErr = phaseErrEma;
 
-    // Standing phase error is delay, not a slow song. Only the *change* in
-    // error means the clock is running at the wrong speed.
+    // Phase is corrected by *rate*, never by moving the grid.
+    //
+    // A standing error used to be worked off by subtracting it straight from
+    // `phase`. That moves the grid out from under a part which is already
+    // playing on it, and the pulses for the block are then read off the moved
+    // grid: a position the clock had just passed could be passed a second time,
+    // or stepped over without being played. Measured over two minutes against a
+    // decoder whose phase wobbles by 3% of a beat, roughly one pulse in a
+    // hundred came out either doubled on top of its neighbour or missing
+    // altogether - a shaker that now and then plays two strokes on top of each
+    // other, or drops one, and then sounds like it has lost the beat.
+    //
+    // Running fractionally fast or slow for a moment closes the same error and
+    // the grid stays monotonic, so no stroke is ever played twice or skipped.
+    // It is what a player does: nobody moves their hand, they lean until they
+    // are back with the band.
+    const float nominalBeats = tempo / 60.0f
+                               * static_cast<float> (numSamples)
+                               / static_cast<float> (sampleRate);
     float steer = 0.0f;
-    float phaseNudge = 0.0f;
     if (locked)
     {
-        float steerGain = 1.4f;
-        float nudgeGain = tempoTrimEnabled ? 0.018f : 0.045f;
-        float steerLim = 0.006f;
-        float nudgeLim = 0.006f;
+        // Seconds to close a standing phase error, and the most the rate may be
+        // bent to do it. The pull has to be gentler when the listener has asked
+        // the clock to hold its ground.
+        float tau = 0.35f;
+        float steerLim = 0.035f;
+        float dGain = 1.4f;
         switch (follow)
         {
             case FollowStrength::low:
-                steerGain = 0.4f;
-                nudgeGain = 0.025f;
-                steerLim = 0.003f;
-                nudgeLim = 0.004f;
+                tau = 0.70f;
+                steerLim = 0.018f;
+                dGain = 0.4f;
                 break;
             case FollowStrength::high:
-                steerGain = 2.2f;
-                nudgeGain = 0.07f;
-                steerLim = 0.012f;
-                nudgeLim = 0.010f;
+                tau = 0.22f;
+                steerLim = 0.050f;
+                dGain = 2.2f;
                 break;
             case FollowStrength::medium:
                 break;
         }
-        steer = std::clamp (dErr * steerGain, -steerLim, steerLim);
-        phaseNudge = std::clamp (phaseErrEma * nudgeGain, -nudgeLim, nudgeLim);
+        // Rate needed to close `phaseErrEma` beats in `tau` seconds, as a
+        // fraction of the tempo. Derived rather than tuned per tempo: the same
+        // phase error is a longer time at a slower tempo, so a fixed gain would
+        // pull twice as hard at 60 BPM as at 120.
+        const float kp = 60.0f / std::max (40.0f, tempo) / std::max (0.05f, tau);
+        steer = std::clamp (phaseErrEma * kp + dErr * dGain, -steerLim, steerLim);
     }
     else
     {
         steer = std::clamp (phaseErrEma * 0.08f, -0.030f, 0.030f);
     }
 
-    if (phaseNudge != 0.0f)
-    {
-        phase -= static_cast<double> (phaseNudge);
-        phaseCorrectionSinceObservation += phaseNudge;
-        if (phase < 0.0)
-        {
-            phase += 1.0;
-            beatInBar = (beatInBar + 3) & 3;
-        }
-        if (phase >= 1.0)
-        {
-            phase -= 1.0;
-            beatInBar = (beatInBar + 1) & 3;
-        }
-        phaseErrEma -= phaseNudge;
-    }
+    // Phase this block will *not* advance because of the steer. The trim
+    // controller subtracts it from the drift it measures, so that the loop's own
+    // correction is not read back as the song having moved; and the error
+    // estimate is worked down by it, so the loop stops pulling once it has
+    // leaned far enough rather than overshooting on an estimate that is only
+    // refreshed once a beat.
+    const float applied = steer * nominalBeats;
+    phaseCorrectionSinceObservation += applied;
+    phaseErrEma -= applied;
 
     const float effTempo = tempo * (1.0f - steer);
 

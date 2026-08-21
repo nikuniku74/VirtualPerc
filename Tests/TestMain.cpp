@@ -143,17 +143,99 @@ int main()
         for (int i = 0; i < 12; ++i)
             clock.observeOnsetPhase (0.20f, 1.0f, 1);
 
+        // A correction pending right on top of the bar line, which is where it
+        // used to be able to do damage: the loop subtracted it straight from the
+        // phase, the phase went below zero, and the quarter counter had to be
+        // walked back with it. The counter is what the bar is read off, so
+        // getting that wrong moved the whole bar rather than the phase inside
+        // it.
+        //
+        // The correction is a rate change now, so the phase cannot step
+        // backwards at all and the wrap cannot happen. What is asserted is the
+        // property either mechanism has to have and only one of them did: over
+        // one sample the bar moves by a hair, in whichever direction, and never
+        // jumps a quarter.
         const float before = clock.barPhase();
         clock.advance (1);
         const float after = clock.barPhase();
-        float backwards = before - after;
-        if (backwards < 0.0f)
-            backwards += 1.0f;
-        std::printf ("phase-zero  bar %.4f->%.4f  backwards=%.4f\n",
+        const float moved = std::fabs (vp::wrapCentered (after - before));
+        std::printf ("phase-zero  bar %.4f->%.4f  moved=%.4f\n",
                      static_cast<double> (before), static_cast<double> (after),
-                     static_cast<double> (backwards));
-        expect (backwards < 0.02f,
-                "PLL correction across zero preserves the quarter counter");
+                     static_cast<double> (moved));
+        expect (moved < 0.02f,
+                "a phase correction on the bar line never jumps the quarter counter");
+    }
+
+    // What the shaker actually plays, while the loop is correcting continuously
+    // against a decoder whose phase is not exact.
+    //
+    // Phase used to be corrected by subtracting the error from the clock's own
+    // position. That moves the grid out from under a part already playing on it,
+    // and the pulses for the block are read off the moved grid: a position just
+    // passed could be passed again, or stepped over unplayed. Measured over two
+    // minutes at 3% phase wobble it put roughly one pulse in a hundred either on
+    // top of its neighbour or nowhere - a shaker that occasionally doubles a
+    // stroke or drops one and then sounds like it has lost the beat. Correcting
+    // by rate instead closes the same error while the grid stays monotonic.
+    {
+        auto sweepStumbles = [&] (float songBpm, float jitterBeats, vp::FollowStrength strength)
+        {
+            const double pulseSec = 60.0 / static_cast<double> (songBpm) / 4.0;
+
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (songBpm);
+            clock.setTargetTempo (songBpm, 0.9f);
+            clock.setLocked (true);
+            clock.setFollowStrength (strength);
+            clock.resetClock();
+
+            // A fixed, ordinary wobble on the analysis phase. Deterministic, so
+            // a failure here is reproducible rather than a bad afternoon.
+            vp::DeterministicRng rng (0x51ED2701u);
+            double songPhase = 0.0, lastPulse = -1.0;
+            int stumbles = 0, counted = 0;
+            const int blocks = static_cast<int> (sr * 60.0 / block);
+            for (int b = 0; b < blocks; ++b)
+            {
+                const double t = static_cast<double> (b * block) / sr;
+                const double inc = (static_cast<double> (songBpm) / 60.0)
+                                   * (static_cast<double> (block) / sr);
+                const double next = songPhase + inc;
+                if (std::floor (next) > std::floor (songPhase))
+                {
+                    const float truth = static_cast<float> (next - std::floor (next));
+                    const float seen = vp::wrap01 (truth + jitterBeats * rng.nextSigned());
+                    clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - seen), 0.8f, 1);
+                }
+                songPhase = next;
+
+                const auto tick = clock.advance (block);
+                for (int i = 0; i < tick.pulsesFired; ++i)
+                {
+                    const double pt = t + static_cast<double> (tick.pulseOffset[i]) / sr;
+                    if (lastPulse > 0.0)
+                    {
+                        ++counted;
+                        if (std::fabs (pt - lastPulse - pulseSec) / pulseSec > 0.20)
+                            ++stumbles;
+                    }
+                    lastPulse = pt;
+                }
+            }
+            std::printf ("pulse-spacing  %.0f BPM wobble %.0f%%  pulses=%d  stumbles=%d\n",
+                         static_cast<double> (songBpm), jitterBeats * 100.0f, counted, stumbles);
+            return counted > 200 && stumbles == 0;
+        };
+
+        bool clean = true;
+        clean &= sweepStumbles (76.0f, 0.03f, vp::FollowStrength::high);
+        clean &= sweepStumbles (120.0f, 0.03f, vp::FollowStrength::high);
+        clean &= sweepStumbles (120.0f, 0.06f, vp::FollowStrength::high);
+        clean &= sweepStumbles (120.0f, 0.03f, vp::FollowStrength::medium);
+        expect (clean,
+                "the grid never doubles a stroke or drops one while correcting phase");
     }
 
     // A tap moves the grid under a part that is already playing. What the
