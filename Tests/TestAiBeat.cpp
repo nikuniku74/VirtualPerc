@@ -2308,6 +2308,233 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (bpmSamples > 20 && (bpmHi - bpmLo) < 6.0f,
                     "locked BPM stays stable");
 
+            // What the microphone hears once the part is actually playing.
+            //
+            // The app's own shaker comes out of a speaker into the same room the
+            // microphone is in, so the analysis is fed its own output on top of
+            // the song. That output sits exactly on the grid the tracker already
+            // believes in, which is the one thing guaranteed to confirm whatever
+            // the tracker currently thinks - including a wrong answer. The leak
+            // canceller exists for this, so this measures whether it holds.
+            //
+            // Run the same song twice: once with nothing playing, once with the
+            // part playing and its output fed back in delayed and attenuated the
+            // way a room would. Both should track the song equally well.
+            auto runWithLeak = [&] (bool partOn, float leakGain, vp::FollowSource src,
+                                    float songGain,
+                                    float& outBpm, float& outSpan, vp::TrackingState& outState)
+            {
+                vp::VirtualPercussionEngine e;
+                e.prepare (sr, block, 1);
+                e.settings().followSource.store (static_cast<int> (src));
+                e.settings().shakerEnabled.store (partOn);
+                e.settings().congasEnabled.store (partOn);
+                e.start();
+
+                // Speaker to microphone across a room: a few milliseconds of
+                // flight on top of whatever the device round trip already is.
+                const int acoustic = static_cast<int> (sr * 0.007);
+                std::vector<float> echo (static_cast<size_t> (n + block + acoustic), 0.0f);
+                std::vector<float> in (static_cast<size_t> (block), 0.0f);
+                std::vector<float> eL (static_cast<size_t> (block), 0.0f);
+                std::vector<float> eR (static_cast<size_t> (block), 0.0f);
+                float* eOuts[2] = { eL.data(), eR.data() };
+
+                float lo = 1000.0f, hi = 0.0f;
+                int samples = 0;
+                vp::EngineSnapshot snap {};
+                int p = 0, blk = 0;
+                while (p + block <= n)
+                {
+                    for (int i = 0; i < block; ++i)
+                        in[static_cast<size_t> (i)] = songGain * kit[static_cast<size_t> (p + i)]
+                                                      + echo[static_cast<size_t> (p + i)];
+                    const float* ins[1] = { in.data() };
+                    e.process (ins, 1, eOuts, 2, block);
+
+                    // The part just rendered reaches the microphone a little later.
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const size_t at = static_cast<size_t> (p + block + acoustic + i);
+                        if (at < echo.size())
+                            echo[at] += leakGain * 0.5f * (eL[static_cast<size_t> (i)]
+                                                           + eR[static_cast<size_t> (i)]);
+                    }
+
+                    snap = e.snapshot();
+                    if (p > static_cast<int> (sr * 8.0) && snap.bpm > 40.0f)
+                    {
+                        lo = std::min (lo, snap.bpm);
+                        hi = std::max (hi, snap.bpm);
+                        ++samples;
+                    }
+                    p += block;
+                    if ((++blk % 10) == 0)
+                        std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                }
+                outBpm = snap.bpm;
+                outSpan = samples > 0 ? hi - lo : -1.0f;
+                outState = snap.state;
+                return samples;
+            };
+
+            struct LeakCase { const char* name; bool on; float gain; vp::FollowSource src; float song; };
+            const LeakCase cases[] = {
+                { "silent",        false, 0.00f, vp::FollowSource::kitMic,  1.00f },
+                { "MIX  leak .55", true,  0.55f, vp::FollowSource::kitMic,  1.00f },
+                { "IPAD leak .55", true,  0.55f, vp::FollowSource::speaker, 1.00f },
+                { "MIX  leak 1.0", true,  1.00f, vp::FollowSource::kitMic,  1.00f },
+                { "IPAD leak 1.0", true,  1.00f, vp::FollowSource::speaker, 1.00f },
+                // The realistic bad case: a quiet source with the part loud in
+                // the same room, so the loudest thing the microphone hears is
+                // the app's own playing rather than the song it is following.
+                { "MIX  quiet src", true, 0.55f, vp::FollowSource::kitMic,  0.12f },
+                { "IPAD quiet src", true, 0.55f, vp::FollowSource::speaker, 0.12f },
+                { "quiet src only", false, 0.00f, vp::FollowSource::kitMic, 0.12f },
+            };
+            bool leakHeld = true;
+            for (const auto& c : cases)
+            {
+                float b = 0.0f, span = -1.0f;
+                vp::TrackingState st {};
+                const int got = runWithLeak (c.on, c.gain, c.src, c.song, b, span, st);
+                const bool ok = got > 20 && st == vp::TrackingState::following
+                                && std::fabs (b - bpm) < 12.0f && span < 8.0f;
+                std::printf ("self-leak  %-12s bpm=%6.1f  span=%5.1f  state=%-10s %s\n",
+                             c.name, static_cast<double> (b), static_cast<double> (span),
+                             vp::toString (st), ok ? "" : "  <-- lost it");
+                if (! ok)
+                    leakHeld = false;
+            }
+            expect (leakHeld,
+                    "the tracker holds the song while hearing its own part come back");
+
+            // And the case that being fed your own playing really threatens:
+            // getting *out* of a wrong answer. While the tracker is right its
+            // own part agrees with the song and the leak is harmless. Once the
+            // song moves, the part is still sitting on the old grid, and it is
+            // the loudest, cleanest, most regular thing in the room - so the
+            // evidence for the answer the tracker has just stopped being right
+            // about is coming from the tracker itself.
+            {
+                // Long enough to contain the change and then enough of the new
+                // tempo to lock to it. The first cut of this ran on the ten
+                // second song above and put the change at twenty seconds, so it
+                // never happened: the tracker read 120 on a song that was 120
+                // throughout, and the test called that a failure to follow.
+                const int nShift = static_cast<int> (sr * 40.0);
+                const float shiftAt = 20.0f;
+                std::vector<float> shift (static_cast<size_t> (nShift), 0.0f);
+                {
+                    double p2 = 0.0;
+                    for (int i = 0; i < nShift; ++i)
+                    {
+                        const float when = static_cast<float> (i) / static_cast<float> (sr);
+                        const float bpmNow = when < shiftAt ? bpm : bpm * 0.83f;   // 120 -> 99.6
+                        const double inc2 = static_cast<double> (bpmNow) / 60.0 / sr;
+                        const double beat = p2 - std::floor (p2);
+                        const int bi = static_cast<int> (std::floor (p2));
+                        const float tBeat = static_cast<float> (beat) / (bpmNow / 60.0f);
+                        const double eighth = beat * 2.0 - std::floor (beat * 2.0);
+                        if (bi % 2 == 0 && beat < 0.06)
+                            shift[static_cast<size_t> (i)] +=
+                                std::sin (2.0f * 3.14159265f * 55.0f * tBeat) * std::exp (-tBeat * 22.0f);
+                        if (bi % 2 == 1 && beat < 0.05)
+                            shift[static_cast<size_t> (i)] +=
+                                (0.35f * ((i % 17) / 17.0f - 0.5f)
+                                 + 0.2f * std::sin (2.0f * 3.14159265f * 180.0f * tBeat))
+                                * std::exp (-tBeat * 18.0f);
+                        if (eighth < 0.02)
+                            shift[static_cast<size_t> (i)] += 0.18f * ((i % 11) / 11.0f - 0.5f)
+                                * std::exp (static_cast<float> (-eighth) * 70.0f);
+                        if (beat < 0.12)
+                            shift[static_cast<size_t> (i)] +=
+                                0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
+                                * std::exp (-tBeat * 8.0f);
+                        p2 += inc2;
+                    }
+                }
+
+                auto recover = [&] (bool partOn, float leakGain, vp::FollowSource src)
+                {
+                    vp::VirtualPercussionEngine e;
+                    e.prepare (sr, block, 1);
+                    e.settings().followSource.store (static_cast<int> (src));
+                    e.settings().shakerEnabled.store (partOn);
+                    e.settings().congasEnabled.store (partOn);
+                    e.start();
+
+                    const int acoustic = static_cast<int> (sr * 0.007);
+                    std::vector<float> echo (static_cast<size_t> (nShift + block + acoustic), 0.0f);
+                    std::vector<float> in (static_cast<size_t> (block), 0.0f);
+                    std::vector<float> eL (static_cast<size_t> (block), 0.0f);
+                    std::vector<float> eR (static_cast<size_t> (block), 0.0f);
+                    float* eOuts[2] = { eL.data(), eR.data() };
+
+                    vp::EngineSnapshot snap {};
+                    int p = 0, blk = 0;
+                    while (p + block <= nShift)
+                    {
+                        for (int i = 0; i < block; ++i)
+                            in[static_cast<size_t> (i)] = shift[static_cast<size_t> (p + i)]
+                                                          + echo[static_cast<size_t> (p + i)];
+                        const float* ins[1] = { in.data() };
+                        e.process (ins, 1, eOuts, 2, block);
+                        for (int i = 0; i < block; ++i)
+                        {
+                            const size_t at = static_cast<size_t> (p + block + acoustic + i);
+                            if (at < echo.size())
+                                echo[at] += leakGain * 0.5f * (eL[static_cast<size_t> (i)]
+                                                               + eR[static_cast<size_t> (i)]);
+                        }
+                        snap = e.snapshot();
+                        p += block;
+                        if ((++blk % 10) == 0)
+                            std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                    }
+                    std::printf ("    [%s leak=%.2f]  bpm=%.1f  nn=%.1f  comb=%.1f  "
+                                 "regime=%s  settled=%d  conf=%.2f\n",
+                                 src == vp::FollowSource::speaker ? "IPAD" : "MIX ",
+                                 static_cast<double> (leakGain),
+                                 static_cast<double> (snap.bpm),
+                                 static_cast<double> (snap.neuralBpm),
+                                 static_cast<double> (snap.combBpm),
+                                 vp::regimeLabel (snap.tempoRegime),
+                                 snap.levelSettled ? 1 : 0,
+                                 static_cast<double> (snap.confidence));
+                    return snap.bpm;
+                };
+
+                const float want = bpm * 0.83f;
+                const float silent = recover (false, 0.0f, vp::FollowSource::kitMic);
+                const float mixLeak = recover (true, 0.55f, vp::FollowSource::kitMic);
+                const float ipadLeak = recover (true, 0.55f, vp::FollowSource::speaker);
+                std::printf ("self-leak-recover  want=%.1f  silent=%.1f  MIX=%.1f  IPAD=%.1f\n",
+                             static_cast<double> (want), static_cast<double> (silent),
+                             static_cast<double> (mixLeak), static_cast<double> (ipadLeak));
+
+                // Reported, not asserted, and deliberately so: this measures a
+                // known open problem rather than guarding a fixed one, and a
+                // red suite that is expected to be red teaches nobody anything.
+                //
+                // Measured on a 120 -> 99.6 change twenty seconds into a forty
+                // second song, with the part silent, the fold names the new
+                // tempo correctly (comb 99.7) while the tempo actually used
+                // stays at 120.9 - the evidence arrives and the output does not
+                // follow it within the twenty seconds that are left. Feeding the
+                // app's own part back in then drags the fold itself off the
+                // answer, to 110.1 on a line feed and 111.5 through the room,
+                // because the loudest regular thing in the analysis signal is
+                // the part still playing at the tempo the tracker is trying to
+                // leave. That second half is the thing a listener describes as
+                // the tracker going out and not coming back.
+                //
+                // Neither is a small fix: the first is in how the decoder's beat
+                // fit follows the fold, the second wants the leak canceller to
+                // work on a line feed too, which today it does not. See the
+                // numbers above rather than guessing when either is attempted.
+            }
+
             std::vector<float> quiet (kit.size(), 0.0f);
             float quietPeak = 0.0f;
             for (size_t i = 0; i < kit.size(); ++i)
