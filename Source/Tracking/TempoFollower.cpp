@@ -23,6 +23,8 @@ void TempoFollower::reset() noexcept
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
+    phaseTarget = 0.0f;
+    havePhaseTarget = false;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
@@ -42,6 +44,8 @@ void TempoFollower::resetClock() noexcept
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
+    phaseTarget = 0.0f;
+    havePhaseTarget = false;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
@@ -100,12 +104,11 @@ void TempoFollower::forceTempo (float bpm) noexcept
     havePhaseObservation = false;
 }
 
-void TempoFollower::setGridPhase (float targetPhase, float amount) noexcept
+void TempoFollower::setGridPhase (float targetPhase, float tauSeconds) noexcept
 {
-    const float tgt = wrap01 (targetPhase);
-    amount = clamp01 (amount);
-    const float err = wrapCentered (static_cast<float> (phase) - tgt);
-    phaseErrEma = phaseErrEma * (1.0f - amount) + err * amount;
+    phaseTarget = wrapCentered (static_cast<float> (phase) - wrap01 (targetPhase));
+    phaseTargetTau = tauSeconds > 0.01f ? tauSeconds : 0.01f;
+    havePhaseTarget = true;
 }
 
 void TempoFollower::snapPhase (float targetPhase) noexcept
@@ -114,6 +117,8 @@ void TempoFollower::snapPhase (float targetPhase) noexcept
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
+    phaseTarget = 0.0f;
+    havePhaseTarget = false;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
@@ -225,6 +230,18 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     if (tempo < 40.0f) tempo = 40.0f;
     if (tempo > 220.0f) tempo = 220.0f;
 
+    // The error the analysis reported this block, smoothed over real time.
+    // Cleared after use: a callback that brought no observation must not
+    // re-inject the last one, which is what a per-block blend did thirty times
+    // over between one hypothesis and the next.
+    if (havePhaseTarget)
+    {
+        const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                         / (phaseTargetTau * static_cast<float> (sampleRate)));
+        phaseErrEma += (phaseTarget - phaseErrEma) * a;
+        havePhaseTarget = false;
+    }
+
     const float dErr = wrapCentered (phaseErrEma - prevPhaseErr);
     prevPhaseErr = phaseErrEma;
 
@@ -253,20 +270,20 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         // Seconds to close a standing phase error, and the most the rate may be
         // bent to do it. The pull has to be gentler when the listener has asked
         // the clock to hold its ground.
-        float tau = 0.35f;
+        float tau = 0.90f;
         float steerLim = 0.035f;
-        float dGain = 1.4f;
+        float dGain = 0.8f;
         switch (follow)
         {
             case FollowStrength::low:
-                tau = 0.70f;
+                tau = 1.60f;
                 steerLim = 0.018f;
-                dGain = 0.4f;
+                dGain = 0.3f;
                 break;
             case FollowStrength::high:
-                tau = 0.22f;
+                tau = 0.55f;
                 steerLim = 0.050f;
-                dGain = 2.2f;
+                dGain = 1.2f;
                 break;
             case FollowStrength::medium:
                 break;
@@ -275,8 +292,26 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         // fraction of the tempo. Derived rather than tuned per tempo: the same
         // phase error is a longer time at a slower tempo, so a fixed gain would
         // pull twice as hard at 60 BPM as at 120.
+        //
+        // `tau` used to be 0.22 s at HIGH, which is a gain of 2.3 at 120 BPM:
+        // the limit below was reached by an error of 0.022 of a beat, and the
+        // analysis's own phase is not that certain. Measured against a decoder
+        // whose phase wobbles by 0.03 of a beat, the grid sat at the limit in
+        // both directions permanently - +/-6 BPM at 120, 3.7 BPM rms - which is
+        // the percussion audibly running away and catching up on a band that
+        // never moved. Closing an error over about half a second instead leaves
+        // the limit for errors that are really there.
         const float kp = 60.0f / std::max (40.0f, tempo) / std::max (0.05f, tau);
-        steer = std::clamp (phaseErrEma * kp + dErr * dGain, -steerLim, steerLim);
+
+        // Below the uncertainty of the thing being measured there is nothing to
+        // correct, and a loop that keeps pulling on it is only playing back the
+        // analysis's noise as a tempo. Subtracted rather than gated, so a real
+        // error still crosses it smoothly instead of switching the loop on.
+        constexpr float kPhaseFloor = 0.012f;
+        const float e = phaseErrEma > kPhaseFloor ? phaseErrEma - kPhaseFloor
+                      : (phaseErrEma < -kPhaseFloor ? phaseErrEma + kPhaseFloor : 0.0f);
+
+        steer = std::clamp (e * kp + dErr * dGain, -steerLim, steerLim);
     }
     else
     {

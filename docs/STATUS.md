@@ -26,6 +26,96 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Il tracker seguiva sé stesso (22 agosto)
+
+Tre sintomi, una causa sola:
+
+- alzando il volume di shaker e percussioni **il tempo rallenta e si perde**; abbassandolo resta fedele;
+- quando finisce un brano e ne comincia un altro, **si riaggancia solo se prima premi STOP**;
+- mentre tiene il tempo e cerca di allinearsi, **accelera o decelera troppo in fretta**.
+
+I primi due sono la stessa cosa: quello che l'app suona rientra in quello che
+l'app ascolta. Un pezzo di percussione che rientra e' un impulso perfettamente
+d'accordo con il clock, quindi il tracker si sente dire che ha ragione ovunque
+si trovi — e piu' forte suona la parte, piu' l'analisi *e'* la parte. STOP
+zittisce la parte, ed e' zittendola che torna a sentire il brano.
+
+Misura: `leak-residual` nella suite dei test da in pasto al motore **solo la sua
+uscita ritardata** e riporta quanto ne sopravvive nel segnale di analisi. 1.000
+significa un tracker che segue soltanto il proprio shaker.
+
+| | prima | dopo |
+|---|---|---|
+| IPAD, blocco 1024 | 0.62 | **0.063** |
+| IPAD, blocco 4096 | 0.57 | **0.021** |
+| **MIXER, blocco 1024** | **1.000** | **0.063** |
+
+Tre difetti:
+
+1. **La sottrazione girava solo in SPEAKER.** Il rientro era modellato come la
+   cassa dell'iPad nel suo microfono. Ma un mixer restituisce l'uscita
+   direttamente sul return, ed e' il rig con l'X-Air: **non veniva sottratto
+   niente**.
+2. **Cancellava solo la parte alta.** Il riferimento era passa-alto a 1.5 kHz —
+   giusto per una cassa di tablet, che il basso non ce l'ha — quindi su un mixer
+   le congas passavano intatte. Ora sono due bande, risolte insieme.
+3. **Poteva inventarsi un rientro inesistente.** Il guadagno stimato veniva
+   clampato a zero *prima* di essere smorzato: su un blocco il fit fra due
+   segnali scorrelati non e' zero, e' zero piu' qualche per cento di rumore, e
+   tenerne solo la meta' positiva lo media a un guadagno positivo stabile. Ora
+   il fit con segno viene smorzato prima e clampato solo dove si applica, con un
+   gate sull'energia spiegata.
+
+### Il terzo sintomo: l'anello di fase
+
+Il clock corregge la fase per *velocita'*, non spostando la griglia. Ogni misura
+esistente pero' leggeva `tick.tempoBpm`, cioe' il tempo **prima** della
+correzione: gli impulsi escono a `tempo * (1 - steer)`, quindi tutta l'escursione
+era invisibile ai test.
+
+Con un decoder la cui fase porta tre centesimi di battuta di errore proprio —
+quello vero li porta, e si aggiorna sei volte al secondo — l'anello stava **al
+limite in entrambe le direzioni, in permanenza**: ±6 BPM a 120, 3,7 BPM rms, su
+una band che non si muoveva. Due cause: il guadagno arrivava al limite con un
+errore di 0,022 di battuta (piu' piccolo dell'incertezza di cio' che misurava), e
+lo smoothing era **per blocco**, quindi la costante di tempo dell'anello era la
+dimensione del buffer — 4,2 BPM rms su 64 campioni contro 2,2 su 1024, stessa
+musica. Con il buffer ora scegliibile dalla pagina impostazioni, era un settaggio
+che ritarava il tracker di nascosto.
+
+| | wobble rms a 120 | peggiore | 64 vs 1024 |
+|---|---|---|---|
+| prima | 3,7 BPM | ±6,0 | 4,2 / 2,2 |
+| dopo | **0,15 BPM** | 1,2 | **0,14 / 0,19** |
+
+Tenuti da `phase-steer` nella suite.
+
+### Brano nuovo: adesso riallinea anche la fase
+
+Su un cambio di brano veniva ritarato il **tempo** e basta; la fase restava
+affidata all'anello di steering, che e' fatto apposta per chiudere centesimi di
+battuta — e mezza battuta non e' centesimi. Ora, quando la ritaratura si chiude e
+la fase e' fuori di piu' di 0,15 di battuta, viene agganciata come al primo lock
+e i voti sulla battuta vengono azzerati (sono prove su un brano finito). Questo
+e' ragionato, non misurato: il rientro era la causa dominante del sintomo.
+
+### x2 e :2 in automatico
+
+L'ottava metrica e' l'unica cosa del tempo che il segnale non risolve (le misure
+stanno su `BeatDecoder::userOctave`). Ora la decide una regola, con i due tasti
+come override: **tieni la pulsazione su cui si suona la parte fra 76 e 168 BPM**.
+La banda e' poco piu' larga di un'ottava e quel margine e' l'isteresi (un tempo
+appena dimezzato da 168 cade su 84, non su 76). Un cambio di livello viene tenuto
+2,5 s prima di essere preso.
+
+**Non e' una soluzione al problema dell'ottava.** Dove mettere la banda e' un
+giudizio su come deve stare una parte, non una misura, e non e' stato validato
+su ascoltatori. E' limitato, reversibile con un tocco, e la riga del tempo dice
+quando la scelta e' dell'app: `a meta' (auto)`.
+
+Da provare sul device: con l'X-Air, alza lo shaker al massimo su un brano fermo e
+guarda se il BPM sta fermo; poi cambia brano senza premere STOP.
+
 ## Crack all'avvio e Spotify che si ferma (22 agosto)
 
 Sintomo: all'apertura dell'app si sente un **crack**, e se stava suonando qualcosa (Spotify, Apple Music) **la riproduzione si ferma**. Rig: iPad + Behringer X-Air via USB, ingresso e uscita insieme, mixer a 48 kHz.

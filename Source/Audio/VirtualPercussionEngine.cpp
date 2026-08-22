@@ -58,6 +58,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     leakScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
+    leakScratchLo.assign (static_cast<size_t> (maxBlock), 0.0f);
     outRing.assign (static_cast<size_t> (ringSize), 0.0f);
     ringWrite = 0;
 
@@ -82,6 +83,8 @@ void VirtualPercussionEngine::reset() noexcept
     std::fill (outRing.begin(), outRing.end(), 0.0f);
     ringWrite = 0;
     leakLp = 0.0f;
+    leakGainLo = 0.0f;
+    leakGainHi = 0.0f;
     peakEnv = 0.0f;
     makeupGain = 1.0f;
     tapWrite.store (0, std::memory_order_relaxed);
@@ -225,30 +228,85 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
     // at 2048 samples, which left the tail of a larger block un-subtracted: the
     // step it created at the splice point is a textbook onset, and it landed
     // in the analysis signal once per callback.
-    float xy = 0.0f, yy = 0.0f;
     const int n = std::min (numSamples, static_cast<int> (leakScratch.size()));
     if (n <= 0)
         return;
 
+    // Split our own output in two around 1.5 kHz and fit a gain to each.
+    //
+    // One band was not enough. The reference used to be the top end alone -
+    // which is the right model for the iPad's own speaker, because that speaker
+    // has no low end to leak - so on a mixer, where the return carries the whole
+    // part, the shaker was cancelled and the congas went into the analysis
+    // untouched. Fitting both bands covers either path without having to be
+    // told which one it is: through a speaker the low gain simply fits near
+    // zero.
+    double xyLo = 0.0, xyHi = 0.0, loLo = 0.0, hiHi = 0.0, loHi = 0.0, xx = 0.0;
     for (int i = 0; i < n; ++i)
     {
         const int ri = (ringWrite - delay + i + ringSize) & (ringSize - 1);
         const float y = outRing[static_cast<size_t> (ri)];
         leakLp += 0.18f * (y - leakLp);
-        const float hp = y - leakLp;
-        leakScratch[static_cast<size_t> (i)] = hp;
+        const float lo = leakLp;
+        const float hi = y - leakLp;
+        leakScratchLo[static_cast<size_t> (i)] = lo;
+        leakScratch[static_cast<size_t> (i)] = hi;
         const float x = mono[static_cast<size_t> (i)];
-        xy += x * hp;
-        yy += hp * hp;
+        xyLo += static_cast<double> (x) * lo;
+        xyHi += static_cast<double> (x) * hi;
+        loLo += static_cast<double> (lo) * lo;
+        hiHi += static_cast<double> (hi) * hi;
+        loHi += static_cast<double> (lo) * hi;
+        xx += static_cast<double> (x) * x;
     }
 
-    float g = yy > 1.0e-8f ? xy / yy : 0.0f;
-    g = std::clamp (g, 0.0f, 0.90f);
-    if (g < 0.08f)
+    // Least squares over the two together, not one each: a one-pole split does
+    // not make them orthogonal, and fitting them independently has each one
+    // claiming part of what the other explains.
+    float gLo = 0.0f, gHi = 0.0f;
+    const double det = loLo * hiHi - loHi * loHi;
+    if (std::fabs (det) > 1.0e-12 && loLo > 1.0e-9 && hiHi > 1.0e-9)
+    {
+        gLo = static_cast<float> ((xyLo * hiHi - xyHi * loHi) / det);
+        gHi = static_cast<float> ((xyHi * loLo - xyLo * loHi) / det);
+    }
+    else
+    {
+        if (loLo > 1.0e-9) gLo = static_cast<float> (xyLo / loLo);
+        if (hiHi > 1.0e-9) gHi = static_cast<float> (xyHi / hiHi);
+    }
+
+    // Smoothed *before* it is clamped, which is the whole difference between
+    // cancelling a leak and inventing one. Over a block of 256 samples the fit
+    // between two unrelated signals is not zero, it is zero plus a few per cent
+    // of noise; clamping that at zero first keeps only the positive half and
+    // averages it to a standing positive gain, so the analysis had a few per
+    // cent of the app's own part subtracted from it even on a feed that carried
+    // none - which costs the tracker real onsets, and was seen to put it badly
+    // out on a clean line feed with the part turned up. Smoothing the signed fit
+    // lets the noise cancel, and a path that does not change from one callback
+    // to the next is estimated far better over half a second than over a block.
+    constexpr float kGainSmooth = 0.12f;
+    gLo = std::clamp (gLo, -2.0f, 2.0f);
+    gHi = std::clamp (gHi, -2.0f, 2.0f);
+    leakGainLo += (gLo - leakGainLo) * kGainSmooth;
+    leakGainHi += (gHi - leakGainHi) * kGainSmooth;
+
+    const float useLo = std::clamp (leakGainLo, 0.0f, 0.95f);
+    const float useHi = std::clamp (leakGainHi, 0.0f, 0.95f);
+
+    // And only when our own output actually explains a share of what came in.
+    // A leak is a large part of the input by definition; an accidental
+    // resemblance between our shaker and the band's hi-hat is not. Below a few
+    // per cent of the input's energy there is nothing here worth subtracting,
+    // and subtracting it anyway costs the tracker real onsets.
+    const double explained = useLo * xyLo + useHi * xyHi;
+    if (xx < 1.0e-9 || explained / xx < 0.02)
         return;
 
     for (int i = 0; i < n; ++i)
-        mono[static_cast<size_t> (i)] -= g * leakScratch[static_cast<size_t> (i)];
+        mono[static_cast<size_t> (i)] -= useLo * leakScratchLo[static_cast<size_t> (i)]
+                                       + useHi * leakScratch[static_cast<size_t> (i)];
 }
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak) noexcept
@@ -369,6 +427,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     tracker.setFollowStrength (static_cast<FollowStrength> (cfg.followStrength.load (std::memory_order_relaxed)));
     tracker.setSubdivisionOverride (static_cast<Subdivision> (cfg.subdivision.load (std::memory_order_relaxed)));
+    tracker.setTempoOctaveAuto (cfg.tempoOctaveAuto.load (std::memory_order_relaxed));
     tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
     {
         const int nudge = cfg.barNudge.load (std::memory_order_relaxed);
@@ -429,8 +488,17 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     }
     if (bad > 0)
         badInputSamples.fetch_add (bad, std::memory_order_relaxed);
-    if (speaker)
-        subtractSpeakerLeak (numSamples);
+    // Both modes. It used to run only under SPEAKER, on the reasoning that the
+    // leak is the iPad's own speaker into its own microphone - but a mixer
+    // hands the app its output back on the return, which is the same signal
+    // with a shorter path and none of the room in front of it. Measured on a
+    // 120 BPM song with the app's output returning at half level: the tempo
+    // error went from 0.12 BPM with the part silent to 2.10 BPM with it up, and
+    // walked 1.2 BPM over the take, because what the tracker was following was
+    // its own shaker. It is adaptive and self-gating - the gain it fits is near
+    // zero when there is nothing of ours on the input - so running it on a feed
+    // that has no leak costs nothing.
+    subtractSpeakerLeak (numSamples);
     maybeInjectClick (numSamples);
     applyAnalysisMakeup (numSamples, peak);
     float analysisPeak = 0.0f;
@@ -534,6 +602,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastPBeat.store (tr.pBeat, std::memory_order_relaxed);
     lastLeadMs.store (tr.leadMs, std::memory_order_relaxed);
     lastRegime.store (static_cast<int> (tr.regime), std::memory_order_relaxed);
+    lastOctave.store (tr.tempoOctave, std::memory_order_relaxed);
     lastCombBpm.store (tr.combBpm, std::memory_order_relaxed);
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
@@ -599,7 +668,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
     s.combBpm = lastCombBpm.load (std::memory_order_relaxed);
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
-    s.tempoOctave = cfg.tempoOctave.load (std::memory_order_relaxed);
+    // The level in force, which under AUTO is not the one in the settings.
+    s.tempoOctave = lastOctave.load (std::memory_order_relaxed);
+    s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);
 
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);

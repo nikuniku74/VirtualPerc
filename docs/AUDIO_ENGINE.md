@@ -96,6 +96,121 @@ This used to be a constant array of eight entries inside the render loop, repeat
 
 Now: a two-bar phrase (bar B doubles the bass and moves the heel), a fill closing every eight bars, an accent contour across the bar, ghost notes on the sixteenths scaled by intensity, swing that lands only on the off-eighths, and micro-timing. Micro-timing is expressed as *lateness* only — the clock hands out grid positions as they pass and a voice cannot be scheduled before one — so the feel is biased late by half its own spread.
 
+## The clock is not allowed to hear itself
+
+The app plays a part and then listens to the room. Whatever of that part comes
+back on the input is a pulse in perfect agreement with the clock, so a tracker
+that sees it is being told it is right no matter where it actually is - and a
+part played louder is a tracker more certain of a tempo it is getting from
+itself.
+
+That is the whole of two separate reports. *"When I raise the shaker volume it
+slows down and loses the beat"*: the louder the part, the more of the analysis is
+the part. *"When one song ends and another starts, it only picks up the new one
+if I press STOP first"*: STOP mutes the part, and muting the part is what lets it
+hear the song again.
+
+Three things were wrong. The measurement is `leak-residual` in
+`Tests/TestMain.cpp`, which feeds the engine nothing but its own delayed output
+and reports the share of it that survives into the analysis signal - so 1.000 is
+a tracker following its own shaker and nothing else.
+
+| | before | after |
+|---|---|---|
+| SPEAKER, 1024-frame block | 0.62 | **0.063** |
+| SPEAKER, 4096-frame block | 0.57 | **0.021** |
+| MIXER, 1024-frame block | **1.000** | **0.063** |
+
+- **The subtraction only ran in SPEAKER mode.** The leak was modelled as the
+  iPad's own speaker into its own microphone. But a mixer hands the app its
+  output straight back on the return - the same signal, a shorter path, none of
+  the room in front of it - and on that rig nothing was subtracted at all. That
+  is the 1.000.
+- **It only cancelled the top end.** The reference was high-passed at 1.5 kHz,
+  which is the right model for a tablet speaker with no low end to leak. On a
+  mixer return the congas are in there too, and they went through untouched. Two
+  bands are fitted now, solved together rather than one each - a one-pole split
+  does not make them orthogonal, and fitted independently each claims part of
+  what the other explains. Either path is covered without having to be told
+  which one it is: through a speaker the low gain simply fits near zero.
+- **It could invent a leak that was not there.** The fitted gain was clamped at
+  zero before it was smoothed. Over one block the fit between two unrelated
+  signals is not zero, it is zero plus a few per cent of noise, and keeping only
+  the positive half of that averages to a standing positive gain - so a few per
+  cent of the app's own part was subtracted from the analysis even on a clean
+  feed that carried none, which costs the tracker real onsets - it was seen to
+  put it badly out on a clean feed with the part turned up. The signed fit is
+  smoothed first and clamped only where it is applied, and the subtraction is
+  gated on our output explaining at least a few per cent of the input's energy:
+  a real leak does that by definition, an accidental resemblance between our
+  shaker and the band's hi-hat does not.
+
+Driving the whole engine with a song and a return loop agrees on direction and
+magnitude - on one take at 120 BPM with the return at half level, the tracked
+tempo went from 0.12 BPM out with the part silent to about 2 BPM out with it up,
+and walked over the minute, while the same take in SPEAKER mode, where the
+subtraction did run, stayed at 0.13. That is one arrangement and one seed; the
+numbers in the table are the ones this rests on.
+
+## Aligning without sounding like it
+
+The clock corrects its phase by *rate*: it runs fractionally fast or slow until
+it is back with the band, rather than moving the grid (see **Grid continuity**).
+How hard it may lean, and how quickly, is the difference between a percussionist
+leaning into the beat and one who has lost it.
+
+Every measurement in this repository until now read `tick.tempoBpm`, which is
+the tempo *before* that lean. The pulses come out at `tempo * (1 - steer)`, so
+the entire correction was invisible to every test.
+
+Measured against a decoder whose phase carries three hundredths of a beat of its
+own error - which is what the real one carries, refreshed about six times a
+second - the loop sat at its steering limit **in both directions, permanently**:
+±6 BPM at 120, 3.7 BPM rms, on a band that never moved. Two causes:
+
+- **The gain reached that limit on an error of 0.022 of a beat**, which is
+  smaller than the uncertainty of the thing it was measuring. It closes the
+  error over about half a second now instead of a fifth, which leaves the limit
+  for errors that are really there.
+- **The error estimate was smoothed per block, not per second.** `setGridPhase`
+  was called once per audio callback with a fixed blend, so the loop's whole
+  time constant was whatever the buffer happened to be - 4.2 BPM rms of wobble
+  on 64 frames against 2.2 on 1024, same music - and at every buffer size it was
+  shorter than the interval at which the analysis refreshes, so nothing was
+  averaged at all. It is a time constant in seconds now, long enough to span
+  several hypotheses.
+
+Below the analysis's own residual uncertainty the loop does nothing: an error
+smaller than that is not an error, and a loop that keeps pulling on it is playing
+the decoder's noise back as a tempo.
+
+| | rms wobble at 120 BPM | worst | 64 vs 1024 frames |
+|---|---|---|---|
+| before | 3.7 BPM | ±6.0 | 4.2 / 2.2 |
+| after | **0.15 BPM** | 1.2 | **0.14 / 0.19** |
+
+`phase-steer` in `Tests/TestMain.cpp` holds both.
+
+## Half and double, chosen
+
+The metrical level is the one thing about the tempo the signal does not settle -
+the measurements are under `BeatDecoder::userOctave` - so it used to be left to
+the listener and two buttons. It is now decided by a rule, with those buttons as
+the override.
+
+The rule is not about the music, it is about the part: **keep the pulse the
+percussionist counts in between 76 and 168 BPM**. That band is a little over an
+octave wide and the overlap is the hysteresis - a tempo just halved from 168
+lands on 84, not on 76, so nothing sits on a boundary it can be pushed back and
+forth across. A level change is held for two and a half seconds before it is
+taken, because changing it mid-song is one of the most audible things the app
+can do.
+
+What this is not is a solution to the octave problem. Where the band should sit
+is a judgement about how a part should feel, not a measurement, and it has not
+been validated against listeners. It is bounded, it is reversible in one tap,
+and the tempo line says when it is the app's decision rather than yours.
+
 ## Voices
 
 Up to 16 overlapping grains. Sample data lives in precomputed buffers generated at `prepare`.

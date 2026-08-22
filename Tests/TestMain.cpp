@@ -530,11 +530,11 @@ int main()
     // the block would need output that has not been rendered yet. 150 ms covers
     // every buffer size used here.
     {
-        auto leakThrough = [&] (int blk)
+        auto leakThrough = [&] (int blk, vp::FollowSource source = vp::FollowSource::speaker)
         {
             vp::VirtualPercussionEngine eng;
             eng.prepare (sr, blk, 1);
-            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+            eng.settings().followSource.store (static_cast<int> (source));
             eng.settings().masterVolume.store (1.0f);
             eng.settings().reverbAmount.store (0.0f);
             eng.setReportedLatencyMs (150.0f);
@@ -592,6 +592,19 @@ int main()
         // (0.57 vs 0.62 here); truncated, the untouched tail pushes it to 0.79.
         expect (large <= small * 1.10f,
                 "speaker-leak subtraction covers a block larger than the old 2048 cap");
+
+        // The same input, in the other mode. There is no mode in which the app's
+        // own part is allowed into the analysis: a mixer hands it back on the
+        // return exactly as a speaker hands it back through the room, and the
+        // subtraction used to run only under SPEAKER - so on a mixer the whole
+        // of it went through. The input here is nothing but our own output, so
+        // this number is the share of its own part the tracker would be
+        // following instead of the band.
+        const float mixer = leakThrough (1024, vp::FollowSource::kitMic);
+        std::printf ("leak-residual  MIXER@1024=%.3f  (1.000 = not subtracted at all)\n",
+                     static_cast<double> (mixer));
+        expect (mixer < 0.25f,
+                "the app's own part is subtracted from the analysis on a mixer feed too");
     }
 
     // Same music, two buffer sizes. A small block puts one pulse in each
@@ -715,6 +728,111 @@ int main()
                      compared, mismatches);
         expect (compared > 8 && mismatches == 0,
                 "the phrase comes back where the song is, not where it was muted");
+    }
+
+    // What the grid does while the clock is aligning itself, which is what a
+    // listener hears - and which nothing measured, because every other test
+    // reads `tick.tempoBpm`, the tempo *before* the steer. The pulses come out
+    // at `tempo * (1 - steer)`, so the whole phase correction was invisible.
+    //
+    // The input the loop really gets is not the truth. The decoder hands over a
+    // hypothesis about six times a second and each one carries its own phase
+    // error, of the order of three hundredths of a beat. Fed that, the loop used
+    // to sit at its steering limit in both directions permanently - +/-6 BPM at
+    // 120, 3.7 BPM rms, on a band that never moved - because the gain reached
+    // that limit on an error of 0.022 of a beat, which is smaller than the
+    // uncertainty of the thing it was measuring.
+    {
+        auto wobble = [&] (float trueBpm, int blk)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (trueBpm);
+            clock.setTargetTempo (trueBpm, 1.0f);
+            clock.setFollowStrength (vp::FollowStrength::high);
+            clock.setLocked (true);
+            clock.resetClock();
+
+            // A deterministic stand-in for the decoder's phase error: held for a
+            // sixth of a second at a time, because that is how often a new
+            // hypothesis arrives. White noise per block would be averaged away
+            // by the loop's own smoothing and would flatter it.
+            double songPhase = -0.04;
+            double t = 0.0, nextRefresh = 0.0;
+            float held = 0.0f;
+            int seed = 1;
+            double sqAcc = 0.0;
+            int n = 0;
+            float worst = 0.0f;
+
+            const double dt = blk / sr;
+            for (int i = 0; i < static_cast<int> (sr * 20.0) / blk; ++i)
+            {
+                const double before = clock.beatsElapsed() + clock.beatPhase();
+                const float songFrac = static_cast<float> (songPhase - std::floor (songPhase));
+                if (t >= nextRefresh)
+                {
+                    seed = seed * 1103515245 + 12345;
+                    held = 0.03f * (static_cast<float> ((seed >> 16) & 0x7fff) / 16383.5f - 1.0f);
+                    nextRefresh += 1.0 / 6.0;
+                }
+                const float seen = vp::wrap01 (songFrac + held);
+
+                const double songBefore = songPhase;
+                songPhase += trueBpm / 60.0 * dt;
+                if (std::floor (songPhase) > std::floor (songBefore))
+                    clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - seen), 0.6f, 1);
+
+                clock.setGridPhase (seen, 0.90f);
+                clock.advance (blk);
+                t += dt;
+
+                const double after = clock.beatsElapsed() + clock.beatPhase();
+                const double rate = (after - before) / dt * 60.0;
+                if (t > 2.0)
+                {
+                    const double dev = rate - trueBpm;
+                    sqAcc += dev * dev;
+                    ++n;
+                    worst = std::max (worst, static_cast<float> (std::fabs (dev)));
+                }
+            }
+            return std::pair<float, float> { n > 0 ? static_cast<float> (std::sqrt (sqAcc / n)) : 0.0f,
+                                             worst };
+        };
+
+        bool steady = true;
+        for (float bpm : { 80.0f, 120.0f, 160.0f })
+        {
+            const auto [rms, worst] = wobble (bpm, 256);
+            std::printf ("phase-steer  %.0f BPM  rms=%.2f BPM  worst=%.2f BPM\n",
+                         static_cast<double> (bpm), static_cast<double> (rms),
+                         static_cast<double> (worst));
+            // Four thousandths of the tempo. Not a perceptual threshold - it is
+            // where this loop actually sits once it is not chasing noise, with
+            // the margin to say so: it measures 0.0016 of the tempo, the gains
+            // it shipped with measured 0.0065, and the per-block smoothing they
+            // shipped with measured 0.031. Anything that loosens the loop back
+            // towards its input's own uncertainty crosses this.
+            if (rms > bpm * 0.004f)
+                steady = false;
+        }
+        expect (steady,
+                "the grid does not chase the analysis's own phase noise as if it were the band");
+
+        // And the same music has to come out the same whatever the buffer is.
+        // The smoothing used to be a fixed blend applied once per callback, so
+        // its time constant was whatever the buffer happened to be: measured at
+        // 4.2 BPM rms on 64 frames against 2.2 on 1024, same song. With the
+        // buffer now something the listener can change on the settings page,
+        // that is a setting that quietly retunes the tracker.
+        const float small = wobble (120.0f, 64).first;
+        const float large = wobble (120.0f, 1024).first;
+        std::printf ("phase-steer  buffer 64=%.2f  1024=%.2f BPM rms\n",
+                     static_cast<double> (small), static_cast<double> (large));
+        expect (std::fabs (small - large) < 0.25f,
+                "the phase loop behaves the same whatever the buffer size");
     }
 
     vpRunAiBeatTests (gPassed, gFailed);

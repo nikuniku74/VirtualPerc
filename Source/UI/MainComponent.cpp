@@ -292,13 +292,23 @@ MainComponent::MainComponent()
     // Half and double. The one part of the metrical level the signal does not
     // decide - full eighths under a slow tempo read as well at the double - is
     // decided here instead, by the person listening, in one tap.
+    // Lit means "the listener chose this". Pressing the lit one hands the
+    // choice back rather than parking on "as measured": with AUTO in the middle
+    // there is no third state to reach otherwise, and the button that turned it
+    // off has to be the button that turns it on.
     halveButton.onClick = [this]
     {
-        applyTempoOctave (engine.settings().tempoOctave.load() < 0 ? 0 : -1);
+        const bool mine = ! engine.settings().tempoOctaveAuto.load()
+                          && engine.settings().tempoOctave.load() < 0;
+        if (mine) applyTempoOctaveAuto();
+        else      applyTempoOctave (-1);
     };
     doubleButton.onClick = [this]
     {
-        applyTempoOctave (engine.settings().tempoOctave.load() > 0 ? 0 : 1);
+        const bool mine = ! engine.settings().tempoOctaveAuto.load()
+                          && engine.settings().tempoOctave.load() > 0;
+        if (mine) applyTempoOctaveAuto();
+        else      applyTempoOctave (1);
     };
     setupBtn (sub4, ink());
     setupBtn (sub8, ink());
@@ -963,13 +973,25 @@ void MainComponent::applyStyle (vp::GrooveStyle s)
 
 void MainComponent::applyTempoOctave (int octaves)
 {
+    engine.settings().tempoOctaveAuto.store (false);
     engine.settings().tempoOctave.store (juce::jlimit (-1, 1, octaves));
+    refreshOctaveButtons();
+    repaint();
+}
+
+void MainComponent::applyTempoOctaveAuto()
+{
+    engine.settings().tempoOctaveAuto.store (true);
     refreshOctaveButtons();
     repaint();
 }
 
 void MainComponent::refreshOctaveButtons()
 {
+    // Only a level the listener picked lights the button. Under AUTO the level
+    // may well be halved, and the tempo line says so - but a filled button
+    // means "you asked for this", and the way back is to press it again.
+    const bool mine = ! engine.settings().tempoOctaveAuto.load();
     const int oct = engine.settings().tempoOctave.load();
     auto paint = [] (juce::TextButton& b, bool on)
     {
@@ -977,8 +999,8 @@ void MainComponent::refreshOctaveButtons()
         b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
         b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
     };
-    paint (halveButton, oct < 0);
-    paint (doubleButton, oct > 0);
+    paint (halveButton, mine && oct < 0);
+    paint (doubleButton, mine && oct > 0);
 }
 
 void MainComponent::applyStyleAuto (bool on)
@@ -1459,9 +1481,15 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         if (! snap.levelSettled)
             tempoLine += juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  livello provvisorio"));
         if (snap.tempoOctave != 0)
+        {
             tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0
                                                                   ? "  \xc2\xb7  a met\xc3\xa0"
                                                                   : "  \xc2\xb7  doppio"));
+            // Whose decision it was. Without this a halved tempo looks like a
+            // setting the listener forgot they had left on.
+            if (snap.tempoOctaveAuto)
+                tempoLine += " (auto)";
+        }
         g.drawFittedText (tempoLine, rows.tempoLine, juce::Justification::centred, 1);
     }
 

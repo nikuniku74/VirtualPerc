@@ -32,7 +32,17 @@ public:
     void setTempoTrimEnabled (bool on) noexcept;
     void resetClock() noexcept;
 
-    void setGridPhase (float targetPhase, float amount) noexcept;
+    /** Where the analysis says the song's pulse is, and how long the loop
+        should take to believe it, in seconds.
+
+        Seconds rather than a per-block blend. This is called once per audio
+        callback, so a fixed blend made the whole time constant a function of
+        the buffer size: measured on the same music, the grid rate wobbled by
+        4.2 BPM rms on a 64-frame buffer against 2.2 on 1024. It also has to be
+        longer than the interval at which the analysis refreshes - about a sixth
+        of a second - or nothing is averaged at all and the loop chases the
+        decoder's own uncertainty as if it were the band moving. */
+    void setGridPhase (float targetPhase, float tauSeconds) noexcept;
     void snapPhase (float targetPhase) noexcept;
     void snapDownbeat (float targetPhase = 0.0f) noexcept;
     void snapBeat (int beatIndex, float targetPhase = 0.0f) noexcept;
@@ -62,6 +72,12 @@ private:
     int totalBeats = 0;
     int pulsesPerBeat = 4; // 4 = 16th notes per quarter
     float phaseErrEma = 0.0f;
+    /** The raw error the last callback reported, and its time constant. Held
+        rather than blended on the spot so that `advance` - the only place that
+        knows how much time a block is - does the smoothing. */
+    float phaseTarget = 0.0f;
+    float phaseTargetTau = 0.5f;
+    bool  havePhaseTarget = false;
     float prevPhaseErr = 0.0f;
     float lastObservedPhaseErr = 0.0f;
     float tempoTrim = 0.0f;

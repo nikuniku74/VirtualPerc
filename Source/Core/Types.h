@@ -193,8 +193,10 @@ struct EngineSnapshot
         that to count as decided. */
     float combBpm              = 0.0f;
     bool  levelSettled         = false;
-    /** Half or double the measured tempo, when the listener has asked for it. */
+    /** Half or double the measured tempo: the level actually in force, whether
+        the listener asked for it or AUTO settled on it. */
     int   tempoOctave          = 0;
+    bool  tempoOctaveAuto      = true;
 
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
@@ -229,6 +231,12 @@ struct EngineSettings
     // can guess: below ~92 BPM with full eighths the level is genuinely
     // ambiguous in the signal, so it is offered as a control instead.
     std::atomic<int>   tempoOctave     { 0 };
+    // And whether the app picks it. On by default: the choice the analysis
+    // cannot make is at least bounded - the pulse a part is played on belongs
+    // inside the range a percussionist counts in - and a rule that keeps it
+    // there is better than leaving every track that reads at the wrong level
+    // waiting for a tap. A tap on the halve or double button takes it back.
+    std::atomic<bool>  tempoOctaveAuto { true };
     // Counter, not a position: every increment moves the bar on by one beat.
     // Where beat one is cannot be read reliably from what the network gives us
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to

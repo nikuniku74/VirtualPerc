@@ -44,6 +44,19 @@ namespace
     // And a good deal longer after the listener has moved it by hand.
     constexpr double kBarNudgeHoldSeconds = 30.0;
 
+    // AUTO half/double. The range a percussionist counts in, a little over an
+    // octave wide - and that overlap is the hysteresis: a tempo just halved from
+    // 168 lands on 84 rather than on 76, so nothing can sit on a boundary and be
+    // pushed back and forth across it. See the note on BeatDecoder::userOctave
+    // for why the choice cannot be made from the signal in the first place.
+    constexpr float kOctaveTooFast = 168.0f;
+    constexpr float kOctaveTooSlow = 76.0f;
+
+    // Held before it is taken. Changing the metrical level in the middle of a
+    // song is one of the most audible things this app can do, and a reading that
+    // has only just arrived is not evidence enough to do it on.
+    constexpr double kAutoOctaveHoldSeconds = 2.5;
+
     // How long the one stays marked after a tap has declared it.
     constexpr double kBarDeclaredFlashSeconds = 0.9;
 
@@ -395,6 +408,67 @@ void BeatTracker::holdBarDecision() noexcept
     downbeatHoldSamples = static_cast<int> (sampleRate * kBarNudgeHoldSeconds);
 }
 
+void BeatTracker::setTempoOctave (int octaves) noexcept
+{
+    userOctave = octaves < -1 ? -1 : (octaves > 1 ? 1 : octaves);
+    if (! octaveAuto)
+        neural.setUserOctave (userOctave);
+}
+
+void BeatTracker::setTempoOctaveAuto (bool on) noexcept
+{
+    if (on == octaveAuto)
+        return;
+
+    octaveAuto = on;
+    // Switching AUTO on starts from the level the listener had chosen rather
+    // than from the analysis's own reading: what they picked is the best
+    // evidence there is about the pulse they want, and jumping levels the
+    // instant the button is released would change the part under their hands.
+    autoOctave = userOctave;
+    autoWant = userOctave;
+    autoHoldSamples = 0;
+    neural.setUserOctave (octaveAuto ? autoOctave : userOctave);
+}
+
+void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples) noexcept
+{
+    if (! periodic || bpm < 40.0f)
+    {
+        autoHoldSamples = 0;
+        return;
+    }
+
+    // The reading already carries whatever shift is in force, so a level too
+    // fast is answered by going one below the shift now applied, not one below
+    // zero.
+    int want = autoOctave;
+    if (bpm > kOctaveTooFast && want > -1)
+        --want;
+    else if (bpm < kOctaveTooSlow && want < 1)
+        ++want;
+
+    if (want != autoWant)
+    {
+        autoWant = want;
+        autoHoldSamples = 0;
+        return;
+    }
+    if (want == autoOctave)
+    {
+        autoHoldSamples = 0;
+        return;
+    }
+
+    autoHoldSamples += numSamples;
+    if (autoHoldSamples > static_cast<int> (sampleRate * kAutoOctaveHoldSeconds))
+    {
+        autoOctave = want;
+        autoHoldSamples = 0;
+        neural.setUserOctave (autoOctave);
+    }
+}
+
 void BeatTracker::nudgeBar (int beats) noexcept
 {
     follower.rotateBarIndex (beats);
@@ -682,6 +756,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         needsResync = false;
     }
 
+    if (octaveAuto)
+        updateAutoOctave (nnBpm, periodic, numSamples);
+
     const bool musicOn = quietSamples < static_cast<int> (sampleRate * 0.35);
     if (lockedOnce && ! tapHold && ! tapOwnsTempo && musicOn && heldBpm > 50.0f && nnBpm > 50.0f)
     {
@@ -706,7 +783,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
              && currentState != TrackingState::idle
              && ! tapEstablished)
     {
-        follower.setGridPhase (songPhase, holding ? 0.06f : 0.14f);
+        // Seconds, not a per-block blend. While holding, long enough to average
+        // several hypotheses - the analysis refreshes about six times a second
+        // and each one carries its own phase error - so the clock follows the
+        // band and not the decoder. While still acquiring it is worth being
+        // wrong quickly.
+        follower.setGridPhase (songPhase, holding ? 0.90f : 0.25f);
     }
 
     if (tapHold)
@@ -770,6 +852,25 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         {
             retuning = false;
             lostSyncSamples = 0;
+
+            // A new tempo is a new song, and a new song's beat one has nothing
+            // to do with the old one's. Only the tempo was retuned here; the
+            // phase was left to the steering loop, which is deliberately gentle
+            // - it is built to close hundredths of a beat, and half a beat is
+            // not hundredths. Snap it, the way the first lock does. Only when it
+            // is genuinely far out: inside the range the loop closes quickly,
+            // moving the grid under a part that is already playing costs a
+            // stroke and buys nothing.
+            //
+            // The bar votes go with it. They are evidence about a song that has
+            // finished, and left in place they hold the new one's downbeat
+            // wherever the old one's was.
+            if (haveHyp && gridMuteSamples <= 0
+                && std::fabs (wrapCentered (follower.beatPhase() - songPhase)) > 0.15f)
+            {
+                follower.snapPhase (songPhase);
+                std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+            }
         }
     }
 
@@ -795,6 +896,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.bpm = showBpm ? (tapOwnsTempo ? follower.currentTempo() : heldBpm) : 0.0f;
     out.targetBpm = follower.targetTempo() + follower.tempoTrimBpm();
     out.confidence = smoothedConf;
+    out.tempoOctave = octaveAuto ? autoOctave : userOctave;
     out.beatPhase = follower.beatPhase();
     out.barPhase = follower.barPhase();
     barDeclaredSamples = std::max (0, barDeclaredSamples - numSamples);

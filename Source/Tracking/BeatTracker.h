@@ -27,7 +27,15 @@ public:
     void setFollowStrength (FollowStrength s) noexcept;
     void setSubdivisionOverride (Subdivision s) noexcept;
     void setSpeakerFollow (bool on) noexcept { speakerFollow = on; }
-    void setTempoOctave (int octaves) noexcept { neural.setUserOctave (octaves); }
+    /** Half or double, and whether the app chooses it.
+
+        AUTO keeps the pulse the part is played on inside the range a
+        percussionist counts in, which is the one thing that can be said about
+        the metrical level without solving it - see the note on
+        BeatDecoder::userOctave for why the signal does not settle it. A manual
+        choice switches AUTO off and stands. */
+    void setTempoOctave (int octaves) noexcept;
+    void setTempoOctaveAuto (bool on) noexcept;
 
     /** Move the bar on by whole beats, because the listener says so. Clears the
         tally and holds the automatic alignment off for a while afterwards: the
@@ -75,6 +83,10 @@ public:
         int64_t       analysisWakeups = 0;
         /** Input samples fed but not yet analysed. */
         int           analysisBacklog = 0;
+        /** The metrical level actually in force, whether AUTO or the listener
+            picked it. Reported rather than assumed, so the screen can say what
+            the part is being played at rather than what was asked for. */
+        int           tempoOctave = 0;
     };
 
     void start() noexcept;
@@ -89,6 +101,7 @@ public:
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
+    void updateAutoOctave (float bpm, bool periodic, int numSamples) noexcept;
     void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
@@ -128,6 +141,13 @@ private:
     bool hadPlayed = false;
     bool needsResync = false;
     bool waitForSongBeat = false;
+    /** The level the listener chose, the level AUTO has settled on, the level it
+        is arguing for, and how long it has been arguing. */
+    int  userOctave = 0;
+    bool octaveAuto = true;
+    int  autoOctave = 0;
+    int  autoWant = 0;
+    int  autoHoldSamples = 0;
     int tapHoldSamples = 0;
     int lostSyncSamples = 0;
     int downbeatHoldSamples = 0;

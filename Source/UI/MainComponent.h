@@ -70,6 +70,7 @@ private:
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
     void applyTempoOctave (int octaves);
+    void applyTempoOctaveAuto();
     void refreshOctaveButtons();
 
     juce::Rectangle<int> layoutColumn() const;

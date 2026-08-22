@@ -82,6 +82,7 @@ private:
     std::vector<float> outR;
     std::vector<float> clickScratch;
     std::vector<float> leakScratch;
+    std::vector<float> leakScratchLo;
     std::vector<float> outRing;
 
     double sampleRate = 48000.0;
@@ -120,6 +121,7 @@ private:
     std::atomic<int>   lastBacklog { 0 };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };
+    std::atomic<int>   lastOctave { 0 };
     std::atomic<float> lastCombBpm { 0.0f };
     std::atomic<bool>  lastLevelSettled { false };
     int seenBarNudge = 0;
@@ -138,6 +140,14 @@ private:
     std::atomic<bool>  clickEnabled { false };
     double clickPhase = 0.0;
     float leakLp = 0.0f;
+    /** How much of our own output the input is carrying back, fitted per band
+        and held across blocks. Two bands because the two return paths do not
+        look alike: through the iPad's speaker the low end is simply not there,
+        while a mixer hands back the whole thing, congas included. Smoothed
+        because a fit over one block of 256 samples is a noisy estimate, and a
+        gain that jumps subtracts a different signal every callback. */
+    float leakGainLo = 0.0f;
+    float leakGainHi = 0.0f;
     float peakEnv = 0.0f;
     float makeupGain = 1.0f;
     int ringWrite = 0;
