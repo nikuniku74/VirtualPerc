@@ -42,18 +42,36 @@ Cioe': muore il collegamento audio USB fra iPad e X-Air, qualunque cosa lo stia
 usando. L'app ci finiva dentro solo perche' era una delle cose che lo usavano.
 
 Non c'e' un "driver dell'iPad" da aggiornare: iPadOS non ha driver per singola
-periferica audio, usa la classe generica **USB Audio Class 2.0**. Quello che
-cambia da un rig all'altro e' l'alimentazione della porta, la banda isocrona che
-il flusso chiede (un X-Air grosso presenta 18 in / 18 out) e il firmware del
-mixer. La leva sta li', non nel software.
+periferica audio, usa la classe generica **USB Audio Class 2.0**. La leva sta
+nell'alimentazione della porta, nella banda che il flusso chiede e nel firmware
+del mixer, non nel software.
 
-Cosa e' stato provato senza esito: attaccare l'iPad alla corrente; 44.1 e 48 kHz;
-allineare i due clock sulla stessa frequenza.
+Il mixer e' un **XR18**: 18 in / 18 out su USB. Provato senza esito, e in
+quest'ordine sono cadute le ipotesi:
 
-**Percorso consigliato se il collegamento diretto non si recupera:** una
-interfaccia 2x2 class-compliant fra iPad e mixer, con l'uscita su un canale e una
-mandata del banco sul suo ingresso. L'app funziona cosi' com'e': CLOCK su AUTO
-segue l'interfaccia, e la sorgente resta MIXER.
+| provato | esito |
+|---|---|
+| 44.1 e 48 kHz, e i due clock allineati | cade lo stesso |
+| iPad alla corrente | cade lo stesso |
+| hub, con l'iPad alimentato **mentre** e' collegato | cade lo stesso |
+
+Con l'alimentazione esclusa da quest'ultima prova, quello che resta e' il flusso:
+18 x 18 canali sono un carico isocrono pesante, e iPadOS ha limiti pratici su
+quanti canali regge. Non e' una cosa su cui il software dell'app abbia una leva -
+iOS non espone un modo per chiedere a una periferica solo due dei suoi diciotto
+canali.
+
+**Conclusione operativa: la porta USB dell'XR18 non e' una strada per l'iPad.**
+Il rig e' una interfaccia **2x2 class-compliant** fra iPad e mixer: uscita su un
+canale di linea, una mandata del banco sul suo ingresso. Copre ingresso e uscita
+insieme, che e' il requisito, e l'app funziona cosi' com'e' - CLOCK su AUTO segue
+l'interfaccia, sorgente MIXER. Che l'ingresso analogico del banco funzioni e'
+gia' stato verificato.
+
+Resta una prova che vale la pena fare comunque, perche' cambia la natura del
+problema: **l'USB dell'XR18 su un computer.** Se cade anche li', non e' un limite
+di iPadOS ma una porta o un cavo guasti, ed e' una riparazione invece che un
+vicolo cieco.
 
 Quello che l'app ha guadagnato lungo questa indagine resta valido e utile a
 prescindere - si rialza da sola quando iOS le porta via il device, invece di
