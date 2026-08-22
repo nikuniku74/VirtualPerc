@@ -38,6 +38,13 @@ private:
     void ensureMicrophone();
     void applyInputProcessing();
 
+    /** Throw the audio device away and build a new one from the setup it is
+        already on. Not a reopen: after iOS restarts its media server the audio
+        unit is a handle to something that no longer exists, and only making a
+        new one brings the sound back - which is what changing the clock by hand
+        was doing. */
+    void rebuildAudioDevice (const char* why);
+
     /** What the listener asked the clock to be, and what the device should
         actually be opened at. They are not the same question: the request may
         be AUTO, and AUTO means the rate the hardware is already running at -
@@ -232,6 +239,19 @@ private:
     int  clockHz = 0;
     int  bufferChoice = 0;
     bool inputProcessing = false;
+
+    /** Blocks the audio callback has run, and the value the last timer tick saw.
+        The device can stop calling us without telling anyone - a media server
+        restart is one way, and a USB interface is a good way to provoke one - so
+        the message thread watches for the count standing still and builds a new
+        device when it does. How many times that has happened is on the settings
+        page, because a rig that needs it every few seconds is a rig with a
+        problem the app can only paper over. */
+    std::atomic<uint32_t> audioBlocks { 0 };
+    uint32_t seenAudioBlocks = 0;
+    int  stalledTicks = 0;
+    int  rebuildCooldownTicks = 0;
+    int  deviceRebuilds = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

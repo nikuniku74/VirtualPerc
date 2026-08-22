@@ -26,6 +26,66 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## L'audio si ferma dopo qualche secondo con l'X-Air attaccato (22 agosto)
+
+Sintomo: iPad collegato via USB al mixer X-Air, **entrambi i clock sulla stessa
+frequenza**. Si sente per un attimo, poi si blocca. Per farlo tornare bisogna
+cambiare frequenza sulla pagina impostazioni — che riapre il device — e dopo
+qualche secondo si blocca di nuovo. Attaccare l'iPad alla corrente non cambia
+niente.
+
+**Che a farlo tornare sia la riapertura del device e' tutta la diagnosi.** Quando
+iOS riavvia il suo media server, tutto quello che il processo possiede di audio
+diventa invalido: sessione, audio unit, tutto. Va ricostruito. JUCE la notifica
+la riceve, ma le risponde cosi':
+
+    isRunning = enabled;
+    setAudioSessionActive (enabled);
+    AudioOutputUnitStart (audioUnit);   // l'unit di prima del reset
+
+cioe' fa partire un handle a una cosa che non esiste piu'. L'app resta muta
+finche' qualcosa non ne costruisce una nuova — e cambiare il clock era l'unica
+cosa nell'app che lo facesse. Un'interfaccia USB class-compliant e' uno dei modi
+piu' affidabili di provocare il reset, ed e' per questo che succede col cavo
+attaccato e non senza.
+
+Due risposte, perche' la prima puo' sfuggire:
+
+1. `vp::setMediaServicesResetHandler` osserva direttamente
+   `AVAudioSessionMediaServicesWereResetNotification` e ricostruisce: prima la
+   sessione (dopo un reset non ha piu' niente di quello che le era stato
+   impostato), poi `closeAudioDevice()` + `restartLastAudioDevice()` — chiudere,
+   non riaprire, perche' `setAudioDeviceSetup` si tiene l'oggetto device e la
+   sua unit morta.
+2. Un **watchdog** sul thread messaggi conta le callback audio. Un device che
+   dovrebbe girare e non chiama da un secondo viene ricostruito lo stesso,
+   qualunque cosa lo abbia fermato. Minimo due secondi fra una ricostruzione e
+   l'altra.
+
+Il conteggio e' sulla pagina impostazioni, **STATO / riavvii**. Deve stare a 0:
+se sale da solo, il rig sta perdendo il device audio di continuo e la
+ricostruzione lo sta tamponando, non risolvendo.
+
+### E una cosa trovata cercando questa
+
+Il guadagno di make-up dell'analisi era pilotato dal livello **prima** della
+sottrazione del rientro. Da quando la sottrazione funziona davvero, questo
+teneva l'analisi sotto il livello su cui la rete e' stata validata, esattamente
+di quanto era stato tolto: misurato su un feed con rientro e parte al massimo,
+**0,045 contro 0,076** con la parte in silenzio — stessa band, piu' piano, per
+un motivo che la rete non puo' conoscere. Ora il make-up legge il livello del
+segnale a cui viene applicato: **0,0775**, alla pari.
+
+Tenuto da `analysis-level` nella suite, che fallisce con l'ordine vecchio.
+
+### Cosa non e' stato verificato sul device
+
+Non ho un iPad ne' un X-Air: la diagnosi e' sul meccanismo (il codice JUCE che
+gestisce il reset e' li' da leggere), non su una riproduzione. Se dopo questo
+cambio il problema resta, **guarda `riavvii` sulla pagina impostazioni**: se sale
+la causa e' quella e il tamponamento non basta; se resta a 0 il device non si sta
+fermando e la causa e' altrove.
+
 ## Il tracker seguiva sé stesso (22 agosto)
 
 Tre sintomi, una causa sola:

@@ -500,7 +500,19 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // that has no leak costs nothing.
     subtractSpeakerLeak (numSamples);
     maybeInjectClick (numSamples);
-    applyAnalysisMakeup (numSamples, peak);
+
+    // The level the make-up gain works from is the level of the signal it is
+    // about to be applied to, which is not the level that arrived. `peak` above
+    // is the input including whatever of our own part came back on it, and that
+    // part has just been taken out - so driving the gain from it holds the
+    // analysis below where the network expects it by exactly the amount the
+    // subtraction removed. Measured on a returned feed with the part at full
+    // volume, the analysis sat at 0.045 against 0.076 with the part silent: the
+    // same band, quieter, for no reason the network can know about.
+    float postPeak = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+        postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
+    applyAnalysisMakeup (numSamples, postPeak);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
         analysisPeak = std::max (analysisPeak, std::abs (mono[static_cast<size_t> (i)]));
