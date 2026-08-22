@@ -61,7 +61,7 @@ private:
     void layoutSettings (juce::Rectangle<int> area);
 
     void loadPrefs();
-    void savePrefs();
+    void savePrefs (bool flush = true);
     void applySubdivision (vp::Subdivision s);
     void refreshSubdivisionButtons();
     void applyStyle (vp::GrooveStyle s);

@@ -324,6 +324,7 @@ MainComponent::MainComponent()
         engine.settings().shakerEnabled.store (on);
         shakerButton.setButtonText (on ? "SHAKER  ON" : "SHAKER  OFF");
         shakerButton.setToggleState (on, juce::dontSendNotification);
+        savePrefs();
     };
     debugButton.onClick = [this] {
         debugOpen = ! debugOpen;
@@ -360,6 +361,7 @@ MainComponent::MainComponent()
         engine.settings().congasEnabled.store (on);
         congasButton.setButtonText (on ? "CONGAS  ON" : "CONGAS  OFF");
         congasButton.setToggleState (on, juce::dontSendNotification);
+        savePrefs();
     };
 
     styleAuto.onClick   = [this] { applyStyleAuto (! engine.settings().grooveAuto.load()); };
@@ -401,12 +403,14 @@ MainComponent::MainComponent()
         caption (lab, name, initial);
         auto* sp = &s;
         auto* lp = &lab;
-        s.onValueChange = [sp, lp, name, apply, caption]
+        s.onValueChange = [this, sp, lp, name, apply, caption]
         {
             const float v = static_cast<float> (sp->getValue());
             apply (v);
             caption (*lp, name, v);
+            savePrefs (false);
         };
+        s.onDragEnd = [this] { savePrefs(); };
     };
 
     setupTrim (swingSlider, swingLabel, "SWING", 0.00,
@@ -440,7 +444,9 @@ MainComponent::MainComponent()
         engine.settings().percussionVolume.store (v);
         shakerVolumeValue.setText (juce::String (juce::roundToInt (v * 100.0)) + "%",
                                    juce::dontSendNotification);
+        savePrefs (false);
     };
+    shakerVolumeSlider.onDragEnd = [this] { savePrefs(); };
 
     // The settings page and everything on it. Added after the console so it is
     // the last child: a full-bounds opaque child on top is what makes the page
@@ -527,6 +533,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    savePrefs();
     juce::Desktop::getInstance().removeDarkModeSettingListener (this);
     tapButton.setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
@@ -903,6 +910,20 @@ void MainComponent::loadPrefs()
     options.osxLibrarySubFolder = "Application Support";
     prefs = std::make_unique<juce::PropertiesFile> (options);
 
+    auto clamp01 = [] (double v, double fallback) -> float
+    {
+        if (! std::isfinite (v))
+            return static_cast<float> (fallback);
+        return juce::jlimit (0.0f, 1.0f, static_cast<float> (v));
+    };
+    auto setTrim = [] (juce::Slider& s, juce::Label& lab, const char* name, float v)
+    {
+        s.setValue (static_cast<double> (v), juce::dontSendNotification);
+        lab.setText (juce::String (name) + "    "
+                         + juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%",
+                     juce::dontSendNotification);
+    };
+
     // Only the rates the page can offer are honoured. A stored number the page
     // has no button for would be a clock the listener could see the effect of
     // and not get back off.
@@ -925,9 +946,60 @@ void MainComponent::loadPrefs()
     const int theme = prefs->getIntValue ("theme", -1);
     if (theme == 0 || theme == 1)
         applyTheme (theme == 1, true);
+
+    const int sub = prefs->getIntValue ("subdivision",
+                                        engine.settings().subdivision.load());
+    if (sub == static_cast<int> (vp::Subdivision::autoDetect)
+        || sub == static_cast<int> (vp::Subdivision::quarter)
+        || sub == static_cast<int> (vp::Subdivision::eighth)
+        || sub == static_cast<int> (vp::Subdivision::sixteenth))
+        engine.settings().subdivision.store (sub);
+
+    const int style = prefs->getIntValue ("grooveStyle",
+                                          engine.settings().grooveStyle.load());
+    if (style >= 0 && style < static_cast<int> (vp::GrooveStyle::count))
+        engine.settings().grooveStyle.store (style);
+
+    engine.settings().grooveAuto.store (
+        prefs->getBoolValue ("grooveAuto", engine.settings().grooveAuto.load()));
+
+    const int oct = prefs->getIntValue ("tempoOctave",
+                                        engine.settings().tempoOctave.load());
+    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, oct));
+
+    engine.settings().shakerEnabled.store (
+        prefs->getBoolValue ("shakerEnabled", engine.settings().shakerEnabled.load()));
+    engine.settings().congasEnabled.store (
+        prefs->getBoolValue ("congasEnabled", engine.settings().congasEnabled.load()));
+
+    const float vol = clamp01 (prefs->getDoubleValue ("percussionVolume", 1.0), 1.0);
+    engine.settings().percussionVolume.store (vol);
+    shakerVolumeSlider.setValue (static_cast<double> (vol), juce::dontSendNotification);
+    shakerVolumeValue.setText (juce::String (juce::roundToInt (static_cast<double> (vol) * 100.0)) + "%",
+                               juce::dontSendNotification);
+
+    const float reverb = clamp01 (prefs->getDoubleValue ("reverbAmount", 0.30), 0.30);
+    engine.settings().reverbAmount.store (reverb);
+    setTrim (reverbSlider, reverbLabel, "REVERB", reverb);
+
+    const float swing = clamp01 (prefs->getDoubleValue ("swing", 0.00), 0.00);
+    engine.settings().swing.store (swing);
+    setTrim (swingSlider, swingLabel, "SWING", swing);
+
+    const float energy = clamp01 (prefs->getDoubleValue ("intensity", 0.50), 0.50);
+    engine.settings().intensity.store (energy);
+    setTrim (intensitySlider, intensityLabel, "ENERGIA", energy);
+
+    const bool shakerOn = engine.settings().shakerEnabled.load();
+    shakerButton.setButtonText (shakerOn ? "SHAKER  ON" : "SHAKER  OFF");
+    shakerButton.setToggleState (shakerOn, juce::dontSendNotification);
+
+    const bool congasOn = engine.settings().congasEnabled.load();
+    congasButton.setButtonText (congasOn ? "CONGAS  ON" : "CONGAS  OFF");
+    congasButton.setToggleState (congasOn, juce::dontSendNotification);
 }
 
-void MainComponent::savePrefs()
+void MainComponent::savePrefs (bool flush)
 {
     if (prefs == nullptr)
         return;
@@ -937,13 +1009,28 @@ void MainComponent::savePrefs()
     prefs->setValue ("inputProcessing", inputProcessing);
     prefs->setValue ("followSource", engine.settings().followSource.load());
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
-    prefs->saveIfNeeded();
+    prefs->setValue ("subdivision", engine.settings().subdivision.load());
+    prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
+    prefs->setValue ("grooveAuto", engine.settings().grooveAuto.load());
+    prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());
+    prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
+    prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
+    prefs->setValue ("percussionVolume",
+                     static_cast<double> (engine.settings().percussionVolume.load()));
+    prefs->setValue ("reverbAmount",
+                     static_cast<double> (engine.settings().reverbAmount.load()));
+    prefs->setValue ("swing", static_cast<double> (engine.settings().swing.load()));
+    prefs->setValue ("intensity", static_cast<double> (engine.settings().intensity.load()));
+
+    if (flush)
+        prefs->saveIfNeeded();
 }
 
 void MainComponent::applySubdivision (vp::Subdivision s)
 {
     engine.settings().subdivision.store (static_cast<int> (s));
     refreshSubdivisionButtons();
+    savePrefs();
 }
 
 void MainComponent::refreshSubdivisionButtons()
@@ -969,6 +1056,7 @@ void MainComponent::applyStyle (vp::GrooveStyle s)
     engine.settings().grooveAuto.store (false);
     engine.settings().grooveStyle.store (static_cast<int> (s));
     refreshStyleButtons();
+    savePrefs();
 }
 
 void MainComponent::applyTempoOctave (int octaves)
@@ -976,6 +1064,7 @@ void MainComponent::applyTempoOctave (int octaves)
     engine.settings().tempoOctaveAuto.store (false);
     engine.settings().tempoOctave.store (juce::jlimit (-1, 1, octaves));
     refreshOctaveButtons();
+    savePrefs();
     repaint();
 }
 
@@ -1007,6 +1096,7 @@ void MainComponent::applyStyleAuto (bool on)
 {
     engine.settings().grooveAuto.store (on);
     refreshStyleButtons();
+    savePrefs();
 }
 
 void MainComponent::refreshStyleButtons()
