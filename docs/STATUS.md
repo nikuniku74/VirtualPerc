@@ -26,6 +26,40 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Il link USB iPad -> X-Air non regge, e non e' l'app (22 agosto)
+
+Chiuso il capitolo sopra: la causa **non e' nel nostro codice**. Isolata cosi',
+e il risultato e' netto:
+
+| prova | esito |
+|---|---|
+| App **chiusa** dal selettore, solo Spotify, iPad -> X-Air via USB | cade dopo ~1 s |
+| Senza cavo USB, anche con l'app aperta | regge |
+| Musica in un ingresso normale del mixer con un cavo audio | regge |
+| USB usata come **uscita** | cade dopo ~1 s |
+
+Cioe': muore il collegamento audio USB fra iPad e X-Air, qualunque cosa lo stia
+usando. L'app ci finiva dentro solo perche' era una delle cose che lo usavano.
+
+Non c'e' un "driver dell'iPad" da aggiornare: iPadOS non ha driver per singola
+periferica audio, usa la classe generica **USB Audio Class 2.0**. Quello che
+cambia da un rig all'altro e' l'alimentazione della porta, la banda isocrona che
+il flusso chiede (un X-Air grosso presenta 18 in / 18 out) e il firmware del
+mixer. La leva sta li', non nel software.
+
+Cosa e' stato provato senza esito: attaccare l'iPad alla corrente; 44.1 e 48 kHz;
+allineare i due clock sulla stessa frequenza.
+
+**Percorso consigliato se il collegamento diretto non si recupera:** una
+interfaccia 2x2 class-compliant fra iPad e mixer, con l'uscita su un canale e una
+mandata del banco sul suo ingresso. L'app funziona cosi' com'e': CLOCK su AUTO
+segue l'interfaccia, e la sorgente resta MIXER.
+
+Quello che l'app ha guadagnato lungo questa indagine resta valido e utile a
+prescindere - si rialza da sola quando iOS le porta via il device, invece di
+restare muta finche' qualcuno non cambia una impostazione - ma **non impedisce
+il crollo**, perche' il crollo non e' suo.
+
 ## L'audio si ferma dopo qualche secondo con l'X-Air attaccato (22 agosto)
 
 Sintomo: iPad collegato via USB al mixer X-Air, **entrambi i clock sulla stessa
