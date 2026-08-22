@@ -2,7 +2,7 @@
 
 Documento operativo. Aggiornarlo ogni volta che cambia cosa si può installare, cosa locka, e cosa resta da provare sul device.
 
-**Data:** 19 agosto 2026 (sera)  
+**Data:** 22 agosto 2026  
 **Target:** iPadOS 16+, iPad Air M1  
 **Versione albero:** 0.1.0
 
@@ -25,6 +25,34 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | AI | Snapshot `aiOnnx=1`: motore **ONNX BeatNet**, non lo stub |
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
+
+## Crack all'avvio e Spotify che si ferma (22 agosto)
+
+Sintomo: all'apertura dell'app si sente un **crack**, e se stava suonando qualcosa (Spotify, Apple Music) **la riproduzione si ferma**. Rig: iPad + Behringer X-Air via USB, ingresso e uscita insieme, mixer a 48 kHz.
+
+Non era la sessione audio non condivisa: la categoria era gia' `PlayAndRecord` con `MixWithOthers`. Erano tre cose che riconfigurano l'hardware all'avvio, e su un'interfaccia esterna ogni riconfigurazione e' un clic:
+
+1. **JUCE che cerca i sample rate provandoli.** Senza `JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES`, `juce_Audio_ios.cpp` scopre cosa supporta la route **impostandola**: `setPreferredSampleRate` a 4 kHz, poi 192 kHz, poi ogni kilohertz in mezzo — circa **190 cambi di clock di fila**, a ogni apertura del device. Questo e' il crack, ed e' anche quello che strappa il sample rate all'app che stava suonando sulla stessa route. Ora i rate sono **dichiarati** (44.1 / 48 / 88.2 / 96) e lo sweep non parte mai.
+2. **Sessione dopo il device.** `configurePlaybackSession()` veniva chiamata *dopo* che JUCE aveva aperto il device, e chiedeva 48 kHz fissi e un buffer di 256 comunque: con il mixer a 44.1 lo faceva ripartire, con il mixer a 48 riscriveva valori gia' giusti. Ora `vp::prepareAudioSession` gira **prima**, e ogni scrittura sulla sessione e' condizionata: un rate o un buffer gia' corretto non viene riscritto.
+3. **Apri e riapri.** `setAudioChannels` apriva il device, e subito dopo `setAudioDeviceSetup` lo chiudeva e riapriva a 48 kHz / 256 comunque. Ora la sessione e' gia' a posto quando il device si apre, quindi l'apertura cade sul clock giusto e `applyAudioSetup` non ha piu' niente da cambiare: JUCE confronta il setup che riceve con quello su cui e' e torna senza toccare il device. Le uniche righe che possono ancora riaprirlo sono i canali d'ingresso, e vengono scritte solo nell'unico caso che lo richiede — microfono concesso dopo che il device era gia' aperto senza.
+
+Con CLOCK e BUFFER su **AUTO** (il default) l'app non scrive niente sull'hardware: si apre sul clock che il mixer sta gia' dando.
+
+### Pagina IMPOSTAZIONI
+
+Il tasto **SETUP** in alto a destra apre una pagina dedicata. In prima pagina restava roba che si decide una volta prima del concerto e mai durante, a un tocco di distanza dal trasporto: sono passate tutte di la'.
+
+| Gruppo | Cosa |
+|---|---|
+| **CLOCK** | AUTO / 44.1k / 48k / 88.2k / 96k. AUTO segue l'interfaccia |
+| **BUFFER** | AUTO / 64 / 128 / 256 / 512 |
+| **INGRESSO** | MIXER o IPAD; ELAB. OFF/ON (modo Measurement di iOS contro modo Default) |
+| **PROVE** | tema, CLICK TEST, pannello DEBUG |
+| **STATO** | clock e buffer **veri**, latenza, canali, route, se altre app stanno suonando, motore AI |
+
+Le scelte sono ricordate tra un avvio e l'altro (`PropertiesFile`), quindi il clock scelto e' gia' quello con cui il device viene aperto al lancio successivo.
+
+Da provare sul device: X-Air a 48 kHz, Spotify in riproduzione, apertura dell'app — niente crack e la traccia continua; poi CLOCK 44.1k mentre suona, che invece **deve** far ripartire l'audio (e' l'unica cosa in tutta l'app che riconfigura l'hardware di proposito).
 
 ## Bug Spotify / BPM a 0 (18 agosto)
 

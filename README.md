@@ -73,6 +73,10 @@ Simulator (no device signing):
 5. Speed up / slow down — it should follow without a restart
 6. STOP mutes the shaker; it keeps listening. START arms it again and waits for the next downbeat — it does not start at the instant you tap the button.
 
+**SETUP** (top right) is everything you set once and never touch mid-song: the **clock** (AUTO, or 44.1 / 48 / 88.2 / 96 kHz), the buffer, MIXER vs IPAD, the theme, **CLICK TEST** and the debug panel — plus a read-out of the rate, buffer, latency and route the hardware actually gave.
+
+Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds the clock and the app opens at whatever it is already running at, so plugging into an X-Air at 48 kHz costs nothing: no click, and a track already playing through the same route keeps playing.
+
 **CLICK TEST** (debug) injects an internal 120 BPM kit so you can verify the engine without drums.
 
 ## Docs

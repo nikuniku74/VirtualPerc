@@ -30,9 +30,38 @@ private:
     void refreshStartButton();
     void applyLatencyFromDevice();
     void openAudioDevice (bool micGranted);
-    void applyHardwareAudioSetup (int inputChannels);
+    /** Pins the clock and the buffer on the open device. claimInputChannels is
+        for the one case that has to move them - the microphone granted after the
+        device was already open with none - because any other write to the channel
+        fields makes the setup compare unequal and reopens the device for nothing. */
+    void applyAudioSetup (bool claimInputChannels);
     void ensureMicrophone();
-    void applyFollowSource();
+    void applyInputProcessing();
+
+    /** What the listener asked the clock to be, and what the device should
+        actually be opened at. They are not the same question: the request may
+        be AUTO, and AUTO means the rate the hardware is already running at -
+        on this rig the mixer's own clock. 0 from either means "no opinion",
+        and nothing is written to the device. */
+    double requestedSampleRate() const;
+    int    requestedBufferFrames() const;
+    double deviceSampleRate() const;
+    int    deviceBufferFrames() const;
+
+    void applyClock (int hz);
+    void applyBufferChoice (int frames);
+    void applyInputProcessingChoice (bool on);
+    void refreshClockButtons();
+    void refreshBufferButtons();
+    void refreshSourceButton();
+    void refreshProcButton();
+
+    void setSettingsOpen (bool open);
+    void paintSettings (juce::Graphics&);
+    void layoutSettings (juce::Rectangle<int> area);
+
+    void loadPrefs();
+    void savePrefs();
     void applySubdivision (vp::Subdivision s);
     void refreshSubdivisionButtons();
     void applyStyle (vp::GrooveStyle s);
@@ -61,6 +90,32 @@ private:
         juce::String title;
     };
     juce::Array<Card> cards;
+    juce::Array<Card> settingsCards;
+    void paintCardList (juce::Graphics& g, const juce::Array<Card>& list);
+
+    /** The settings page. A child rather than a flag the paint routine checks,
+        because a full-bounds opaque child is also what stops a tap meant for
+        the clock from landing on START underneath it. Everything it shows is
+        still a MainComponent member - the overlay only owns the surface. */
+    struct SettingsOverlay final : juce::Component
+    {
+        explicit SettingsOverlay (MainComponent& o) : owner (o) { setOpaque (true); }
+        void paint (juce::Graphics& g) override { owner.paintSettings (g); }
+        void resized() override { owner.layoutSettings (getLocalBounds()); }
+        MainComponent& owner;
+    };
+    SettingsOverlay settingsOverlay { *this };
+
+    /** The parts of the settings page that are drawn rather than placed: the
+        heading, the sentence under each group saying what the choice costs, and
+        the block of numbers the hardware actually came back with. Computed in
+        layoutSettings() and read by paintSettings(), for the same reason the
+        stage rows are: a caption cannot drift away from the row it explains. */
+    struct SettingsRows
+    {
+        juce::Rectangle<int> title, clockNote, bufferNote, inputNote, status;
+    };
+    SettingsRows settingsRows;
 
     /** The stage laid out row by row. Both resized() and paint() ask for it, so
         the halve/double buttons cannot end up somewhere other than beside the
@@ -128,6 +183,13 @@ private:
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
+    juce::TextButton settingsButton { "SETUP" };
+    juce::TextButton settingsClose { "CHIUDI" };
+    juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
+    juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
+    juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };
+    juce::TextButton buf256 { "256" }, buf512 { "512" };
+    juce::TextButton procButton { "ELAB.  OFF" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton congasButton { "CONGAS  ON" };
     juce::TextButton styleAuto { "AUTO" };
@@ -151,6 +213,8 @@ private:
         alone rather than the whole console. */
     juce::Rectangle<int> beatStrip;
 
+    std::unique_ptr<juce::PropertiesFile> prefs;
+
     bool debugOpen = false;
     bool darkMode = true;
     bool themeFollowsSystem = true;
@@ -160,6 +224,13 @@ private:
     bool userWantsArmed = false;
     int  inputChannels = 0;
     int  tapFlash = 0;
+
+    /** 0 means AUTO for both: follow the interface rather than tell it what to
+        do. That is the default because on a rig with a mixer the mixer holds
+        the clock, and the one thing the app must not do is take it off it. */
+    int  clockHz = 0;
+    int  bufferChoice = 0;
+    bool inputProcessing = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

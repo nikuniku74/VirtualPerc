@@ -142,6 +142,16 @@ target_compile_definitions (VirtualPercussionist PRIVATE
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:VirtualPercussionist,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:VirtualPercussionist,JUCE_VERSION>"
+    # The rates the app offers, declared rather than discovered. Left undefined,
+    # juce_Audio_ios.cpp *finds* them: on every device open it calls
+    # setPreferredSampleRate at 4 kHz, then 192 kHz, then every kilohertz in
+    # between - around 190 of them, back to back. Each one re-clocks whatever is
+    # on the USB port, so on a mixer that sweep is audible as a crack, and it
+    # pulls the hardware rate out from under anything else playing through the
+    # same route, which is why the track being played along to stops.
+    # A rate the interface does not have is not a problem: iOS answers with the
+    # one it does have, the device reports it, and the engine prepares at it.
+    "JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES=44100.0,48000.0,88200.0,96000.0"
 )
 
 target_link_libraries (VirtualPercussionist PRIVATE

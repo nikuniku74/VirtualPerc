@@ -265,10 +265,7 @@ MainComponent::MainComponent()
     setupBtn (stopButton, ink());
     setupBtn (tapButton, ink());
     setupBtn (shakerButton, ink());
-    setupBtn (debugButton, juce::Colour (0xff0a0a0c));
-    setupBtn (clickButton, juce::Colour (0xff0a0a0c));
-    setupBtn (themeButton, ink());
-    setupBtn (sourceButton, ink());
+    setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
     setupBtn (congasButton, ink());
     setupBtn (styleAuto, ink());
     setupBtn (styleMarcha, ink());
@@ -321,6 +318,10 @@ MainComponent::MainComponent()
     debugButton.onClick = [this] {
         debugOpen = ! debugOpen;
         debugButton.setToggleState (debugOpen, juce::dontSendNotification);
+        // The panel is drawn over the stage, so opening it from the settings
+        // page means leaving the settings page - otherwise the tap looks like
+        // it did nothing.
+        setSettingsOpen (false);
         repaint();
     };
     clickButton.onClick = [this]
@@ -332,15 +333,15 @@ MainComponent::MainComponent()
         clickButton.setButtonText (click ? "CLICK  ON" : "CLICK TEST");
         clickButton.setToggleState (click, juce::dontSendNotification);
     };
-    themeButton.onClick = [this] { applyTheme (! darkMode, true); };
+    themeButton.onClick = [this] { applyTheme (! darkMode, true); savePrefs(); };
     sourceButton.onClick = [this]
     {
         const bool speaker = engine.settings().followSource.load()
                              != static_cast<int> (vp::FollowSource::speaker);
         engine.settings().followSource.store (static_cast<int> (
             speaker ? vp::FollowSource::speaker : vp::FollowSource::kitMic));
-        sourceButton.setButtonText (speaker ? "IPAD" : "MIXER");
-        applyFollowSource();
+        refreshSourceButton();
+        savePrefs();
     };
 
     congasButton.onClick = [this]
@@ -431,12 +432,51 @@ MainComponent::MainComponent()
                                    juce::dontSendNotification);
     };
 
+    // The settings page and everything on it. Added after the console so it is
+    // the last child: a full-bounds opaque child on top is what makes the page
+    // a page rather than a set of buttons drawn over the transport.
+    addChildComponent (settingsOverlay);
+    settingsOverlay.toFront (false);
+
+    auto setupPageBtn = [this] (juce::TextButton& b, juce::Colour fill)
+    {
+        settingsOverlay.addAndMakeVisible (b);
+        b.setColour (juce::TextButton::buttonColourId, fill);
+        b.setColour (juce::TextButton::textColourOffId, text());
+        b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.18f));
+    };
+
+    setupPageBtn (settingsClose, ink());
+    setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
+    setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
+    setupPageBtn (themeButton, ink());
+    setupPageBtn (sourceButton, ink());
+    setupPageBtn (procButton, ink());
+    for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
+                     &bufAuto, &buf64, &buf128, &buf256, &buf512 })
+        setupPageBtn (*b, ink());
+
+    settingsButton.onClick = [this] { setSettingsOpen (true); };
+    settingsClose.onClick  = [this] { setSettingsOpen (false); };
+
+    clockAuto.onClick = [this] { applyClock (0); };
+    clock44.onClick   = [this] { applyClock (44100); };
+    clock48.onClick   = [this] { applyClock (48000); };
+    clock88.onClick   = [this] { applyClock (88200); };
+    clock96.onClick   = [this] { applyClock (96000); };
+
+    bufAuto.onClick = [this] { applyBufferChoice (0); };
+    buf64.onClick   = [this] { applyBufferChoice (64); };
+    buf128.onClick  = [this] { applyBufferChoice (128); };
+    buf256.onClick  = [this] { applyBufferChoice (256); };
+    buf512.onClick  = [this] { applyBufferChoice (512); };
+
+    procButton.onClick = [this] { applyInputProcessingChoice (! inputProcessing); };
+
    #if JUCE_IOS
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
-    sourceButton.setButtonText ("IPAD");
    #else
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
-    sourceButton.setButtonText ("MIXER");
    #endif
     // 0.00 is a sequencer: dead on the grid, every stroke the same weight.
     // A percussionist is neither, and this is the single setting that decides
@@ -451,6 +491,12 @@ MainComponent::MainComponent()
     engine.settings().reverbAmount.store (0.30f);
     shakerButton.setToggleState (true, juce::dontSendNotification);
     congasButton.setToggleState (true, juce::dontSendNotification);
+
+    // Before the device is opened: the stored clock is what it has to be opened
+    // at, and asking for it after the fact is the reconfiguration this change
+    // exists to remove.
+    loadPrefs();
+
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
@@ -504,7 +550,10 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &halveButton, &doubleButton, &barButton
+        &styleBossa, &halveButton, &doubleButton, &barButton,
+        &settingsButton, &settingsClose, &procButton,
+        &clockAuto, &clock44, &clock48, &clock88, &clock96,
+        &bufAuto, &buf64, &buf128, &buf256, &buf512
     };
     for (auto* button : buttons)
     {
@@ -528,6 +577,10 @@ void MainComponent::refreshThemeColours()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshOctaveButtons();
+    refreshClockButtons();
+    refreshBufferButtons();
+    refreshSourceButton();
+    refreshProcButton();
 }
 
 void MainComponent::startPressed()
@@ -589,6 +642,38 @@ void MainComponent::ensureMicrophone()
     });
 }
 
+double MainComponent::requestedSampleRate() const
+{
+    return clockHz > 0 ? static_cast<double> (clockHz) : 0.0;
+}
+
+int MainComponent::requestedBufferFrames() const
+{
+    return bufferChoice > 0 ? bufferChoice : 0;
+}
+
+double MainComponent::deviceSampleRate() const
+{
+    if (clockHz > 0)
+        return static_cast<double> (clockHz);
+
+    // AUTO. Not a fallback to 48 k: the number the session reports is the one
+    // the interface is clocked at, and handing JUCE exactly that number is what
+    // makes opening the device cost nothing. Off-device it is 0, and 0 travels
+    // all the way out as "do not write a rate anywhere".
+    const double hw = vp::sessionSampleRate();
+    return hw > 8000.0 && hw <= 192000.0 ? hw : 0.0;
+}
+
+int MainComponent::deviceBufferFrames() const
+{
+    if (bufferChoice > 0)
+        return bufferChoice;
+
+    const int hw = vp::sessionBufferFrames();
+    return hw >= 32 && hw <= 8192 ? hw : 0;
+}
+
 void MainComponent::openAudioDevice (bool granted)
 {
     micGranted = granted;
@@ -597,51 +682,252 @@ void MainComponent::openAudioDevice (bool granted)
     if (! audioOpened)
     {
         audioOpened = true;
+
+        // Session first, device second. It used to be the other way round -
+        // open at whatever came out, then set the category, then ask for 48 kHz
+        // and a 256-frame buffer whatever the interface was on, then close and
+        // reopen - and every one of those steps re-clocks an interface the whole
+        // room is listening through. With the hardware already settled, the open
+        // below lands on it and applyAudioSetup has nothing left to change.
+        vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+                                   inputProcessing });
         setAudioChannels (ins, 2);
-        applyHardwareAudioSetup (ins);
+        applyAudioSetup (false);
         return;
     }
 
     auto* dev = deviceManager.getCurrentAudioDevice();
     const int nIn = dev != nullptr ? dev->getActiveInputChannels().countNumberOfSetBits() : 0;
     if (ins > 0 && nIn <= 0)
-        applyHardwareAudioSetup (ins);
+        applyAudioSetup (true);
 }
 
-void MainComponent::applyHardwareAudioSetup (int ins)
+void MainComponent::applyAudioSetup (bool claimInputChannels)
 {
-   #if JUCE_IOS
-    vp::configurePlaybackSession();
-   #endif
+    vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+                               inputProcessing });
 
     auto setup = deviceManager.getAudioDeviceSetup();
-    double sr = setup.sampleRate;
-    if (auto* dev = deviceManager.getCurrentAudioDevice())
-        sr = dev->getCurrentSampleRate();
-    const double hw = vp::sessionSampleRate();
-    if (sr < 24000.0)
-        sr = hw > 24000.0 ? hw : 48000.0;
-    if (sr < 8000.0 || sr > 192000.0)
-        sr = 48000.0;
+    if (const double sr = deviceSampleRate(); sr > 0.0)
+        setup.sampleRate = sr;
+    if (const int buf = deviceBufferFrames(); buf > 0)
+        setup.bufferSize = buf;
 
-    setup.sampleRate = sr;
-    setup.bufferSize = 256;
-    setup.inputChannels.clear();
-    if (ins > 0)
-        setup.inputChannels.setRange (0, ins, true);
-    setup.outputChannels.clear();
-    setup.outputChannels.setRange (0, 2, true);
-    setup.useDefaultInputChannels = ins <= 0;
-    setup.useDefaultOutputChannels = false;
+    // The channel fields are left exactly as the device manager has them unless
+    // the microphone has just been granted and the open device has none. That is
+    // what opening once rests on: JUCE compares the setup it is handed against
+    // the one it is on and returns without touching the device when they are
+    // equal, so on a rig already at the right clock this call costs nothing.
+    // Rewriting the channels unconditionally - even to the same two - flips
+    // useDefaultInputChannels and reopens the device for nothing.
+    if (claimInputChannels)
+    {
+        setup.inputChannels.clear();
+        setup.inputChannels.setRange (0, 2, true);
+        setup.useDefaultInputChannels = false;
+    }
+
     const auto err = deviceManager.setAudioDeviceSetup (setup, true);
     juce::ignoreUnused (err);
-    applyFollowSource();
+    applyInputProcessing();
 }
 
-void MainComponent::applyFollowSource()
+void MainComponent::applyInputProcessing()
 {
+    // Measurement mode on iOS: no AGC, no noise suppression, no echo canceller
+    // between the room and the tracker. prepareAudioSession has already put the
+    // session there; this is what carries the same answer to the open device
+    // after a route change.
     if (auto* dev = deviceManager.getCurrentAudioDevice())
-        dev->setAudioPreprocessingEnabled (false);
+        dev->setAudioPreprocessingEnabled (inputProcessing);
+}
+
+void MainComponent::applyClock (int hz)
+{
+    if (clockHz == hz)
+        return;
+
+    clockHz = hz;
+    refreshClockButtons();
+    savePrefs();
+    if (audioOpened)
+        applyAudioSetup (false);
+    repaint();
+}
+
+void MainComponent::applyBufferChoice (int frames)
+{
+    if (bufferChoice == frames)
+        return;
+
+    bufferChoice = frames;
+    refreshBufferButtons();
+    savePrefs();
+    if (audioOpened)
+        applyAudioSetup (false);
+    repaint();
+}
+
+void MainComponent::applyInputProcessingChoice (bool on)
+{
+    if (inputProcessing == on)
+        return;
+
+    inputProcessing = on;
+    refreshProcButton();
+    savePrefs();
+
+    if (audioOpened)
+    {
+        vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+                                   inputProcessing });
+        applyInputProcessing();
+    }
+    repaint();
+}
+
+namespace
+{
+    void paintChoice (juce::TextButton& b, bool on)
+    {
+        b.setToggleState (on, juce::dontSendNotification);
+        b.setColour (juce::TextButton::buttonColourId, ink());
+        b.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+    }
+
+    juce::Font noteFont() { return fontUi (11.5f, false); }
+
+    /** The sentence under each group of settings. Shared because layoutSettings
+        needs its height and paintSettings needs its text, and a card sized
+        against one string and filled with another is how a caption ends up
+        clipped on the narrow side of the page. */
+    juce::String clockNote()
+    {
+        return juce::String (juce::CharPointer_UTF8 (
+            "AUTO segue il clock dell'interfaccia e non lo tocca: con il mixer a "
+            "48 kHz l'app si apre a 48 kHz. Un valore fisso lo chiede "
+            "all'interfaccia, e cambiarlo mentre suona la fa ripartire."));
+    }
+
+    juce::String bufferNote()
+    {
+        return juce::String (juce::CharPointer_UTF8 (
+            "Piu' corto, meno ritardo e piu' rischio di buchi. AUTO prende quello "
+            "che l'interfaccia sta gia' dando."));
+    }
+
+    juce::String inputNote()
+    {
+        return juce::String (juce::CharPointer_UTF8 (
+            "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
+            "microfono che sente la stanza. ELAB. OFF toglie guadagno automatico "
+            "ed eco di iOS: e' quello che vuole l'analisi."));
+    }
+
+    /** How tall that sentence comes out at a given width. Measured rather than
+        assumed: the same three sentences wrap to two lines beside a portrait
+        iPad and to five in a landscape column half as wide. */
+    int noteHeight (const juce::String& text, int width)
+    {
+        const juce::Font f = noteFont();
+        const float total = juce::GlyphArrangement::getStringWidth (f, text);
+        // Wrapping breaks at spaces, so a line never fills to the last pixel.
+        const float usable = juce::jmax (1.0f, static_cast<float> (width) * 0.94f);
+        const int lines = juce::jlimit (1, 8, static_cast<int> (std::ceil (total / usable)));
+        return juce::roundToInt (f.getHeight() * 1.28f) * lines;
+    }
+
+    constexpr int kStatusLines = 7;
+}
+
+void MainComponent::refreshClockButtons()
+{
+    paintChoice (clockAuto, clockHz == 0);
+    paintChoice (clock44, clockHz == 44100);
+    paintChoice (clock48, clockHz == 48000);
+    paintChoice (clock88, clockHz == 88200);
+    paintChoice (clock96, clockHz == 96000);
+}
+
+void MainComponent::refreshBufferButtons()
+{
+    paintChoice (bufAuto, bufferChoice == 0);
+    paintChoice (buf64, bufferChoice == 64);
+    paintChoice (buf128, bufferChoice == 128);
+    paintChoice (buf256, bufferChoice == 256);
+    paintChoice (buf512, bufferChoice == 512);
+}
+
+void MainComponent::refreshProcButton()
+{
+    procButton.setButtonText (inputProcessing ? "ELAB.  ON" : "ELAB.  OFF");
+    paintChoice (procButton, inputProcessing);
+}
+
+void MainComponent::refreshSourceButton()
+{
+    const bool speaker = engine.settings().followSource.load()
+                             == static_cast<int> (vp::FollowSource::speaker);
+    sourceButton.setButtonText (speaker ? "IPAD" : "MIXER");
+    paintChoice (sourceButton, speaker);
+}
+
+void MainComponent::setSettingsOpen (bool open)
+{
+    settingsButton.setToggleState (open, juce::dontSendNotification);
+    settingsOverlay.setVisible (open);
+    if (open)
+    {
+        settingsOverlay.toFront (false);
+        settingsOverlay.setBounds (getLocalBounds());
+    }
+    repaint();
+}
+
+void MainComponent::loadPrefs()
+{
+    juce::PropertiesFile::Options options;
+    options.applicationName = "VirtualPercussionist";
+    options.filenameSuffix = "settings";
+    options.folderName = "VirtualPercussionist";
+    options.osxLibrarySubFolder = "Application Support";
+    prefs = std::make_unique<juce::PropertiesFile> (options);
+
+    // Only the rates the page can offer are honoured. A stored number the page
+    // has no button for would be a clock the listener could see the effect of
+    // and not get back off.
+    const int hz = prefs->getIntValue ("clockHz", 0);
+    clockHz = (hz == 44100 || hz == 48000 || hz == 88200 || hz == 96000) ? hz : 0;
+
+    const int buf = prefs->getIntValue ("bufferFrames", 0);
+    bufferChoice = (buf == 64 || buf == 128 || buf == 256 || buf == 512) ? buf : 0;
+
+    inputProcessing = prefs->getBoolValue ("inputProcessing", false);
+
+    const int src = prefs->getIntValue ("followSource",
+                                        engine.settings().followSource.load());
+    if (src == static_cast<int> (vp::FollowSource::speaker)
+        || src == static_cast<int> (vp::FollowSource::kitMic))
+        engine.settings().followSource.store (src);
+
+    // -1 is the state the app ships in: follow the system rather than remember
+    // a theme the listener never chose.
+    const int theme = prefs->getIntValue ("theme", -1);
+    if (theme == 0 || theme == 1)
+        applyTheme (theme == 1, true);
+}
+
+void MainComponent::savePrefs()
+{
+    if (prefs == nullptr)
+        return;
+
+    prefs->setValue ("clockHz", clockHz);
+    prefs->setValue ("bufferFrames", bufferChoice);
+    prefs->setValue ("inputProcessing", inputProcessing);
+    prefs->setValue ("followSource", engine.settings().followSource.load());
+    prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
+    prefs->saveIfNeeded();
 }
 
 void MainComponent::applySubdivision (vp::Subdivision s)
@@ -767,7 +1053,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     if (userWantsArmed)
         engine.start();
     applyLatencyFromDevice();
-    applyFollowSource();
+    applyInputProcessing();
     audioReady = true;
 }
 
@@ -1021,14 +1307,13 @@ void MainComponent::resized()
     auto util = r.removeFromTop (34);
     if (isLandscape())
         util = util.withWidth (stage.getWidth());
-    debugButton.setBounds (util.removeFromRight (56).reduced (2));
-    util.removeFromRight (6);
-    clickButton.setBounds (util.removeFromRight (112).reduced (2));
-    util.removeFromRight (6);
-    themeButton.setBounds (util.removeFromRight (80).reduced (2));
-    util.removeFromRight (6);
-    sourceButton.setBounds (util.removeFromRight (92).reduced (2));
+    // One button now. The four that used to live here - source, theme, click
+    // test, debug - are all things a player sets before the set and never
+    // during it, and every one of them was a stray tap away from the transport.
+    settingsButton.setBounds (util.removeFromRight (96).reduced (2));
     r.removeFromTop (8);
+
+    settingsOverlay.setBounds (getLocalBounds());
 
     if (isLandscape())
         r.removeFromLeft (stage.getWidth() + 16);
@@ -1048,7 +1333,12 @@ void MainComponent::resized()
 
 void MainComponent::paintCards (juce::Graphics& g)
 {
-    for (const auto& c : cards)
+    paintCardList (g, cards);
+}
+
+void MainComponent::paintCardList (juce::Graphics& g, const juce::Array<Card>& list)
+{
+    for (const auto& c : list)
     {
         g.setColour (panel());
         g.fillRoundedRectangle (c.bounds.toFloat(), 14.0f);
@@ -1269,6 +1559,208 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     g.drawFittedText (micText + dot + (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER")
                           + (snap.aiOnnx ? juce::String() : dot + "AI STUB"),
                       rows.mic, juce::Justification::centred, 1);
+}
+
+void MainComponent::layoutSettings (juce::Rectangle<int> area)
+{
+    settingsCards.clearQuick();
+
+    auto r = area;
+   #if JUCE_IOS
+    r = r.reduced (24, 20).withTrimmedTop (16);
+   #else
+    r = r.reduced (30, 24);
+   #endif
+
+    auto head = r.removeFromTop (34);
+    settingsClose.setBounds (head.removeFromRight (juce::jmin (120, head.getWidth() / 3))
+                                 .reduced (2));
+    settingsRows.title = head.withTrimmedRight (8);
+    r.removeFromTop (14);
+
+    const int gap = 10;
+    const int titleH = 18;
+    const int padY = 10;
+    const int noteGap = 8;
+    const int rowH = 58;
+
+    auto card = [&] (juce::Rectangle<int> bounds, const char* title)
+    {
+        settingsCards.add ({ bounds, juce::String (title) });
+        return bounds.reduced (12, padY).withTrimmedTop (titleH);
+    };
+
+    // Five across is the widest this page gets, and the buttons have to stay
+    // tappable at that width on the narrow side of a portrait iPad. The
+    // remainder goes to the last one rather than to a gap on the right.
+    auto buttonRow = [] (juce::Rectangle<int> row, std::initializer_list<juce::TextButton*> bs)
+    {
+        const int n = static_cast<int> (bs.size());
+        int i = 0;
+        for (auto* b : bs)
+        {
+            const int w = row.getWidth() / (n - i);
+            b->setBounds ((++i == n ? row : row.removeFromLeft (w)).reduced (3));
+        }
+    };
+
+    // One column at full width in both orientations. Two columns is what the
+    // console does, because the console has enough in it to fill them; this page
+    // has five short cards, and split in two neither side had enough to reach
+    // the bottom. Turned, the same five get shorter instead of narrower: the
+    // captions stop wrapping.
+    const int bodyW = juce::jmax (80, r.getWidth() - 24);
+    const int chrome = padY * 2 + titleH;
+
+    // Sized against their contents, placed second - the same order the stage
+    // rows are computed in. A share of the column each gave a two-line caption
+    // the same room as a seven-line read-out.
+    enum { kClock = 0, kBuffer, kInput, kTests, kStatus, kCards };
+    int h[kCards] = {
+        chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
+        chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
+        chrome + rowH + noteGap + noteHeight (inputNote(), bodyW),
+        chrome + rowH,
+        chrome + juce::roundToInt (fontUi (12.0f, false).getHeight() * 1.32f) * kStatusLines
+    };
+
+    int want = (kCards - 1) * gap;
+    for (const int n : h)
+        want += n;
+
+    int cardGap = gap;
+    if (want > r.getHeight() && want > 0)
+    {
+        for (int& n : h)
+            n = n * r.getHeight() / want;
+    }
+    else
+    {
+        // What is left over goes three ways, in this order: a third of their own
+        // height to the cards, up to 24 px to each gap, and whatever is still
+        // spare above and below - so a page shorter than the screen sits in the
+        // middle of it rather than stretched down it. Grown any further, a card
+        // is a title with a hole under it.
+        int slack = r.getHeight() - want;
+        const int grow = juce::jmin (slack, want / 3);
+        for (int& n : h)
+            n += grow * n / juce::jmax (1, want);
+        slack -= grow;
+
+        const int extraGap = juce::jmin (24, slack / (kCards - 1));
+        cardGap += extraGap;
+        slack -= extraGap * (kCards - 1);
+
+        r.removeFromTop (juce::jmin (slack / 2, 40));
+    }
+
+    auto take = [&r, cardGap] (int height)
+    {
+        auto out = r.removeFromTop (height);
+        r.removeFromTop (cardGap);
+        return out;
+    };
+
+    {
+        auto body = card (take (h[kClock]), "CLOCK");
+        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                   { &clockAuto, &clock44, &clock48, &clock88, &clock96 });
+        settingsRows.clockNote = body.withTrimmedTop (noteGap);
+    }
+
+    {
+        auto body = card (take (h[kBuffer]), "BUFFER");
+        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                   { &bufAuto, &buf64, &buf128, &buf256, &buf512 });
+        settingsRows.bufferNote = body.withTrimmedTop (noteGap);
+    }
+
+    {
+        auto body = card (take (h[kInput]), "INGRESSO");
+        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                   { &sourceButton, &procButton });
+        settingsRows.inputNote = body.withTrimmedTop (noteGap);
+    }
+
+    buttonRow (card (take (h[kTests]), "PROVE"),
+               { &themeButton, &clickButton, &debugButton });
+
+    // The numbers are the point of the page: a clock the listener chose and a
+    // clock the hardware gave are not the same thing, and only one of them is
+    // what the engine is running at.
+    settingsRows.status = card (take (h[kStatus]), "STATO");
+}
+
+void MainComponent::paintSettings (juce::Graphics& g)
+{
+    const auto full = settingsOverlay.getLocalBounds().toFloat();
+    g.fillAll (bg());
+
+    juce::ColourGradient floor (gDarkMode ? juce::Colour (0xff0a0a0c) : juce::Colour (0xffffffff),
+                                full.getCentreX(), full.getY(),
+                                bg(), full.getCentreX(), full.getBottom(), false);
+    g.setGradientFill (floor);
+    g.fillRect (full);
+    paintRadial (g, { full.getCentreX(), full.getY() + 28.0f },
+                 full.getWidth() * 0.55f, fuchsia(), 0.10f);
+
+    paintCardList (g, settingsCards);
+
+    {
+        auto titleR = settingsRows.title;
+        auto brand = titleR.removeFromLeft (20);
+        g.setColour (fuchsia());
+        g.fillRoundedRectangle (brand.withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
+        g.setColour (text());
+        g.setFont (fontUi (13.0f));
+        g.drawFittedText ("IMPOSTAZIONI", titleR, juce::Justification::centredLeft, 1);
+        g.setColour (fuchsia().withAlpha (0.55f));
+        g.fillRect ((float) settingsRows.title.getX(),
+                    (float) settingsRows.title.getBottom() + 2.0f,
+                    (float) settingsRows.title.getWidth(), 1.2f);
+    }
+
+    g.setColour (mute());
+    g.setFont (noteFont());
+    g.drawFittedText (clockNote(), settingsRows.clockNote, juce::Justification::centredLeft, 8);
+    g.drawFittedText (bufferNote(), settingsRows.bufferNote, juce::Justification::centredLeft, 8);
+    g.drawFittedText (inputNote(), settingsRows.inputNote, juce::Justification::centredLeft, 8);
+
+    // Status: what came back, not what was asked for.
+    {
+        auto* dev = deviceManager.getCurrentAudioDevice();
+        const double devSr = dev != nullptr ? dev->getCurrentSampleRate() : 0.0;
+        const int devBuf = dev != nullptr ? dev->getCurrentBufferSizeSamples() : 0;
+        const int outs = dev != nullptr
+                             ? dev->getActiveOutputChannels().countNumberOfSetBits() : 0;
+        const double blockMs = devSr > 0.0 && devBuf > 0
+                                   ? devBuf * 1000.0 / devSr : 0.0;
+        const juce::String route (vp::sessionRouteName());
+
+        juce::StringArray lines;
+        lines.add (juce::String ("clock      ")
+                   + (devSr > 0.0 ? juce::String (devSr, 0) + " Hz" : juce::String ("--"))
+                   + (clockHz > 0 ? juce::String ("   (chiesto ") + juce::String (clockHz) + ")"
+                                  : juce::String ("   (auto)")));
+        lines.add (juce::String ("buffer     ")
+                   + (devBuf > 0 ? juce::String (devBuf) + "  ->  "
+                                       + juce::String (blockMs, 1) + " ms"
+                                 : juce::String ("--")));
+        lines.add (juce::String ("latenza    ") + juce::String (snap.latencyMs, 1) + " ms");
+        lines.add (juce::String ("canali     in ") + juce::String (inputChannels)
+                   + "   out " + juce::String (outs));
+        if (route.isNotEmpty())
+            lines.add ("uscita     " + route);
+        lines.add (juce::String ("altre app  ")
+                   + (vp::otherAudioPlaying() ? "in riproduzione" : "ferme"));
+        lines.add (juce::String ("motore     ")
+                   + (snap.aiOnnx ? "ONNX BeatNet" : "AI STUB"));
+
+        g.setColour (mute());
+        g.setFont (fontUi (12.0f, false));
+        g.drawFittedText (lines.joinIntoString ("\n"), settingsRows.status,
+                          juce::Justification::centredLeft, kStatusLines);
+    }
 }
 
 void MainComponent::paint (juce::Graphics& g)
