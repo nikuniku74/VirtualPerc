@@ -835,6 +835,123 @@ int main()
                 "the phase loop behaves the same whatever the buffer size");
     }
 
+    // The part must not be able to switch the tracker off.
+    //
+    // The loudness gate that decides whether there is music to follow reads the
+    // *analysis* signal - after the leak subtraction and after the make-up gain
+    // - and both of those moved when the subtraction was made to work. Two ways
+    // that goes wrong, and the symptom of either is the same: the part plays for
+    // a moment, everything goes quiet, and it stops.
+    //
+    //   - on a feed carrying none of our output, a subtraction that fires at all
+    //     is eating the band;
+    //   - on a feed that does carry it, taking it out leaves less signal, and
+    //     the make-up gain was being driven by the level *before* the
+    //     subtraction, so nothing put the remainder back where the network
+    //     expects it.
+    {
+        auto analysisLevel = [&] (float percVolume, float feedback, vp::FollowSource source)
+        {
+            const int blk = 256;
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, blk, 1);
+            eng.settings().followSource.store (static_cast<int> (source));
+            eng.settings().percussionVolume.store (percVolume);
+            eng.settings().masterVolume.store (1.0f);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.setReportedLatencyMs (12.0f);
+            eng.start();
+            // Four taps put the clock on 120 without waiting for the network,
+            // so the part is playing for the whole of the measured window.
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            const int delay = static_cast<int> (0.012 * sr);
+            std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
+            int histWrite = 0;
+
+            std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+            std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            // A band: a broadband stroke on every eighth at 120, steady level.
+            const int beatSamples = static_cast<int> (sr * 0.25);
+            unsigned rng = 22222u;
+            double sum = 0.0;
+            int counted = 0;
+            const int blocks = static_cast<int> (sr * 12.0) / blk;
+            for (int bi = 0; bi < blocks; ++bi)
+            {
+                for (int i = 0; i < blk; ++i)
+                {
+                    const int pos = bi * blk + i;
+                    const int intoBeat = pos % beatSamples;
+                    rng = rng * 1664525u + 1013904223u;
+                    const float noise = static_cast<float> ((rng >> 9) & 0xffff) / 32767.5f - 1.0f;
+                    const float env = std::exp (-static_cast<float> (intoBeat) / (sr * 0.030f));
+                    const float band = 0.25f * noise * env;
+                    const int ri = (histWrite - delay + i + static_cast<int> (history.size()))
+                                   % static_cast<int> (history.size());
+                    in[static_cast<size_t> (i)] = band + feedback * history[static_cast<size_t> (ri)];
+                }
+                const float* ins[1] = { in.data() };
+                eng.process (ins, 1, outs, 2, blk);
+                for (int i = 0; i < blk; ++i)
+                {
+                    history[static_cast<size_t> (histWrite)] =
+                        0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                    histWrite = (histWrite + 1) % static_cast<int> (history.size());
+                }
+                if (bi > blocks / 2)
+                {
+                    sum += static_cast<double> (eng.snapshot().analysisPeak);
+                    ++counted;
+                }
+            }
+            return counted > 0 ? static_cast<float> (sum / counted) : 0.0f;
+        };
+
+        // The gate the tracker uses. Below this there is no music as far as the
+        // state machine is concerned, and the part is muted.
+        constexpr float kMixerGate = 0.0020f;
+        constexpr float kSpeakerGate = 0.0010f;
+
+        for (const auto& mode : { std::pair<vp::FollowSource, const char*>
+                                      { vp::FollowSource::kitMic, "MIXER" },
+                                  { vp::FollowSource::speaker, "IPAD" } })
+        {
+            const float quiet = analysisLevel (0.0f, 0.0f, mode.first);
+            const float loud  = analysisLevel (1.0f, 0.0f, mode.first);
+            const float loopedQuiet = analysisLevel (0.0f, 0.5f, mode.first);
+            const float loopedLoud  = analysisLevel (1.0f, 0.5f, mode.first);
+            std::printf ("analysis-level  %-6s clean: part off=%.4f on=%.4f   "
+                         "returned: off=%.4f on=%.4f\n",
+                         mode.second, static_cast<double> (quiet), static_cast<double> (loud),
+                         static_cast<double> (loopedQuiet), static_cast<double> (loopedLoud));
+
+            const float gate = mode.first == vp::FollowSource::speaker ? kSpeakerGate : kMixerGate;
+            expect (loud > gate * 4.0f && loopedLoud > gate * 4.0f,
+                    mode.first == vp::FollowSource::speaker
+                        ? "IPAD: the analysis stays well above the gate with the part at full volume"
+                        : "MIXER: the analysis stays well above the gate with the part at full volume");
+            // And turning the part up must not quietly cost the band - on either
+            // kind of feed. On a clean one there is nothing of ours to take out,
+            // so any loss is the band. On a returned one the subtraction does
+            // remove signal, and the make-up gain has to put the remainder back
+            // where the network expects it: driven by the level *before* the
+            // subtraction it did not, and the same band arrived at 0.045 instead
+            // of 0.076 for no reason the network could know about.
+            expect (loopedLoud > loopedQuiet * 0.8f,
+                    mode.first == vp::FollowSource::speaker
+                        ? "IPAD: taking our own part out does not leave the band quieter"
+                        : "MIXER: taking our own part out does not leave the band quieter");
+            expect (loud > quiet * 0.9f,
+                    mode.first == vp::FollowSource::speaker
+                        ? "IPAD: playing the part does not eat the band on a feed that has no return"
+                        : "MIXER: playing the part does not eat the band on a feed that has no return");
+        }
+    }
+
     vpRunAiBeatTests (gPassed, gFailed);
 
     std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);

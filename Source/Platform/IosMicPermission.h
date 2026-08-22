@@ -41,5 +41,18 @@ int    sessionOutputChannels();
 std::string sessionRouteName();
 /** True while another app - the track being played along to - holds audio. */
 bool   otherAudioPlaying();
+/** Whether iOS is currently doing its own processing on the input. */
+bool   sessionInputProcessing();
+
+/** Called on the message thread when iOS has restarted its media server.
+
+    Everything audio the process owns is invalid after that - the session, the
+    audio unit, all of it - and has to be built again from nothing. JUCE hears
+    the same notification but answers it by starting the audio unit it already
+    has, which after a reset is a handle to something that no longer exists, so
+    the app goes silent and stays silent until something makes it build a new
+    one. A USB interface is a common way to provoke the reset in the first
+    place. */
+void setMediaServicesResetHandler (std::function<void()> handler);
 
 } // namespace vp

@@ -4,6 +4,7 @@
 #import <dispatch/dispatch.h>
 
 #include <cmath>
+#include <utility>
 
 namespace vp
 {
@@ -151,6 +152,38 @@ std::string sessionRouteName()
 bool otherAudioPlaying()
 {
     return session().secondaryAudioShouldBeSilencedHint || session().isOtherAudioPlaying;
+}
+
+bool sessionInputProcessing()
+{
+    return [session().mode isEqualToString: AVAudioSessionModeDefault];
+}
+
+namespace
+{
+    id gResetObserver = nil;
+    std::function<void()> gResetHandler;
+}
+
+void setMediaServicesResetHandler (std::function<void()> handler)
+{
+    gResetHandler = std::move (handler);
+
+    if (gResetObserver != nil)
+        return;
+
+    // Delivered on the main queue, which is the message thread: rebuilding the
+    // device is not something to start from whichever thread the notification
+    // happens to arrive on.
+    gResetObserver = [[NSNotificationCenter defaultCenter]
+        addObserverForName: AVAudioSessionMediaServicesWereResetNotification
+                    object: nil
+                     queue: [NSOperationQueue mainQueue]
+                usingBlock: ^(NSNotification*)
+    {
+        if (gResetHandler)
+            gResetHandler();
+    }];
 }
 
 } // namespace vp

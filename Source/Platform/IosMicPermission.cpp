@@ -19,5 +19,7 @@ int    sessionInputChannels()  { return 0; }
 int    sessionOutputChannels() { return 0; }
 std::string sessionRouteName() { return {}; }
 bool   otherAudioPlaying()   { return false; }
+bool   sessionInputProcessing() { return true; }
+void   setMediaServicesResetHandler (std::function<void()>) {}
 
 } // namespace vp

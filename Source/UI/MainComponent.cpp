@@ -514,6 +514,15 @@ MainComponent::MainComponent()
 
     startTimerHz (15);
 
+    {
+        juce::Component::SafePointer<MainComponent> safeReset (this);
+        vp::setMediaServicesResetHandler ([safeReset]
+        {
+            if (safeReset != nullptr)
+                safeReset->rebuildAudioDevice ("media services were reset");
+        });
+    }
+
     juce::Component::SafePointer<MainComponent> safe (this);
     vp::requestMicrophoneAccess ([safe] (bool granted)
     {
@@ -742,12 +751,63 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
     applyInputProcessing();
 }
 
+void MainComponent::rebuildAudioDevice (const char* why)
+{
+    juce::ignoreUnused (why);
+    if (! audioOpened)
+        return;
+
+    ++deviceRebuilds;
+    stalledTicks = 0;
+    // Two seconds before another one is allowed. A rig that genuinely cannot
+    // hold a device open would otherwise be rebuilt fifteen times a second,
+    // which is louder and less useful than being silent.
+    rebuildCooldownTicks = 30;
+
+    // The session first, because after a media server restart it has none of
+    // what was set on it - category, mode, rate, buffer, all back to defaults.
+    vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+                               inputProcessing });
+
+    // Close, not reopen. setAudioDeviceSetup keeps the device object and its
+    // audio unit; after a reset that unit is a handle to something that no
+    // longer exists, and starting it again is what JUCE already tried.
+    deviceManager.closeAudioDevice();
+
+    const auto setup = deviceManager.getAudioDeviceSetup();
+    if (setup.outputDeviceName.isNotEmpty() || setup.inputDeviceName.isNotEmpty())
+        deviceManager.restartLastAudioDevice();
+
+    if (deviceManager.getCurrentAudioDevice() == nullptr)
+    {
+        // Nothing to restart from, or it refused. Go all the way back to opening
+        // one from nothing, which is what the app does at launch - a reset can
+        // take the device names with it, and restartLastAudioDevice has nothing
+        // to work from then.
+        audioOpened = false;
+        openAudioDevice (micGranted);
+    }
+
+    applyInputProcessing();
+
+    seenAudioBlocks = audioBlocks.load (std::memory_order_relaxed);
+}
+
 void MainComponent::applyInputProcessing()
 {
     // Measurement mode on iOS: no AGC, no noise suppression, no echo canceller
     // between the room and the tracker. prepareAudioSession has already put the
     // session there; this is what carries the same answer to the open device
     // after a route change.
+    //
+    // Only when it is not already right. This runs from prepareToPlay, so it
+    // runs on every device start, and setting the mode is a write to the live
+    // session that iOS answers with a route change - which restarts the device,
+    // which calls prepareToPlay. On an external interface that churn is not
+    // free, and asking for the mode it is already in buys nothing.
+    if (vp::sessionInputProcessing() == inputProcessing)
+        return;
+
     if (auto* dev = deviceManager.getCurrentAudioDevice())
         dev->setAudioPreprocessingEnabled (inputProcessing);
 }
@@ -847,7 +907,7 @@ namespace
         return juce::roundToInt (f.getHeight() * 1.28f) * lines;
     }
 
-    constexpr int kStatusLines = 7;
+    constexpr int kStatusLines = 8;
 }
 
 void MainComponent::refreshClockButtons()
@@ -1110,6 +1170,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     }
 
     engine.process (inPtrs, used, outPtrs, used, nCopy);
+    audioBlocks.fetch_add (1, std::memory_order_relaxed);
 
     if (nCopy < n)
     {
@@ -1122,6 +1183,49 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
     applyLatencyFromDevice();
+
+    // Is the device still calling us? It can stop without saying so - iOS
+    // restarting its media server leaves every audio object in the process
+    // invalid, and JUCE answers that notification by starting the audio unit it
+    // already has, which is a handle to something that no longer exists. The
+    // sound goes and does not come back until a *new* unit is made, which is
+    // what changing the clock by hand was doing.
+    if (rebuildCooldownTicks > 0)
+    {
+        --rebuildCooldownTicks;
+        seenAudioBlocks = audioBlocks.load (std::memory_order_relaxed);
+    }
+    else if (audioOpened)
+    {
+        // No device at all counts as stalled too. A rebuild that fails leaves
+        // one, and without this the watchdog would never look again - the app
+        // would sit silent forever having tried exactly once. Retried on the
+        // same cooldown, it also means plugging the cable back in brings the
+        // sound back without touching anything.
+        const uint32_t now = audioBlocks.load (std::memory_order_relaxed);
+        const bool haveDevice = deviceManager.getCurrentAudioDevice() != nullptr;
+        const bool moving = haveDevice && audioReady && now != seenAudioBlocks;
+
+        if (moving)
+        {
+            stalledTicks = 0;
+            seenAudioBlocks = now;
+        }
+        else if (haveDevice && ! audioReady)
+        {
+            // Between close and prepareToPlay. Not a stall.
+            stalledTicks = 0;
+        }
+        else
+        {
+            // Twelve ticks at 15 Hz: near enough a second of silence from a
+            // device that is supposed to be running. Long enough that a busy
+            // moment on the message thread cannot trigger it.
+            if (++stalledTicks >= 12)
+                rebuildAudioDevice (haveDevice ? "no audio callback for a second"
+                                               : "no audio device");
+        }
+    }
     if (tapFlash > 0)
         --tapFlash;
     refreshTapButton();
@@ -1783,6 +1887,10 @@ void MainComponent::paintSettings (juce::Graphics& g)
                    + (vp::otherAudioPlaying() ? "in riproduzione" : "ferme"));
         lines.add (juce::String ("motore     ")
                    + (snap.aiOnnx ? "ONNX BeatNet" : "AI STUB"));
+        // A rig that needs this is a rig with a problem the app is papering
+        // over, so the number is on the page rather than in a log nobody reads.
+        lines.add (juce::String ("riavvii    ") + juce::String (deviceRebuilds)
+                   + (deviceRebuilds > 0 ? "   (audio ricostruito)" : ""));
 
         g.setColour (mute());
         g.setFont (fontUi (12.0f, false));
