@@ -130,11 +130,45 @@ void BeatTracker::reset() noexcept
     tapIoiWrite = 0;
     tapIoiFilled = 0;
     std::fill (tapIoi, tapIoi + 8, 0.0f);
+    userTempoGen = ~0u;
 }
 
 void BeatTracker::setFollowStrength (FollowStrength s) noexcept
 {
     follower.setFollowStrength (s);
+}
+
+void BeatTracker::setTempoFollow (bool on) noexcept
+{
+    if (on == tempoFollow)
+        return;
+
+    // SEGUI after FISSO: the listener asked the analysis to drive again, so a
+    // tap that had owned the tempo no longer does. Calling this every block
+    // with the same value is a no-op above, so a count-in that is still
+    // landing is not cleared.
+    if (on)
+    {
+        tapEstablished = false;
+        tapHold = false;
+        tapAligned = false;
+    }
+    tempoFollow = on;
+}
+
+void BeatTracker::setUserTempo (float bpm, uint32_t generation) noexcept
+{
+    if (generation == userTempoGen)
+        return;
+    userTempoGen = generation;
+    if (! std::isfinite (bpm) || bpm < 50.0f || bpm > 200.0f)
+        return;
+
+    heldBpm = bpm;
+    follower.forceTempo (bpm);
+    follower.setTargetTempo (bpm, 0.95f);
+    currentState = TrackingState::following;
+    lockedOnce = true;
 }
 
 void BeatTracker::setSubdivisionOverride (Subdivision s) noexcept
@@ -248,24 +282,7 @@ void BeatTracker::tap (double timeSeconds) noexcept
         return;
 
     const bool fourthTap = tapIoiFilled == 3;
-    bool acceptTempo = fourthTap;
     float candidate = tapped;
-
-    if (! fourthTap)
-    {
-        const float instant = static_cast<float> (60.0 / dt);
-        if (instant >= 50.0f && instant <= 200.0f)
-        {
-            const float rel = heldBpm > 50.0f
-                                  ? std::fabs (instant - heldBpm) / heldBpm
-                                  : 0.0f;
-            if (rel <= 0.08f)
-            {
-                candidate = instant;
-                acceptTempo = true;
-            }
-        }
-    }
 
     if (fourthTap)
     {
@@ -282,14 +299,46 @@ void BeatTracker::tap (double timeSeconds) noexcept
             waitForSongBeat = false;
         }
     }
-    else if (acceptTempo)
+    else
     {
+        // Keep tapping: the tempo is what the last few intervals say.
+        //
+        // Used to accept a follow-up tap only inside 8% of the count-in, so
+        // accelerating (120 → 140 is 17%) did nothing until a 2 s pause reset
+        // the group. A percussionist who is still tapping is conducting; the
+        // new rate is the one that counts. Mean of the last three intervals
+        // so one rushed tap does not yank the grid, but two or three at the
+        // new speed take it.
+        float recent = 0.0f;
+        {
+            const int n = std::min (3, tapIoiFilled);
+            float sum = 0.0f;
+            for (int k = 0; k < n; ++k)
+            {
+                const int idx = (tapIoiWrite - 1 - k + 8) % 8;
+                sum += tapIoi[idx];
+            }
+            const float ioi = sum / static_cast<float> (n);
+            if (ioi > 1.0e-4f)
+                recent = 60.0f / ioi;
+        }
+        if (recent < 50.0f || recent > 200.0f)
+            return;
+
+        candidate = recent;
         const float rel = heldBpm > 50.0f
                               ? std::fabs (candidate - heldBpm) / heldBpm
-                              : 0.0f;
-        const float blend = rel > 0.08f ? 0.65f : 0.45f;
-        heldBpm += (candidate - heldBpm) * blend;
-        follower.setTargetTempo (heldBpm, 0.95f);
+                              : 1.0f;
+        if (rel > 0.06f)
+        {
+            heldBpm = candidate;
+            follower.forceTempo (candidate);
+        }
+        else
+        {
+            heldBpm += (candidate - heldBpm) * 0.55f;
+            follower.setTargetTempo (heldBpm, 0.95f);
+        }
         follower.snapPhase (0.0f);
     }
 
@@ -355,7 +404,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
             break;
 
         case TrackingState::following:
-            if (tapEstablished)
+            if (tapEstablished || ! tempoFollow)
             {
                 lowHoldSamples = 0;
                 break;
@@ -628,7 +677,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // the network took it straight back. Measured on a 100 BPM track tapped at
     // 132: held 100% of the time in IPAD, 0% in MIXER.
     const bool tapOwnsTempo = tapEstablished && heldBpm > 50.0f;
-    const bool holding = tapHold || tapOwnsTempo
+    const bool userOwnsTempo = ! tempoFollow && heldBpm > 50.0f;
+    const bool tempoOwned = tapOwnsTempo || userOwnsTempo;
+    const bool holding = tapHold || tempoOwned
                       || currentState == TrackingState::following
                       || currentState == TrackingState::lowConfidence
                       || currentState == TrackingState::recovering;
@@ -645,10 +696,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // is genuinely live the decoder is already chasing it and a second
     // controller would only fight the first.
     const bool trimTempo = tapOwnsTempo
-                           || (periodic && hyp.regime == TempoRegime::fixed && ! tapHold);
+                           || (periodic && hyp.regime == TempoRegime::fixed
+                               && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
 
-    if (tapOwnsTempo)
+    if (tempoOwned)
         follower.setTargetTempo (heldBpm, 0.95f);
     else if (nnBpm > 50.0f)
     {
@@ -728,7 +780,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         samplesSinceBeat = 0;
         quietSamples = 0;
         beatCount += newBeats;
-        if (! tapHold && hyp.confidence > 0.25f)
+        if (! tapHold && tempoFollow && hyp.confidence > 0.25f)
         {
             // observeOnsetPhase wants the clock's own phase at the instant the
             // song's beat happened, which is what makes its error term mean
@@ -745,7 +797,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         quietSamples += numSamples;
     }
 
-    if (needsResync && armed && waitForQuantize && ! tapEstablished && periodic)
+    if (needsResync && armed && waitForQuantize && ! tapEstablished
+        && tempoFollow && periodic)
     {
         follower.setTargetTempo (nnBpm, std::max (nnConf, 0.75f));
         heldBpm = nnBpm;
@@ -755,7 +808,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         needsResync = false;
     }
 
-    if (octaveAuto)
+    if (octaveAuto && tempoFollow)
         updateAutoOctave (nnBpm, periodic, numSamples);
 
     // The analysis has thrown its grid away and built another one.
@@ -780,13 +833,13 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // Not over a bar the listener placed by hand, and not over one that was
         // moved a moment ago: those are the two cases where somebody already
         // answered this question.
-        if (! tapEstablished && downbeatHoldSamples <= 0)
+        if (! tapEstablished && tempoFollow && downbeatHoldSamples <= 0)
             std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     }
 
     if (gridMuteSamples > 0)
         gridMuteSamples -= numSamples;
-    else if (! tapHold && periodic && loudEnough && nnConf > 0.28f
+    else if (! tapHold && tempoFollow && periodic && loudEnough && nnConf > 0.28f
              && currentState != TrackingState::listening
              && currentState != TrackingState::idle
              && ! tapEstablished)
@@ -836,7 +889,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (currentState == TrackingState::locking)
         lockHoldSamples += numSamples;
 
-    if (! tapOwnsTempo)
+    if (! tempoOwned)
     {
         if (lockedOnce && follower.currentTempo() > 50.0f)
             heldBpm = follower.currentTempo();
@@ -888,7 +941,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         }
     }
 
-    if (tapOwnsTempo)
+    if (tempoOwned)
         currentState = TrackingState::following;
 
     if (currentState == TrackingState::following)
@@ -898,8 +951,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.subdivision = effectiveSubdivision;
     out.clockPulsesPerBeat = kClockPulsesPerBeat;
     const bool showBpm = heldBpm > 40.0f
-                         && (lockedOnce || tapEstablished || periodic);
-    out.bpm = showBpm ? (tapOwnsTempo ? follower.currentTempo() : heldBpm) : 0.0f;
+                         && (lockedOnce || tapEstablished || periodic || userOwnsTempo);
+    out.bpm = showBpm ? (tempoOwned ? follower.currentTempo() : heldBpm) : 0.0f;
     out.targetBpm = follower.targetTempo() + follower.tempoTrimBpm();
     out.confidence = smoothedConf;
     out.tempoOctave = octaveAuto ? autoOctave : userOctave;

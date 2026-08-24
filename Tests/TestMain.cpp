@@ -462,6 +462,57 @@ int main()
         eng.tapAt (0.5);
         eng.tapAt (1.0);
         eng.tapAt (1.5);
+        feedSilence (eng, sr, block, 0.2f);
+        expect (std::fabs (eng.snapshot().bpm - 120.f) < 2.5f,
+                "count-in still locks 120 before the tempo moves");
+
+        // No 2 s pause: keep tapping at 150 BPM (0.4 s).
+        eng.tapAt (1.9);
+        eng.tapAt (2.3);
+        eng.tapAt (2.7);
+        eng.tapAt (3.1);
+        feedSilence (eng, sr, block, 0.5f);
+        const auto last = eng.snapshot();
+        std::printf ("tap-tempo follow  bpm=%.1f\n", static_cast<double> (last.bpm));
+        expect (std::fabs (last.bpm - 150.f) < 5.0f
+                    && last.state == vp::TrackingState::following,
+                "continuing taps at a new rate take the tempo without a pause");
+    }
+
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        expect (eng.settings().tempoFollow.load(),
+                "tempo follow is the default");
+
+        eng.setFixedBpm (100.0f);
+        expect (! eng.settings().tempoFollow.load(),
+                "setFixedBpm switches to FISSO");
+        eng.start();
+        feedSilence (eng, sr, block, 0.3f);
+        expect (std::fabs (eng.snapshot().bpm - 100.f) < 2.5f,
+                "fixed BPM is held before any analysis");
+
+        eng.setClickInjectEnabled (true);
+        eng.setClickInjectBpm (120.0f);
+        feedSilence (eng, sr, block, 4.0f);
+        const auto last = eng.snapshot();
+        std::printf ("fixed-tempo vs click  bpm=%.1f  nn=%.1f  follow=%d\n",
+                     static_cast<double> (last.bpm),
+                     static_cast<double> (last.neuralBpm),
+                     last.tempoFollow ? 1 : 0);
+        expect (std::fabs (last.bpm - 100.f) < 3.0f,
+                "fixed 100 is not stolen by a 120 click");
+    }
+
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.start();
+        eng.tapAt (0.0);
+        eng.tapAt (0.5);
+        eng.tapAt (1.0);
+        eng.tapAt (1.5);
         feedSilence (eng, sr, block, 2.0f);
         const int hitsBefore = eng.shakerHits();
         eng.stop();
@@ -535,7 +586,7 @@ int main()
     // the block would need output that has not been rendered yet. 150 ms covers
     // every buffer size used here.
     {
-        auto leakThrough = [&] (int blk, vp::FollowSource source = vp::FollowSource::speaker)
+        auto leakRemain = [&] (int blk, vp::FollowSource source, float acousticExtraMs = 0.0f)
         {
             vp::VirtualPercussionEngine eng;
             eng.prepare (sr, blk, 1);
@@ -544,7 +595,7 @@ int main()
             eng.settings().reverbAmount.store (0.0f);
             eng.setReportedLatencyMs (150.0f);
 
-            const int delay = static_cast<int> (0.150 * sr);
+            const int delay = static_cast<int> ((0.150 + acousticExtraMs * 0.001) * sr);
             std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
             int histWrite = 0;
 
@@ -579,37 +630,91 @@ int main()
                     histWrite = (histWrite + 1) % static_cast<int> (history.size());
                 }
                 const auto snap = eng.snapshot();
-                // Loud blocks only: below 0.25 the analysis make-up gain kicks in
-                // and the ratio would stop describing the subtraction.
-                if (b > blocks / 3 && snap.inputPeak > 0.25f)
+                if (b > blocks / 3 && snap.inputPeak > 0.08f)
                 {
-                    sum += static_cast<double> (snap.analysisPeak / snap.inputPeak);
+                    sum += static_cast<double> (snap.leakRemain / snap.inputPeak);
                     ++counted;
                 }
             }
             return counted > 0 ? static_cast<float> (sum / counted) : 1.0f;
         };
 
-        const float small = leakThrough (1024);
-        const float large = leakThrough (4096);
+        const float small = leakRemain (1024, vp::FollowSource::speaker);
+        const float large = leakRemain (4096, vp::FollowSource::speaker);
         std::printf ("leak-residual  through@1024=%.3f  through@4096=%.3f\n", small, large);
-        // Fixed, the big block cancels slightly better than the small one
-        // (0.57 vs 0.62 here); truncated, the untouched tail pushes it to 0.79.
         expect (large <= small * 1.10f,
                 "speaker-leak subtraction covers a block larger than the old 2048 cap");
 
-        // The same input, in the other mode. There is no mode in which the app's
-        // own part is allowed into the analysis: a mixer hands it back on the
-        // return exactly as a speaker hands it back through the room, and the
-        // subtraction used to run only under SPEAKER - so on a mixer the whole
-        // of it went through. The input here is nothing but our own output, so
-        // this number is the share of its own part the tracker would be
-        // following instead of the band.
-        const float mixer = leakThrough (1024, vp::FollowSource::kitMic);
+        const float mixer = leakRemain (1024, vp::FollowSource::kitMic);
         std::printf ("leak-residual  MIXER@1024=%.3f  (1.000 = not subtracted at all)\n",
                      static_cast<double> (mixer));
         expect (mixer < 0.25f,
                 "the app's own part is subtracted from the analysis on a mixer feed too");
+
+        // iPad speaker: the mic hears the part later than the device latency
+        // by the acoustic hop. A canceller glued to the reported figure misses
+        // that and the tracker follows its own congas.
+        const float room = leakRemain (1024, vp::FollowSource::speaker, 25.0f);
+        std::printf ("leak-residual  IPAD+25ms@1024=%.3f\n", static_cast<double> (room));
+        expect (room < 0.35f,
+                "speaker leak is subtracted even when the acoustic delay is past the device latency");
+    }
+
+    // Input trim is analysis-only: twice the gain, twice the peak the tracker
+    // is handed, and the output of the part does not move with it.
+    {
+        auto peakAt = [&] (float gain)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, 256, 1);
+            eng.settings().inputGain.store (gain);
+            eng.settings().masterVolume.store (0.0f);
+            std::vector<float> in (256, 0.10f);
+            std::vector<float> oL (256, 1.0f), oR (256, 1.0f);
+            const float* ins[1] = { in.data() };
+            float* outs[2] = { oL.data(), oR.data() };
+            float last = 0.0f;
+            for (int b = 0; b < 20; ++b)
+            {
+                std::fill (oL.begin(), oL.end(), 1.0f);
+                std::fill (oR.begin(), oR.end(), 1.0f);
+                eng.process (ins, 1, outs, 2, 256);
+                last = eng.snapshot().inputPeak;
+            }
+            return last;
+        };
+
+        const float atOne = peakAt (1.0f);
+        const float atTwo = peakAt (2.0f);
+        const float atZero = peakAt (0.0f);
+        std::printf ("input-gain    1.0=%.3f  2.0=%.3f  0.0=%.3f\n", atOne, atTwo, atZero);
+        expect (atOne > 0.05f && atTwo > atOne * 1.6f && atTwo < atOne * 2.4f,
+                "input gain scales the analysis peak and leaves the output alone");
+        expect (atZero < 0.002f, "input gain at zero silences the analysis bus");
+
+        vp::VirtualPercussionEngine muteCheck;
+        muteCheck.prepare (sr, 256, 1);
+        muteCheck.settings().inputGain.store (0.0f);
+        muteCheck.settings().masterVolume.store (1.0f);
+        muteCheck.settings().percussionVolume.store (1.0f);
+        muteCheck.start();
+        muteCheck.tapAt (0.0);
+        muteCheck.tapAt (0.5);
+        muteCheck.tapAt (1.0);
+        muteCheck.tapAt (1.5);
+        std::vector<float> silence (256, 0.0f);
+        std::vector<float> oL (256, 0.0f), oR (256, 0.0f);
+        const float* ins[1] = { silence.data() };
+        float* outs[2] = { oL.data(), oR.data() };
+        float outPeak = 0.0f;
+        for (int b = 0; b < static_cast<int> (sr * 2.0) / 256; ++b)
+        {
+            muteCheck.process (ins, 1, outs, 2, 256);
+            for (float s : oL)
+                outPeak = std::max (outPeak, std::abs (s));
+        }
+        expect (outPeak > 0.01f,
+                "input gain does not mute shaker or congas");
     }
 
     // Same music, two buffer sizes. A small block puts one pulse in each

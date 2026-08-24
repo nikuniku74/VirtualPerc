@@ -26,7 +26,9 @@ private:
     void startPressed();
     void stopPressed();
     void tapPressed();
-    void refreshTapButton();
+    void applyTempoFollow (bool follow);
+    void nudgeFixedBpm (float delta);
+    void refreshTempoModeButtons();
     void refreshStartButton();
     void applyLatencyFromDevice();
     void openAudioDevice (bool micGranted);
@@ -130,7 +132,7 @@ private:
         number they apply to. */
     struct StageRows
     {
-        juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoLine, beats, part, meter, mic;
+        juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoLine, beats, part, meter, mic;
         /** The three columns the tempo row is divided into. The number gets the
             middle one and nothing else: given the whole row it grew until it
             ran under the two buttons and out of the column. */
@@ -167,16 +169,22 @@ private:
                                juce::Slider::SliderStyle, juce::Slider&) override;
     };
 
-    struct TapLookAndFeel final : AppLookAndFeel
+    /** Invisible hit target over the BPM, the quarters and the input meter.
+        A press anywhere in that zone is TAP; the flash is painted on the stage
+        so it sits on the same numbers the player is looking at. */
+    struct TapZone final : juce::Component
     {
-        juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
-        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
-                                   bool shouldDrawButtonAsHighlighted,
-                                   bool shouldDrawButtonAsDown) override;
+        explicit TapZone (MainComponent& o) : owner (o)
+        {
+            setOpaque (false);
+            setInterceptsMouseClicks (true, false);
+            setWantsKeyboardFocus (false);
+        }
+        void mouseDown (const juce::MouseEvent&) override { owner.tapPressed(); }
+        MainComponent& owner;
     };
 
     AppLookAndFeel appLaf;
-    TapLookAndFeel tapLaf;
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 
@@ -185,7 +193,11 @@ private:
     juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
-    juce::TextButton tapButton { "TAP" };
+    juce::TextButton followButton { "SEGUI" };
+    juce::TextButton fixedButton { "FISSO" };
+    juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
+    juce::TextButton bpmNudgeUp { "+" };
+    juce::Label      bpmEdit;
     juce::TextButton shakerButton { "SHAKER  ON" };
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
@@ -207,19 +219,27 @@ private:
     juce::TextButton styleReggae { "REGGAE" }, styleBossa { "BOSSA" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
+    juce::Label  reverbValue { {}, "30%" };
     juce::Slider swingSlider;
     juce::Label  swingLabel { {}, "SWING" };
+    juce::Label  swingValue { {}, "0%" };
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
+    juce::Label  intensityValue { {}, "50%" };
     juce::Slider shakerVolumeSlider;
     juce::Label  shakerVolumeLabel { {}, "VOLUME" };
     juce::Label  shakerVolumeValue { {}, "100%" };
+    juce::Slider inputGainSlider;
+    juce::Label  inputGainLabel { {}, "MIC" };
+    juce::Label  inputGainValue { {}, "100%" };
 
     juce::AudioBuffer<float> inputScratch;
 
     /** Where the beat dots are drawn, kept so the timer can repaint that strip
         alone rather than the whole console. */
     juce::Rectangle<int> beatStrip;
+    juce::Rectangle<int> tapStrip;
+    TapZone tapZone { *this };
 
     std::unique_ptr<juce::PropertiesFile> prefs;
 

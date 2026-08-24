@@ -167,6 +167,14 @@ The old target of 0.12 sat on the near side of the optimum, and its failures wer
 
 The gain that gets there also has to *stay* there. It used to take the input peak instantly and release over half a second, so every drum hit dropped the gain and the next half second crept back up — moving the network's operating point on every beat. The envelope is slow in both directions now, primed from the first audio rather than crawling up to it, and the gain is ramped across the block so no edge is put into the analysis signal.
 
+A user `inputGain` (0–2, default 1) scales the mixed analysis bus *before* leak subtraction and makeup. It does not touch the output. In SPEAKER/iPad-mic mode an ~80 Hz HPF on the same bus takes rumble off the mic; it is not applied to a mixer aux, where it would thin the kick.
+
+### Own-part leak
+
+The analysis bus always subtracts a delayed copy of our shaker/congas (`subtractSpeakerLeak`). The delay is searched around the device latency; in SPEAKER/iPad-mic mode the search also covers the extra acoustic hop (roughly 8–80 ms) so the canceller still finds the part when the room path is longer than the hardware figure. Makeup is applied after the subtraction.
+
+Acquire timing (`LISTENING` 0.70 s + two beats, `LOCKING` ~0.16 s) is unchanged: shortening it locked a 78 BPM click a half-beat off. The decoder still uses the comb head-start for tempo; the clock still waits for a valid hypothesis before snapping phase.
+
 ### Latency
 
 `beatPhase` from the worker describes audio that has already been played. `NeuralBeatTracker` timestamps each hypothesis with the input sample its frame was centred on (including anything `AudioFifo` dropped), `BeatTracker` turns the gap to `samplesFed()` plus the reported output latency into a lead in beats, and every phase target handed to `TempoFollower` refers to the current acoustic moment. Measured end to end on a click track: ~68 ms of lead, leaving a residual offset of 14–19 ms — a constant, not a rate error.

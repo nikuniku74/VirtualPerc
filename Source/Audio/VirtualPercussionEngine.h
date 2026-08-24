@@ -28,6 +28,12 @@ public:
     void tap() noexcept;
     void tapAt (double timeSeconds) noexcept;
 
+    /** SEGUI (true, default) vs FISSO. Turning follow off freezes the BPM
+        currently showing; turning it on lets BeatNet drive again. */
+    void setTempoFollow (bool follow) noexcept;
+    /** Lock a BPM and switch to FISSO. Tap and later nudges still update it. */
+    void setFixedBpm (float bpm) noexcept;
+
     EngineSettings& settings() noexcept { return cfg; }
     const EngineSettings& settings() const noexcept { return cfg; }
 
@@ -66,7 +72,9 @@ private:
                        int numSamples) noexcept;
     void mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept;
     void maybeInjectClick (int numSamples) noexcept;
-    void subtractSpeakerLeak (int numSamples) noexcept;
+    void subtractSpeakerLeak (int numSamples, bool speaker) noexcept;
+    void updateLeakDelay (int numSamples, bool speaker) noexcept;
+    void applyAnalysisHpf (int numSamples) noexcept;
     void pushOutputToRing (int numSamples) noexcept;
     void applyAnalysisMakeup (int numSamples, float rawPeak) noexcept;
 
@@ -113,6 +121,7 @@ private:
     std::atomic<float> lastPBeat { 0.0f };
     std::atomic<float> lastAnalysisPeak { 0.0f };
     std::atomic<float> lastAnalysisGain { 1.0f };
+    std::atomic<float> lastLeakRemain { 0.0f };
     /** Input samples that arrived non-finite and were replaced with silence.
         Never zero on a healthy device; worth showing, because a driver that
         does this is a driver whose other numbers are also suspect. */
@@ -140,6 +149,9 @@ private:
     std::atomic<bool>  clickEnabled { false };
     double clickPhase = 0.0;
     float leakLp = 0.0f;
+    float analysisHp = 0.0f;
+    int leakDelaySamples = 0;
+    int leakScanCountdown = 0;
     /** How much of our own output the input is carrying back, fitted per band
         and held across blocks. Two bands because the two return paths do not
         look alike: through the iPad's speaker the low end is simply not there,

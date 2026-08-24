@@ -217,24 +217,11 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
     g.fillEllipse (sliderPos - tr + 2.6f, cy - tr + 2.6f, (tr - 2.6f) * 2.0f, (tr - 2.6f) * 2.0f);
 }
 
-juce::Font MainComponent::TapLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
-{
-    return fontDisplay (juce::jmax (34.0f, (float) buttonHeight * 0.38f));
-}
-
-void MainComponent::TapLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
-                                                          const juce::Colour& backgroundColour,
-                                                          bool, bool shouldDrawButtonAsDown)
-{
-    drawFlatButton (g, button, backgroundColour, shouldDrawButtonAsDown);
-}
-
 MainComponent::MainComponent()
 {
     darkMode = juce::Desktop::getInstance().isDarkModeActive();
     gDarkMode = darkMode;
     appLaf.refreshColours();
-    tapLaf.refreshColours();
     juce::Desktop::getInstance().addDarkModeSettingListener (this);
 
     setOpaque (true);
@@ -253,6 +240,8 @@ MainComponent::MainComponent()
     }
     setLookAndFeel (&appLaf);
 
+    addAndMakeVisible (tapZone);
+
     auto setupBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
         addAndMakeVisible (b);
@@ -263,7 +252,10 @@ MainComponent::MainComponent()
 
     setupBtn (startButton, ink());
     setupBtn (stopButton, ink());
-    setupBtn (tapButton, ink());
+    setupBtn (followButton, ink());
+    setupBtn (fixedButton, ink());
+    setupBtn (bpmNudgeDown, ink());
+    setupBtn (bpmNudgeUp, ink());
     setupBtn (shakerButton, ink());
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
     setupBtn (congasButton, ink());
@@ -316,8 +308,10 @@ MainComponent::MainComponent()
 
     startButton.onClick = [this] { startPressed(); };
     stopButton.onClick = [this] { stopPressed(); };
-    tapButton.setLookAndFeel (&tapLaf);
-    tapButton.onClick = [this] { tapPressed(); };
+    followButton.onClick = [this] { applyTempoFollow (true); };
+    fixedButton.onClick = [this] { applyTempoFollow (false); };
+    bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
+    bpmNudgeUp.onClick = [this] { nudgeFixedBpm (1.0f); };
     shakerButton.onClick = [this]
     {
         const bool on = ! engine.settings().shakerEnabled.load();
@@ -379,74 +373,78 @@ MainComponent::MainComponent()
     sub8.onClick    = [this] { applySubdivision (vp::Subdivision::eighth); };
     sub16.onClick   = [this] { applySubdivision (vp::Subdivision::sixteenth); };
 
-    auto caption = [] (juce::Label& lab, const char* name, double value)
+    auto setupFader = [this] (juce::Slider& s, juce::Label& name, juce::Label& value,
+                              const char* title, double minV, double maxV, double initial,
+                              double dblClick, std::function<void (float)> apply)
     {
-        lab.setText (juce::String (name) + "    "
-                         + juce::String (juce::roundToInt (value * 100.0)) + "%",
-                     juce::dontSendNotification);
-    };
+        addAndMakeVisible (name);
+        name.setText (title, juce::dontSendNotification);
+        name.setJustificationType (juce::Justification::centred);
+        name.setColour (juce::Label::textColourId, mute());
+        name.setFont (fontUi (11.0f));
+        name.setInterceptsMouseClicks (false, false);
 
-    auto setupTrim = [this, caption] (juce::Slider& s, juce::Label& lab, const char* name,
-                                      double initial, std::function<void (float)> apply)
-    {
-        addAndMakeVisible (lab);
-        lab.setJustificationType (juce::Justification::centredLeft);
-        lab.setColour (juce::Label::textColourId, mute());
-        lab.setFont (fontUi (13.0f));
-        lab.setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (value);
+        value.setJustificationType (juce::Justification::centred);
+        value.setColour (juce::Label::textColourId, fuchsia());
+        value.setFont (fontUi (13.0f));
+        value.setInterceptsMouseClicks (false, false);
+        value.setText (juce::String (juce::roundToInt (initial * 100.0)) + "%",
+                       juce::dontSendNotification);
 
         addAndMakeVisible (s);
-        s.setSliderStyle (juce::Slider::LinearHorizontal);
+        s.setSliderStyle (juce::Slider::LinearVertical);
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        s.setRange (0.0, 1.0, 0.01);
+        s.setRange (minV, maxV, 0.01);
         s.setValue (initial, juce::dontSendNotification);
-        caption (lab, name, initial);
+        s.setDoubleClickReturnValue (true, dblClick);
         auto* sp = &s;
-        auto* lp = &lab;
-        s.onValueChange = [this, sp, lp, name, apply, caption]
+        auto* valueLab = &value;
+        s.onValueChange = [this, sp, valueLab, apply]
         {
             const float v = static_cast<float> (sp->getValue());
             apply (v);
-            caption (*lp, name, v);
+            valueLab->setText (juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%",
+                               juce::dontSendNotification);
             savePrefs (false);
         };
         s.onDragEnd = [this] { savePrefs(); };
     };
 
-    setupTrim (swingSlider, swingLabel, "SWING", 0.00,
-               [this] (float v) { engine.settings().swing.store (v); });
-    setupTrim (intensitySlider, intensityLabel, "ENERGIA", 0.50,
-               [this] (float v) { engine.settings().intensity.store (v); });
-    setupTrim (reverbSlider, reverbLabel, "REVERB", 0.30,
-               [this] (float v) { engine.settings().reverbAmount.store (v); });
+    setupFader (shakerVolumeSlider, shakerVolumeLabel, shakerVolumeValue, "VOLUME",
+                0.0, 1.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().percussionVolume.store (v); });
+    setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
+                0.0, 2.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().inputGain.store (v); });
+    setupFader (swingSlider, swingLabel, swingValue, "SWING",
+                0.0, 1.0, 0.00, 0.0,
+                [this] (float v) { engine.settings().swing.store (v); });
+    setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
+                0.0, 1.0, 0.50, 0.50,
+                [this] (float v) { engine.settings().intensity.store (v); });
+    setupFader (reverbSlider, reverbLabel, reverbValue, "REVERB",
+                0.0, 1.0, 0.30, 0.30,
+                [this] (float v) { engine.settings().reverbAmount.store (v); });
 
-    addAndMakeVisible (shakerVolumeLabel);
-    shakerVolumeLabel.setJustificationType (juce::Justification::centred);
-    shakerVolumeLabel.setColour (juce::Label::textColourId, mute());
-    shakerVolumeLabel.setFont (fontUi (11.0f));
-    shakerVolumeLabel.setInterceptsMouseClicks (false, false);
-
-    addAndMakeVisible (shakerVolumeValue);
-    shakerVolumeValue.setJustificationType (juce::Justification::centred);
-    shakerVolumeValue.setColour (juce::Label::textColourId, fuchsia());
-    shakerVolumeValue.setFont (fontUi (13.0f));
-    shakerVolumeValue.setInterceptsMouseClicks (false, false);
-
-    addAndMakeVisible (shakerVolumeSlider);
-    shakerVolumeSlider.setSliderStyle (juce::Slider::LinearVertical);
-    shakerVolumeSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-    shakerVolumeSlider.setRange (0.0, 1.0, 0.01);
-    shakerVolumeSlider.setValue (1.00, juce::dontSendNotification);
-    shakerVolumeSlider.setDoubleClickReturnValue (true, 1.0);
-    shakerVolumeSlider.onValueChange = [this]
+    addAndMakeVisible (bpmEdit);
+    bpmEdit.setJustificationType (juce::Justification::centred);
+    bpmEdit.setColour (juce::Label::textColourId, fuchsia());
+    bpmEdit.setColour (juce::Label::backgroundColourId, ink());
+    bpmEdit.setFont (fontUi (16.0f));
+    bpmEdit.setEditable (true, true, false);
+    bpmEdit.setText ("120", juce::dontSendNotification);
+    bpmEdit.onTextChange = [this]
     {
-        const float v = static_cast<float> (shakerVolumeSlider.getValue());
-        engine.settings().percussionVolume.store (v);
-        shakerVolumeValue.setText (juce::String (juce::roundToInt (v * 100.0)) + "%",
-                                   juce::dontSendNotification);
-        savePrefs (false);
+        const float v = bpmEdit.getText().getFloatValue();
+        if (v >= 50.0f && v <= 200.0f)
+        {
+            engine.setFixedBpm (v);
+            refreshTempoModeButtons();
+            savePrefs (false);
+        }
     };
-    shakerVolumeSlider.onDragEnd = [this] { savePrefs(); };
+    bpmEdit.onEditorHide = [this] { savePrefs(); };
 
     // The settings page and everything on it. Added after the console so it is
     // the last child: a full-bounds opaque child on top is what makes the page
@@ -544,7 +542,6 @@ MainComponent::~MainComponent()
 {
     savePrefs();
     juce::Desktop::getInstance().removeDarkModeSettingListener (this);
-    tapButton.setLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
     stopTimer();
     shutdownAudio();
@@ -564,7 +561,6 @@ void MainComponent::applyTheme (bool dark, bool manualOverride)
         themeFollowsSystem = false;
     gDarkMode = darkMode;
     appLaf.refreshColours();
-    tapLaf.refreshColours();
     refreshThemeColours();
     repaint();
 }
@@ -572,7 +568,8 @@ void MainComponent::applyTheme (bool dark, bool manualOverride)
 void MainComponent::refreshThemeColours()
 {
     juce::TextButton* buttons[] = {
-        &startButton, &stopButton, &tapButton, &shakerButton, &debugButton,
+        &startButton, &stopButton, &followButton, &fixedButton,
+        &bpmNudgeDown, &bpmNudgeUp, &shakerButton, &debugButton,
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
@@ -591,18 +588,25 @@ void MainComponent::refreshThemeColours()
     }
 
     reverbLabel.setColour (juce::Label::textColourId, mute());
+    reverbValue.setColour (juce::Label::textColourId, fuchsia());
     swingLabel.setColour (juce::Label::textColourId, mute());
+    swingValue.setColour (juce::Label::textColourId, fuchsia());
     intensityLabel.setColour (juce::Label::textColourId, mute());
+    intensityValue.setColour (juce::Label::textColourId, fuchsia());
     shakerVolumeLabel.setColour (juce::Label::textColourId, mute());
     shakerVolumeValue.setColour (juce::Label::textColourId, fuchsia());
+    inputGainLabel.setColour (juce::Label::textColourId, mute());
+    inputGainValue.setColour (juce::Label::textColourId, fuchsia());
+    bpmEdit.setColour (juce::Label::textColourId, fuchsia());
+    bpmEdit.setColour (juce::Label::backgroundColourId, ink());
     themeButton.setButtonText (darkMode ? "DARK" : "LIGHT");
     themeButton.setToggleState (! darkMode, juce::dontSendNotification);
 
-    refreshTapButton();
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshOctaveButtons();
+    refreshTempoModeButtons();
     refreshClockButtons();
     refreshBufferButtons();
     refreshSourceButton();
@@ -628,16 +632,56 @@ void MainComponent::tapPressed()
 {
     ensureMicrophone();
     engine.tap();
-    tapFlash = 1;
-    refreshTapButton();
+    tapFlash = 2;
 }
 
-void MainComponent::refreshTapButton()
+void MainComponent::applyTempoFollow (bool follow)
 {
-    const bool lit = tapFlash > 0;
-    tapButton.setColour (juce::TextButton::buttonColourId, lit ? fuchsia() : ink());
-    tapButton.setColour (juce::TextButton::textColourOffId, lit ? juce::Colours::white : text());
-    tapButton.setButtonText ("TAP");
+    if (follow)
+        engine.setTempoFollow (true);
+    else
+        engine.setTempoFollow (false);
+    refreshTempoModeButtons();
+    resized();
+    savePrefs();
+    repaint();
+}
+
+void MainComponent::nudgeFixedBpm (float delta)
+{
+    float bpm = snap.bpm > 50.0f ? snap.bpm
+                                 : engine.settings().userBpm.load();
+    if (bpm < 50.0f)
+        bpm = 120.0f;
+    engine.setFixedBpm (bpm + delta);
+    refreshTempoModeButtons();
+    resized();
+    savePrefs();
+    repaint();
+}
+
+void MainComponent::refreshTempoModeButtons()
+{
+    const bool follow = engine.settings().tempoFollow.load();
+    auto paint = [] (juce::TextButton& b, bool on)
+    {
+        b.setToggleState (on, juce::dontSendNotification);
+        b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
+        b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
+    };
+    paint (followButton, follow);
+    paint (fixedButton, ! follow);
+
+    const bool showNudge = ! follow;
+    bpmNudgeDown.setVisible (showNudge);
+    bpmNudgeUp.setVisible (showNudge);
+    bpmEdit.setVisible (showNudge);
+    if (showNudge && ! bpmEdit.isBeingEdited())
+    {
+        const float bpm = snap.bpm > 50.0f ? snap.bpm
+                                           : engine.settings().userBpm.load();
+        bpmEdit.setText (juce::String (bpm, 1), juce::dontSendNotification);
+    }
 }
 
 void MainComponent::refreshStartButton()
@@ -897,8 +941,10 @@ namespace
     {
         return juce::String (juce::CharPointer_UTF8 (
             "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
-            "microfono che sente la stanza. ELAB. OFF toglie guadagno automatico "
-            "ed eco di iOS: e' quello che vuole l'analisi."));
+            "microfono che sente la stanza. In IPAD l'app toglie shaker e congas "
+            "da quello che ascolta. MIC sul mixer regola quanto sente. "
+            "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
+            "vuole l'analisi."));
     }
 
     /** How tall that sentence comes out at a given width. Measured rather than
@@ -976,12 +1022,11 @@ void MainComponent::loadPrefs()
             return static_cast<float> (fallback);
         return juce::jlimit (0.0f, 1.0f, static_cast<float> (v));
     };
-    auto setTrim = [] (juce::Slider& s, juce::Label& lab, const char* name, float v)
+    auto setFader = [] (juce::Slider& s, juce::Label& value, float v)
     {
         s.setValue (static_cast<double> (v), juce::dontSendNotification);
-        lab.setText (juce::String (name) + "    "
-                         + juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%",
-                     juce::dontSendNotification);
+        value.setText (juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%",
+                       juce::dontSendNotification);
     };
 
     // Only the rates the page can offer are honoured. A stored number the page
@@ -1038,17 +1083,32 @@ void MainComponent::loadPrefs()
     shakerVolumeValue.setText (juce::String (juce::roundToInt (static_cast<double> (vol) * 100.0)) + "%",
                                juce::dontSendNotification);
 
+    const float inGain = juce::jlimit (0.0, 2.0, prefs->getDoubleValue ("inputGain", 1.0));
+    engine.settings().inputGain.store (static_cast<float> (inGain));
+    inputGainSlider.setValue (inGain, juce::dontSendNotification);
+    inputGainValue.setText (juce::String (juce::roundToInt (inGain * 100.0)) + "%",
+                            juce::dontSendNotification);
+
     const float reverb = clamp01 (prefs->getDoubleValue ("reverbAmount", 0.30), 0.30);
     engine.settings().reverbAmount.store (reverb);
-    setTrim (reverbSlider, reverbLabel, "REVERB", reverb);
+    setFader (reverbSlider, reverbValue, reverb);
 
     const float swing = clamp01 (prefs->getDoubleValue ("swing", 0.00), 0.00);
     engine.settings().swing.store (swing);
-    setTrim (swingSlider, swingLabel, "SWING", swing);
+    setFader (swingSlider, swingValue, swing);
 
     const float energy = clamp01 (prefs->getDoubleValue ("intensity", 0.50), 0.50);
     engine.settings().intensity.store (energy);
-    setTrim (intensitySlider, intensityLabel, "ENERGIA", energy);
+    setFader (intensitySlider, intensityValue, energy);
+
+    const bool followTempo = prefs->getBoolValue ("tempoFollow", true);
+    const float storedBpm = static_cast<float> (juce::jlimit (50.0, 200.0,
+                                                              prefs->getDoubleValue ("userBpm", 120.0)));
+    engine.settings().userBpm.store (storedBpm);
+    if (followTempo)
+        engine.setTempoFollow (true);
+    else
+        engine.setFixedBpm (storedBpm);
 
     const bool shakerOn = engine.settings().shakerEnabled.load();
     shakerButton.setButtonText (shakerOn ? "SHAKER  ON" : "SHAKER  OFF");
@@ -1077,10 +1137,14 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
     prefs->setValue ("percussionVolume",
                      static_cast<double> (engine.settings().percussionVolume.load()));
+    prefs->setValue ("inputGain",
+                     static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
                      static_cast<double> (engine.settings().reverbAmount.load()));
     prefs->setValue ("swing", static_cast<double> (engine.settings().swing.load()));
     prefs->setValue ("intensity", static_cast<double> (engine.settings().intensity.load()));
+    prefs->setValue ("tempoFollow", engine.settings().tempoFollow.load());
+    prefs->setValue ("userBpm", static_cast<double> (engine.settings().userBpm.load()));
 
     if (flush)
         prefs->saveIfNeeded();
@@ -1318,8 +1382,8 @@ void MainComponent::timerCallback()
     }
     if (tapFlash > 0)
         --tapFlash;
-    refreshTapButton();
     refreshStartButton();
+    refreshTempoModeButtons();
     if (engine.settings().grooveAuto.load())
         refreshStyleButtons();
     repaint();
@@ -1381,7 +1445,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     const int bpmH = juce::jlimit (72, 156, area.getHeight() / 4);
     const int beatsH = juce::jlimit (52, 96, area.getHeight() / 6);
 
-    const int content = 18 + 6 + 40 + 12 + bpmH + 16 + 20 + 10 + beatsH + 20 + 10 + 10 + 18;
+    const int content = 18 + 6 + 40 + 12 + bpmH + 16 + 36 + 18 + 10 + beatsH + 20 + 10 + 10 + 18;
     const int slack = juce::jmax (0, area.getHeight() - content);
     area.removeFromTop (slack / 3);
 
@@ -1402,7 +1466,8 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
         s.bpmNumber = block.reduced (8, 0);
     }
     s.bpmLabel = area.removeFromTop (16);
-    s.tempoLine = area.removeFromTop (20);
+    s.tempoMode = area.removeFromTop (36);
+    s.tempoLine = area.removeFromTop (18);
     area.removeFromTop (10);
     s.beats = area.removeFromTop (beatsH);
     // Beside the dots, because that is what it moves.
@@ -1438,10 +1503,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
-        auto row = body.removeFromTop (juce::roundToInt (static_cast<float> (body.getHeight()) * 0.55f));
-        startButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (4));
-        stopButton.setBounds (row.reduced (4));
-        tapButton.setBounds (body.reduced (4, 3));
+        startButton.setBounds (body.removeFromLeft (body.getWidth() / 2).reduced (4));
+        stopButton.setBounds (body.reduced (4));
         area.removeFromTop (gap);
     }
 
@@ -1476,38 +1539,40 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     }
 
     {
-        // Fader on the left, the three sends stacked beside it. The fader is
-        // the output level of shaker and congas together.
-        // row of the same control drawn smaller.
+        // Two faders on the left: output of shaker/congas, then how loud the
+        // tracker hears the room or the aux. The three sends sit beside them.
         auto body = card (area, "FEEL");
-        const int faderW = juce::jlimit (56, 88, body.getWidth() / 5);
-        auto fader = body.removeFromLeft (faderW);
-        body.removeFromLeft (10);
-
-        shakerVolumeValue.setBounds (fader.removeFromTop (18));
-        shakerVolumeLabel.setBounds (fader.removeFromBottom (16));
-        shakerVolumeSlider.setBounds (fader.reduced (4, 2));
-
-        const int rowH = body.getHeight() / 3;
-        auto slider = [] (juce::Label& label, juce::Slider& s, juce::Rectangle<int> row)
+        const int nFaders = 5;
+        const int faderW = body.getWidth() / nFaders;
+        auto placeFader = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
         {
-            const int head = juce::jlimit (16, 22, row.getHeight() / 3);
-            label.setBounds (row.removeFromTop (head).reduced (2, 0));
-            const int padY = juce::jmax (2, (row.getHeight() - 36) / 2);
-            s.setBounds (row.reduced (2, padY));
+            auto col = body.removeFromLeft (faderW);
+            val.setBounds (col.removeFromTop (18));
+            name.setBounds (col.removeFromBottom (16));
+            s.setBounds (col.reduced (4, 2));
         };
-        slider (swingLabel, swingSlider, body.removeFromTop (rowH));
-        slider (intensityLabel, intensitySlider, body.removeFromTop (rowH));
-        slider (reverbLabel, reverbSlider, body);
+        placeFader (shakerVolumeValue, shakerVolumeLabel, shakerVolumeSlider);
+        placeFader (inputGainValue, inputGainLabel, inputGainSlider);
+        placeFader (swingValue, swingLabel, swingSlider);
+        placeFader (intensityValue, intensityLabel, intensitySlider);
+        placeFader (reverbValue, reverbLabel, reverbSlider);
     }
 
     swingSlider.setVisible (true);
     swingLabel.setVisible (true);
+    swingValue.setVisible (true);
     intensitySlider.setVisible (true);
     intensityLabel.setVisible (true);
+    intensityValue.setVisible (true);
+    reverbSlider.setVisible (true);
+    reverbLabel.setVisible (true);
+    reverbValue.setVisible (true);
     shakerVolumeSlider.setVisible (true);
     shakerVolumeLabel.setVisible (true);
     shakerVolumeValue.setVisible (true);
+    inputGainSlider.setVisible (true);
+    inputGainLabel.setVisible (true);
+    inputGainValue.setVisible (true);
     return area;
 }
 
@@ -1542,6 +1607,29 @@ void MainComponent::resized()
     halveButton.setBounds (rows.octaveDown);
     doubleButton.setBounds (rows.octaveUp);
     barButton.setBounds (rows.barShift);
+
+    tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
+                                                         stage.getRight(), rows.meter.getBottom());
+    tapZone.setBounds (tapStrip);
+
+    {
+        const bool follow = engine.settings().tempoFollow.load();
+        auto mode = rows.tempoMode;
+        const int btnW = juce::jlimit (72, 108, mode.getWidth() / 5);
+        const int nudgeW = juce::jmax (36, mode.getHeight() - 4);
+        const int editW = 78;
+        const int total = btnW * 2 + (follow ? 0 : nudgeW * 2 + editW + 12);
+        auto block = mode.withSizeKeepingCentre (juce::jmin (mode.getWidth(), total), mode.getHeight());
+        followButton.setBounds (block.removeFromLeft (btnW).reduced (3, 2));
+        fixedButton.setBounds (block.removeFromLeft (btnW).reduced (3, 2));
+        if (! follow)
+        {
+            block.removeFromLeft (8);
+            bpmNudgeDown.setBounds (block.removeFromLeft (nudgeW).reduced (2));
+            bpmEdit.setBounds (block.removeFromLeft (editW).reduced (2, 4));
+            bpmNudgeUp.setBounds (block.removeFromLeft (nudgeW).reduced (2));
+        }
+    }
 
     layoutConsole (r);
 }
@@ -1663,24 +1751,23 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     g.setFont (fontUi (11.5f));
     g.drawFittedText ("BPM", rows.bpmLabel, juce::Justification::centred, 1);
 
-    // How the tempo is being held. Since the tracking work this is the most
-    // useful line on the screen when something looks wrong: a tempo that says
-    // FISSO and will not stop moving is a different fault from one that never
-    // leaves CERCO.
+    // How the tempo is being held. SEGUI shows what the analysis thinks;
+    // FISSO is the listener's lock, so the analysis label would only confuse.
     {
-        const bool held = snap.tempoRegime == 1;
+        const bool userFixed = ! snap.tempoFollow;
+        const bool held = userFixed || snap.tempoRegime == 1;
         g.setColour (held ? fuchsia() : mute());
         g.setFont (fontUi (12.0f));
-        juce::String tempoLine = juce::String (vp::regimeLabel (snap.tempoRegime));
-        if (! snap.levelSettled)
+        juce::String tempoLine = userFixed
+                                     ? juce::String ("TEMPO FISSO")
+                                     : juce::String (vp::regimeLabel (snap.tempoRegime));
+        if (! userFixed && ! snap.levelSettled)
             tempoLine += juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  livello provvisorio"));
         if (snap.tempoOctave != 0)
         {
             tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0
                                                                   ? "  \xc2\xb7  a met\xc3\xa0"
                                                                   : "  \xc2\xb7  doppio"));
-            // Whose decision it was. Without this a halved tempo looks like a
-            // setting the listener forgot they had left on.
             if (snap.tempoOctaveAuto)
                 tempoLine += " (auto)";
         }
@@ -1769,6 +1856,14 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                  fillM.getRight(), fillM.getY(), false);
         g.setGradientFill (mg);
         g.fillRoundedRectangle (fillM, 5.0f);
+    }
+
+    if (tapFlash > 0 && ! tapStrip.isEmpty())
+    {
+        g.setColour (fuchsia().withAlpha (gDarkMode ? 0.32f : 0.20f));
+        g.fillRoundedRectangle (tapStrip.toFloat(), 14.0f);
+        g.setColour (fuchsia().withAlpha (0.70f));
+        g.drawRoundedRectangle (tapStrip.toFloat().reduced (0.5f), 14.0f, 2.4f);
     }
 
     g.setColour (mute());
@@ -2047,7 +2142,8 @@ void MainComponent::paint (juce::Graphics& g)
         lines.add ("inCh " + juce::String (inputChannels) + "  micGranted " + juce::String (micGranted ? 1 : 0));
         lines.add ("hits " + juce::String (engine.shakerHits())
                    + "  voices " + juce::String (snap.shakerVoices));
-        lines.add (juce::String (snap.tapLocked ? "tap LOCK" : "tap auto"));
+        lines.add (juce::String (snap.tapLocked ? "tap LOCK" : "tap auto")
+                   + (snap.tempoFollow ? "  SEGUI" : "  FISSO"));
         lines.add ("bar " + juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))));
         lines.add ("part " + juce::String (vp::toString (static_cast<vp::GrooveStyle> (snap.grooveStyle)))
                    + (engine.settings().grooveAuto.load() ? "  AUTO" : "  manual")

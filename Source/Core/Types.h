@@ -173,6 +173,11 @@ struct EngineSnapshot
     /** Gain the analysis signal is being held at for the network, and how many
         input samples had to be replaced because they were not finite. */
     float analysisGain         = 1.0f;
+    /** User trim on the analysis bus, linear. 1 = as the device delivered it. */
+    float inputGain            = 1.0f;
+    /** Peak left on the analysis bus after leak subtraction, before makeup.
+        The ratio of this to `inputPeak` is how much of our own part survived. */
+    float leakRemain           = 0.0f;
     int   badInputSamples      = 0;
     /** Times the analysis lost audio because its worker fell behind. Zero on a
         healthy run; anything else is a dropout in the tracking, not the sound. */
@@ -197,6 +202,8 @@ struct EngineSnapshot
         the listener asked for it or AUTO settled on it. */
     int   tempoOctave          = 0;
     bool  tempoOctaveAuto      = true;
+    /** False when the listener has locked a BPM (FISSO). Default true (SEGUI). */
+    bool  tempoFollow          = true;
 
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
@@ -211,6 +218,9 @@ struct EngineSettings
 {
     std::atomic<float> masterVolume    { 0.90f };
     std::atomic<float> percussionVolume{ 1.00f };
+    /** Linear gain on the mixed input, before leak subtraction and makeup.
+        0 silences the tracker; 2 is +6 dB. Does not touch the output. */
+    std::atomic<float> inputGain       { 1.00f };
     std::atomic<float> reverbAmount    { 0.30f };
     // A percussionist is not on the grid and is not evenly loud. 0 is a
     // sequencer; the default is a player who is not trying to be one.
@@ -242,6 +252,13 @@ struct EngineSettings
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to
     // be one tap however wrong the analysis currently is.
     std::atomic<int>   barNudge        { 0 };
+    // SEGUI (true, default) lets BeatNet / tap-follow / mixer analysis drive
+    // the clock. FISSO freezes a BPM and ignores neural tempo updates; tap
+    // and the on-screen nudge still write the number. Generation bumps when
+    // the listener sets the value so the audio thread can apply it once.
+    std::atomic<bool>     tempoFollow  { true };
+    std::atomic<float>    userBpm      { 120.0f };
+    std::atomic<uint32_t> userBpmGen   { 0 };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };

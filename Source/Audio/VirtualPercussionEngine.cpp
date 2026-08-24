@@ -83,8 +83,11 @@ void VirtualPercussionEngine::reset() noexcept
     std::fill (outRing.begin(), outRing.end(), 0.0f);
     ringWrite = 0;
     leakLp = 0.0f;
+    analysisHp = 0.0f;
     leakGainLo = 0.0f;
     leakGainHi = 0.0f;
+    leakDelaySamples = 0;
+    leakScanCountdown = 0;
     peakEnv = 0.0f;
     makeupGain = 1.0f;
     tapWrite.store (0, std::memory_order_relaxed);
@@ -135,6 +138,32 @@ void VirtualPercussionEngine::tap() noexcept
     tapAt (std::chrono::duration<double> (now).count());
 }
 
+void VirtualPercussionEngine::setTempoFollow (bool follow) noexcept
+{
+    const bool was = cfg.tempoFollow.exchange (follow, std::memory_order_relaxed);
+    if (was && ! follow)
+    {
+        float bpm = lastBpm.load (std::memory_order_relaxed);
+        if (bpm < 50.0f)
+            bpm = cfg.userBpm.load (std::memory_order_relaxed);
+        if (bpm < 50.0f)
+            bpm = 120.0f;
+        bpm = std::clamp (bpm, 50.0f, 200.0f);
+        cfg.userBpm.store (bpm, std::memory_order_relaxed);
+        cfg.userBpmGen.fetch_add (1u, std::memory_order_relaxed);
+    }
+}
+
+void VirtualPercussionEngine::setFixedBpm (float bpm) noexcept
+{
+    if (! std::isfinite (bpm))
+        return;
+    bpm = std::clamp (bpm, 50.0f, 200.0f);
+    cfg.tempoFollow.store (false, std::memory_order_relaxed);
+    cfg.userBpm.store (bpm, std::memory_order_relaxed);
+    cfg.userBpmGen.fetch_add (1u, std::memory_order_relaxed);
+}
+
 void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept
 {
     std::fill (mono.begin(), mono.begin() + numSamples, 0.0f);
@@ -164,6 +193,13 @@ void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInpu
             for (int i = 0; i < numSamples; ++i)
                 mono[static_cast<size_t> (i)] *= g;
         }
+    }
+
+    const float trim = std::clamp (cfg.inputGain.load (std::memory_order_relaxed), 0.0f, 4.0f);
+    if (std::fabs (trim - 1.0f) > 1.0e-6f)
+    {
+        for (int i = 0; i < numSamples; ++i)
+            mono[static_cast<size_t> (i)] *= trim;
     }
 }
 
@@ -215,13 +251,129 @@ void VirtualPercussionEngine::maybeInjectClick (int numSamples) noexcept
     }
 }
 
-void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
+void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noexcept
 {
     if (outRing.empty() || numSamples <= 0)
         return;
 
     const float latMs = std::max (8.0f, latencyMs.load (std::memory_order_relaxed));
-    int delay = static_cast<int> (latMs * 0.001 * sampleRate);
+    int center = static_cast<int> (latMs * 0.001 * sampleRate);
+    center = std::clamp (center, 64, ringSize - numSamples - 1);
+
+    // The reported figure is the device round trip. Through a mixer that is
+    // the leak delay. Through the iPad's own speaker the acoustic path sits
+    // on top of it - typically another 10-40 ms - so a canceller pinned to
+    // the device number misses the congas and the tracker follows itself.
+    const int pad = static_cast<int> ((speaker ? 0.080 : 0.040) * sampleRate);
+    const int lo = std::max (64, speaker ? static_cast<int> (0.008 * sampleRate)
+                                         : center - pad);
+    const int hi = std::min (ringSize - numSamples - 1,
+                             speaker ? std::max (center + pad,
+                                                 static_cast<int> (0.080 * sampleRate))
+                                     : center + pad);
+    if (hi < lo)
+        return;
+
+    if (leakDelaySamples < lo || leakDelaySamples > hi)
+        leakDelaySamples = std::clamp (center, lo, hi);
+
+    auto scoreAt = [this, numSamples] (int d) noexcept -> double
+    {
+        double xy = 0.0, yy = 0.0;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const int ri = (ringWrite - d + i + ringSize) & (ringSize - 1);
+            const float y = outRing[static_cast<size_t> (ri)];
+            xy += static_cast<double> (mono[static_cast<size_t> (i)]) * y;
+            yy += static_cast<double> (y) * y;
+        }
+        return yy > 1.0e-12 ? xy / std::sqrt (yy) : -1.0e9;
+    };
+
+    int best = leakDelaySamples;
+    double bestScore = scoreAt (best);
+
+    if (--leakScanCountdown <= 0)
+    {
+        leakScanCountdown = speaker ? 4 : 8;
+        const int step = std::max (16, numSamples / 8);
+        for (int d = lo; d <= hi; d += step)
+        {
+            const double s = scoreAt (d);
+            if (s > bestScore)
+            {
+                bestScore = s;
+                best = d;
+            }
+        }
+        const int refineLo = std::max (lo, best - step);
+        const int refineHi = std::min (hi, best + step);
+        for (int d = refineLo; d <= refineHi; ++d)
+        {
+            const double s = scoreAt (d);
+            if (s > bestScore)
+            {
+                bestScore = s;
+                best = d;
+            }
+        }
+    }
+    else
+    {
+        const int step = speaker ? 8 : 16;
+        for (int d : { leakDelaySamples - step, leakDelaySamples + step })
+        {
+            if (d < lo || d > hi)
+                continue;
+            const double s = scoreAt (d);
+            if (s > bestScore)
+            {
+                bestScore = s;
+                best = d;
+            }
+        }
+    }
+
+    leakDelaySamples = best;
+}
+
+void VirtualPercussionEngine::applyAnalysisHpf (int numSamples) noexcept
+{
+    // Analysis only. The output path is untouched. ~80 Hz takes rumble and
+    // handling noise off the iPad mic without eating a kick's body.
+    const float coef = 1.0f - std::exp (-2.0f * 3.14159265f * 80.0f
+                                        / static_cast<float> (std::max (1.0, sampleRate)));
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float x = mono[static_cast<size_t> (i)];
+        analysisHp += coef * (x - analysisHp);
+        mono[static_cast<size_t> (i)] = x - analysisHp;
+    }
+}
+
+void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker) noexcept
+{
+    if (outRing.empty() || numSamples <= 0)
+        return;
+
+    // Mixer return is the device round trip; searching around it can lock
+    // onto a musical coincidence with the click and nibble the song. The
+    // iPad mic needs the search: the acoustic hop sits on top of the
+    // hardware figure, and a canceller glued to latencyMs misses the congas.
+    int delay;
+    if (speaker)
+    {
+        updateLeakDelay (numSamples, true);
+        delay = leakDelaySamples > 0
+                    ? leakDelaySamples
+                    : static_cast<int> (std::max (8.0f, latencyMs.load (std::memory_order_relaxed))
+                                        * 0.001 * sampleRate);
+    }
+    else
+    {
+        delay = static_cast<int> (std::max (8.0f, latencyMs.load (std::memory_order_relaxed))
+                                  * 0.001 * sampleRate);
+    }
     delay = std::clamp (delay, 64, ringSize - numSamples - 1);
 
     // The scratch is sized in prepare(). A fixed stack buffer used to cap this
@@ -292,16 +444,29 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples) noexcept
     leakGainLo += (gLo - leakGainLo) * kGainSmooth;
     leakGainHi += (gHi - leakGainHi) * kGainSmooth;
 
-    const float useLo = std::clamp (leakGainLo, 0.0f, 0.95f);
-    const float useHi = std::clamp (leakGainHi, 0.0f, 0.95f);
+    const float maxG = speaker ? 0.98f : 0.95f;
+    const float useLo = std::clamp (leakGainLo, 0.0f, maxG);
+    const float useHi = std::clamp (leakGainHi, 0.0f, maxG);
 
     // And only when our own output actually explains a share of what came in.
     // A leak is a large part of the input by definition; an accidental
     // resemblance between our shaker and the band's hi-hat is not. Below a few
     // per cent of the input's energy there is nothing here worth subtracting,
     // and subtracting it anyway costs the tracker real onsets.
+    //
+    // On the iPad mic the room music often dominates, so the share of *our*
+    // part can sit under that floor even while the shaker is clearly audible.
+    // Correlation against the delayed reference still names the leak, which
+    // is enough to subtract without eating the song.
     const double explained = useLo * xyLo + useHi * xyHi;
-    if (xx < 1.0e-9 || explained / xx < 0.02)
+    const double yy = loLo + hiHi;
+    const double corr = (xx > 1.0e-12 && yy > 1.0e-12)
+                            ? (useLo * xyLo + useHi * xyHi) / std::sqrt (xx * yy)
+                            : 0.0;
+    const float minShare = speaker ? 0.008f : 0.02f;
+    if (xx < 1.0e-9)
+        return;
+    if (explained / xx < static_cast<double> (minShare) && ! (speaker && corr > 0.12))
         return;
 
     for (int i = 0; i < n; ++i)
@@ -430,6 +595,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     tracker.setTempoOctaveAuto (cfg.tempoOctaveAuto.load (std::memory_order_relaxed));
     tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
     {
+        const bool follow = cfg.tempoFollow.load (std::memory_order_relaxed);
+        tracker.setTempoFollow (follow);
+        if (! follow)
+            tracker.setUserTempo (cfg.userBpm.load (std::memory_order_relaxed),
+                                  cfg.userBpmGen.load (std::memory_order_relaxed));
+    }
+    {
         const int nudge = cfg.barNudge.load (std::memory_order_relaxed);
         if (nudge != seenBarNudge)
         {
@@ -498,8 +670,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // its own shaker. It is adaptive and self-gating - the gain it fits is near
     // zero when there is nothing of ours on the input - so running it on a feed
     // that has no leak costs nothing.
-    subtractSpeakerLeak (numSamples);
+    subtractSpeakerLeak (numSamples, speaker);
     maybeInjectClick (numSamples);
+    // Mic rumble only. A mixer aux and the click tests carry kick body around
+    // 50-60 Hz; an 80 Hz HPF on those feeds thins the very pulse BeatNet
+    // was trained on.
+    if (speaker)
+        applyAnalysisHpf (numSamples);
 
     // The level the make-up gain works from is the level of the signal it is
     // about to be applied to, which is not the level that arrived. `peak` above
@@ -512,6 +689,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     float postPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
+    lastLeakRemain.store (postPeak, std::memory_order_relaxed);
     applyAnalysisMakeup (numSamples, postPeak);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
@@ -530,6 +708,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     }
 
     const auto tr = tracker.process (mono.data(), numSamples);
+    if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
+        cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
     // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
     // until the tracker has locked and reads 0 before then, so the percussion
     // was being told 120 while the clock ran at whatever it had actually found.
@@ -672,6 +852,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.pBeat = lastPBeat.load (std::memory_order_relaxed);
     s.analysisPeak = lastAnalysisPeak.load (std::memory_order_relaxed);
     s.analysisGain = lastAnalysisGain.load (std::memory_order_relaxed);
+    s.inputGain = cfg.inputGain.load (std::memory_order_relaxed);
+    s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
     s.analysisBacklog = lastBacklog.load (std::memory_order_relaxed);
@@ -683,6 +865,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     // The level in force, which under AUTO is not the one in the settings.
     s.tempoOctave = lastOctave.load (std::memory_order_relaxed);
     s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);
+    s.tempoFollow = cfg.tempoFollow.load (std::memory_order_relaxed);
 
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);

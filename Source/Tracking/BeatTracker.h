@@ -5,6 +5,7 @@
 #include "AI/IBeatModel.h"
 #include "Tracking/TempoFollower.h"
 
+#include <cstdint>
 #include <memory>
 
 namespace vp
@@ -27,6 +28,14 @@ public:
     void setFollowStrength (FollowStrength s) noexcept;
     void setSubdivisionOverride (Subdivision s) noexcept;
     void setSpeakerFollow (bool on) noexcept { speakerFollow = on; }
+    /** SEGUI vs FISSO. Default true. Switching back to follow hands the tempo
+        to the analysis again; a count-in that is still in progress is not
+        cleared by calling this with the value already in force. */
+    void setTempoFollow (bool on) noexcept;
+    /** Apply a listener-set BPM. `generation` must change for the value to
+        take; the same stamp is ignored so a tap can keep moving the tempo
+        without the control fighting it every block. */
+    void setUserTempo (float bpm, uint32_t generation) noexcept;
     /** Half or double, and whether the app chooses it.
 
         AUTO keeps the pulse the part is played on inside the range a
@@ -132,6 +141,8 @@ private:
     int ghostLockSamples = 0;
     bool armed = true;
     bool speakerFollow = false;
+    bool tempoFollow = true;
+    uint32_t userTempoGen = ~0u;
     bool lockedOnce = false;
     bool tapHold = false;
     bool tapAligned = false;
