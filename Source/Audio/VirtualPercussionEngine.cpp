@@ -45,6 +45,47 @@ namespace
     constexpr double kMakeupAttackSec = 0.8;
     constexpr double kMakeupReleaseSec = 4.0;
     constexpr double kMakeupGlideSec = 0.25;
+
+    // Watching the analysis level for the moment something starts playing.
+    //
+    // Fast up so the start is caught inside a third of a second, slow down so
+    // the gaps between hits do not read as the music stopping.
+    constexpr double kLevelFastAttackSec = 0.05;
+    constexpr double kLevelFastReleaseSec = 1.5;
+
+    // How much louder than the level it has been sitting at counts as
+    // something starting, and for how long. Between an empty room and a band
+    // there are thirty to forty decibels; between a verse and a chorus, three
+    // to eight, and a drums-out passage with the bass and the pads still in it
+    // is nearer ten. Eighteen decibels sits above all of those and well below
+    // the one this exists to catch, and a third of a second is longer than any
+    // single hit.
+    constexpr float  kLevelStepUp = 8.0f;
+    constexpr double kLevelStepHoldSec = 0.30;
+
+    // And how far below the loudest this input gets we must have been sitting
+    // for the rise to be something *starting* rather than something getting
+    // louder. Without it a breakdown coming back in reads as a new song, and
+    // measured over thirty tracks that costs more than the whole fix gains:
+    // every drums-out passage throws away a working grid.
+    //
+    // Twenty-four decibels. Between an empty room and a band there are thirty
+    // to forty; the deepest breakdown that still has a band in it is nearer
+    // twenty. How long that memory lasts has to outlive the gap between two
+    // songs, which is where the silence this exists to notice actually is.
+    constexpr float  kQuietFraction = 0.0625f;
+    constexpr double kLoudMemorySec = 60.0;
+
+    // Before it can say the level has changed, the watcher has to know where
+    // the level is. One block is five milliseconds and can land anywhere inside
+    // a kick, so a reference taken from it is a fraction of the real level and
+    // the rest of that first note reads as something starting.
+    constexpr double kLevelPrimeSec = 0.5;
+
+    // How long our own part stays answerable for a rise on the input after it
+    // starts. The leak comes back late - the device round trip plus, in a room,
+    // the flight - and the canceller needs a moment to find it.
+    constexpr double kOwnStepBlameSec = 0.75;
 }
 
 void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChannels) noexcept
@@ -90,6 +131,16 @@ void VirtualPercussionEngine::reset() noexcept
     leakScanCountdown = 0;
     peakEnv = 0.0f;
     makeupGain = 1.0f;
+    levelFast = 0.0f;
+    levelRef = 0.0f;
+    levelLoud = 0.0f;
+    levelStepSamples = 0;
+    levelPrimeSamples = 0;
+    analysisEpoch = 0;
+    ownPeakLast = 0.0f;
+    ownFast = 0.0f;
+    ownRef = 0.0f;
+    ownStepSamples = 0;
     tapWrite.store (0, std::memory_order_relaxed);
     tapRead = 0;
 }
@@ -474,7 +525,8 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
                                        + useHi * leakScratch[static_cast<size_t> (i)];
 }
 
-void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak) noexcept
+void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak,
+                                                   bool levelJumped) noexcept
 {
     // BeatNet's features are log10(magnitude + 1), which is not scale
     // invariant: the +1 knee means the level the analysis signal arrives at is
@@ -493,8 +545,8 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
                                           / std::max (1.0f, static_cast<float> (sampleRate * kMakeupAttackSec)));
     const float release = 1.0f - std::exp (-static_cast<float> (numSamples)
                                            / std::max (1.0f, static_cast<float> (sampleRate * kMakeupReleaseSec)));
-    if (peakEnv < kMakeupFloor && rawPeak >= kMakeupFloor)
-        peakEnv = rawPeak;   // first audio: start at the level, do not crawl up to it
+    if (levelJumped || (peakEnv < kMakeupFloor && rawPeak >= kMakeupFloor))
+        peakEnv = rawPeak;   // start at the level, do not crawl up to it
     else
         peakEnv += (rawPeak - peakEnv) * (rawPeak > peakEnv ? attack : release);
 
@@ -505,7 +557,15 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
     const float smooth = 1.0f - std::exp (-static_cast<float> (numSamples)
                                           / std::max (1.0f, static_cast<float> (sampleRate * kMakeupGlideSec)));
     const float from = makeupGain;
-    makeupGain += (wanted - makeupGain) * smooth;
+    // A level that has genuinely changed is not something to glide towards. The
+    // envelope's attack is deliberately slow - eight tenths of a second, so that
+    // no drum hit moves the network's operating point - and after an empty room
+    // that is eight tenths of a second of music arriving at the network twenty
+    // times too hot, which is exactly the window the level has to be right in.
+    if (levelJumped)
+        makeupGain = wanted;
+    else
+        makeupGain += (wanted - makeupGain) * smooth;
     if (from <= 1.0001f && makeupGain <= 1.0001f)
         return;
 
@@ -516,8 +576,116 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         mono[static_cast<size_t> (i)] *= from + step * static_cast<float> (i);
 }
 
+bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak) noexcept
+{
+    // The make-up gain exists to hold the analysis at the one level the network
+    // was validated at, which means that downstream of it an empty room and a
+    // band playing arrive looking alike - by design, and measured: room noise
+    // forty decibels down still reaches BeatNet amplified to the same peak, and
+    // the network answers it with activations tall enough that the tempo
+    // estimator names a level and calls it settled. This is the last place the
+    // difference between the two still exists, so the moment has to be found
+    // here and handed over.
+    const float attack = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                          / std::max (1.0f, static_cast<float> (sampleRate * kLevelFastAttackSec)));
+    const float release = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                           / std::max (1.0f, static_cast<float> (sampleRate * kLevelFastReleaseSec)));
+
+    if (levelRef <= 0.0f)
+    {
+        // First audio. The envelope starts *at* the level rather than crawling
+        // up to it, the same reason the make-up gain is primed rather than
+        // released into.
+        levelFast = rawPeak;
+        levelRef = std::max (rawPeak, kMakeupFloor);
+        levelLoud = levelRef;
+        levelPrimeSamples = static_cast<int> (sampleRate * kLevelPrimeSec);
+        return false;
+    }
+
+    levelFast += (rawPeak - levelFast) * (rawPeak > levelFast ? attack : release);
+
+    if (levelPrimeSamples > 0)
+    {
+        // Still learning where the level is. Follow it up, decide nothing.
+        levelPrimeSamples -= numSamples;
+        levelRef = std::max (levelRef, levelFast);
+        levelLoud = std::max (levelLoud, levelFast);
+        return false;
+    }
+
+    // Our own part, on the same envelope. It reaches the microphone a little
+    // after we play it and the canceller does not always find it - in mixer
+    // mode the search does not cover an acoustic hop at all - so when the part
+    // comes in, the level on the analysis bus can step up by more than this
+    // looks for. That is us, not the room filling with a band.
+    ownFast += (ownPeakLast - ownFast) * (ownPeakLast > ownFast ? attack : release);
+    if (ownFast > std::max (ownRef, 1.0e-5f) * kLevelStepUp)
+        ownStepSamples = static_cast<int> (sampleRate * kOwnStepBlameSec);
+    else
+        ownStepSamples = std::max (0, ownStepSamples - numSamples);
+    ownRef = std::max (1.0e-6f, ownRef + (ownFast - ownRef) * release);
+
+    if (ownStepSamples > 0)
+    {
+        // Take the new plateau as the level we are now sitting at, so that when
+        // the blame expires the part's own contribution is not still standing
+        // there looking like something that just started.
+        levelRef = std::max (levelRef, levelFast);
+        levelStepSamples = 0;
+        return false;
+    }
+
+    const float loudDecay = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                             / std::max (1.0f, static_cast<float> (sampleRate * kLoudMemorySec)));
+    levelLoud = std::max (levelFast, levelLoud + (levelFast - levelLoud) * loudDecay);
+
+    // Two conditions, and both are needed.
+    //
+    // Upwards only, because a level that falls is a song ending, a break, a
+    // quiet verse, and none of those is a reason to throw away what has been
+    // measured: the evidence collected while it is quiet is the room's, and the
+    // next rise discards it anyway.
+    //
+    // And out of a level that was properly quiet, not merely quieter. A rise on
+    // its own cannot tell a band starting from a chorus arriving or a breakdown
+    // ending, and the second and third are frequent and expensive.
+    const bool wasQuiet = levelRef < levelLoud * kQuietFraction;
+    if (wasQuiet && levelFast > levelRef * kLevelStepUp)
+        levelStepSamples += numSamples;
+    else
+        levelStepSamples = 0;
+
+    if (levelStepSamples > static_cast<int> (sampleRate * kLevelStepHoldSec))
+    {
+        levelRef = std::max (levelFast, kMakeupFloor);
+        levelStepSamples = 0;
+        ++analysisEpoch;
+        return true;
+    }
+
+    if (levelFast < levelRef)
+    {
+        // The reference follows the level down, so it stays "where this input
+        // has been sitting" rather than the loudest thing ever heard. A running
+        // maximum would leave the bar too high for the next start to clear.
+        levelRef = std::max (kMakeupFloor, levelRef + (levelFast - levelRef) * release);
+    }
+    return false;
+}
+
 void VirtualPercussionEngine::pushOutputToRing (int numSamples) noexcept
 {
+    // What we played this block, for the level watcher next block: it runs
+    // before the part is rendered, so the newest own-level it can have is the
+    // previous one - which is the right one anyway, because that is the part
+    // that has had time to come back round.
+    float own = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+        own = std::max (own, std::abs (0.5f * (outL[static_cast<size_t> (i)]
+                                               + outR[static_cast<size_t> (i)])));
+    ownPeakLast = own;
+
     if (outRing.empty())
         return;
     for (int i = 0; i < numSamples; ++i)
@@ -690,7 +858,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
     lastLeakRemain.store (postPeak, std::memory_order_relaxed);
-    applyAnalysisMakeup (numSamples, postPeak);
+    const bool levelJumped = updateAnalysisEpoch (numSamples, postPeak);
+    applyAnalysisMakeup (numSamples, postPeak, levelJumped);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
         analysisPeak = std::max (analysisPeak, std::abs (mono[static_cast<size_t> (i)]));
@@ -707,6 +876,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         ++tapRead;
     }
 
+    tracker.setInputEpoch (analysisEpoch);
     const auto tr = tracker.process (mono.data(), numSamples);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
         cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
@@ -777,6 +947,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
     lastBarDeclared.store (tr.barDeclared, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
+    lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
     lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
     lastPeak.store (peak, std::memory_order_relaxed);
     lastAnalysisPeak.store (analysisPeak, std::memory_order_relaxed);
@@ -856,6 +1027,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
+    s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));
     s.analysisBacklog = lastBacklog.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);
     s.attackLeadMs = lastAttackLeadMs.load (std::memory_order_relaxed);

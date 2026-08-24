@@ -91,6 +91,7 @@ No single measurement is both fast and precise, so each does one job.
 
 | Source | Window | Job |
 |---|---|---|
+| `BeatHmm` | from the first frame | the level **during acquisition**, before the fold may speak |
 | `TempoEstimator` | ~12 s of activation | which **metrical level** — the octave nothing else may leave |
 | Least squares over 24 beat times | ~24 beats | **precision**, far finer than the 20 ms frame grid |
 | Least squares over 8 beat times | ~8 beats | **responsiveness** when a player moves |
@@ -134,6 +135,25 @@ All the end-to-end figures here come from a probe that drives the engine faster 
 
 The estimator also refuses to report a level whose *too-fast* charge could not be evaluated yet. Early on the buffer holds a few seconds, the slow half of the range is not searched at all, and the fastest candidate present wins by default with nothing slower to lose to — which is how a 68 BPM song used to be established at 136 in the first two seconds and defended ever after.
 
+#### Acquisition: the state space speaks first
+
+`TempoEstimator` reports nothing until its buffer holds five periods of the octave *below* its winner — ten beats of the tempo being played. Measured end to end that requirement **was** the time to lock, to a third of a second:
+
+| BPM | ten beats | measured t_lock |
+|---|---|---|
+| 76 | 7.89 | 8.3 |
+| 104 | 5.77 | 6.2 |
+| 128 | 4.69 | 5.1 |
+| 140 | 4.29 | 4.6 |
+
+`BeatHmm` accumulates from the first frame and, on real activations, names the right level with a margin at 1.2–1.7 s — on 10 of 12 captures, the two failures being the same 76-read-as-152 the fold gets wrong too. So when the fold cannot speak yet and the state space is clear, the decoder acquires from the state space instead of waiting.
+
+What it takes from it is the **level and a starting grid, not the number**: the state space's periods are whole frames, so it reads about 2 % sharp (120.0 for 118, 142.9 for 140), which is fine to lock to and not fine to play on. The least-squares fit owns the tempo from the fourth beat. The margin required to *acquire* is higher than the one required to fold the comb into the state space's octave (`kAnchorAcquireMargin` 4 against `kAnchorMargin` 2): folding is undone at the next refresh, acquiring is what the grid, the fits and the bar are then built on.
+
+Its readiness is two periods of the **winning** tempo, not two of the slowest tempo in the space: the old rule cost 2.4 s whatever was playing.
+
+Measured on the decoder alone at 140 BPM: first valid tempo at **0.88 s** with the state space against **4.30 s** with the fold alone.
+
 ### Fixed vs live tempo
 
 A record cut to a click does not change tempo; a band on stage does. `BeatDecoder` decides which it is from whether the short fit keeps agreeing with the long one, and reports it as `TempoRegime`.
@@ -174,6 +194,16 @@ A user `inputGain` (0–2, default 1) scales the mixed analysis bus *before* lea
 The analysis bus always subtracts a delayed copy of our shaker/congas (`subtractSpeakerLeak`). The delay is searched around the device latency; in SPEAKER/iPad-mic mode the search also covers the extra acoustic hop (roughly 8–80 ms) so the canceller still finds the part when the room path is longer than the hardware figure. Makeup is applied after the subtraction.
 
 Acquire timing (`LISTENING` 0.70 s + two beats, `LOCKING` ~0.16 s) is unchanged: shortening it locked a 78 BPM click a half-beat off. The decoder still uses the comb head-start for tempo; the clock still waits for a valid hypothesis before snapping phase.
+
+### The room the app was listening to is not evidence
+
+Every measurement above starts the music at sample zero, and that is the one case a device is never in: the app has been listening since it was opened, so by the time anybody plays, the analysis has been running for minutes on an empty room — and the guards inside `TempoEstimator` counted *frames*. Measured on the real network, forty seconds of room noise is enough for it to name a tempo with a salience of 0.29 and call the level **settled** a tenth of a second after the first beat, having examined none of it. `BeatHmm` is poisoned the same way: at the downbeat it already sits at 107 or 136 BPM with a margin of 2.7–8.0, and having a change penalty it then defends that against the music. End to end, a 128 BPM track behind twenty seconds of room locked at 150 BPM in the *fixed* regime and took 27 s to find 128, against 5.7 s from a cold start.
+
+The make-up gain is what hides this from everything downstream — it exists to hold the analysis at one level — so the moment has to be found before it, on the level of the analysis bus itself. `VirtualPercussionEngine::updateAnalysisEpoch` counts a restart when that level rises by 18 dB **out of a state that was properly quiet** (24 dB below the loudest this input reaches, remembered for a minute). Both halves are needed: a rise on its own cannot tell a band starting from a chorus arriving or a breakdown ending. It is upwards only — a level that falls is a song ending or a quiet verse — and a rise our own part caused is excluded, because what we play comes back on the microphone and the canceller does not always find it.
+
+The counter reaches the worker as `NeuralBeatTracker::setInputEpoch`, and `BeatDecoder::notifyInputRestart` starts the evidence again: the fold's counter, the state space, the beat history, the regime and `established`. The committed tempo is kept only as a number to move from. At the same moment the make-up gain is re-primed at the new level instead of gliding to it over its 0.8 s attack, and the network's recurrent state is reset — a cold start begins with it zeroed, and that is the condition every figure here was measured in.
+
+`VPProbe --pre <sec>` renders an empty room before the song and reports `rst`, the number of restarts. One per song is a set; more than one inside a song is the watcher being fooled, and the host tests assert both. `VPProbe --sync` waits for the analysis to finish each block before feeding the next: without it the same unchanged binary gave mean spans of 8.7, 9.2 and 12.1 BPM over three runs, a noise floor wider than most of the differences worth measuring.
 
 ### Latency
 

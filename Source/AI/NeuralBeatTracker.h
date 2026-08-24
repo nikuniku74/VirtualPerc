@@ -7,6 +7,7 @@
 #include "AI/LogSpectFeatures.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -35,6 +36,14 @@ public:
     void setUserOctave (int octaves) noexcept
     {
         wantedOctave.store (octaves, std::memory_order_relaxed);
+    }
+    /** The analysis input has changed character - see
+        BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
+        flag, from the audio thread, so an event that comes and goes between two
+        of the worker's passes cannot be missed. */
+    void setInputEpoch (uint32_t epoch) noexcept
+    {
+        inputEpoch.store (epoch, std::memory_order_relaxed);
     }
     bool tryLoad (BeatHypothesis& out) const noexcept { return slot.load (out); }
 
@@ -86,6 +95,8 @@ private:
     std::atomic<int64_t> gapCount { 0 };
     std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
+    std::atomic<uint32_t> inputEpoch { 0 };
+    uint32_t seenInputEpoch = 0;
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across
         all discontinuities. After a reset it buffers a whole frame before

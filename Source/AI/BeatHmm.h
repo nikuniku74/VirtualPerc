@@ -44,7 +44,15 @@ public:
     /** One beat activation per analysis frame. */
     void push (float activation) noexcept;
 
-    bool  ready()  const noexcept { return frames > warmupFrames; }
+    /** Whether the answer is worth reading yet.
+
+        Two periods of the *winning* tempo, not two of the slowest tempo in the
+        space. The old rule cost 2.4 s whatever was playing, because the space
+        reaches down to 50 BPM; measured on real activations the level is
+        settled, with a margin, at 1.2-1.7 s at ordinary tempi. A tempo that has
+        been observed twice over has been observed - that the space also holds
+        slower ones nobody is playing is not a reason to keep quiet. */
+    bool  ready()  const noexcept { return readyNow; }
     /** The tempo of the most likely state, in BPM. Moves continuously. */
     float bpm()    const noexcept { return reportedBpm; }
     /** How far through the beat the most likely state is, 0..1. */
@@ -95,6 +103,7 @@ private:
 
     float reportedBpm = 0.0f;
     float reportedPhase = 0.0f;
+    bool  readyNow = false;
     float margin = 0.0f;
     bool  beatNow = false;
 };

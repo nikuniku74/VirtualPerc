@@ -224,6 +224,62 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and the fold alone really does read this material an octave out");
     }
 
+    // How soon the level is known, and by which of the two sources.
+    //
+    // The fold reports nothing until its buffer holds five periods of the
+    // octave *below* its winner - ten beats of the tempo being played, 4.3 s at
+    // 140 BPM and 7.9 s at 76 - and measured end to end that requirement was
+    // the whole of the time to lock: t_lock came out at ten beats plus a third
+    // of a second at every tempo in the sweep. The state space has been
+    // accumulating since the first frame and, on real activations, names the
+    // right level with a margin at 1.2-1.7 s.
+    {
+        const double fps = 50.0;
+        const float trueBpm = 140.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trueBpm) * fps;
+
+        // One bump per beat and nothing between them, so there is no metrical
+        // level to argue about: what is being timed is when either source is
+        // willing to speak, not which of them is right.
+        auto curveAt = [framesPerBeat] (int frame)
+        {
+            const double beats = static_cast<double> (frame) / framesPerBeat;
+            const double toBeat = std::fabs (beats - std::round (beats)) * framesPerBeat;
+            return 0.03f + 0.92f * static_cast<float> (std::exp (-0.5 * (toBeat / 1.6)
+                                                                     * (toBeat / 1.6)));
+        };
+
+        auto firstValid = [&] (bool anchored)
+        {
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLevelAnchor (anchored);
+            for (int f = 0; f < static_cast<int> (fps * 20.0); ++f)
+            {
+                const auto h = dec.observe (curveAt (f), 0.03f, 0.0f);
+                if (h.valid)
+                    return std::make_pair (static_cast<double> (f) / fps, h.bpm);
+            }
+            return std::make_pair (-1.0, 0.0f);
+        };
+
+        const auto plain = firstValid (false);
+        const auto anchored = firstValid (true);
+        std::printf ("acquire  primo tempo valido a %.0f BPM: solo fold %.2f s (%.1f),"
+                     " con lo stato %.2f s (%.1f)\n",
+                     static_cast<double> (trueBpm), plain.first,
+                     static_cast<double> (plain.second), anchored.first,
+                     static_cast<double> (anchored.second));
+        expect (anchored.first > 0.0 && plain.first > 0.0
+                    && anchored.first < plain.first - 1.0
+                    && std::fabs (anchored.second - trueBpm) / trueBpm < 0.05f,
+                "the tempo is acquired from the state space, seconds before the fold speaks");
+        // And the other half: if the fold ever stops needing its ten beats, the
+        // test above has stopped measuring anything.
+        expect (plain.first > 4.0,
+                "and the fold alone really does need ten beats before it says anything");
+    }
+
     // The same bar, with the analysis starved on purpose.
     //
     // Feeding the engine faster than the worker can keep up makes the FIFO
@@ -1919,10 +1975,18 @@ void vpRunAiBeatTests (int& passed, int& failed)
         else
         {
             std::printf ("tap-downbeat  bar on the tap's count: %.0f%% before, %.0f%% after"
-                         " (tap on song beat %d, clock was calling it %d)\n",
-                         was * 100.0, held * 100.0, tapBeat, (tapBeat + offset) % 4);
+                         " (tap on song beat %d, clock was calling it %d)%s\n",
+                         was * 100.0, held * 100.0, tapBeat, (tapBeat + offset) % 4,
+                         was > 0.05 ? "  [la battuta era gia' quella: la meta' causale"
+                                      " del test non prova niente]" : "");
         }
-        expect (! tapped || (afterTap > 400 && was < 0.05 && held > 0.95),
+        // What is being asserted is that the bar goes where the tap says and
+        // stays there. "It was not already there" is a statement about the
+        // material, not about the behaviour, and it stopped being true: on this
+        // track the automatic alignment was right 0% of the time before the
+        // level watcher and the state-space acquisition landed, and 100% after.
+        // Requiring it would now be requiring the tracker to be worse.
+        expect (! tapped || (afterTap > 400 && held > 0.95),
                 "one tap says where the bar starts, and the bar stays there");
         expect (! tapped || (sawDeclared && ! declaredLater),
                 "and the one is marked for a moment, only just after the tap");
@@ -2723,6 +2787,148 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         && std::fabs (last.bpm - bpm) < 16.0f,
                     "ONNX locks quiet SPEAKER-level 120 kit (iPad/Spotify path)");
         }
+    }
+
+    // The room the app has been listening to since it was opened.
+    //
+    // Every test above starts the music at sample zero, and that is the one
+    // case a device is never in: the analysis has been running for minutes on
+    // an empty room by the time anybody plays, and the guards inside the tempo
+    // estimator count *frames*. Measured on the real network, forty seconds of
+    // room noise is enough for it to name a tempo and call the level settled a
+    // tenth of a second after the first beat, having examined none of it - and
+    // the band then spends twenty seconds arguing with a lock to an empty room.
+    {
+        const double sr = 48000.0;
+        const int block = 256;
+        const float bpm = 120.0f;
+        const int preN = static_cast<int> (sr * 20.0) / block * block;
+        const int songN = static_cast<int> (sr * 30.0) / block * block;
+
+        std::vector<float> kit (static_cast<size_t> (songN), 0.0f);
+        renderKitTrack (kit, bpm, sr);
+        float kitPeak = 0.0f;
+        for (float v : kit)
+            kitPeak = std::max (kitPeak, std::abs (v));
+
+        std::vector<float> in (static_cast<size_t> (preN + songN), 0.0f);
+        {
+            // Thirty decibels under the band, which is a quiet room, not
+            // silence - and after the analysis make-up gain it reaches the
+            // network at very nearly the level the band does.
+            std::mt19937 rng (0x0ff1ce);
+            std::uniform_real_distribution<float> u (-1.0f, 1.0f);
+            float lp = 0.0f, peak = 0.0f;
+            for (int i = 0; i < preN; ++i)
+            {
+                lp += (u (rng) - lp) * 0.05f;
+                in[static_cast<size_t> (i)] = lp;
+                peak = std::max (peak, std::abs (lp));
+            }
+            if (peak > 0.0f)
+                for (int i = 0; i < preN; ++i)
+                    in[static_cast<size_t> (i)] *= kitPeak * 0.03f / peak;
+        }
+        std::copy (kit.begin(), kit.end(), in.begin() + preN);
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.start();
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        double rightSince = -1.0;
+        vp::EngineSnapshot last {};
+        int pos = 0, blocks = 0;
+        while (pos + block <= static_cast<int> (in.size()))
+        {
+            const float* ins[1] = { in.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            last = eng.snapshot();
+            const double t = static_cast<double> (pos - preN) / sr;
+            if (t >= 0.0 && last.bpm > 40.0f)
+            {
+                const bool right = std::fabs (last.bpm - bpm) / bpm < 0.02f;
+                if (right)
+                {
+                    if (rightSince < 0.0)
+                        rightSince = t;
+                }
+                else
+                {
+                    rightSince = -1.0;
+                }
+            }
+            pos += block;
+            if ((++blocks % 10) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (4));
+        }
+
+        std::printf ("room-then-band  ripartenze=%d  bpm=%.2f  giusto-e-resta=%.1f s\n",
+                     last.analysisRestarts, static_cast<double> (last.bpm), rightSince);
+        expect (last.analysisRestarts >= 1,
+                "the band starting is noticed, so the room stops counting as evidence");
+        expect (rightSince >= 0.0 && rightSince < 14.0,
+                "after listening to a room for twenty seconds the tempo is still found promptly");
+    }
+
+    // And the other half of it: a passage with the drums out is not a band
+    // starting. A restart in the middle of a song throws away the grid the part
+    // is playing on, so the level watcher has to tell a break from a beginning.
+    {
+        const double sr = 48000.0;
+        const int block = 256;
+        const float bpm = 120.0f;
+        const int n = static_cast<int> (sr * 40.0) / block * block;
+
+        std::vector<float> in (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (in, bpm, sr);
+        // Twelve decibels out of the middle of it for eight seconds: a
+        // drums-out passage with everything else still playing, which is about
+        // as deep as a break inside a song goes. An empty room is thirty down,
+        // and that is the gap the watcher works in.
+        for (int i = static_cast<int> (sr * 14.0); i < static_cast<int> (sr * 22.0); ++i)
+            in[static_cast<size_t> (i)] *= 0.25f;
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.start();
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        vp::EngineSnapshot last {};
+        double firstRestart = -1.0;
+        int pos = 0, blocks = 0;
+        while (pos + block <= n)
+        {
+            const float* ins[1] = { in.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            last = eng.snapshot();
+            if (firstRestart < 0.0 && last.analysisRestarts > 0)
+                firstRestart = static_cast<double> (pos) / sr;
+            pos += block;
+            if ((++blocks % 10) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (4));
+        }
+
+        std::printf ("breakdown  ripartenze=%d (prima a %.1f s)  bpm=%.2f  state=%s\n",
+                     last.analysisRestarts, firstRestart, static_cast<double> (last.bpm),
+                     vp::toString (last.state));
+        expect (last.analysisRestarts == 0,
+                "a drums-out passage is not a band starting");
+        expect (last.state == vp::TrackingState::following
+                    && std::fabs (last.bpm - bpm) < 4.0f,
+                "and the tempo survives it");
     }
 #endif
 }

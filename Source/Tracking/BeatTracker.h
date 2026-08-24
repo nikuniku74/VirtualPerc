@@ -55,6 +55,11 @@ public:
 
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
+    /** The analysis input has changed character - an empty room becoming a band
+        playing. Counted rather than flagged; see
+        BeatDecoder::notifyInputRestart. */
+    void setInputEpoch (uint32_t epoch) noexcept { neural.setInputEpoch (epoch); }
+
     struct Output
     {
         ClockTick     clock;
@@ -103,6 +108,13 @@ public:
     void tap (double timeSeconds) noexcept;
 
     Output process (const float* mono, int numSamples) noexcept;
+
+    /** Input samples fed to the analysis but not yet analysed, read live rather
+        than as of the last `process`. The probes wait on this to make a run
+        repeatable: otherwise how far behind the worker happens to be is decided
+        by the host's scheduler, and the same build measures differently from
+        one run to the next. */
+    int analysisBacklog() const noexcept { return neural.backlog(); }
 
     TrackingState state() const noexcept { return currentState; }
     bool tryLoadHypothesis (BeatHypothesis& out) const noexcept { return neural.tryLoad (out); }

@@ -21,6 +21,10 @@ public:
     void setBeatModel (std::unique_ptr<IBeatModel> model) { tracker.setBeatModel (std::move (model)); }
 
     void prepare (double sampleRate, int maxBlock, int numInputChannels) noexcept;
+
+    /** Input samples fed to the analysis but not yet analysed, live. Safe from
+        any thread; see BeatTracker::analysisBacklog for what it is for. */
+    int analysisBacklog() const noexcept { return tracker.analysisBacklog(); }
     void reset() noexcept;
 
     void start() noexcept;
@@ -76,7 +80,14 @@ private:
     void updateLeakDelay (int numSamples, bool speaker) noexcept;
     void applyAnalysisHpf (int numSamples) noexcept;
     void pushOutputToRing (int numSamples) noexcept;
-    void applyAnalysisMakeup (int numSamples, float rawPeak) noexcept;
+    void applyAnalysisMakeup (int numSamples, float rawPeak, bool levelJumped) noexcept;
+    /** Watches the analysis level *before* the make-up gain and counts the
+        moments the input changes character - an empty room becoming a band.
+        The counter is what the neural worker is told; see
+        BeatDecoder::notifyInputRestart for why it needs telling. Returns true
+        on the block the change is called, so the make-up gain can be re-primed
+        at the new level instead of gliding to it. */
+    bool updateAnalysisEpoch (int numSamples, float rawPeak) noexcept;
 
     BeatTracker tracker;
     PercussionEngine percussion;
@@ -162,6 +173,26 @@ private:
     float leakGainHi = 0.0f;
     float peakEnv = 0.0f;
     float makeupGain = 1.0f;
+    /** Pre-make-up level, and the level the current run of analysis evidence
+        started at. See updateAnalysisEpoch. */
+    float levelFast = 0.0f;
+    float levelRef = 0.0f;
+    /** How loud this input gets when something is happening, remembered for
+        about a minute. What makes "quiet" mean quiet rather than merely
+        quieter. */
+    float levelLoud = 0.0f;
+    int   levelStepSamples = 0;
+    int   levelPrimeSamples = 0;
+    uint32_t analysisEpoch = 0;
+    /** The same envelope on our *own* output, and how long our own part is
+        still answerable for a rise on the input. What we play comes back on the
+        microphone, the canceller does not always find it, and a level that rose
+        because we started playing is not the room turning into a band. */
+    std::atomic<uint32_t> lastRestarts { 0 };
+    float ownPeakLast = 0.0f;
+    float ownFast = 0.0f;
+    float ownRef = 0.0f;
+    int   ownStepSamples = 0;
     int ringWrite = 0;
     /** Power of two: the wrap is a mask, not a divide. */
     static constexpr int ringSize = 32768;

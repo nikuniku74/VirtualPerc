@@ -26,6 +26,120 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Quanto ci mette a trovare il BPM (24 agosto)
+
+Due cose, e la prima e' un difetto vero che si vede solo se si prova l'app come
+la si usa davvero.
+
+### La stanza vuota contava come prova
+
+Tutte le sonde partivano con la musica al campione zero. Sul dispositivo non
+succede mai: l'app ascolta da quando la si apre, quindi quando la band attacca
+l'analisi gira da minuti su una stanza vuota — e ogni guardia dentro
+`TempoEstimator` contava **frame**, non musica. Con quaranta secondi di rumore
+di stanza davanti (misurato sulla rete vera) l'estimatore nomina un tempo con
+salience 0.29 e dichiara il livello *deciso* **un decimo di secondo** dopo la
+prima battuta, senza averne esaminata nemmeno una. Anche lo state space e'
+avvelenato: all'attacco sta gia' a 107 o 136 BPM con margine 2.7-8.0, e avendo
+una penalita' di cambio poi lo difende.
+
+Il conto: `VPProbe --pre 20` su un brano a 128 in MIXER agganciava a **-14,6 s**
+(cioe' cinque secondi dentro la stanza vuota), a 150 BPM, in regime *fisso*, e
+ci metteva **27 s** a trovare i 128 veri — contro 5,7 s partendo da freddo.
+
+Ora il livello d'ingresso *prima* del makeup viene guardato: quando sale di
+diciotto decibel uscendo da uno stato davvero silenzioso (ventiquattro sotto il
+piu' forte che quell'ingresso raggiunge), l'analisi ricomincia a contare. Non
+sulla discesa — una strofa piano non e' una canzone nuova — e non se a farlo
+salire siamo stati noi, perche' quello che suoniamo rientra dal microfono e il
+cancellatore non sempre lo trova. Nello stesso momento il makeup viene
+ri-agganciato al livello nuovo invece di scivolarci in otto decimi di secondo, e
+lo stato ricorrente della rete viene azzerato: una partenza a freddo comincia
+con quello a zero, ed e' la condizione in cui e' stato misurato tutto.
+
+Il contratto sta in due test: `ripartenze` deve essere **0** dentro un brano
+(anche con dodici decibel di buco per otto secondi) e **1** per brano quando la
+band attacca.
+
+### Il livello lo sapeva gia' lo state space
+
+`TempoEstimator` non riporta niente finche' il buffer non contiene cinque
+periodi dell'ottava *sotto* il suo vincitore: dieci battute, 4,3 s a 140 BPM e
+7,9 s a 76. Misurato, il tempo fino a FOLLOWING era **esattamente** quello:
+
+| BPM | 10 battute | t_lock misurato |
+|---|---|---|
+| 76 | 7,89 | 8,3 |
+| 92 | 6,52 | 6,8 |
+| 104 | 5,77 | 6,2 |
+| 118 | 5,08 | 5,5 |
+| 128 | 4,69 | 5,1 |
+| 140 | 4,29 | 4,6 |
+
+`BeatHmm` intanto accumula dal primo frame, e sulle attivazioni vere nomina il
+livello giusto con margine a **1,2-1,7 s** (10 dump su 12; i 2 sbagliati sono i
+soliti 76 letti 152, che sbaglia anche il fold). Serviva solo al decoder per
+ripiegare la risposta del comb — cioe' arrivava *dopo* la cosa che si stava
+aspettando. Ora, se il comb non puo' ancora parlare e lo state space e' chiaro,
+il decoder aggancia da li'. Del suo prende **il livello e una griglia, non il
+numero**: i suoi periodi sono a frame interi, quindi legge circa il 2% alto
+(120,0 per 118, 142,9 per 140), e il tempo passa ai minimi quadrati dalla quarta
+battuta. La soglia per agganciare e' piu' alta di quella per ripiegare
+(`kAnchorAcquireMargin` 4 contro 2): ripiegare si disfa al refresh dopo,
+agganciare no.
+
+Sul decoder da solo, a 140 BPM: primo tempo valido **0,88 s** con lo stato
+contro **4,30 s** col solo fold.
+
+### Le misure
+
+`VPProbe` ha ora `--pre <sec>` (stanza vuota davanti, t=0 e' la prima battuta) e
+`--sync`, che aspetta che l'analisi finisca il blocco prima di darle il
+successivo. Serviva: senza, lo stesso identico binario dava span medio 8,7 / 9,2
+/ 12,1 BPM su tre giri, un rumore di fondo piu' largo di quasi tutte le
+differenze che si vogliono misurare. Con `--sync` il giro e' **ripetibile** e
+gira quaranta volte piu' in fretta.
+
+Trenta brani, tempo fisso, prima e dopo:
+
+| MIXER | da freddo | | con 20 s di stanza | |
+|---|---|---|---|---|
+| | prima | dopo | prima | dopo |
+| t_lock medio | 5,57 s | **2,64 s** | | |
+| ottava sbagliata | 5 | **4** | 4 | 4 |
+| instabili (>1,5) | 13 | **5** | 12 | **9** |
+| lenti (>12 s) | 9 | **8** | 14 | **7** |
+| span medio | 15,67 | **6,36** | 12,86 | **8,69** |
+
+| IPAD | da freddo | | con 20 s di stanza | |
+|---|---|---|---|---|
+| | prima | dopo | prima | dopo |
+| t_lock medio | 4,13 s | **3,07 s** | | |
+| ottava sbagliata | 5 | 5 | 5 | 5 |
+| instabili (>1,5) | 22 | **18** | 22 | **19** |
+| lenti (>12 s) | 17 | **15** | 19 | **17** |
+| span medio | 5,89 | **3,83** | 5,34 | **2,91** |
+
+L'unico numero che peggiora e' l'errore medio nei due casi col pre-roll (3,52 →
+8,29 in MIXER, 11,66 → 13,22 in IPAD): a parita' di ottave sbagliate sono
+*brani diversi* a sbagliarle, e quella metrica e' dominata da quali. Tutto il
+resto e' uguale o meglio.
+
+Host `VPTests`: **156 passed, 1 failed** — quello che resta rosso e' l'attacco
+percepito, ed era rosso anche prima. L'allineamento di fase, che prima falliva,
+ora passa; il test del TAP e' stato riscritto perche' la sua *premessa* non e'
+piu' vera (la battuta automatica su quel brano era giusta lo 0% del tempo prima
+e il 100% dopo, quindi non puo' piu' servire da controprova), non la sua tesi.
+
+### Cosa resta aperto
+
+L'app **aggancia ancora la stanza vuota**: 30 brani su 30 in MIXER, prima che
+qualcuno suoni. La ripartenza la corregge entro un terzo di secondo dall'attacco
+vero, ma sullo schermo per venti secondi c'e' scritto FOLLOWING a 150 BPM. La
+guardia che esiste (`ghostLockSamples`) vale solo in modalita' cassa e solo a
+percussione disarmata, e per estenderla serve una nozione di livello
+*assoluto* che questo giro non introduce.
+
 ## Il core del tempo, rivisto (24 agosto)
 
 Audit completo su fase e aggancio, con le misure e il resto in

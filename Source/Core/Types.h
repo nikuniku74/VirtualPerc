@@ -184,6 +184,11 @@ struct EngineSnapshot
     int   analysisGaps         = 0;
     /** Input samples fed but not yet analysed; zero means the worker is caught up. */
     int   analysisBacklog      = 0;
+    /** Times the analysis has been told to start its evidence again because the
+        input changed character - in practice, the room the app was listening to
+        turning into a band playing. One per song is what a set looks like; one
+        in the middle of a song is this watcher being fooled. */
+    int   analysisRestarts     = 0;
     /** Measured analysis-plus-output delay the clock runs ahead by, so that what
         is played lands on the pulse the listener hears. */
     float leadMs               = 0.0f;

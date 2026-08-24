@@ -25,6 +25,14 @@ namespace
     constexpr float kAnchorMargin = 2.0f;
     constexpr float kAnchorHysteresis = 0.12f;
 
+    // And a higher bar to *acquire* on, because the two decisions cost
+    // different things. Folding the comb's answer into the state space's octave
+    // is reversible on the next refresh; adopting the state space's tempo
+    // outright is what the grid, the fits and the bar are then built on, and
+    // the state space has a change penalty, so a level taken too early is one
+    // it will defend.
+    constexpr float kAnchorAcquireMargin = 4.0f;
+
     // The long fit, watched over a window of beats. A record cut to a click
     // holds its 24-beat fit inside a few tenths of a percent; a band drifts out
     // of that band and keeps going in one direction.
@@ -405,6 +413,47 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     longFilled = 0;
 }
 
+void BeatDecoder::notifyInputRestart() noexcept
+{
+    // The two things that decide the metrical level. Both were measuring a
+    // room: over forty seconds of room noise at the level the make-up gain
+    // hands the network, the fold names a tempo with a salience of 0.29 and
+    // calls the level settled, and the state space sits on it with a margin of
+    // 8 - which, having a change penalty, it then defends against the music.
+    tempo.restartEvidence();
+    hmm.reset();
+    anchorBpm = 0.0f;
+    anchorStrength = 0.0f;
+
+    // The grid and everything fitted to it. The next peak re-anchors, because
+    // with no last beat the on-grid gate has nothing to reject against.
+    lastBeatSec = -1.0;
+    lastDownbeatSec = -1.0;
+    gridAnchorSec = -1.0;
+    foldPhaseBeats = 0;
+    beatWrite = 0;
+    beatFilled = 0;
+    beatsInBar = 0;
+    ++gridSerial;
+
+    // Evidence chains, and the verdict they fed. A tempo called fixed on a room
+    // is the most expensive thing to keep: it is designed to be stubborn.
+    fastDriftBeats = 0;
+    fastDriftLargeBeats = 0;
+    fastDriftSign = 0;
+    octaveMismatchBeats = 0;
+    octaveVoteBpm = 0.0f;
+    beatsOnLevel = 0;
+    lastFitResidual = 1.0f;
+    lastFitCoverage = 0.0f;
+    longFitBpm = 0.0f;
+    shortFitBpm = 0.0f;
+    longWrite = 0;
+    longFilled = 0;
+    established = false;
+    enterRegime (TempoRegime::unknown);
+}
+
 float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
 {
     // A missed beat doubles the interval, a ghost halves it. Snap the interval
@@ -638,6 +687,27 @@ void BeatDecoder::updateTempo() noexcept
         if (combReady)
         {
             bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
+            established = true;
+        }
+        else if (useAnchor && hmm.ready() && anchorBpm >= kMinBpm
+                 && hmm.levelMargin() > kAnchorAcquireMargin)
+        {
+            // The state space is clear about the level and the fold cannot
+            // speak yet. It cannot speak for a while, either: it reports
+            // nothing until the buffer holds five periods of the octave *below*
+            // its winner, which is ten beats - 4.3 s at 140 BPM and 7.9 s at
+            // 76, and measured end to end that is the whole of the time to
+            // lock. The state space has been accumulating since the first
+            // frame and, on real activations, names the right level with a
+            // margin at 1.2-1.7 s.
+            //
+            // What is taken from it is the level and a starting grid, not the
+            // number: its periods are whole frames, so it reads about 2% sharp
+            // - 120.0 for 118, 142.9 for 140 - which is fine to lock to and not
+            // fine to play on. The least-squares fit owns the tempo from the
+            // fourth beat, and the fold corrects the level if it disagrees when
+            // it finally arrives, at the provisional cost of two beats.
+            bpm = std::clamp (applyUserOctave (anchorBpm), kMinBpm, kMaxBpm);
             established = true;
         }
         else if (beatFilled >= 4 && timeSec > kPeakOnlyGraceSec)
@@ -995,8 +1065,17 @@ float BeatDecoder::scoreConfidence() const noexcept
     if (! established)
         return std::clamp (0.35f * tempo.salience(), 0.0f, 1.0f);
 
-    const float salience = std::clamp (tempo.salience() / 0.55f, 0.0f, 1.0f);
-    const float clarity = std::clamp (tempo.clarity() / 0.50f, 0.0f, 1.0f);
+    // How sure we are that there is a pulse, and that its level is not a coin
+    // toss, from whichever of the two level sources can answer. Before the fold
+    // has its ten beats of buffer it answers neither, and a tracker waiting for
+    // confidence waits for the fold whether or not anything else already knows.
+    // The state space answers both at once: its margin is the winning tempo's
+    // lead over the tempi that are *not* neighbours of it, which is to say over
+    // the other metrical levels.
+    const float salience = std::max (std::clamp (tempo.salience() / 0.55f, 0.0f, 1.0f),
+                                     anchorStrength);
+    const float clarity = std::max (std::clamp (tempo.clarity() / 0.50f, 0.0f, 1.0f),
+                                    anchorStrength);
     const float tightness = 1.0f - std::clamp (lastFitResidual / 0.08f, 0.0f, 1.0f);
     const float coverage = std::clamp (static_cast<float> (beatFilled) / 8.0f, 0.0f, 1.0f);
 
@@ -1042,7 +1121,18 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
         // margin is the winning tempo's lead over the best tempo that is not a
         // neighbour of it - that is, over the other metrical levels.
         if (hmm.ready() && hmm.levelMargin() > kAnchorMargin)
+        {
             anchorBpm = hmm.bpm();
+            anchorStrength = std::clamp ((hmm.levelMargin() - kAnchorMargin) / kAnchorMargin,
+                                         0.0f, 1.0f);
+        }
+        else
+        {
+            // The tempo it last named is kept - the fold is still folded onto
+            // it - but a margin that has fallen back is not evidence about
+            // anything now, so it stops counting as confidence.
+            anchorStrength = 0.0f;
+        }
     }
 
     const float period = 60.0f / std::max (kMinBpm, bpm);

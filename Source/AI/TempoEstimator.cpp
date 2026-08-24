@@ -184,6 +184,7 @@ void TempoEstimator::reset() noexcept
     std::fill (score.begin(), score.end(), 0.0f);
     write = 0;
     filled = 0;
+    evidence = 0;
     sinceRefresh = 0;
     acfValidTop = 0;
     challengerBpm = 0.0f;
@@ -194,6 +195,27 @@ void TempoEstimator::reset() noexcept
     bestSalience = 0.0f;
     bestClarity = 0.0f;
     bestOffbeat = 1.0f;
+}
+
+void TempoEstimator::restartEvidence() noexcept
+{
+    // Only the counter. The ring keeps what it has - the frames are still
+    // there, they simply stop being counted as evidence - and nothing that has
+    // been reported is retracted here: the decoder above decides what to do
+    // with a comb that has gone quiet, and it already knows how.
+    evidence = 0;
+    isReady = false;
+    isLevelSettled = false;
+    bestSalience = 0.0f;
+    bestClarity = 0.0f;
+    bestOffbeat = 1.0f;
+    challengerBpm = 0.0f;
+    challengerRefreshes = 0;
+}
+
+int TempoEstimator::evidenceFrames() const noexcept
+{
+    return std::min (filled, evidence);
 }
 
 float TempoEstimator::foldIntoRange (float bpmCandidate) noexcept
@@ -298,12 +320,13 @@ bool TempoEstimator::foldProfile (float lag, int n, float* prof) const noexcept
 float TempoEstimator::beatPhaseFor (float bpmCandidate, float& contrastOut) const noexcept
 {
     contrastOut = 1.0f;
-    if (bpmCandidate < 1.0f || filled < minLag * kMinPeriods)
+    const int n = evidenceFrames();
+    if (bpmCandidate < 1.0f || n < minLag * kMinPeriods)
         return -1.0f;
 
     const float lag = static_cast<float> (60.0 * fps) / bpmCandidate;
     float prof[kPhaseBins];
-    if (! foldProfile (lag, std::min (filled, window), prof))
+    if (! foldProfile (lag, std::min (n, window), prof))
         return -1.0f;
 
     float lo = prof[0], hi = prof[0];
@@ -415,7 +438,8 @@ float TempoEstimator::levelScore (float lag, int n, float& offbeatOut, bool& rul
 TempoEstimator::CandidateScore TempoEstimator::scoreFor (float bpmCandidate) const noexcept
 {
     CandidateScore out;
-    if (bpmCandidate <= 1.0f || filled < minLag * kMinPeriods)
+    const int n = evidenceFrames();
+    if (bpmCandidate <= 1.0f || n < minLag * kMinPeriods)
         return out;
     const float lag = static_cast<float> (60.0 * fps) / bpmCandidate;
     if (lag < static_cast<float> (minLag) || lag > static_cast<float> (maxLag))
@@ -423,12 +447,12 @@ TempoEstimator::CandidateScore TempoEstimator::scoreFor (float bpmCandidate) con
 
     float offbeat = 1.0f;
     bool ruledOutFast = false;
-    out.score = levelScore (lag, filled, offbeat, ruledOutFast);
+    out.score = levelScore (lag, n, offbeat, ruledOutFast);
     out.comb = combStrength (lag);
     out.halfAtSelf = offbeat;
     out.evaluable = ruledOutFast;
     if (ruledOutFast)
-        out.halfAtDouble = halfPhaseRatio (2.0f * lag, filled);
+        out.halfAtDouble = halfPhaseRatio (2.0f * lag, n);
     return out;
 }
 
@@ -441,6 +465,8 @@ void TempoEstimator::push (float activation) noexcept
     write = (write + 1) % window;
     if (filled < window)
         ++filled;
+    if (evidence < window)
+        ++evidence;
 
     if (++sinceRefresh < kRefreshFrames)
         return;
@@ -450,7 +476,7 @@ void TempoEstimator::push (float activation) noexcept
 
 void TempoEstimator::refresh() noexcept
 {
-    const int n = filled;
+    const int n = evidenceFrames();
     isLevelSettled = false;
 
     // Three periods of the fastest tempo we accept is the floor for saying

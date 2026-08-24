@@ -66,9 +66,10 @@ void BeatHmm::prepare (double framesPerSecond)
     next.assign (static_cast<size_t> (numStates), 0.0f);
     logPrior.assign (static_cast<size_t> (numTempi), 0.0f);
 
-    // Two beats of the slowest tempo before anything is reported: below that
-    // the forward pass has not seen a whole period of most of the state space.
-    warmupFrames = tauMax * 2;
+    // The floor under the per-winner rule in `ready`: two beats of the fastest
+    // tempo in the space, which is the shortest thing that could have been
+    // observed twice at all.
+    warmupFrames = tauMin * 2;
 
     rebuildPrior();
     reset();
@@ -101,6 +102,7 @@ void BeatHmm::reset() noexcept
     frames = 0;
     reportedBpm = 0.0f;
     reportedPhase = 0.0f;
+    readyNow = false;
     margin = 0.0f;
     beatNow = false;
     if (numStates <= 0)
@@ -215,6 +217,7 @@ void BeatHmm::push (float activation) noexcept
     reportedBpm = static_cast<float> (60.0 * fps) / static_cast<float> (wt);
     reportedPhase = static_cast<float> (wp) / static_cast<float> (wt);
     beatNow = wp == 0;
+    readyNow = frames > static_cast<long long> (std::max (warmupFrames, wt * 2));
 
     // How much better the winning tempo is than the best rival at a different
     // metrical level. Compared as *tempi*, not as single states: the probability

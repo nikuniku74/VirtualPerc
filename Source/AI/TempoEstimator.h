@@ -48,6 +48,23 @@ public:
         interval; the cost is bounded and allocation free. */
     void push (float activation) noexcept;
 
+    /** The input has changed character: the room the app was listening to has
+        become a band playing. Everything in the ring predates that, so the
+        evidence starts again from here.
+
+        The guards below - how many periods the buffer holds, whether the level
+        has been examined - used to count frames since `reset`, and on a device
+        the analysis has been running since the app was opened. By the time
+        anyone plays, they are all satisfied by an empty room: measured on real
+        activations, after forty seconds of room noise the estimator names a
+        level and calls it settled a tenth of a second after the first beat,
+        having examined none of it. Counting evidence rather than frames is what
+        makes the guards mean what their comments say.
+
+        The ring is not cleared. `n` inside is what decides how much of it is
+        looked at, and after this call that is only what has arrived since. */
+    void restartEvidence() noexcept;
+
     bool  ready()    const noexcept { return isReady; }
     float bpm()      const noexcept { return bestBpm; }
 
@@ -113,6 +130,9 @@ private:
     bool  foldProfile (float lag, int n, float* prof) const noexcept;
     float tempoPrior (float bpmCandidate) const noexcept;
     float lagAt (float lag) const noexcept;
+    /** Frames in the ring that are evidence about the music now playing, as
+        opposed to frames that merely happened. */
+    int   evidenceFrames() const noexcept;
     float combStrength (float lag) const noexcept;
     float halfPhaseRatio (float lag, int n) const noexcept;
     float levelScore (float lag, int n, float& offbeatOut, bool& ruledOutFast) const noexcept;
@@ -137,6 +157,9 @@ private:
     int window = 0;
     int write = 0;
     int filled = 0;
+    /** Frames pushed since the last restart. `filled` says how much of the ring
+        holds anything; this says how much of it holds the music. */
+    int evidence = 0;
     int sinceRefresh = 0;
     bool isReady = false;
     float bestBpm = 0.0f;

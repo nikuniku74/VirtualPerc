@@ -9,7 +9,9 @@
 // actually reproduce.
 //
 // What it measures, per track:
-//   t_lock     seconds until FOLLOWING
+//   t_lock     seconds until FOLLOWING, counted from the first beat of the
+//              song - so a negative one means it locked to an empty room
+//              before anybody played
 //   t_2%       seconds until the reported tempo is within 2% and stays there
 //   span       BPM range after settling - a fixed tempo must have none
 //   wobble     mean |dBPM| per second after settling
@@ -39,6 +41,10 @@ using namespace vp::probe;
 struct Result
 {
     double tLock = -1.0;
+    /** Whether FOLLOWING was ever reached. `tLock` alone cannot say so any
+        more: with a pre-roll it is measured from the first beat of the song, so
+        a lock to the empty room is a *negative* time rather than no time. */
+    bool   lockSeen = false;
     double t2pct = -1.0;
     float  bpmEnd = 0.0f;
     float  span = 0.0f;
@@ -50,6 +56,10 @@ struct Result
     float  phaseMean = 0.0f;
     float  phaseWorst = 0.0f;
     int    gaps = 0;
+    /** Times the analysis was told to start its evidence again. One is the band
+        starting; more than one means the level watcher was fooled by the song
+        itself. */
+    int    restarts = 0;
     /** Mean and worst distance from the tempo the band is actually playing, in
         BPM. On material that holds still this is the same question as `span`;
         on material that does not, it is the only one that means anything. */
@@ -66,16 +76,49 @@ struct Result
 // problem. Both are shipped, so both get measured.
 enum class Listening { ipad, mixer };
 
+// Peak level of the room before anybody plays, before the analysis make-up
+// gain. An empty room is not digital silence, and the difference matters: the
+// gain has a 24x ceiling and a 0.20 target, so a room at this level reaches the
+// network at very nearly the level a band does.
+constexpr float kRoomPeak = 0.006f;
+
 Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool trace,
-            Listening mode)
+            Listening mode, double preSeconds, bool sync)
 {
     const int block = 256;
     const double seconds = 60.0;
     const int n = static_cast<int> (sr * seconds);
 
-    std::vector<float> song (static_cast<size_t> (n), 0.0f);
+    // The room before the band starts. On a device the app has been listening
+    // since it was opened, so by the time anyone plays, the analysis has been
+    // running for minutes on an empty room - and every guard that counts
+    // *frames* rather than music has already been satisfied by it. Starting the
+    // song at sample zero is the one case that never happens in use.
+    const int preN = (static_cast<int> (sr * std::max (0.0, preSeconds)) / block) * block;
+
+    std::vector<float> song (static_cast<size_t> (preN + n), 0.0f);
     std::vector<double> truePhase;
-    renderSong (song, opt, sr, seed, &truePhase);
+    {
+        std::vector<float> body (static_cast<size_t> (n), 0.0f);
+        renderSong (body, opt, sr, seed, &truePhase);
+        std::copy (body.begin(), body.end(), song.begin() + preN);
+    }
+    if (preN > 0)
+    {
+        std::mt19937 rng (seed ^ 0x4f6f6du);
+        float lp = 0.0f, peak = 0.0f;
+        for (int i = 0; i < preN; ++i)
+        {
+            lp += (noiseAt (rng) - lp) * 0.05f;
+            song[static_cast<size_t> (i)] = lp;
+            peak = std::max (peak, std::fabs (lp));
+        }
+        if (peak > 0.0f)
+            for (int i = 0; i < preN; ++i)
+                song[static_cast<size_t> (i)] *= kRoomPeak / peak;
+        truePhase.insert (truePhase.begin(), static_cast<size_t> (preN), 0.0);
+    }
+
     if (mode == Listening::ipad)
         speakerRoomMic (song, sr, seed, level);
 
@@ -121,11 +164,43 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     {
         const float* ins[1] = { song.data() + pos };
         eng.process (ins, 1, outs, 2, block);
-        const auto snap = eng.snapshot();
-        const double t = static_cast<double> (pos) / sr;
 
-        if (r.tLock < 0.0 && snap.state == vp::TrackingState::following)
+        // Wait for the analysis to catch up with the audio before feeding it
+        // any more.
+        //
+        // Without this the worker runs on its own thread against a feeder that
+        // is faster than real time, so how far behind it happens to be is
+        // decided by the host's scheduler - and that decides which activations
+        // the decoder sees for a given block. Measured on one unchanged build,
+        // three runs gave mean spans of 8.7, 9.2 and 12.1 BPM: a noise floor
+        // wider than most of the differences anyone would want to measure. With
+        // the backlog drained every block the same build gives the same answer,
+        // which is what makes a before and an after comparable at all.
+        if (sync)
+        {
+            // One analysis hop, not one block, and read live: the worker cannot
+            // make a frame out of less than a hop, and the backlog inside the
+            // snapshot is as of the last `process` and therefore never moves
+            // while this spins.
+            const int hop = static_cast<int> (std::ceil (vp::kBeatModelHop * sr
+                                                         / vp::kBeatModelSampleRate));
+            const auto until = std::chrono::steady_clock::now()
+                               + std::chrono::milliseconds (50);
+            while (eng.analysisBacklog() > hop
+                   && std::chrono::steady_clock::now() < until)
+                std::this_thread::yield();
+        }
+
+        const auto snap = eng.snapshot();
+        // Time zero is the first beat of the song, not the first sample fed to
+        // the engine: everything before that is the room.
+        const double t = static_cast<double> (pos - preN) / sr;
+
+        if (! r.lockSeen && snap.state == vp::TrackingState::following)
+        {
+            r.lockSeen = true;
             r.tLock = t;
+        }
 
         if (snap.bpm > 40.0f)
         {
@@ -200,6 +275,7 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
 
         r.bpmEnd = snap.bpm;
         r.gaps = snap.analysisGaps;
+        r.restarts = snap.analysisRestarts;
         pos += block;
 
         // Note what this pacing does and does not give you. The worker runs on
@@ -211,8 +287,10 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
         // check first whether the code that changed is even on this path (the
         // `gaps` column says whether the analysis ever lost audio, which is the
         // usual answer to "did the FIFO have anything to do with it").
-        if ((++blocks % 8) == 0)
+        if (! sync && (++blocks % 8) == 0)
             std::this_thread::sleep_for (std::chrono::milliseconds (2));
+        else if (sync)
+            ++blocks;
     }
 
     r.span = (hi >= lo) ? hi - lo : 0.0f;
@@ -230,6 +308,8 @@ int main (int argc, char** argv)
 {
     bool trace = false;
     float drift = 0.0f, jitter = 0.0f;
+    double preSeconds = 0.0;
+    bool sync = false;
     Listening mode = Listening::ipad;
     std::vector<const char*> rest;
     for (int i = 1; i < argc; ++i)
@@ -240,6 +320,8 @@ int main (int argc, char** argv)
         else if (std::strcmp (argv[i], "--drift") == 0 && i + 1 < argc) drift = static_cast<float> (std::atof (argv[++i]));
         else if (std::strcmp (argv[i], "--jitter") == 0 && i + 1 < argc) jitter = static_cast<float> (std::atof (argv[++i]));
         else if (std::strcmp (argv[i], "--live") == 0) { drift = 3.0f; jitter = 10.0f; }
+        else if (std::strcmp (argv[i], "--pre") == 0 && i + 1 < argc) preSeconds = std::atof (argv[++i]);
+        else if (std::strcmp (argv[i], "--sync") == 0) sync = true;
         else rest.push_back (argv[i]);
     }
     const char* modeName = mode == Listening::ipad ? "IPAD (cassa -> stanza -> microfono)"
@@ -265,7 +347,8 @@ int main (int argc, char** argv)
         o.driftBpm = drift;
         o.jitterMs = jitter;
         std::printf ("# %s  |  %s\n", modeName, material);
-        const Result r = run (o, sr, static_cast<unsigned> (o.bpm) * 7u + 13u, 0.55f, true, mode);
+        const Result r = run (o, sr, static_cast<unsigned> (o.bpm) * 7u + 13u, 0.55f, true, mode,
+                              preSeconds, sync);
         std::printf ("\n%s %.0f: lock=%.1f t2=%.1f end=%.2f span=%.2f bars=%d jumps=%d\n",
                      st.c_str(), static_cast<double> (o.bpm), r.tLock, r.t2pct,
                      static_cast<double> (r.bpmEnd), static_cast<double> (r.span),
@@ -283,10 +366,16 @@ int main (int argc, char** argv)
     const float tempos[] = { 76.0f, 92.0f, 104.0f, 118.0f, 128.0f, 140.0f };
 
     std::printf ("# ascolto: %s\n# materiale: %s\n", modeName, material);
+    if (preSeconds > 0.0)
+        std::printf ("# stanza vuota per %.0f s prima che la band attacchi; t=0 e' la prima battuta\n",
+                     preSeconds);
+    if (sync)
+        std::printf ("# analisi sincronizzata con l'audio a ogni blocco: il giro e' ripetibile\n");
     std::printf ("%-11s %-6s %-7s %-7s %-7s %-7s %-7s %-6s %-6s %-7s %-5s\n",
-                 "style", "bpm", "t_lock", "t_2%", "err", "errMax", "span", "jumps", "bars", "phase", "gaps");
+                 "style", "bpm", "t_lock", "t_2%", "err", "errMax", "span", "jumps", "bars", "phase", "rst");
 
     int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0, totalGaps = 0;
+    int nLocked = 0, nEarlyLock = 0, totalRestarts = 0;
     double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0, errAcc = 0.0;
 
     for (const auto& style : styles)
@@ -297,7 +386,8 @@ int main (int argc, char** argv)
             o.bpm = bpm;
             o.driftBpm = drift;
             o.jitterMs = jitter;
-            const Result r = run (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, 0.55f, trace, mode);
+            const Result r = run (o, sr, static_cast<unsigned> (bpm) * 7u + 13u, 0.55f, trace, mode,
+                                  preSeconds, sync);
 
             const bool octaveBad = std::fabs (r.octave) > 0.20f;
             const bool unstable = r.span > 1.5f;
@@ -311,15 +401,17 @@ int main (int argc, char** argv)
             spanAcc += r.span;
             spanNnAcc += r.spanNn;
             wobbleAcc += r.wobble;
-            if (r.tLock >= 0.0) lockAcc += r.tLock;
+            if (r.lockSeen) { lockAcc += r.tLock; ++nLocked; }
+            nEarlyLock += r.lockSeen && r.tLock < 0.0;
 
             totalGaps += r.gaps;
+            totalRestarts += r.restarts;
             errAcc += r.errMean;
             std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-7.2f %-7.2f %-7.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
                          styleName (o), static_cast<double> (bpm), r.tLock, r.t2pct,
                          static_cast<double> (r.errMean), static_cast<double> (r.errWorst),
                          static_cast<double> (r.span), r.bigJumps, r.barBreaks,
-                         static_cast<double> (r.phaseMean), r.gaps,
+                         static_cast<double> (r.phaseMean), r.restarts,
                          octaveBad ? "OCT " : "", unstable ? "WOBBLE " : "", slow ? "SLOW" : "");
             std::fflush (stdout);
         }
@@ -331,11 +423,17 @@ int main (int argc, char** argv)
     std::printf ("slow (>12s / never) %d\n", nSlow);
     std::printf ("bar restarts      %d\n", totalBars);
     std::printf ("analysis gaps     %d\n", totalGaps);
+    std::printf ("ripartenze        %d   <- una a brano e' la band che attacca; di piu' e' il livello che inganna\n",
+                 totalRestarts);
     std::printf ("bpm jumps >1      %d\n", totalJumps);
     std::printf ("errore medio      %.2f BPM   <- distanza dal tempo che la band suona davvero\n", errAcc / nRuns);
     std::printf ("mean span         %.2f BPM\n", spanAcc / nRuns);
     std::printf ("mean wobble       %.2f BPM/0.5s\n", wobbleAcc / nRuns);
     std::printf ("mean span (decoder only) %.2f BPM\n", spanNnAcc / nRuns);
-    std::printf ("mean t_lock       %.2f s\n", lockAcc / nRuns);
+    if (preSeconds > 0.0)
+        std::printf ("lock sulla stanza vuota %d   <- agganciati prima che qualcuno suonasse\n",
+                     nEarlyLock);
+    std::printf ("mean t_lock       %.2f s (%d agganciati)\n",
+                 nLocked > 0 ? lockAcc / nLocked : -1.0, nLocked);
     return 0;
 }

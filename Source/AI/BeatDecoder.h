@@ -40,6 +40,25 @@ public:
         recent evidence, not a reason to forget the song. */
     void notifyDiscontinuity (double lostSeconds) noexcept;
 
+    /** The input has changed character - measured on its level, before the
+        analysis make-up gain erases the difference. In practice that is the
+        room the app has been listening to since it was opened turning into a
+        band playing.
+
+        Everything the level sources have measured up to here describes the
+        room, so their evidence starts again: the fold's buffer, the state
+        space, and the beat history that was built on whatever the network made
+        of an empty room. What is deliberately kept is the committed tempo and
+        `established`, so the clock does not stop and the part does not drop
+        out; both are wrong if the previous lock was to a room, and both are
+        corrected within a couple of beats by sources that now have nothing but
+        the music in them.
+
+        This is not `notifyDiscontinuity`. There, audio was lost and the level
+        evidence is still good; here no audio was lost and the level evidence is
+        the thing that has gone stale. */
+    void notifyInputRestart() noexcept;
+
     const BeatHypothesis& current() const noexcept { return hyp; }
     TempoRegime regime() const noexcept { return tempoRegime; }
 
@@ -194,6 +213,12 @@ private:
     int   octaveShift = 0;
     bool  useAnchor = false;
     float anchorBpm = 0.0f;
+    /** How clear the state space is about the level right now, 0..1, from its
+        own margin over the rival metrical levels. Zero when it is not clear
+        enough to be used at all. This is the only thing that can answer "is
+        there a pulse, and is its level unambiguous" during the seconds before
+        the fold has enough buffer to answer anything. */
+    float anchorStrength = 0.0f;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
     float longFitBpm = 0.0f;

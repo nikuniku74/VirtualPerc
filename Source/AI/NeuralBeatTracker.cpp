@@ -42,6 +42,8 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     wakeCount.store (0, std::memory_order_relaxed);
     seenDropped = 0;
     modelRefill = 0;
+    inputEpoch.store (0, std::memory_order_relaxed);
+    seenInputEpoch = 0;
 
     popBuf.assign (4096, 0.0f);
     resampled.assign (4096, 0.0f);
@@ -112,6 +114,22 @@ void NeuralBeatTracker::workerLoop()
     while (! stopFlag.load (std::memory_order_relaxed))
     {
         decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
+
+        // Before the audio from after the event reaches the decoder, not after:
+        // the whole point is that nothing measured before it may vouch for what
+        // comes next.
+        const uint32_t epoch = inputEpoch.load (std::memory_order_relaxed);
+        if (epoch != seenInputEpoch)
+        {
+            seenInputEpoch = epoch;
+            decoder.notifyInputRestart();
+            // The network's recurrent state as well. A cold start begins with it
+            // zeroed and that is the case every measurement in this repository
+            // was taken in; carrying twenty seconds of an amplified empty room
+            // into the first bar is not the same thing, and is not better.
+            if (model != nullptr)
+                model->reset();
+        }
 
         const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
 
