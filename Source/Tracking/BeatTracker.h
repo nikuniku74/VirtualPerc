@@ -115,6 +115,7 @@ private:
     double sampleRate = 48000.0;
     uint32_t lastBeatSerial = 0;
     uint32_t lastDownbeatSerial = 0;
+    uint32_t lastGridSerial = 0;
     bool seenSerials = false;
     float lastLeadMs = 0.0f;
     int samplesSinceBeat = 0;
@@ -132,7 +133,6 @@ private:
     bool armed = true;
     bool speakerFollow = false;
     bool lockedOnce = false;
-    bool retuning = false;
     bool tapHold = false;
     bool tapAligned = false;
     bool tapEstablished = false;
@@ -141,6 +141,10 @@ private:
     bool hadPlayed = false;
     bool needsResync = false;
     bool waitForSongBeat = false;
+    /** Whether a stroke actually came out last block. Nothing on the grid means
+        nothing to disturb by moving it, which is the difference between placing
+        the clock and having to lean it into place. */
+    bool sounding = false;
     /** The level the listener chose, the level AUTO has settled on, the level it
         is arguing for, and how long it has been arguing. */
     int  userOctave = 0;
@@ -149,7 +153,6 @@ private:
     int  autoWant = 0;
     int  autoHoldSamples = 0;
     int tapHoldSamples = 0;
-    int lostSyncSamples = 0;
     int downbeatHoldSamples = 0;
     float downbeatVotes[4] {};
     int   barDeclaredSamples = 0;

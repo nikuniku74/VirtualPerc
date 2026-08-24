@@ -1564,6 +1564,137 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and stays in the held regime rather than being shaken out of it");
     }
 
+    // Where the beat is, not just how far apart the beats are.
+    //
+    // The tempo has always come from a least-squares fit over up to
+    // twenty-four beats; the phase used to come from `lastBeatSec`, the single
+    // last accepted peak, so every beat's own timing error was handed to the
+    // clock whole and as a step. Measured against 22 ms of onset jitter the
+    // reported phase carried 22 ms rms of it, in jumps of up to 0.18 of a beat
+    // - and the clock's 0.9 s of phase smoothing exists to swallow exactly
+    // those jumps, which is what stops the loop being any tighter.
+    {
+        constexpr double fps = 50.0;
+        constexpr float trueBpm = 100.0f;
+        const double period = 60.0 / static_cast<double> (trueBpm) * fps;
+
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+
+        std::mt19937 rng (4242u);
+        std::normal_distribution<double> jitter (0.0, 1.1);   // ~22 ms
+        std::uniform_real_distribution<float> floorNoise (0.0f, 0.14f);
+        std::uniform_real_distribution<float> coin (0.0f, 1.0f);
+
+        const int total = static_cast<int> (fps * 60.0);
+        std::vector<double> beatAt;
+        std::vector<float>  beatGain;
+        for (int k = 0; static_cast<double> (k) * period < total + 4.0 * period; ++k)
+        {
+            beatAt.push_back (static_cast<double> (k) * period + jitter (rng));
+            beatGain.push_back (coin (rng) < 0.08f ? 0.10f : 0.94f);
+        }
+
+        double sq = 0.0, prev = 0.0;
+        int n = 0, steps = 0;
+        double worstStep = 0.0;
+        bool havePrev = false;
+        for (int i = 0; i < total; ++i)
+        {
+            float act = floorNoise (rng);
+            for (size_t k = 0; k < beatAt.size(); ++k)
+            {
+                const double d = static_cast<double> (i) - beatAt[k];
+                if (std::fabs (d) < 6.0)
+                    act = std::max (act, beatGain[k] * static_cast<float> (
+                                             std::exp (-0.5 * (d / 1.6) * (d / 1.6))));
+            }
+            const auto h = dec.observe (act, 0.03f, 1.0f - act);
+            if (! h.valid || static_cast<double> (i) / fps <= 25.0)
+                continue;
+
+            const double truePhase = std::fmod (static_cast<double> (i) / period, 1.0);
+            const double err = vp::wrapCentered (h.beatPhase - static_cast<float> (truePhase));
+            sq += err * err;
+            ++n;
+            if (havePrev)
+            {
+                const double step = std::fabs (vp::wrapCentered (
+                                        static_cast<float> (err - prev)));
+                if (step > 0.05)
+                {
+                    ++steps;
+                    worstStep = std::max (worstStep, step);
+                }
+            }
+            prev = err;
+            havePrev = true;
+        }
+
+        const double rms = n > 0 ? std::sqrt (sq / n) : 1.0;
+        std::printf ("grid-phase  rms=%.4f beats (%.1f ms)  steps>0.05=%d worst=%.3f\n",
+                     rms, rms * 60.0 / static_cast<double> (trueBpm) * 1000.0,
+                     steps, worstStep);
+        // Measured 0.0352 off the last peak and 0.0122 off the fit, on this
+        // material with this seed. The bound sits between the two, so the fit
+        // is what has to be carrying it.
+        expect (n > 100 && rms < 0.022,
+                "the phase is averaged over the fit, not taken from the last peak");
+        expect (steps == 0,
+                "and it does not step when a jittery beat is accepted");
+    }
+
+    // Right tempo, wrong half of the beat - the failure that feeds itself.
+    //
+    // The gate that decides whether a peak counts measures against the grid,
+    // so a grid that once anchors on an offbeat is stable: every real beat then
+    // sits half a beat off it and is thrown away as a subdivision, and every
+    // subdivision lands on it and is kept. Measured at 168 BPM with an eighth
+    // at 0.45 of the beat, the decoder reported 168.00 BPM - exactly right -
+    // half a beat out, for ninety seconds. The activation folded onto the
+    // committed period is the one measurement outside that loop.
+    {
+        constexpr double fps = 50.0;
+        constexpr float trueBpm = 168.0f;
+        const double period = 60.0 / static_cast<double> (trueBpm) * fps;
+
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+
+        const int total = static_cast<int> (fps * 60.0);
+        double sumAbs = 0.0;
+        int n = 0;
+        float found = 0.0f;
+        for (int i = 0; i < total; ++i)
+        {
+            const double ph = std::fmod (static_cast<double> (i), period);
+            const double dBeat = std::min (ph, period - ph);
+            const double po = std::fmod (static_cast<double> (i) + period * 0.5, period);
+            const double dOff = std::min (po, period - po);
+
+            float act = 0.05f;
+            act = std::max (act, 0.94f * static_cast<float> (
+                                     std::exp (-0.5 * (dBeat / 1.6) * (dBeat / 1.6))));
+            act = std::max (act, 0.45f * static_cast<float> (
+                                     std::exp (-0.5 * (dOff / 1.6) * (dOff / 1.6))));
+
+            const auto h = dec.observe (act, 0.03f, 1.0f - act);
+            if (! h.valid || static_cast<double> (i) / fps <= 30.0)
+                continue;
+            found = h.bpm;
+            const double truePhase = std::fmod (static_cast<double> (i) / period, 1.0);
+            sumAbs += std::fabs (vp::wrapCentered (h.beatPhase
+                                                   - static_cast<float> (truePhase)));
+            ++n;
+        }
+
+        const double mean = n > 0 ? sumAbs / n : 1.0;
+        std::printf ("offbeat-lock  bpm=%.2f (true %.0f)  mean phase error=%.3f beats\n",
+                     static_cast<double> (found), static_cast<double> (trueBpm), mean);
+        expect (n > 100 && std::fabs (found - trueBpm) / trueBpm < 0.03f && mean < 0.05,
+                "a grid that lands on the offbeat is found and moved, not defended");
+    }
+
     // Half and double, asked for by the listener. One half of the octave
     // problem is not decidable from the signal: on a 76 BPM mix with full
     // eighths the activation half a beat from the beat stands at 0.73-0.77 of

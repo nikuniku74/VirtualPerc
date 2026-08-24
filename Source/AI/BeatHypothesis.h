@@ -42,6 +42,15 @@ struct BeatHypothesis
     uint32_t beatSerial     = 0;
     uint32_t downbeatSerial = 0;
 
+    /** Bumped whenever the analysis throws its grid away and builds another:
+        a metrical level it no longer believes, a grid it has found to be on
+        the offbeat, a level the listener changed. Everything measured about
+        the bar describes the grid that has just gone, so this is the one
+        moment at which the count is worth nothing and should be dropped rather
+        than argued down. It is *not* bumped for a dropout - a hole in the
+        audio costs the recent evidence, not the song. */
+    uint32_t gridSerial     = 0;
+
     /** Input-sample position this hypothesis describes, in the device clock the
         audio thread counts in. The pipeline delay is whatever the audio thread
         has fed since; without it the phase target refers to the past. */

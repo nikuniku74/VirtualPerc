@@ -226,8 +226,9 @@ Phase decoderPhase (float bpm, double jitterFrames, float eighthGain,
 void measureDecoderPhase()
 {
     std::printf ("--- la fase che il decoder consegna, contro la griglia vera ---\n");
-    std::printf ("Il tempo esce da un fit su ventiquattro battiti; la fase esce\n"
-                 "dall'ultimo picco accettato, uno solo.\n\n");
+    std::printf ("Tempo e fase escono dallo stesso fit. Prima la fase usciva\n"
+                 "dall'ultimo picco accettato, uno solo, e questa tabella\n"
+                 "misurava 22 ms rms di jitter passato dritto, a scatti.\n\n");
     std::printf ("%-7s %-9s %-9s %-9s %-9s %-9s %-7s %-9s\n",
                  "bpm", "jitter", "ottavi", "rms", "peggio", "media", "scatti", "peggiore");
     for (float bpm : { 76.0f, 100.0f, 132.0f, 168.0f })
@@ -252,11 +253,13 @@ void measureDecoderPhase()
                          p.rms * 60.0 / bpm * 1000.0, p.worst * 60.0 / bpm * 1000.0);
         }
 
-    // The one that does not average out. Anchored on a single peak, a grid that
-    // once lands on the offbeat keeps landing there: every real beat is then
-    // half a beat off its own grid and the on-grid gate throws it away, so the
-    // error feeds itself. The tempo comes out exactly right the whole time.
-    std::printf ("\nTempo giusto, mezzo battito fuori - e non rientra:\n");
+    // The one that does not average out, and the one a fit cannot fix either.
+    // A grid that once lands on the offbeat keeps landing there: every real
+    // beat is then half a beat off its own grid and the on-grid gate throws it
+    // away, so the error feeds itself, with the tempo coming out exactly right
+    // the whole time. Only the fold sees the activation the gate never showed
+    // anybody, so only the fold can notice.
+    std::printf ("\nTempo giusto, mezzo battito fuori: il ripiegamento lo trova.\n");
     std::printf ("%-7s %-11s %-13s %-13s %-10s\n",
                  "bpm", "ottavo a", "bpm trovato", "errore/batt", "in fase?");
     for (float bpm : { 100.0f, 132.0f, 168.0f })
@@ -277,10 +280,12 @@ void measureDecoderPhase()
 
 void measureResync()
 {
-    std::printf ("--- il rilevatore di \"l'analisi e' andata altrove\" ---\n");
-    std::printf ("BeatTracker confronta il BPM del decoder con heldBpm, e heldBpm\n"
-                 "e' il tempo del follower, che sta gia' inseguendo il decoder.\n"
-                 "Servono 1.15 s netti sopra l'8%%.\n\n");
+    std::printf ("--- il vecchio rilevatore di \"l'analisi e' andata altrove\" ---\n");
+    std::printf ("Confrontava il BPM del decoder con heldBpm, che e' il tempo del\n"
+                 "follower, che sta gia' inseguendo il decoder: servivano 1.15 s\n"
+                 "netti sopra l'8%% e nessun gradino ci arriva. Ora il decoder dice\n"
+                 "da se' quando butta via la griglia (gridSerial); questa tabella\n"
+                 "resta perche' e' il motivo per cui non si torna a misurarlo qui.\n\n");
     std::printf ("%-10s %-10s %-14s %-10s\n", "nuovo bpm", "salto %", "sopra l'8% per", "ricalibra?");
 
     constexpr int blk = 256;

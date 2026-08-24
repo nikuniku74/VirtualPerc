@@ -96,6 +96,7 @@ void BeatTracker::reset() noexcept
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
     lastDownbeatSerial = 0;
+    lastGridSerial = 0;
     seenSerials = false;
     lastLeadMs = 0.0f;
     samplesSinceBeat = 0;
@@ -110,18 +111,17 @@ void BeatTracker::reset() noexcept
     gridMuteSamples = 0;
     ghostLockSamples = 0;
     lockedOnce = false;
-    retuning = false;
     tapHold = false;
     tapAligned = false;
     tapEstablished = false;
     waitForQuantize = false;
     heardMusic = false;
     hadPlayed = false;
+    sounding = false;
     needsResync = false;
     waitForSongBeat = false;
     armed = false;
     tapHoldSamples = 0;
-    lostSyncSamples = 0;
     downbeatHoldSamples = 0;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     quantizeWaitSamples = 0;
@@ -165,7 +165,6 @@ void BeatTracker::stop() noexcept
     tapHold = false;
     tapAligned = false;
     tapEstablished = false;
-    retuning = false;
     if (hadPlayed)
         needsResync = true;
     hadPlayed = false;
@@ -296,7 +295,6 @@ void BeatTracker::tap (double timeSeconds) noexcept
 
     tapEstablished = true;
     currentState = TrackingState::following;
-    retuning = false;
     gridMuteSamples = static_cast<int> (sampleRate * 0.35);
     tapHold = true;
     tapHoldSamples = 0;
@@ -587,6 +585,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         {
             lastBeatSerial = hyp.beatSerial;
             lastDownbeatSerial = hyp.downbeatSerial;
+            lastGridSerial = hyp.gridSerial;
             seenSerials = true;
         }
         newBeats = static_cast<int> (hyp.beatSerial - lastBeatSerial);
@@ -629,10 +628,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // the network took it straight back. Measured on a 100 BPM track tapped at
     // 132: held 100% of the time in IPAD, 0% in MIXER.
     const bool tapOwnsTempo = tapEstablished && heldBpm > 50.0f;
-    const bool holding = tapHold || tapOwnsTempo || (! retuning
-                      && (currentState == TrackingState::following
-                          || currentState == TrackingState::lowConfidence
-                          || currentState == TrackingState::recovering));
+    const bool holding = tapHold || tapOwnsTempo
+                      || currentState == TrackingState::following
+                      || currentState == TrackingState::lowConfidence
+                      || currentState == TrackingState::recovering;
 
     // The clock's lead is applied where it is measured - in `songPhase` above,
     // from the pipeline delay plus the device round trip. The follower used to
@@ -759,36 +758,64 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (octaveAuto)
         updateAutoOctave (nnBpm, periodic, numSamples);
 
-    const bool musicOn = quietSamples < static_cast<int> (sampleRate * 0.35);
-    if (lockedOnce && ! tapHold && ! tapOwnsTempo && musicOn && heldBpm > 50.0f && nnBpm > 50.0f)
+    // The analysis has thrown its grid away and built another one.
+    //
+    // This used to be inferred here, from the network's BPM disagreeing with
+    // `heldBpm` by 8% for a second - and `heldBpm` is the follower's own tempo
+    // five lines below, which is already chasing the network with a time
+    // constant of half a second. Measured over steps from 100 BPM, nothing up
+    // to and including a doubling ever accumulated the second it needed: the
+    // most any of them managed was 1.12 s at 100 -> 60, and the octaves scored
+    // zero because the clock takes those in one block. The state it set was
+    // therefore never entered, and with it neither was the phase snap for a new
+    // song nor the clearing of the bar.
+    //
+    // Anything the clock can measure for itself, the clock is also busy
+    // closing, so it will always be outrun. The decoder is the one that knows:
+    // it says so directly when it drops a grid, and that is the only moment at
+    // which the bar count is worth nothing rather than merely stale.
+    if (haveHyp && seenSerials && hyp.gridSerial != lastGridSerial)
     {
-        const float tempoRel = std::fabs (nnBpm - heldBpm) / heldBpm;
-        if (tempoRel > 0.08f)
-            lostSyncSamples += numSamples;
-        else
-            lostSyncSamples = std::max (0, lostSyncSamples - numSamples * 2);
-
-        if (lostSyncSamples > static_cast<int> (sampleRate * 1.15f))
-            retuning = true;
-    }
-    else if (! retuning)
-    {
-        lostSyncSamples = 0;
+        lastGridSerial = hyp.gridSerial;
+        // Not over a bar the listener placed by hand, and not over one that was
+        // moved a moment ago: those are the two cases where somebody already
+        // answered this question.
+        if (! tapEstablished && downbeatHoldSamples <= 0)
+            std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     }
 
     if (gridMuteSamples > 0)
         gridMuteSamples -= numSamples;
-    else if (! tapHold && ! waitForQuantize && periodic && loudEnough && nnConf > 0.28f
+    else if (! tapHold && periodic && loudEnough && nnConf > 0.28f
              && currentState != TrackingState::listening
              && currentState != TrackingState::idle
              && ! tapEstablished)
     {
-        // Seconds, not a per-block blend. While holding, long enough to average
-        // several hypotheses - the analysis refreshes about six times a second
-        // and each one carries its own phase error - so the clock follows the
-        // band and not the decoder. While still acquiring it is worth being
-        // wrong quickly.
-        follower.setGridPhase (songPhase, holding ? 0.90f : 0.25f);
+        // With nothing on the grid, put the grid where the song is.
+        //
+        // The loop corrects phase by bending the rate, because moving the grid
+        // under a part that is already playing doubles a stroke or drops one.
+        // That reasoning does not apply when no stroke is being played: there
+        // the correction is free and exact, and leaning into it instead costs
+        // the seconds measured in docs/CORE_TIMING_AUDIT.md - which is exactly
+        // the wait between arming the shaker and it being in the right place.
+        // This is also the whole of the time the part spends waiting to come
+        // in, which used to be excluded here altogether: through the entire
+        // wait the phase was never corrected at all.
+        const float gridErr = wrapCentered (follower.beatPhase() - songPhase);
+        if (! sounding && std::fabs (gridErr) > 0.04f)
+        {
+            follower.snapPhase (songPhase);
+        }
+        else
+        {
+            // Seconds, not a per-block blend. While holding, long enough to
+            // average several hypotheses - the analysis refreshes about six
+            // times a second and each one carries its own phase error - so the
+            // clock follows the band and not the decoder. While still acquiring
+            // it is worth being wrong quickly.
+            follower.setGridPhase (songPhase, holding ? 0.90f : 0.25f);
+        }
     }
 
     if (tapHold)
@@ -836,7 +863,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             listeningSamples = 0;
             lockHoldSamples = 0;
             ghostLockSamples = 0;
-            retuning = false;
         }
     }
     else
@@ -844,42 +870,22 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         ghostLockSamples = 0;
     }
 
-    if (retuning && nnBpm > 50.0f && currentState == TrackingState::following)
-    {
-        follower.setTargetTempo (nnBpm, std::max (nnConf, 0.70f));
-        heldBpm = nnBpm;
-        if (std::fabs (follower.currentTempo() - nnBpm) < 4.0f)
-        {
-            retuning = false;
-            lostSyncSamples = 0;
-
-            // A new tempo is a new song, and a new song's beat one has nothing
-            // to do with the old one's. Only the tempo was retuned here; the
-            // phase was left to the steering loop, which is deliberately gentle
-            // - it is built to close hundredths of a beat, and half a beat is
-            // not hundredths. Snap it, the way the first lock does. Only when it
-            // is genuinely far out: inside the range the loop closes quickly,
-            // moving the grid under a part that is already playing costs a
-            // stroke and buys nothing.
-            //
-            // The bar votes go with it. They are evidence about a song that has
-            // finished, and left in place they hold the new one's downbeat
-            // wherever the old one's was.
-            if (haveHyp && gridMuteSamples <= 0
-                && std::fabs (wrapCentered (follower.beatPhase() - songPhase)) > 0.15f)
-            {
-                follower.snapPhase (songPhase);
-                std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
-            }
-        }
-    }
-
     if (currentState == TrackingState::following && prevState != TrackingState::following)
     {
         if (tapAligned)
             tapAligned = false;
         else if (! tapHold && nnBpm > 50.0f && gridMuteSamples <= 0 && haveHyp)
-            follower.snapPhase (songPhase);
+        {
+            // Silent, the grid is simply placed. Sounding, a snap is a stroke:
+            // `snapPhase` re-anchors and puts a pulse on the new phase, which
+            // for a correction of a hundredth of a beat is a flam bought for
+            // nothing. Above the size the steering loop would take seconds
+            // over, it is worth the stroke - which is the same threshold the
+            // re-tune path beside this one already used, and this one did not.
+            if (! sounding
+                || std::fabs (wrapCentered (follower.beatPhase() - songPhase)) > 0.12f)
+                follower.snapPhase (songPhase);
+        }
     }
 
     if (tapOwnsTempo)
@@ -909,8 +915,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const bool canPlay = armed
                       && (currentState == TrackingState::following
                           || currentState == TrackingState::lowConfidence
-                          || currentState == TrackingState::recovering
-                          || retuning);
+                          || currentState == TrackingState::recovering);
     if (waitForQuantize && canPlay)
     {
         quantizeWaitSamples += numSamples;
@@ -953,6 +958,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     }
 
     out.percussionShouldPlay = canPlay && ! waitForQuantize;
+    sounding = out.percussionShouldPlay;
     if (out.percussionShouldPlay)
         hadPlayed = true;
     out.tapLocked = tapHold;
@@ -968,8 +974,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         out.followBar = FollowBar::paused;
     else if (waitForQuantize && canPlay)
         out.followBar = FollowBar::waitBeat;
-    else if (retuning)
-        out.followBar = FollowBar::recalin;
     else if (tapHold)
         out.followBar = FollowBar::tapAlign;
     else

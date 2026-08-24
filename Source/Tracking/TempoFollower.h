@@ -79,6 +79,11 @@ private:
     float phaseTargetTau = 0.5f;
     bool  havePhaseTarget = false;
     float prevPhaseErr = 0.0f;
+    // How long the analysis has been saying, in one direction, that the grid is
+    // somewhere else entirely - and which direction. A gap that holds is a
+    // different grid; one that does not is the analysis's own noise.
+    int   farTargetSamples = 0;
+    int   farTargetSign = 0;
     float lastObservedPhaseErr = 0.0f;
     float tempoTrim = 0.0f;
     float phaseCorrectionSinceObservation = 0.0f;

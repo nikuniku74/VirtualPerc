@@ -26,6 +26,32 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Il core del tempo, rivisto (24 agosto)
+
+Audit completo su fase e aggancio, con le misure e il resto in
+[docs/CORE_TIMING_AUDIT.md](CORE_TIMING_AUDIT.md). Sei cose trovate, sei
+corrette. Da riprovare sul device: aggancio su traccia gia' in corso, cambio
+traccia su Spotify, e START dopo uno STOP lungo.
+
+| | prima | dopo |
+|---|---|---|
+| Rumore di fase dal decoder (22 ms di jitter in ingresso) | 22.2 ms rms | **8.7 ms rms** |
+| Scatti di fase > 0.05 di battito, in 35 s | 11-49 | **0** |
+| 168 BPM con ottavi a 0.45 | 168.00 BPM, **mezzo battito fuori per sempre** | in fase |
+| Mezzo battito di scarto da chiudere (HIGH / LOW) | 4.85 s / 13.34 s | **2.81 s / 5.92 s** |
+| Lo stesso, a shaker fermo | uguale | **immediato** |
+| Trim su una canzone 1 BPM lontana | si ferma a 0.500 | **1.000** |
+
+In breve: la fase esce dal fit come il tempo e non piu' dall'ultimo picco; il
+ripiegamento dell'attivazione trova una griglia ancorata sul controtempo, che
+prima si difendeva da sola; il tetto di sterzata si apre quando l'errore e'
+grande e la griglia si sposta e basta quando non suona niente; il trim chiude
+tutto l'errore invece di meta'; e il rilevatore di "canzone nuova", che non
+poteva scattare, e' stato sostituito dal decoder che dice quando butta via la
+griglia.
+
+Host `VPTests`: **128 passed, 0 failed**. Sonda: `VPAlign`.
+
 ## Il link USB iPad -> X-Air non regge, e non e' l'app (22 agosto)
 
 Chiuso il capitolo sopra: la causa **non e' nel nostro codice**. Isolata cosi',

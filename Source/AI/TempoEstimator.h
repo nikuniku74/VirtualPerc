@@ -71,6 +71,25 @@ public:
         all. */
     bool levelSettled() const noexcept { return isLevelSettled; }
 
+    /** Where the beat sits inside a period of `bpmCandidate`, according to the
+        activation folded onto it - phase in [0, 1) at the newest frame pushed,
+        so 0 means a beat is landing now.
+
+        This is the one measurement in the whole chain that does not come
+        through the decoder's on-grid gate, which is what makes it worth having.
+        A grid that once anchors on an offbeat is self-consistent afterwards:
+        every real beat then sits half a beat off that grid and is thrown away
+        as a subdivision, so nothing in the beat history can ever disagree with
+        it. The fold sees all the activation, and folded onto the true period it
+        is tall on the beat and flat half a period later - which is exactly the
+        question "which half of the beat are we on".
+
+        `contrastOut` is how flat it is half a period from its own peak, 0..1,
+        the same number `offbeatRatio` reports for the winner. Near one the fold
+        genuinely cannot tell the beat from the offbeat and its answer must not
+        be used. Returns -1 when the buffer cannot answer at all. */
+    float beatPhaseFor (float bpmCandidate, float& contrastOut) const noexcept;
+
     /** The score one candidate tempo would get from the buffer as it stands,
         with the two charges that decide it broken out. Diagnostic only: the
         level argument is the hardest part of this class to reason about from
@@ -88,6 +107,10 @@ public:
 
 private:
     void  refresh() noexcept;
+    /** The activation folded onto `lag`, one bin per phase, read straight off
+        the ring so it is current rather than as of the last refresh. Returns
+        false when the buffer holds too few periods to mean anything. */
+    bool  foldProfile (float lag, int n, float* prof) const noexcept;
     float tempoPrior (float bpmCandidate) const noexcept;
     float lagAt (float lag) const noexcept;
     float combStrength (float lag) const noexcept;

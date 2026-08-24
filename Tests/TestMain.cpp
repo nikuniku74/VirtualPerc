@@ -840,6 +840,87 @@ int main()
                 "the phase loop behaves the same whatever the buffer size");
     }
 
+    // And how long it takes to get there in the first place.
+    //
+    // Phase is corrected by bending the rate, never by moving the grid, so how
+    // long an error takes to close is `error / limit` beats and nothing else -
+    // and the limit used to be the same 3.5-5% of the tempo whether the clock
+    // was a hundredth of a beat out or half of one. Measured at 120 BPM on
+    // HIGH, half a beat took 4.85 s to close, and on LOW 13.3 s: a new track,
+    // an edit, or a re-lock left the part audibly beside the song for that
+    // long. The ceiling opens with the error now, above the point where the
+    // analysis's own noise could have produced it.
+    //
+    // What must not change is that the grid stays monotonic while it does that.
+    // The correction is still a rate, `1 - steer` is still nowhere near zero,
+    // so no pulse may be emitted twice or stepped over - which is the whole
+    // reason the loop bends the rate instead of moving the grid.
+    {
+        constexpr float bpm = 120.0f;
+        constexpr int blk = 256;
+
+        auto align = [&] (double offsetBeats, vp::FollowStrength fs, double& worstGap)
+        {
+            vp::TempoFollower clock;
+            clock.prepare (sr);
+            clock.setPulsesPerBeat (4);
+            clock.forceTempo (bpm);
+            clock.setTargetTempo (bpm, 1.0f);
+            clock.setFollowStrength (fs);
+            clock.setLocked (true);
+            clock.resetClock();
+
+            const double dt = blk / sr;
+            double songPhase = -offsetBeats, t = 0.0, sincePulse = -1.0;
+            double got = -1.0;
+            worstGap = 0.0;
+            const double pulseSec = 60.0 / static_cast<double> (bpm) / 4.0;
+
+            for (int i = 0; i < static_cast<int> (40.0 * sr) / blk; ++i)
+            {
+                const float songFrac = static_cast<float> (songPhase - std::floor (songPhase));
+                if (got < 0.0
+                    && std::fabs (vp::wrapCentered (clock.beatPhase() - songFrac)) < 0.03f)
+                    got = t;
+
+                const double songBefore = songPhase;
+                songPhase += bpm / 60.0 * dt;
+                if (std::floor (songPhase) > std::floor (songBefore))
+                    clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - songFrac), 0.8f, 1);
+                clock.setGridPhase (songFrac, 0.90f);
+                const auto tick = clock.advance (blk);
+
+                for (int k = 0; k < tick.pulsesFired; ++k)
+                {
+                    const double at = t + tick.pulseOffset[k] / sr;
+                    if (sincePulse >= 0.0)
+                        worstGap = std::max (worstGap, (at - sincePulse) / pulseSec);
+                    sincePulse = at;
+                }
+                t += dt;
+            }
+            return got;
+        };
+
+        double gapHigh = 0.0, gapLow = 0.0;
+        const double high = align (0.48, vp::FollowStrength::high, gapHigh);
+        const double low = align (0.48, vp::FollowStrength::low, gapLow);
+        std::printf ("phase-align  half a beat: HIGH %.2f s  LOW %.2f s"
+                     "  longest gap %.2f / %.2f pulses\n",
+                     high, low, gapHigh, gapLow);
+
+        // Measured 2.81 s on HIGH and 5.92 s on LOW, against 4.85 and 13.34
+        // before the ceiling was allowed to open. The bounds sit between the
+        // two pairs.
+        expect (high > 0.0 && high < 4.0, "half a beat of phase closes in a few beats, not five seconds");
+        expect (low > 0.0 && low < 9.0, "and LOW is gentler about it without giving up on it");
+        // Under two pulses is one pulse's worth of stretch and no more; a
+        // dropped pulse shows up here as a gap of two, a doubled one as a gap
+        // near zero, and neither may happen.
+        expect (gapHigh < 1.9 && gapLow < 1.9,
+                "and the grid never drops a stroke while it catches up");
+    }
+
     // The part must not be able to switch the tracker off.
     //
     // The loudness gate that decides whether there is music to follow reads the

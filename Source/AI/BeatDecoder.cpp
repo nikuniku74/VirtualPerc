@@ -153,6 +153,22 @@ namespace
     constexpr float kGridHealthyResidual = 0.035f;
     constexpr float kGridHealthyCoverage = 0.80f;
 
+    // How far the fold and the committed grid have to disagree about which part
+    // of the beat we are on before the grid is moved, how many beats in a row it
+    // has to say so, and how flat the fold may be half a period from its peak
+    // and still be believed.
+    //
+    // A fifth of a beat is wider than anything the fit's own scatter produces
+    // and narrower than the half beat this exists to catch. Three beats in a
+    // row, because one bad fold must not move a working grid. And the contrast
+    // gate is what keeps it off material where the offbeat genuinely is as loud
+    // as the beat - measured at 0.73-0.77 on a 76 BPM mix with full eighths,
+    // where nothing can tell the two apart and moving the grid would be a coin
+    // toss played six times a second.
+    constexpr float kFoldPhaseThreshold = 0.20f;
+    constexpr int   kFoldPhaseBeats = 3;
+    constexpr float kFoldPhaseContrast = 0.70f;
+
     // How long the fold gets to name a level before the decoder is allowed to
     // establish one from beat times alone. TempoEstimator needs a few seconds
     // of buffer before it can even see the slow half of its range, and a level
@@ -174,6 +190,8 @@ void BeatDecoder::reset() noexcept
     timeSec = 0.0;
     lastBeatSec = -1.0;
     lastDownbeatSec = -1.0;
+    gridAnchorSec = -1.0;
+    foldPhaseBeats = 0;
     bpm = 120.0f;
     refractoryFrames = 0;
     beatsInBar = 0;
@@ -187,6 +205,7 @@ void BeatDecoder::reset() noexcept
     beatFilled = 0;
     beatSerial = 0;
     downbeatSerial = 0;
+    gridSerial = 0;
     tempoRegime = TempoRegime::unknown;
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
@@ -224,6 +243,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     // playing any more.
     const float scale = std::pow (2.0f, static_cast<float> (wanted - octaveShift));
     octaveShift = wanted;
+    ++gridSerial;
     if (bpm >= kMinBpm)
         bpm = std::clamp (bpm * scale, kMinBpm, kMaxBpm);
 
@@ -231,6 +251,10 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     beatFilled = 0;
     longWrite = 0;
     longFilled = 0;
+    // The anchor is still a beat time going up an octave and may be an offbeat
+    // going down one; either way the fold settles it inside three beats, which
+    // is sooner than a fit could be rebuilt to argue about it.
+    foldPhaseBeats = 0;
     octaveMismatchBeats = 0;
     octaveVoteBpm = 0.0f;
     beatsOnLevel = 0;
@@ -349,8 +373,13 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
         timeSec += lostSeconds;
 
     // No interval spanning the hole is measurable, so the fits must not see one.
+    // The grid itself is kept and simply carries on at the committed tempo:
+    // `timeSec` was advanced by the hole, so extrapolating across it is right as
+    // long as the tempo held, and it is the same reasoning that keeps the tempo.
+    // Dropping it would freeze the reported phase until the next peak.
     lastBeatSec = -1.0;
     lastDownbeatSec = -1.0;
+    foldPhaseBeats = 0;
     beatWrite = 0;
     beatFilled = 0;
 
@@ -423,9 +452,11 @@ bool BeatDecoder::recentPeriod (float& period) const noexcept
     return period > 60.0f / kMaxBpm && period < 60.0f / kMinBpm;
 }
 
-bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float& coverage) const noexcept
+bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
+                             double& anchorOut) const noexcept
 {
     coverage = 0.0f;
+    anchorOut = -1.0;
     const int n = std::min (beatFilled, maxBeats);
     if (n < 4 || bpm < kMinBpm)
         return false;
@@ -491,9 +522,92 @@ bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float
         sumSq += e * e;
     }
 
+    // The line's position, not only its spacing. Read at the newest beat of the
+    // window rather than at its centre: the centre is the better-determined end
+    // of a least-squares line, but the phase is wanted *now*, and carrying the
+    // centre forward means extrapolating over half the window with whatever
+    // error the period has - eleven beats of it for the long fit.
     period = static_cast<float> (slope);
     residual = static_cast<float> (std::sqrt (sumSq / static_cast<double> (keep)) / slope);
+    anchorOut = meanT + slope * (idx[keep - 1] - meanIdx);
     return true;
+}
+
+float BeatDecoder::gridPhaseNow (float periodSec) const noexcept
+{
+    if (periodSec <= 0.0f)
+        return 0.0f;
+    if (gridAnchorSec >= 0.0)
+        return wrap01 (static_cast<float> ((timeSec - gridAnchorSec)
+                                           / static_cast<double> (periodSec)));
+    if (lastBeatSec >= 0.0)
+        return wrap01 (static_cast<float> ((timeSec - lastBeatSec)
+                                           / static_cast<double> (periodSec)));
+    return 0.0f;
+}
+
+void BeatDecoder::checkGridPhase (float periodSec) noexcept
+{
+    // Everything that decides where a beat is goes through the on-grid gate,
+    // and the gate measures against the grid itself. So a grid that once
+    // anchors on an offbeat is not merely wrong, it is *stable*: every real
+    // beat then sits half a beat off it and is rejected as a subdivision,
+    // every subdivision lands on it and is kept, and the fits that result are
+    // clean. Measured at 168 BPM with an eighth at 0.45 of the beat, the
+    // decoder reported 168.00 BPM - exactly right - half a beat out, for
+    // ninety seconds, and there was nothing in the chain that could notice.
+    //
+    // The fold is outside that loop. Folded onto the committed period the
+    // activation is tall on the beat and flat half a period later, over the
+    // whole buffer and with no gate in front of it, so it can say which half
+    // of the beat the grid is on. It is not used for anything finer: eight
+    // bins is an eighth of a beat, and the precision stays with the fit.
+    if (gridAnchorSec < 0.0 || periodSec <= 0.0f || ! tempo.ready())
+    {
+        foldPhaseBeats = 0;
+        return;
+    }
+
+    float contrast = 1.0f;
+    const float foldPhase = tempo.beatPhaseFor (bpm, contrast);
+    if (foldPhase < 0.0f || contrast > kFoldPhaseContrast)
+    {
+        // Either the buffer cannot answer, or the material is one where the
+        // offbeat really is as loud as the beat - on which the fold has no
+        // opinion worth acting on and says so.
+        foldPhaseBeats = 0;
+        return;
+    }
+
+    const double period = static_cast<double> (periodSec);
+    const double want = timeSec - static_cast<double> (foldPhase) * period;
+    double shift = want - gridAnchorSec;
+    shift -= std::round (shift / period) * period;   // the nearest grid, not a later one
+
+    if (std::fabs (shift) < kFoldPhaseThreshold * period)
+    {
+        foldPhaseBeats = 0;
+        return;
+    }
+
+    if (++foldPhaseBeats < kFoldPhaseBeats)
+        return;
+
+    gridAnchorSec += shift;
+    if (lastBeatSec >= 0.0)
+        lastBeatSec += shift;   // so the gate starts admitting the beats it was refusing
+    foldPhaseBeats = 0;
+    ++gridSerial;
+
+    // The beats behind us were the wrong ones. Keeping them would have the fit
+    // pulling the grid straight back to where it was, which is the same trap
+    // one level down.
+    beatWrite = 0;
+    beatFilled = 0;
+    longWrite = 0;
+    longFilled = 0;
+    lastFitResidual = 1.0f;
+    lastFitCoverage = 0.0f;
 }
 
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
@@ -535,9 +649,11 @@ void BeatDecoder::updateTempo() noexcept
             // twice the tempo, and a level established that way then has to be
             // argued back out of, one bad octave at a time.
             float period = 0.0f, residual = 0.0f, coverage = 0.0f;
-            if (fitPeriod (kShortFit, period, residual, coverage) && residual < 0.06f)
+            double anchor = -1.0;
+            if (fitPeriod (kShortFit, period, residual, coverage, anchor) && residual < 0.06f)
             {
                 bpm = std::clamp (60.0f / period, kMinBpm, kMaxBpm);
+                gridAnchorSec = anchor;
                 established = true;
             }
         }
@@ -628,8 +744,10 @@ void BeatDecoder::updateTempo() noexcept
         // happen to land inside its tolerance, and the fits that result are
         // noisier than no fit at all - 0.9 BPM of steady-state spread became
         // 1.7 on the same material.
+        ++gridSerial;
         beatWrite = 0;
         beatFilled = 0;
+        foldPhaseBeats = 0;
         octaveMismatchBeats = 0;
         octaveVoteBpm = 0.0f;
         beatsOnLevel = 0;
@@ -647,8 +765,23 @@ void BeatDecoder::updateTempo() noexcept
 
     float longPeriod = 0.0f, longResidual = 0.0f, longCoverage = 0.0f;
     float shortPeriod = 0.0f, shortResidual = 0.0f, shortCoverage = 0.0f;
-    const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage);
-    const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual, shortCoverage);
+    double longAnchor = -1.0, shortAnchor = -1.0;
+    const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage, longAnchor);
+    const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual, shortCoverage, shortAnchor);
+
+    // Where the grid is, from the same two fits and for the same reason the
+    // tempo comes from them: the phase used to be `lastBeatSec`, one accepted
+    // peak, so every beat's own timing error was handed to the clock whole and
+    // as a step. Measured against 22 ms of onset jitter the reported phase
+    // carried 22 ms rms of it, in jumps of up to 0.18 of a beat. Which of the
+    // two fits carries it follows the regime, exactly as the tempo does: a held
+    // tempo can average over twenty-four beats, a live one cannot.
+    if (tempoRegime == TempoRegime::fixed && haveLong)
+        gridAnchorSec = longAnchor;
+    else if (haveShort)
+        gridAnchorSec = shortAnchor;
+    else if (haveLong)
+        gridAnchorSec = longAnchor;
 
     longFitBpm = haveLong ? 60.0f / longPeriod : 0.0f;
     shortFitBpm = haveShort ? 60.0f / shortPeriod : 0.0f;
@@ -662,6 +795,8 @@ void BeatDecoder::updateTempo() noexcept
         lastFitResidual = shortResidual;
         lastFitCoverage = shortCoverage;
     }
+
+    checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
     if (! haveShort)
     {
@@ -969,9 +1104,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     }
 
     const float newPeriod = 60.0f / std::max (kMinBpm, bpm);
-    float phase = 0.0f;
-    if (lastBeatSec >= 0.0)
-        phase = wrap01 (static_cast<float> ((timeSec - lastBeatSec) / static_cast<double> (newPeriod)));
+    const float phase = gridPhaseNow (newPeriod);
 
     hyp.bpm = bpm;
     hyp.beatPhase = phase;
@@ -983,6 +1116,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeat = peak && prevDownbeat > downThresh;
     hyp.beatSerial = beatSerial;
     hyp.downbeatSerial = downbeatSerial;
+    hyp.gridSerial = gridSerial;
     hyp.downbeatStrength = lastDownbeatStrength;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;

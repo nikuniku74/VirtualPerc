@@ -25,6 +25,8 @@ void TempoFollower::reset() noexcept
     lastObservedPhaseErr = 0.0f;
     phaseTarget = 0.0f;
     havePhaseTarget = false;
+    farTargetSamples = 0;
+    farTargetSign = 0;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
@@ -46,6 +48,8 @@ void TempoFollower::resetClock() noexcept
     lastObservedPhaseErr = 0.0f;
     phaseTarget = 0.0f;
     havePhaseTarget = false;
+    farTargetSamples = 0;
+    farTargetSign = 0;
     tempoTrim = 0.0f;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
@@ -119,6 +123,8 @@ void TempoFollower::snapPhase (float targetPhase) noexcept
     lastObservedPhaseErr = 0.0f;
     phaseTarget = 0.0f;
     havePhaseTarget = false;
+    farTargetSamples = 0;
+    farTargetSign = 0;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
@@ -245,8 +251,41 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     // over between one hypothesis and the next.
     if (havePhaseTarget)
     {
+        // How far the analysis is from what the loop currently believes. Its own
+        // noise is hundredths of a beat; a quarter of one is a different grid -
+        // a new song, an edit, the decoder re-anchoring - and averaging that in
+        // over nine tenths of a second is what actually decides how long a
+        // re-lock takes, whatever the steering is allowed to do about it.
+        //
+        // One hypothesis cannot say which of the two it is, so it has to keep
+        // saying it: a quarter of a second is two refreshes of the analysis, and
+        // noise does not hold a sign across them. After that the target is
+        // adopted about as fast as it is far, and the slow average goes back to
+        // being the slow average as soon as the gap closes.
+        constexpr float kFarTarget = 0.06f;
+        const float gap = wrapCentered (phaseTarget - phaseErrEma);
+        const bool sameWay = farTargetSign == 0
+                             || gap * static_cast<float> (farTargetSign) > 0.0f;
+        if (std::fabs (gap) > kFarTarget && sameWay)
+        {
+            if (farTargetSign == 0)
+                farTargetSign = gap > 0.0f ? 1 : -1;
+            farTargetSamples = std::min (farTargetSamples + numSamples,
+                                         static_cast<int> (sampleRate));
+        }
+        else
+        {
+            farTargetSamples = 0;
+            farTargetSign = 0;
+        }
+
+        float tau = phaseTargetTau;
+        if (farTargetSamples > static_cast<int> (sampleRate * 0.25))
+            tau = std::clamp (phaseTargetTau * kFarTarget / std::fabs (gap),
+                              0.10f, phaseTargetTau);
+
         const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
-                                         / (phaseTargetTau * static_cast<float> (sampleRate)));
+                                         / (tau * static_cast<float> (sampleRate)));
         phaseErrEma += (phaseTarget - phaseErrEma) * a;
         havePhaseTarget = false;
     }
@@ -281,17 +320,20 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         // the clock to hold its ground.
         float tau = 0.90f;
         float steerLim = 0.035f;
+        float steerCeil = 0.18f;
         float dGain = 0.8f;
         switch (follow)
         {
             case FollowStrength::low:
                 tau = 1.60f;
                 steerLim = 0.018f;
+                steerCeil = 0.10f;
                 dGain = 0.3f;
                 break;
             case FollowStrength::high:
                 tau = 0.55f;
                 steerLim = 0.050f;
+                steerCeil = 0.25f;
                 dGain = 1.2f;
                 break;
             case FollowStrength::medium:
@@ -320,7 +362,27 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         const float e = phaseErrEma > kPhaseFloor ? phaseErrEma - kPhaseFloor
                       : (phaseErrEma < -kPhaseFloor ? phaseErrEma + kPhaseFloor : 0.0f);
 
-        steer = std::clamp (e * kp + dErr * dGain, -steerLim, steerLim);
+        // The limit exists to stop the loop living at its rail on the analysis's
+        // own phase noise, and that noise is hundredths of a beat. A quarter of
+        // a beat is not noise - it is a different grid, a new song, a re-lock -
+        // and holding one ceiling for both is what made every one of those take
+        // seconds: at 3.5% of the tempo an error simply costs `error / 0.035`
+        // beats to close, measured at 2.8 s for a quarter beat and 4.9 s for
+        // half of one, whatever else was true.
+        //
+        // So the ceiling opens with the error, above the point where noise could
+        // have produced it, and closes again as the error does. Bending the rate
+        // by a quarter for about a beat is what a player does when they find
+        // themselves off the beat; sitting a quarter beat out for five seconds
+        // is not. And it stays a rate: `1 - steer` never approaches zero, so the
+        // grid is still monotonic and no stroke can be doubled or dropped.
+        constexpr float kOpenAbove = 0.06f;
+        constexpr float kOpenAt = 0.30f;
+        const float open = std::max (0.0f, std::fabs (e) - kOpenAbove)
+                           * (steerCeil - steerLim) / (kOpenAt - kOpenAbove);
+        const float lim = std::min (steerCeil, steerLim + open);
+
+        steer = std::clamp (e * kp + dErr * dGain, -lim, lim);
     }
     else
     {

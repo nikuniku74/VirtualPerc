@@ -1,5 +1,7 @@
 #include "AI/TempoEstimator.h"
 
+#include "Core/Types.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -261,6 +263,80 @@ float TempoEstimator::combStrength (float lag) const noexcept
 
     const float strength = sum / norm;
     return strength > 0.0f ? strength : 0.0f;
+}
+
+bool TempoEstimator::foldProfile (float lag, int n, float* prof) const noexcept
+{
+    // Off the ring rather than off `lin`, which is only rebuilt at a refresh:
+    // asked between two of them it would answer about a buffer up to eight
+    // frames old, and eight frames is a fifth of a beat at 150 BPM.
+    if (lag < 2.0f || n <= 0 || ring.empty())
+        return false;
+    if (lag * static_cast<float> (kSettlePeriods) > static_cast<float> (n))
+        return false;
+
+    float acc[kPhaseBins] {};
+    float wsum[kPhaseBins] {};
+    const float binsPerFrame = static_cast<float> (kPhaseBins) / lag;
+
+    for (int age = 0; age < n; ++age)
+    {
+        int idx = write - 1 - age;
+        if (idx < 0)
+            idx += window;
+        const int bin = static_cast<int> (static_cast<float> (age) * binsPerFrame) % kPhaseBins;
+        const float w = foldWeight[static_cast<size_t> (age)];
+        acc[bin] += w * ring[static_cast<size_t> (idx)];
+        wsum[bin] += w;
+    }
+
+    for (int b = 0; b < kPhaseBins; ++b)
+        prof[b] = wsum[b] > 0.0f ? acc[b] / wsum[b] : 0.0f;
+    return true;
+}
+
+float TempoEstimator::beatPhaseFor (float bpmCandidate, float& contrastOut) const noexcept
+{
+    contrastOut = 1.0f;
+    if (bpmCandidate < 1.0f || filled < minLag * kMinPeriods)
+        return -1.0f;
+
+    const float lag = static_cast<float> (60.0 * fps) / bpmCandidate;
+    float prof[kPhaseBins];
+    if (! foldProfile (lag, std::min (filled, window), prof))
+        return -1.0f;
+
+    float lo = prof[0], hi = prof[0];
+    int hiIdx = 0;
+    for (int b = 1; b < kPhaseBins; ++b)
+    {
+        lo = std::min (lo, prof[b]);
+        if (prof[b] > hi)
+        {
+            hi = prof[b];
+            hiIdx = b;
+        }
+    }
+
+    const float on = hi - lo;
+    if (on <= 1.0e-6f)
+        return -1.0f;
+    contrastOut = std::clamp ((prof[(hiIdx + kPhaseBins / 2) % kPhaseBins] - lo) / on,
+                              0.0f, 1.0f);
+
+    // Sub-bin, because eight bins is an eighth of a beat and the correction
+    // this feeds is worth placing better than that. The profile wraps, so the
+    // peak's neighbours are its neighbours whichever bin it landed in.
+    const float ym = prof[(hiIdx + kPhaseBins - 1) % kPhaseBins];
+    const float y0 = prof[hiIdx];
+    const float yp = prof[(hiIdx + 1) % kPhaseBins];
+    const float denom = ym - 2.0f * y0 + yp;
+    float delta = 0.0f;
+    if (denom < -1.0e-9f)
+        delta = std::clamp (0.5f * (ym - yp) / denom, -0.5f, 0.5f);
+
+    return wrap01 ((static_cast<float> (hiIdx) + 0.5f + delta)
+                   / static_cast<float> (kPhaseBins));
 }
 
 float TempoEstimator::halfPhaseRatio (float lag, int n) const noexcept

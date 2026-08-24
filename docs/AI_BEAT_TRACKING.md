@@ -64,6 +64,27 @@ CMake auto-enables ONNX when the **platform** SDK is present: host `third_party/
 
 The network outputs **activations**, not a playable clock. `BeatDecoder` uses `max(pBeat, pDownbeat)`, causal local maxima and the official 0.40 information gate, then combines three tempo sources into `{bpm, beatPhase, barPhase, confidence, regime}`. The audio thread copies that into `TempoFollower` (same PLL as DSP). Stretch is derived from the clock, never the other way around.
 
+### Where the beat is, as opposed to how far apart the beats are
+
+The tempo comes from the sources below. The **phase** comes from the same fits —
+the intercept of the least-squares line, read at the newest beat of its window —
+and not from the last accepted peak, which is one measurement carrying that one
+beat's whole error. Measured against 22 ms of onset jitter, taking it from the
+last peak put 22 ms rms into the reported phase in steps of up to 0.18 of a
+beat; off the fit it is 8 ms and there are no steps.
+
+One thing a fit cannot fix, because it is fitted to the same beats: the gate
+that decides whether a peak counts measures against the grid, so a grid that
+once anchors on an offbeat is *stable* — every real beat then sits half a beat
+off it and is discarded as a subdivision. Measured at 168 BPM with an eighth at
+0.45 of the beat, the decoder reported 168.00 BPM, exactly right, half a beat
+out, indefinitely. The activation folded onto the committed period is the only
+measurement in the chain outside that loop, and folded onto the true period it
+is tall on the beat and flat half a period later. `TempoEstimator::beatPhaseFor`
+answers it; `BeatDecoder::checkGridPhase` moves the grid when the two disagree
+by more than a fifth of a beat for three beats running, and stands down when the
+fold is itself flat half a period away.
+
 ### Three tempo sources
 
 No single measurement is both fast and precise, so each does one job.

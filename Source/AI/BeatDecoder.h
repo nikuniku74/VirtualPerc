@@ -106,9 +106,24 @@ private:
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec) noexcept;
+    /** Phase of the committed grid at `timeSec`, and where the folded
+        activation says the beat actually is. See `checkGridPhase`. */
+    float gridPhaseNow (float periodSec) const noexcept;
+    /** The fold does not go through the on-grid gate, so it is the only thing
+        that can notice a grid anchored half a beat out - which is a state that
+        defends itself, because from that grid every real beat looks like a
+        subdivision and is thrown away. Moves the grid when the two disagree,
+        repeatedly and by more than a fifth of a beat. */
+    void  checkGridPhase (float periodSec) noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
-    bool  fitPeriod (int maxBeats, float& period, float& residual, float& coverage) const noexcept;
+    /** Least squares through the newest `maxBeats` beat times. `anchorOut` is
+        the other half of the line and the half the phase needs: the time the
+        fit predicts for the newest beat in its own window, which is an average
+        over the whole fit where a single beat time is one measurement carrying
+        that one beat's whole error. */
+    bool  fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
+                     double& anchorOut) const noexcept;
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     float scoreConfidence() const noexcept;
@@ -128,6 +143,12 @@ private:
     double fps = 50.0;
     double timeSec = 0.0;
     double lastBeatSec = -1.0;
+    /** A time at which a beat of the committed grid falls, taken from the
+        fit rather than from the last peak. The phase is read off this. */
+    double gridAnchorSec = -1.0;
+    /** Beats the fold has been saying the grid is on the wrong part of the
+        beat. One is a bad fold; three in a row is a grid on the offbeat. */
+    int    foldPhaseBeats = 0;
     double lastDownbeatSec = -1.0;
     float  bpm = 120.0f;
     float  beatThresh = 0.40f;
@@ -146,6 +167,7 @@ private:
     int    beatFilled = 0;
     uint32_t beatSerial = 0;
     uint32_t downbeatSerial = 0;
+    uint32_t gridSerial = 0;
 
     // Regime tracking. The question "is this a record or a band" is settled on
     // the *spread* of the long fit over a window of beats, not on a run of
