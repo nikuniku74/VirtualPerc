@@ -28,6 +28,11 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 
 ## Il link USB iPad -> X-Air non regge, e non e' l'app (22 agosto)
 
+> **Aggiornamento:** il cavo era da dieci metri, il doppio del massimo che lo
+> standard USB 2.0 consente. Vedi la sezione sul cavo piu' sotto: la conclusione
+> sul numero di canali dell'XR18 e' caduta, e la prova che decide non e' ancora
+> stata fatta.
+
 Chiuso il capitolo sopra: la causa **non e' nel nostro codice**. Isolata cosi',
 e il risultato e' netto:
 
@@ -46,8 +51,7 @@ periferica audio, usa la classe generica **USB Audio Class 2.0**. La leva sta
 nell'alimentazione della porta, nella banda che il flusso chiede e nel firmware
 del mixer, non nel software.
 
-Il mixer e' un **XR18**: 18 in / 18 out su USB. Provato senza esito, e in
-quest'ordine sono cadute le ipotesi:
+Il mixer e' un **XR18**: 18 in / 18 out su USB. Provato senza esito:
 
 | provato | esito |
 |---|---|
@@ -55,23 +59,29 @@ quest'ordine sono cadute le ipotesi:
 | iPad alla corrente | cade lo stesso |
 | hub, con l'iPad alimentato **mentre** e' collegato | cade lo stesso |
 
-Con l'alimentazione esclusa da quest'ultima prova, quello che resta e' il flusso:
-18 x 18 canali sono un carico isocrono pesante, e iPadOS ha limiti pratici su
-quanti canali regge. Non e' una cosa su cui il software dell'app abbia una leva -
-iOS non espone un modo per chiedere a una periferica solo due dei suoi diciotto
-canali.
+### Il cavo e' lungo dieci metri
 
-**Conclusione operativa: la porta USB dell'XR18 non e' una strada per l'iPad.**
-Il rig e' una interfaccia **2x2 class-compliant** fra iPad e mixer: uscita su un
-canale di linea, una mandata del banco sul suo ingresso. Copre ingresso e uscita
-insieme, che e' il requisito, e l'app funziona cosi' com'e' - CLOCK su AUTO segue
-l'interfaccia, sorgente MIXER. Che l'ingresso analogico del banco funzioni e'
-gia' stato verificato.
+Che e' il **doppio del massimo consentito**. Lo standard USB 2.0 fissa a 5 m il
+cavo passivo, e non e' prudenza: e' il budget di ritardo di propagazione su cui
+il protocollo e' costruito. Il modo tipico in cui cede un link fuori specifica e'
+proprio questo - la periferica si enumera, perche' i trasferimenti di controllo
+sono lenti e radi e passano lo stesso, e poi lo streaming isocrono, che e'
+continuo e non ha ritrasmissione, muore dopo un secondo o due.
 
-Resta una prova che vale la pena fare comunque, perche' cambia la natura del
-problema: **l'USB dell'XR18 su un computer.** Se cade anche li', non e' un limite
-di iPadOS ma una porta o un cavo guasti, ed e' una riparazione invece che un
-vicolo cieco.
+Prima di questo dato qui era scritta la conclusione che la porta USB dell'XR18
+non fosse una strada per l'iPad, sul ragionamento che 18 x 18 canali fossero un
+carico troppo pesante. **Quel ragionamento non e' stato dimostrato e va
+considerato caduto**: tutte le prove sull'XR18 sono state fatte con quel cavo, e
+la prova che ha funzionato - un iRig Pro Duo - ha cambiato *due* variabili
+insieme, la periferica e il cavo.
+
+**La prova che decide: XR18 con un cavo a norma, 2 o 3 metri.** Finche' non e'
+stata fatta, sul numero di canali non si sa niente.
+
+Se servono davvero i dieci metri, l'USB non e' il mezzo: si tiene il cavo USB
+corto vicino all'iPad e si copre la distanza con **cavi audio bilanciati**, che
+per dieci metri sono nati. In alternativa un extender USB su Cat5 o fibra, che
+funziona ma aggiunge una scatola per lato.
 
 Quello che l'app ha guadagnato lungo questa indagine resta valido e utile a
 prescindere - si rialza da sola quando iOS le porta via il device, invece di
