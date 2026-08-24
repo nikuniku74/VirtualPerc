@@ -21,6 +21,15 @@
 
 Shaker events must keep a monotonically increasing sample index (no loop restart).
 
+## Diagnostics (built on demand, not part of a run)
+
+| Target | Answers |
+|---|---|
+| `VPAlign` | How long the clock takes to get onto the song, and what the phase the decoder hands it is worth. See [docs/CORE_TIMING_AUDIT.md](CORE_TIMING_AUDIT.md). |
+| `VPTiming` | Where the stroke lands to the ear, not where the clock scheduled it |
+| `VPProbe` | Whole engine over a rendered arrangement |
+| `VPCpu` | Callback cost against its budget |
+
 ## Offline audio
 
 The engine accepts arbitrary buffers through `process()`. Use this to A/B a real `.onnx` against kit/piano/guitar WAVs.

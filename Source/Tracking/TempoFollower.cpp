@@ -177,10 +177,19 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
                                           + phaseCorrectionSinceObservation);
         if (std::fabs (drift) < 0.18f && elapsed > 1.0e-3f)
         {
+            // What is left over *after* the trim already in force, because the
+            // clock was running at `target + tempoTrim` over the interval this
+            // was measured across. So it is a correction to add, not the whole
+            // answer to ease towards: pulling the trim towards it instead
+            // charges the trim for its own work, and the two meet halfway.
+            // Measured against a song 1 BPM away from an anchored tempo, that
+            // settled at a trim of exactly 0.500 and a clock of 80.500 - and
+            // stayed there for as long as the run went on, whatever the tempo
+            // and whatever the strength. Half of every standing rate error was
+            // permanently left for the phase loop to carry as a standing lean.
             const float measuredErrorBpm = drift * 60.0f / elapsed;
-            const float wantedTrim = std::clamp (-measuredErrorBpm, -3.5f, 3.5f);
             const float trust = std::clamp (strength * 0.08f, 0.10f, 0.28f);
-            tempoTrim += (wantedTrim - tempoTrim) * trust;
+            tempoTrim = std::clamp (tempoTrim - measuredErrorBpm * trust, -3.5f, 3.5f);
         }
     }
 

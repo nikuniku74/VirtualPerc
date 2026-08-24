@@ -89,6 +89,7 @@ Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds
 - [Percussioni intelligenti — gap analysis e piano](docs/SMART_PERCUSSION.md)
 - [Audio engine](docs/AUDIO_ENGINE.md)
 - [Beat tracking](docs/BEAT_TRACKING.md)
+- [Audit del core — tempo, aggancio, salti](docs/CORE_TIMING_AUDIT.md)
 - [Platform](docs/PLATFORM.md)
 - [Test plan](docs/TEST_PLAN.md)
 - [Licenses](docs/LICENSES.md)

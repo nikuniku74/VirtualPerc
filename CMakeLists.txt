@@ -239,6 +239,25 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPAlign
+        PRODUCT_NAME "VPAlign"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPAlign PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPAlign PRIVATE ${VP_CORE_SOURCES} scripts/probe_align.cpp)
+    target_include_directories (VPAlign PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPAlign PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPAlign PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPCpu
         PRODUCT_NAME "VPCpu"
         NEEDS_WEB_BROWSER FALSE
@@ -386,6 +405,10 @@ endif()
 
 if (TARGET VPTiming)
     vp_apply_ai_options (VPTiming)
+endif()
+
+if (TARGET VPAlign)
+    vp_apply_ai_options (VPAlign)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

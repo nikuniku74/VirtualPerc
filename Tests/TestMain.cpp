@@ -129,8 +129,13 @@ int main()
         std::printf ("pll-fine-tune  tempo=%.3f trim=%.3f\n",
                      static_cast<double> (clock.currentTempo()),
                      static_cast<double> (clock.tempoTrimBpm()));
-        expect (std::fabs (clock.currentTempo() - songBpm) < 0.60f
-                    && clock.tempoTrimBpm() > 0.40f,
+        // The whole error, not half of it. The trim is measured on the drift
+        // that is left after the trim already applied, so it has to be added to
+        // that trim rather than eased towards as if it were the whole answer -
+        // done the second way it converges on half the error and stops, which
+        // this test used to pass with 0.50 against a song that is 1.00 away.
+        expect (std::fabs (clock.currentTempo() - songBpm) < 0.15f
+                    && clock.tempoTrimBpm() > 0.85f,
                 "quarter-phase drift fine-tunes a manually anchored BPM");
     }
 
