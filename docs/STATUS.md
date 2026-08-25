@@ -26,6 +26,58 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Il buco senza batteria: cinque tentativi, nessuno spedito (25 agosto)
+
+Seguito della sezione sotto, che aveva lasciato la diagnosi e non la cura. La
+cura l'ho provata cinque volte e non la spedisco, e questo è il verbale — serve
+a non rifarli.
+
+L'idea era sempre la stessa: durante un passaggio con la batteria fuori il fit
+va **largo restando sulla griglia** (residuo 0,033 → 0,064, copertura 0,92–1,00),
+mentre un tempo che cambia davvero fa crollare la copertura. Quindi: tieni il
+tempo fisso quando il residuo è largo ma la copertura è alta.
+
+| # | variante | buco (peggio) | accelerando (fase) | gradino |
+|---|---|---|---|---|
+| — | **base** | 63,7 ms | 0,178 di battuta | 5,46 s |
+| 1 | soglia assoluta (`kGridHealthyResidual`), blocca tutto | 23,0 ms | — | — |
+| 2 | come 1, con tetto di 6 battute | 23,0 ms, poi **184 ms** | — | — |
+| 3 | soglia **relativa** al brano, blocca tutto, 6 battute | **25,1 ms** | **0,499** | 6,82 s |
+| 4 | come 3 ma lascia vive le vie rapide | **216,9 ms** | 0,179 | 5,46 s |
+| 5 | come 3 con tetto di 2 battute a budget | **23,0 ms** | 0,454 | 6,82 s |
+
+Cosa insegna ciascuna:
+
+1. **La soglia assoluta non è una linea.** Su questo percorso il residuo sta a
+   0,04–0,06 quasi sempre, quindi «tieni durante un buco» diventa «tieni
+   sempre».
+2. Con un tetto, la tenuta finisce ma il danno resta: il tempo esce dal buco
+   già sbagliato e non c'è più niente che lo corregga — la fase arriva a
+   **184 ms** con il regime che si dichiara fisso.
+3. La soglia **relativa** («il residuo peggiorato rispetto a quello che *questo*
+   brano sta dando») funziona sul materiale — 63,7 → 25,1 ms, coda sana, media
+   dentro 20,9 → 14,8 — e **rompe l'accelerando**: la fase peggiore passa da
+   0,18 a 0,50 di battuta, cioè il tracker che tiene un tempo che la musica ha
+   lasciato.
+4. Lasciare vive le vie d'uscita rapide salva l'accelerando e perde il buco:
+   **217 ms**. Il buco *raggiunge* quelle soglie, non gli passa sotto.
+5. Un tetto corto a budget migliora il materiale (23,0 ms, media dentro 13,2) e
+   costa comunque 0,45 di battuta sull'accelerando, perché la tenuta si riarma
+   ogni volta che il residuo torna sotto la linea per una battuta.
+
+**La conclusione è il baratto, non la taratura.** Il residuo non separa
+«batteria fuori» da «band che accelera» abbastanza presto: nei primi secondi i
+due sono lo stesso segnale visto da dentro, ed è esattamente quando la decisione
+va presa. Ogni variante che salva il buco costa mezza battuta su un accelerando,
+e questa è un'app che deve seguire un batterista dal vivo: il verso giusto del
+baratto è quello attuale.
+
+Quello che servirebbe è un discriminante che *non* venga dal fit — qualcosa che
+dica «quanto polso c'è nel suono» indipendentemente dalla griglia. `TempoEstimator`
+ne ha uno, la salience, e non l'ho provato perché non so che valori prenda su un
+accelerando e sarebbe stato il sesto tiro al buio. È il posto da cui ripartire, e
+la prima cosa da fare è misurare quei due valori, non scrivere un'altra regola.
+
 ## "Quando faccio qualcosa sfasa": misurato (25 agosto)
 
 Segnalazione: con Spotify dalla cassa dell'iPad, una volta preso il tempo, se si
