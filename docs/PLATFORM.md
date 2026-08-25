@@ -1,8 +1,38 @@
 # Platform
 
+## Where the app is allowed to run
+
+One iOS build, and Xcode's four destinations answered deliberately rather than
+left to their defaults - because the defaults say yes to all of them.
+
+| Destination | | Why |
+|---|---|---|
+| iPhone | **yes** | `TARGETED_DEVICE_FAMILY` 1 |
+| iPad | **yes** | `TARGETED_DEVICE_FAMILY` 2, and the device everything here was measured on |
+| Mac (Designed for iPad) | **yes** | `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`. Apple silicon, same audio stack, and a laptop with an interface on it is a rig people have |
+| Apple Vision | **no** | `SUPPORTS_XR_COMPATIBLE=NO` |
+
+Vision is off on purpose. The whole analysis is tuned around two microphone
+paths - a close kit mic, and an iPad's own speaker into its own room - and a
+headset's array is neither. Shipping it there would mean shipping a listener
+that has never been near the thing it has to listen to, and "installable" is not
+a claim the buyer can tell apart from "works".
+
+This is a **destination** list, not a port. A Mac still builds the app natively
+too (no `CMAKE_SYSTEM_NAME=iOS`), which is what the host tests and the probes
+run in.
+
 ## iPadOS (priority 1)
 
 First device: **iPad Air M1**.
+
+On a phone the same layout has to survive a screen a third of the size and a
+notch. Two things make it: every full-screen page starts from the system's own
+safe-area insets rather than a margin that happened to look right on an iPad
+(`MainComponent::safePadded`), and the stage rows scale together when there is
+less room than they naturally want instead of running off the bottom. Measured
+against the real geometries, the scale is 1.00 on an iPad in both orientations
+and 0.71-0.94 on a phone.
 
 - JUCE `juce_add_gui_app` with microphone + background audio
 - Core Audio via JUCE `AudioDeviceManager`
@@ -32,7 +62,9 @@ Same `vp_core`. Audio I/O via Oboe/AAudio. JUCE CMake Android is not a complete 
 
 ## Not shipping
 
-macOS, Windows, Web, WebAudio. A Mac GUI/test binary exists only for development.
+Windows, Web, WebAudio, and visionOS. macOS gets the iPad build under "Designed
+for iPad" on Apple silicon; a native Mac GUI/test binary also exists, and that
+one is for development.
 
 ## Buffer / sample rate
 

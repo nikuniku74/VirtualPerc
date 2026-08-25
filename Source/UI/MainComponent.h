@@ -82,6 +82,11 @@ private:
     void applyTempoOctaveAuto();
     void refreshOctaveButtons();
 
+    /** The margin every full-screen page starts from: what the design wants,
+        widened per side to whatever the system says is unusable. On a phone
+        that is a notch or a Dynamic Island at the top and a rounded corner
+        either side; on an iPad it changes nothing. */
+    juce::Rectangle<int> safePadded (juce::Rectangle<int> area) const;
     juce::Rectangle<int> layoutColumn() const;
 
     /** Portrait stacks the stage over the console; landscape puts them side by

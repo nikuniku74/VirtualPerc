@@ -80,7 +80,11 @@ juce_add_gui_app (VirtualPercussionist
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
-    TARGETED_DEVICE_FAMILY "2"
+    # iPhone and iPad. 1 is iPhone, 2 is iPad; Mac is not a device family here -
+    # a Mac gets this app either as the native build (no CMAKE_SYSTEM_NAME=iOS)
+    # or, on Apple silicon, as the iPad build under "Designed for iPad", which
+    # is the SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD setting below.
+    TARGETED_DEVICE_FAMILY "1,2"
     STATUS_BAR_HIDDEN FALSE
     IPAD_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationPortraitUpsideDown;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
     IPHONE_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
@@ -94,6 +98,21 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${VP_DEVELOPMENT_TEAM}"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
+        # Where an iOS build is allowed to turn up, said rather than left to the
+        # defaults - because the defaults say yes to both.
+        #
+        # A Mac with Apple silicon: yes. It is the same app on a bigger screen
+        # with the same audio stack, and a laptop with an interface on it is a
+        # setup somebody actually has.
+        #
+        # Apple Vision: no. "Designed for iPad" on visionOS would ship a
+        # listener that has never been near the thing it has to listen to - the
+        # analysis is tuned around two microphone paths, a close kit mic and an
+        # iPad's own speaker into its own room, and a headset's array is
+        # neither. Being installable is not the same as working, and the App
+        # Store does not draw that distinction for the buyer.
+        XCODE_ATTRIBUTE_SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD "YES"
+        XCODE_ATTRIBUTE_SUPPORTS_XR_COMPATIBLE "NO"
     )
 endif()
 

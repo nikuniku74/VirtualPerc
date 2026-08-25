@@ -1,6 +1,8 @@
 # Virtual Percussionist
 
-Live virtual percussionist for **iPadOS**. The app listens to an acoustic drummer and plays a shaker that follows tempo and phase — accelerando, rallentando, no loop restart.
+Live virtual percussionist for **iPadOS**, from the same build also on **iPhone** and on an Apple silicon **Mac** ("Designed for iPad"). The app listens to an acoustic drummer and plays a shaker that follows tempo and phase — accelerando, rallentando, no loop restart.
+
+Not on Apple Vision, deliberately: the analysis is tuned around a close kit mic and an iPad's own speaker into its own room, and a headset's array is neither. See [docs/PLATFORM.md](docs/PLATFORM.md).
 
 Not a DAW. Not a BPM meter. Not a web app.
 
@@ -48,7 +50,7 @@ cmake --build build --target VPTests -j"$(nproc)"
 `gl`, `libcurl` and `webkit2gtk` are reported missing at configure time and can
 stay missing: no target the tests need links them.
 
-## iPad (iPad Air M1)
+## iPad (iPad Air M1), iPhone, Mac
 
 ```bash
 ./scripts/setup-ai.sh          # ORT host+iOS + beatnet.onnx (skip se già presenti)
@@ -56,7 +58,9 @@ stay missing: no target the tests need links them.
 open build-ios/VirtualPercussionist.xcodeproj
 ```
 
-In Xcode: Development Team, iPad, microfono, Run. Stato attuale e limiti del modello: [docs/STATUS.md](docs/STATUS.md).
+In Xcode: Development Team, pick an iPad or an iPhone, microfono, Run. Stato attuale e limiti del modello: [docs/STATUS.md](docs/STATUS.md).
+
+Everything in `docs/` was measured on an iPad. A phone runs the same engine and the layout is built for it, but no number here has been taken on one.
 
 Simulator (no device signing):
 

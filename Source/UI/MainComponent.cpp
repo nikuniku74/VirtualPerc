@@ -1409,15 +1409,36 @@ void MainComponent::timerCallback()
    #endif
 }
 
+juce::Rectangle<int> MainComponent::safePadded (juce::Rectangle<int> area) const
+{
+   #if JUCE_IOS
+    // The margin an iPad wanted, and then whatever the system says is actually
+    // unusable, whichever is larger per side.
+    //
+    // On an iPad the second half changes nothing: its insets are a status bar
+    // the margin already cleared. On a phone they are the whole difference
+    // between a readable screen and one with the tempo under a Dynamic Island
+    // in portrait and the transport under a rounded corner in landscape. Taking
+    // the larger per side rather than adding them is what keeps the iPad
+    // exactly as it was.
+    juce::BorderSize<int> pad { 36, 24, 20, 24 };
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto safe = display->safeAreaInsets;
+        pad = { juce::jmax (pad.getTop(), safe.getTop()),
+                juce::jmax (pad.getLeft(), safe.getLeft()),
+                juce::jmax (pad.getBottom(), safe.getBottom()),
+                juce::jmax (pad.getRight(), safe.getRight()) };
+    }
+    return pad.subtractedFrom (area);
+   #else
+    return area.reduced (30, 24);
+   #endif
+}
+
 juce::Rectangle<int> MainComponent::layoutColumn() const
 {
-    auto r = getLocalBounds();
-   #if JUCE_IOS
-    r = r.reduced (24, 20).withTrimmedTop (16);
-   #else
-    r = r.reduced (30, 24);
-   #endif
-    return r;
+    return safePadded (getLocalBounds());
 }
 
 bool MainComponent::isLandscape() const
@@ -1443,18 +1464,36 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // left over goes above and below so the block sits in the upper middle of
     // whatever space the orientation gives it, rather than piling up at the top
     // and leaving a hole under it.
-    const int bpmH = juce::jlimit (72, 156, area.getHeight() / 4);
-    const int beatsH = juce::jlimit (52, 96, area.getHeight() / 6);
+    //
+    // And when there is *less* than the natural height, everything shrinks
+    // together instead of the last rows running off the bottom. The minimums
+    // below plus the fixed gaps come to about 340 points, which an iPad always
+    // has and a phone in landscape does not: the stage there is nearer 290, so
+    // without this the meter and the microphone line simply fall off the end.
+    const int naturalBpm = juce::jlimit (72, 156, area.getHeight() / 4);
+    const int naturalBeats = juce::jlimit (52, 96, area.getHeight() / 6);
+    const int natural = 18 + 6 + 40 + 12 + naturalBpm + 16 + 36 + 18 + 10
+                        + naturalBeats + 20 + 10 + 10 + 18;
+    const float fit = natural > area.getHeight() && natural > 0
+                          ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
+                          : 1.0f;
+    const auto px = [fit] (int v)
+    {
+        return juce::jmax (1, juce::roundToInt (static_cast<float> (v) * fit));
+    };
 
-    const int content = 18 + 6 + 40 + 12 + bpmH + 16 + 36 + 18 + 10 + beatsH + 20 + 10 + 10 + 18;
+    const int bpmH = px (naturalBpm);
+    const int beatsH = px (naturalBeats);
+
+    const int content = px (natural);
     const int slack = juce::jmax (0, area.getHeight() - content);
     area.removeFromTop (slack / 3);
 
     StageRows s;
-    s.title = area.removeFromTop (18);
-    area.removeFromTop (6);
-    s.pill = area.removeFromTop (40).reduced (juce::jmax (0, area.getWidth() / 10), 0);
-    area.removeFromTop (12);
+    s.title = area.removeFromTop (px (18));
+    area.removeFromTop (px (6));
+    s.pill = area.removeFromTop (px (40)).reduced (juce::jmax (0, area.getWidth() / 10), 0);
+    area.removeFromTop (px (12));
     s.bpm = area.removeFromTop (bpmH);
     {
         // A bounded block, centred. Wider than this and the two octave buttons
@@ -1466,18 +1505,18 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
         s.octaveUp = block.removeFromRight (octW).reduced (0, bpmH / 5);
         s.bpmNumber = block.reduced (8, 0);
     }
-    s.bpmLabel = area.removeFromTop (16);
-    s.tempoMode = area.removeFromTop (36);
-    s.tempoLine = area.removeFromTop (18);
-    area.removeFromTop (10);
+    s.bpmLabel = area.removeFromTop (px (16));
+    s.tempoMode = area.removeFromTop (px (36));
+    s.tempoLine = area.removeFromTop (px (18));
+    area.removeFromTop (px (10));
     s.beats = area.removeFromTop (beatsH);
     // Beside the dots, because that is what it moves.
     s.barShift = s.beats.removeFromRight (juce::jmin (96, s.beats.getWidth() / 4))
                         .reduced (2, beatsH / 4);
-    s.part = area.removeFromTop (20);
-    area.removeFromTop (10);
-    s.meter = area.removeFromTop (10).reduced (juce::jmax (0, area.getWidth() / 6), 2);
-    s.mic = area.removeFromTop (18);
+    s.part = area.removeFromTop (px (20));
+    area.removeFromTop (px (10));
+    s.meter = area.removeFromTop (px (10)).reduced (juce::jmax (0, area.getWidth() / 6), 2);
+    s.mic = area.removeFromTop (px (18));
     return s;
 }
 
@@ -1883,12 +1922,10 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
 {
     settingsCards.clearQuick();
 
-    auto r = area;
-   #if JUCE_IOS
-    r = r.reduced (24, 20).withTrimmedTop (16);
-   #else
-    r = r.reduced (30, 24);
-   #endif
+    // The same margin the stage uses, for the same reason: this page is
+    // full-screen too, and its close button is the first thing a Dynamic Island
+    // would sit on.
+    auto r = safePadded (area);
 
     auto head = r.removeFromTop (34);
     settingsClose.setBounds (head.removeFromRight (juce::jmin (120, head.getWidth() / 3))

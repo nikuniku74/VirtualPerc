@@ -30,5 +30,6 @@ fi
 cmake "${ARGS[@]}"
 echo
 echo "Xcode project: $ROOT/build-ios/VirtualPercussionist.xcodeproj"
-echo "Open it, select the iPad Air M1, enable the microphone, Run."
+echo "Open it, pick an iPad or an iPhone, enable the microphone, Run."
+echo "Destinations: iPhone, iPad and Mac (Designed for iPad). Apple Vision is off."
 echo "See docs/STATUS.md for what the bundled model can and cannot lock."

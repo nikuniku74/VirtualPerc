@@ -26,6 +26,61 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## iPhone e Mac fra le destinazioni, Vision no (25 agosto)
+
+Una sola build iOS, e le quattro destinazioni di Xcode decise invece che lasciate
+ai default - che dicono di sì a tutte:
+
+| destinazione | | come |
+|---|---|---|
+| iPhone | **sì** | `TARGETED_DEVICE_FAMILY` 1 |
+| iPad | **sì** | `TARGETED_DEVICE_FAMILY` 2 |
+| Mac (Designed for iPad) | **sì** | `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` |
+| Apple Vision | **no** | `SUPPORTS_XR_COMPATIBLE=NO` |
+
+Vision è fuori di proposito: tutta l'analisi è tarata su due percorsi di
+microfono - una ripresa ravvicinata del kit e la cassa dell'iPad nella sua
+stanza - e l'array di un visore non è né l'uno né l'altro. Installabile non è la
+stessa cosa che funzionante, e chi compra non vede la differenza.
+
+### Il layout su uno schermo da telefono
+
+Due cose lo reggevano solo per caso su un iPad e non l'avrebbero retto su un
+telefono:
+
+1. **Il margine era un numero, non il margine vero.** Ogni pagina a schermo
+   intero partiva da `reduced(24, 20).withTrimmedTop(16)`, che su un iPad libera
+   la status bar e su un telefono lascia il tempo sotto la Dynamic Island in
+   ritratto e il trasporto sotto un angolo arrotondato in orizzontale. Ora
+   `MainComponent::safePadded` prende, lato per lato, **il più grande fra quel
+   margine e l'inset che il sistema dichiara**. Prendere il massimo invece di
+   sommarli è ciò che lascia l'iPad identico a prima.
+2. **Le righe del palco non si restringevano.** Fra minimi e spazi fissi il
+   blocco vuole circa 340 punti; un iPad ce li ha sempre, un telefono in
+   orizzontale ne ha circa 290, e il metro e la riga del microfono cadevano
+   semplicemente fuori dal fondo. Ora scalano insieme.
+
+Misurato sulle geometrie vere (colonna → palco → fattore di scala):
+
+| schermo | palco | scala |
+|---|---|---|
+| iPad Air M1 ritratto | 772×522 | **1,00** |
+| iPad Air M1 orizzontale | 498×722 | **1,00** |
+| iPhone 15 Pro ritratto | 345×330 | 0,94 |
+| iPhone 15 Pro orizzontale | 323×294 | 0,87 |
+| iPhone SE ritratto | 327×240 | 0,71 |
+| iPhone SE orizzontale | 272×277 | 0,82 |
+
+### Cosa non è stato provato
+
+**Niente di tutto questo è stato visto su un telefono vero**, e due cose vanno
+guardate lì e non qui: come sta il layout a 0,71 su un SE (ci sta, ma "ci sta"
+non vuol dire leggibile), e la modalità SPEAKER, che su un iPhone è una cassa più
+piccola e un microfono molto più vicino - un percorso acustico diverso da quello
+su cui il cancellatore del rientro e il makeup sono stati misurati. La build iOS
+non è compilabile su questo host: la modifica al CMake e il ramo `JUCE_IOS` del
+layout sono verificati per tipo contro gli header di JUCE, non eseguiti.
+
 ## Quanto ci mette a trovare il BPM (24 agosto)
 
 Due cose, e la prima e' un difetto vero che si vede solo se si prova l'app come
