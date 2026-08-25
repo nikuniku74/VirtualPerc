@@ -71,6 +71,31 @@ and may build a Python environment before it ever calls `cmake`, it runs under
 `set -euo pipefail`, and a failure in any of that aborts it - leaving the
 previous `build-ios` in place, looking untouched because it is.
 
+Xcode also keeps the project in memory. Regenerating the file underneath an open
+window does not reliably refresh that panel, so quit Xcode rather than closing
+the tab. **The iPhone row is the canary**: the file says `"1,2"`, so if the panel
+still shows iPad alone it is the window that is stale, not the project.
+
+### Finding out what a destination really is
+
+`SUPPORTED_PLATFORMS` does *not* remove "Apple Vision (Designed for iPad)" from
+the list - measured, on a project where the setting had landed and the row was
+still there. Rather than guess at another setting name, ask Xcode to write it:
+
+```bash
+cp build-ios/VirtualPercussionist.xcodeproj/project.pbxproj /tmp/pbx.before
+# In Xcode: General -> Supported Destinations -> select the row -> "-", then save.
+diff /tmp/pbx.before build-ios/VirtualPercussionist.xcodeproj/project.pbxproj
+```
+
+The diff is the setting, exactly as Xcode spells it. It belongs in
+`CMakeLists.txt` afterwards, because an edit made in the Xcode UI is written to
+a **generated** file and the next `configure-ios.sh` throws it away.
+
+Worth knowing before doing any of that: this panel decides what Xcode offers
+*you*, not what a buyer can install. That is the App Store Connect setting
+above, and it is the one that matters for keeping the app off Apple Vision.
+
 ## iPadOS (priority 1)
 
 First device: **iPad Air M1**.
