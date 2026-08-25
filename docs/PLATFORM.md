@@ -52,6 +52,25 @@ window opened before the change still shows the old destinations.
 rm -rf build-ios && ./scripts/configure-ios.sh
 ```
 
+### If Supported Destinations still shows the old list
+
+Ask the generated project rather than the Xcode window, because the two can
+disagree for a whole minute after a `git pull`:
+
+```bash
+grep -hoE '(TARGETED_DEVICE_FAMILY|SUPPORTED_PLATFORMS) = [^;]*' \
+  build-ios/VirtualPercussionist.xcodeproj/project.pbxproj | sort -u
+```
+
+`TARGETED_DEVICE_FAMILY = "1,2"` is iPhone and iPad. A bare `2` means the
+project predates the change and was never regenerated - `configure-ios.sh`
+prints the same two lines at the end for exactly this reason.
+
+And check the script actually reached its own last step. It fetches ONNX Runtime
+and may build a Python environment before it ever calls `cmake`, it runs under
+`set -euo pipefail`, and a failure in any of that aborts it - leaving the
+previous `build-ios` in place, looking untouched because it is.
+
 ## iPadOS (priority 1)
 
 First device: **iPad Air M1**.

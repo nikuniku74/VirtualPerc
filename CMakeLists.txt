@@ -101,19 +101,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${VP_DEVELOPMENT_TEAM}"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
-        # Where an iOS build is allowed to turn up, said rather than left to the
-        # defaults - because the defaults say yes to both.
+        # The same device family as above, set straight onto the Xcode target.
         #
-        # A Mac with Apple silicon: yes. It is the same app on a bigger screen
-        # with the same audio stack, and a laptop with an interface on it is a
-        # setup somebody actually has.
-        #
-        # Apple Vision: no. "Designed for iPad" on visionOS would ship a
-        # listener that has never been near the thing it has to listen to - the
-        # analysis is tuned around two microphone paths, a close kit mic and an
-        # iPad's own speaker into its own room, and a headset's array is
-        # neither. Being installable is not the same as working, and the App
-        # Store does not draw that distinction for the buyer.
+        # juce_add_gui_app already forwards it, but through a generator
+        # expression reading a JUCE property, and that is one indirection more
+        # than is worth trusting for the setting that decides whether the app
+        # installs on a phone at all. Written twice, it cannot be read wrong.
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
         # Which destinations Xcode offers *locally*. With the visionOS SDK
         # installed, Xcode adds "Apple Vision (Designed for iPad)" by itself to
         # any target built against the iOS SDK; naming the platforms keeps the

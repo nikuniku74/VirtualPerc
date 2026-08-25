@@ -27,7 +27,24 @@ if [[ -n "$TEAM" ]]; then
   ARGS+=(-DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="$TEAM")
   ARGS+=(-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="Apple Development")
 fi
+echo "Configuring build-ios ..."
 cmake "${ARGS[@]}"
+
+# What actually ended up in the generated project.
+#
+# The settings live in build-ios/, not in the tree, so an Xcode window opened
+# before a change still shows the old destinations - and this script does
+# network fetches before it gets here, any of which can abort it under `set -e`
+# and leave the old project in place looking untouched. Printing what the
+# project really says turns "I still see the old list" into one line of fact.
+PBX="build-ios/VirtualPercussionist.xcodeproj/project.pbxproj"
+if [[ -f "$PBX" ]]; then
+  echo
+  echo "Nel progetto generato:"
+  grep -hoE '(TARGETED_DEVICE_FAMILY|SUPPORTED_PLATFORMS) = [^;]*' "$PBX" \
+    | sort -u | sed 's/^/  /'
+  echo "  (1 = iPhone, 2 = iPad. Se qui non c'e' 1, Xcode non mostrera' iPhone.)"
+fi
 echo
 echo "Xcode project: $ROOT/build-ios/VirtualPercussionist.xcodeproj"
 echo "Open it, pick an iPad or an iPhone, enable the microphone, Run."
