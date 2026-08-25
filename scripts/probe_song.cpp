@@ -43,6 +43,10 @@ using namespace vp::probe;
 struct Result
 {
     double tLock = -1.0;
+    /** When the decoder first published a tempo it was willing to stand behind.
+        The gap to `tLock` is the tracker's own state machine, and splitting the
+        two is the only way to know which of them to shorten. */
+    double tValid = -1.0;
     /** Whether FOLLOWING was ever reached. `tLock` alone cannot say so any
         more: with a pre-roll it is measured from the first beat of the song, so
         a lock to the empty room is a *negative* time rather than no time. */
@@ -198,6 +202,8 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
         // the engine: everything before that is the room.
         const double t = static_cast<double> (pos - preN) / sr;
 
+        if (r.tValid < 0.0 && snap.hypValid && snap.neuralBpm > 40.0f)
+            r.tValid = t;
         if (! r.lockSeen && snap.state == vp::TrackingState::following)
         {
             r.lockSeen = true;
@@ -379,10 +385,11 @@ int main (int argc, char** argv)
     if (sync)
         std::printf ("# analisi sincronizzata con l'audio a ogni blocco: il giro e' ripetibile\n");
     std::printf ("%-11s %-6s %-7s %-7s %-7s %-7s %-7s %-6s %-6s %-7s %-5s\n",
-                 "style", "bpm", "t_lock", "t_2%", "err", "errMax", "span", "jumps", "bars", "phase", "rst");
+                 "style", "bpm", "t_val", "t_lock", "t_2%", "err", "span", "jumps", "bars", "phase", "rst");
 
     int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0, totalGaps = 0;
-    int nLocked = 0, nEarlyLock = 0, totalRestarts = 0;
+    int nLocked = 0, nEarlyLock = 0, totalRestarts = 0, nValid = 0;
+    double validAcc = 0.0;
     double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0, errAcc = 0.0;
 
     for (const auto& style : styles)
@@ -409,14 +416,15 @@ int main (int argc, char** argv)
             spanNnAcc += r.spanNn;
             wobbleAcc += r.wobble;
             if (r.lockSeen) { lockAcc += r.tLock; ++nLocked; }
+            if (r.tValid >= 0.0) { validAcc += r.tValid; ++nValid; }
             nEarlyLock += r.lockSeen && r.tLock < 0.0;
 
             totalGaps += r.gaps;
             totalRestarts += r.restarts;
             errAcc += r.errMean;
-            std::printf ("%-11s %-6.0f %-7.1f %-7.1f %-7.2f %-7.2f %-7.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
-                         styleName (o), static_cast<double> (bpm), r.tLock, r.t2pct,
-                         static_cast<double> (r.errMean), static_cast<double> (r.errWorst),
+            std::printf ("%-11s %-6.0f %-7.2f %-7.2f %-7.1f %-7.2f %-7.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
+                         styleName (o), static_cast<double> (bpm), r.tValid, r.tLock, r.t2pct,
+                         static_cast<double> (r.errMean),
                          static_cast<double> (r.span), r.bigJumps, r.barBreaks,
                          static_cast<double> (r.phaseMean), r.restarts,
                          octaveBad ? "OCT " : "", unstable ? "WOBBLE " : "", slow ? "SLOW" : "");
@@ -440,7 +448,9 @@ int main (int argc, char** argv)
     if (preSeconds > 1.5)
         std::printf ("lock sulla stanza vuota %d   <- agganciati prima che qualcuno suonasse\n",
                      nEarlyLock);
-    std::printf ("mean t_lock       %.2f s (%d agganciati)\n",
+    std::printf ("mean t_val        %.2f s   <- il decoder pubblica un tempo\n",
+                 nValid > 0 ? validAcc / nValid : -1.0);
+    std::printf ("mean t_lock       %.2f s (%d agganciati)   <- e il tracker lo accetta\n",
                  nLocked > 0 ? lockAcc / nLocked : -1.0, nLocked);
     return 0;
 }

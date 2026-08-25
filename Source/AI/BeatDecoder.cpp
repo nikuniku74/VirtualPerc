@@ -31,7 +31,19 @@ namespace
     // outright is what the grid, the fits and the bar are then built on, and
     // the state space has a change penalty, so a level taken too early is one
     // it will defend.
+    // On a microphone in a room. Measured: every value below this puts a 128
+    // BPM track on the wrong metrical level once the app has been listening to
+    // the room first, and it is not the 76 BPM ambiguity that is everywhere
+    // else in this file - it is a track that reads right at 4 and wrong at 3.5.
     constexpr float kAnchorAcquireMargin = 4.0f;
+
+    // And on a line feed, where the activations are sharp and the margin means
+    // what it says. Measured over thirty tracks: the same 2.5 that costs an
+    // octave through a microphone costs none here, and takes the time to lock
+    // from 2.32 s to 1.50 s. The two paths were never the same measurement -
+    // docs/STATUS.md has a section on how different - and this is one more
+    // place where pretending they are costs something.
+    constexpr float kAnchorAcquireMarginLine = 2.5f;
 
     // The long fit, watched over a window of beats. A record cut to a click
     // holds its 24-beat fit inside a few tenths of a percent; a band drifts out
@@ -690,7 +702,8 @@ void BeatDecoder::updateTempo() noexcept
             established = true;
         }
         else if (useAnchor && hmm.ready() && anchorBpm >= kMinBpm
-                 && hmm.levelMargin() > kAnchorAcquireMargin)
+                 && hmm.levelMargin() > (lineFeed ? kAnchorAcquireMarginLine
+                                                  : kAnchorAcquireMargin))
         {
             // The state space is clear about the level and the fold cannot
             // speak yet. It cannot speak for a while, either: it reports

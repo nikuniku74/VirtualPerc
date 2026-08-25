@@ -27,7 +27,11 @@ public:
 
     void setFollowStrength (FollowStrength s) noexcept;
     void setSubdivisionOverride (Subdivision s) noexcept;
-    void setSpeakerFollow (bool on) noexcept { speakerFollow = on; }
+    void setSpeakerFollow (bool on) noexcept
+    {
+        speakerFollow = on;
+        neural.setLineFeed (! on);
+    }
     /** SEGUI vs FISSO. Default true. Switching back to follow hands the tempo
         to the analysis again; a count-in that is still in progress is not
         cleared by calling this with the value already in force. */

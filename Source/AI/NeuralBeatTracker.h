@@ -37,6 +37,13 @@ public:
     {
         wantedOctave.store (octaves, std::memory_order_relaxed);
     }
+
+    /** MIXER rather than the iPad's own microphone. Handed over rather than
+        called, like the octave above: the decoder belongs to the worker. */
+    void setLineFeed (bool on) noexcept
+    {
+        wantedLineFeed.store (on, std::memory_order_relaxed);
+    }
     /** The analysis input has changed character - see
         BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
         flag, from the audio thread, so an event that comes and goes between two
@@ -95,6 +102,7 @@ private:
     std::atomic<int64_t> gapCount { 0 };
     std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
+    std::atomic<bool> wantedLineFeed { false };
     std::atomic<uint32_t> inputEpoch { 0 };
     uint32_t seenInputEpoch = 0;
     uint64_t seenDropped = 0;

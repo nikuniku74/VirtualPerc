@@ -26,6 +26,78 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Perché ci mette a trovare il tempo, e dove sta il resto (25 agosto)
+
+Prima cosa: dividere l'attesa in due, perché finora era un numero solo. `VPProbe`
+riporta ora anche **t_val**, l'istante in cui il decoder pubblica un tempo che è
+disposto a sostenere. La differenza con t_lock è la macchina a stati del tracker.
+
+| | t_val | t_lock |
+|---|---|---|
+| MIXER | 2,14 s | 2,32 s |
+| IPAD | 2,21 s | 2,38 s |
+
+**Quasi tutta l'attesa è il decoder che decide**; il tracker aggiunge 0,18 s.
+Verificato anche al contrario: accorciare il minimo di ASCOLTANDO da 0,70 s a
+0,45 e a 0,30 non sposta di un millesimo (1,50 / 2,18 identici). Quel numero non
+è il collo di bottiglia e resta com'è.
+
+### Cosa gate il decoder
+
+L'aggancio viene dallo state space, e la soglia è `kAnchorAcquireMargin`.
+Spazzolata su trenta brani per modalità:
+
+| margine | MIXER t_lock | MIXER ottave | IPAD t_lock | IPAD ottave (con stanza) |
+|---|---|---|---|---|
+| 2,0 | 1,49 s | 5 | 2,08 s | 6 |
+| 2,5 | **1,50 s** | **4** | 2,17 s | 6 |
+| 3,0 | 1,52 s | 4 | 2,25 s | 6 |
+| 3,5 | 2,18 s | 4 | 2,32 s | 6 |
+| 4,0 | 2,32 s | 5 | 2,38 s | **5** |
+
+Due cose che la tabella dice e che non si vedevano prima:
+
+1. **Sotto 2,5 il guadagno non arriva più a schermo.** Il decoder pubblica a
+   0,67 s ma il lock resta a 1,49: il vincolo passa alla macchina a stati.
+2. **Appena il margine scende sotto 4, in IPAD compare un'ottava sbagliata in
+   più** — e non è l'ambiguità nota dei 76 BPM che sta dappertutto in questo
+   file, è `straight 128`, un brano che a 4 legge giusto e a 3,5 legge storto.
+   Nessun valore intermedio salva entrambe le cose: a 3,5 la velocità è già
+   sparita e l'errore c'è comunque.
+
+### La soglia non è un numero solo
+
+I due percorsi d'ascolto non sono lo stesso segnale — questo documento ha una
+sezione intera su quanto sono diversi — e non meritano lo stesso numero. Su una
+mandata di linea le attivazioni sono nette e il margine vuol dire quello che
+dice; al microfono in una stanza no. Quindi 2,5 sulla linea, 4,0 al microfono:
+
+| | prima | dopo |
+|---|---|---|
+| MIXER, t_lock | 2,32 s | **1,50 s** |
+| MIXER, ottave sbagliate | 5 | **4** |
+| IPAD, t_lock | 2,38 s | 2,38 s |
+| IPAD, ottave sbagliate | 5 | 5 |
+
+Il MIXER aggancia **il 35% più in fretta** con un'ottava sbagliata in meno, e in
+IPAD non cambia niente: le cinque ottave sbagliate restano i cinque brani a
+76 BPM di sempre, `straight 128` non compare.
+
+### Cosa resta, e perché non si scende sotto
+
+In MIXER il decoder pubblica a 1,04 s. Il primo secondo di attivazioni è la LSTM
+che si scalda — è documentato più sotto, il punto a mezzo battito vale 0,86 nelle
+prime tre battute e 0,15 dopo dieci secondi — quindi **1 s è vicino al pavimento
+vero**, non una soglia da abbassare. Il resto fino a 1,50 s è la macchina a
+stati, e accorciarla non serve (misurato sopra).
+
+In IPAD il decoder pubblica a 2,21 s: lì è il percorso acustico che sfuma gli
+attacchi e il margine ci mette di più a formarsi. Quello non è un numero da
+cambiare, è il segnale.
+
+Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
+`VPDecoderProbe`: 5 fallimenti, gli stessi di prima.
+
 ## Il buco senza batteria: cinque tentativi, nessuno spedito (25 agosto)
 
 Seguito della sezione sotto, che aveva lasciato la diagnosi e non la cura. La
