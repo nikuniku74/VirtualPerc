@@ -1212,6 +1212,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
+    hyp.fitResidual = lastFitResidual;
+    hyp.fitCoverage = lastFitCoverage;
     hyp.confidence = scoreConfidence();
     hyp.valid = established;
 

@@ -97,6 +97,8 @@ public:
         TempoRegime   regime = TempoRegime::unknown;
         float         combBpm = 0.0f;
         bool          levelSettled = false;
+        float         fitResidual = 1.0f;
+        float         fitCoverage = 0.0f;
         /** True for a moment after a tap has declared where beat one is, so the
             UI can show that the gesture landed rather than leaving the player
             guessing whether the bar moved because of them. */

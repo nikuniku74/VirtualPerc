@@ -674,26 +674,37 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     return false;
 }
 
-void VirtualPercussionEngine::pushOutputToRing (int numSamples) noexcept
+void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master) noexcept
 {
-    // What we played this block, for the level watcher next block: it runs
-    // before the part is rendered, so the newest own-level it can have is the
-    // previous one - which is the right one anyway, because that is the part
-    // that has had time to come back round.
+    // The part as the speaker emits it, not as it was rendered.
+    //
+    // This used to store the mix from before the master fader while the outputs
+    // got it after - so the canceller's reference was a signal that is never in
+    // the room. A fader that does not move is absorbed by the gain the
+    // canceller fits, which is why it survived this long; a fader that *moves*
+    // is not, and every touch of the volume left the fit wrong until it
+    // re-converged, with our own part in the analysis meanwhile.
+    //
+    // The monitor click is deliberately *not* in here. CLICK TEST adds it to
+    // the analysis on purpose - that is the whole feature, a kit for the
+    // tracker to lock to when there is no drummer - so a canceller that
+    // subtracted it again would be undoing the one thing it is for.
     float own = 0.0f;
     for (int i = 0; i < numSamples; ++i)
-        own = std::max (own, std::abs (0.5f * (outL[static_cast<size_t> (i)]
-                                               + outR[static_cast<size_t> (i)])));
-    ownPeakLast = own;
-
-    if (outRing.empty())
-        return;
-    for (int i = 0; i < numSamples; ++i)
     {
-        const float y = 0.5f * (outL[static_cast<size_t> (i)] + outR[static_cast<size_t> (i)]);
-        outRing[static_cast<size_t> (ringWrite)] = y;
-        ringWrite = (ringWrite + 1) & (ringSize - 1);
+        float y = master * 0.5f * (outL[static_cast<size_t> (i)]
+                                   + outR[static_cast<size_t> (i)]);
+        own = std::max (own, std::abs (y));
+        if (! outRing.empty())
+        {
+            outRing[static_cast<size_t> (ringWrite)] = y;
+            ringWrite = (ringWrite + 1) & (ringSize - 1);
+        }
     }
+    // For the level watcher next block: it runs before the part is rendered, so
+    // the newest own-level it can have is the previous one - which is the right
+    // one anyway, because that is the part that has had time to come back round.
+    ownPeakLast = own;
 }
 
 void VirtualPercussionEngine::process (const float* const* inputs, int numInputs,
@@ -938,7 +949,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         }
     }
 
-    pushOutputToRing (numSamples);
+    pushOutputToRing (numSamples, master);
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
     lastTarget.store (tr.targetBpm, std::memory_order_relaxed);
@@ -968,6 +979,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastOctave.store (tr.tempoOctave, std::memory_order_relaxed);
     lastCombBpm.store (tr.combBpm, std::memory_order_relaxed);
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
+    lastFitResidual.store (tr.fitResidual, std::memory_order_relaxed);
+    lastFitCoverage.store (tr.fitCoverage, std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
     lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
     // Everything the UI shows is published from here. Reading it off the
@@ -1034,6 +1047,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.tempoRegime = lastRegime.load (std::memory_order_relaxed);
     s.combBpm = lastCombBpm.load (std::memory_order_relaxed);
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
+    s.fitResidual = lastFitResidual.load (std::memory_order_relaxed);
+    s.fitCoverage = lastFitCoverage.load (std::memory_order_relaxed);
     // The level in force, which under AUTO is not the one in the settings.
     s.tempoOctave = lastOctave.load (std::memory_order_relaxed);
     s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);

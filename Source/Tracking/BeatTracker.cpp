@@ -1055,6 +1055,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.regime = haveHyp ? hyp.regime : TempoRegime::unknown;
     out.combBpm = haveHyp ? hyp.combBpm : 0.0f;
     out.levelSettled = haveHyp && hyp.levelSettled;
+    out.fitResidual = haveHyp ? hyp.fitResidual : 1.0f;
+    out.fitCoverage = haveHyp ? hyp.fitCoverage : 0.0f;
     if (! armed)
         out.followBar = FollowBar::paused;
     else if (! inputIsLive && heldBpm > 40.0f

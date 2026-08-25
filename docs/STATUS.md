@@ -26,6 +26,112 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## "Quando faccio qualcosa sfasa": misurato (25 agosto)
+
+Segnalazione: con Spotify dalla cassa dell'iPad, una volta preso il tempo, se si
+aziona la percussione o si muove un volume sembra che la fase scappi. Ho
+costruito il banco che mancava e la risposta non è quella che sembrava.
+
+### Il banco: `VPOps`
+
+Ogni altra sonda qui monta il motore e lo lascia stare. Non è così che si usa.
+`VPOps` guida il motore con il brano **più la propria uscita rientrata**, come fa
+una stanza, aspetta l'aggancio, e poi esegue un'operazione alla volta misurando
+la fase contro la battuta suonata, in millisecondi.
+
+E deve essere una **differenza di differenze**. La prima versione confrontava la
+fase prima e dopo l'operazione e leggeva il risultato come colpa
+dell'operazione: non lo è. La fase del tracker oscilla da sola di dieci-venti
+millisecondi su questo materiale, e l'arrangiamento di default toglie la
+batteria per quattro battute su sedici — cosa che nella prima misura ha portato
+la fase a **254 ms in una finestra dove non avevo toccato niente**. Quindi il
+brano tiene fermo, e la scaletta gira **due volte**: una eseguendo le operazioni
+e una senza eseguirne nessuna. Quello che ha fatto l'operazione è ciò che resta
+dopo aver sottratto il giro che non ha fatto niente. C'è anche una passata per
+ogni singola operazione, così una riga è quell'operazione e non la pila di
+tutte quelle prima.
+
+### Le operazioni non sono il problema principale
+
+Con il rientro reale, una passata per operazione:
+
+| | differenza |
+|---|---|
+| master 0.40 → 1.00 | +6,6 ms |
+| congas off | +3,3 ms |
+| inseguimento → low | +3,3 ms |
+| tutte le altre | fra −14 e +2,9 ms |
+
+Sei millisecondi a 118 BPM sono l'1,3% di una battuta. **Il banco non risolve
+sotto i ~10 ms**, perché il giro di controllo oscilla da solo di altrettanto:
+le righe piccole vanno lette come rumore, non come effetti.
+
+### Quello che sfasa davvero è il materiale
+
+Stesso brano con il suo arrangiamento, fase per battuta. La batteria esce nelle
+battute 8–11 di ogni 16:
+
+| battuta | kit | media | peggio | bpm | regime |
+|---|---|---|---|---|---|
+| 8 | fuori | 22,7 | 23,0 | 118,03 | FISSO |
+| 9 | fuori | 14,9 | 22,2 | 117,71 | FISSO |
+| 10 | fuori | 7,3 | 21,8 | 117,12 | **VIVO** |
+| 11 | fuori | 44,2 | **63,7** | 116,76 | VIVO |
+| 12 | rientra | 53,9 | **66,9** | 117,74 | VIVO |
+| … | | | | | |
+| 20 | dentro | 20,9 | 23,2 | 118,06 | FISSO |
+
+**Il passaggio senza batteria rilascia il tempo fisso**, e da lì il tracker
+insegue: il tempo scivola 118,03 → 116,76 (−1,1%), che è esattamente la fase che
+esce dall'altra parte, e ci vogliono otto battute di sovraelongazione per
+rientrare. Il controllo sta dentro la stessa misura: nel **secondo** buco dello
+stesso brano il regime resta FISSO e lo stesso passaggio costa meno di 15 ms.
+
+Un brano vero — Spotify — ne è pieno: stacchi, intro senza kit, strofe piano. È
+lì che si sente sfasare, e capita di stare toccando qualcosa nello stesso
+momento.
+
+### Il tentativo di correzione, e perché non l'ho spedito
+
+Dai due numeri che il decoder già calcola, il passaggio si riconosce: il residuo
+del fit sale (0,033 → 0,041 → 0,064) mentre la copertura resta alta (0,92–1,00).
+Le battute rilevate stanno sulla griglia e sono solo mal piazzate — sono pad e
+basso, non un kit. Un tempo che cambia davvero fa l'opposto, e il file lo dice
+già dove spiega la via d'uscita rapida: appena la griglia è sbagliata il gate
+on-grid smette di ammettere battute, quindi è la **copertura** a crollare.
+
+Tenere il tempo fisso quando il residuo è largo ma la copertura è alta **risolve
+il buco**: peggio 63,7 → 22,99 ms, regime FISSO per tutto il passaggio. E
+introduce un guasto peggiore venti battute dopo: la fase se ne va a **184 ms**
+con il tempo bloccato a 116,4 e niente che possa più correggerlo. Il motivo è
+misurato: su questo percorso il residuo sta a 0,04–0,06 quasi sempre, quindi
+`kGridHealthyResidual` (0,035) non è una linea che separa "prova debole" da
+"prova buona" — con quella soglia "tieni durante un buco" diventa "tieni
+sempre". Un tetto di sei battute non basta a salvarla.
+
+Non spedito. La forma della correzione giusta si vede: la soglia dev'essere
+**relativa** — il residuo peggiorato rispetto a quello che *questo brano* stava
+dando — non un numero assoluto. È il prossimo passo, ed è corto.
+
+### Cosa è cambiato invece
+
+Un difetto vero, trovato leggendo e non misurando: `pushOutputToRing` metteva
+nel riferimento del cancellatore del rientro il mix **prima** del master fader,
+mentre dalle casse esce quello dopo. Il riferimento era un segnale che nella
+stanza non c'è mai. Un fader fermo viene assorbito dal guadagno che il
+cancellatore stima — ecco perché è sopravvissuto fin qui — ma un fader che si
+**muove** no, e ogni tocco del volume lasciava la stima sbagliata finché non
+riconvergeva, con la nostra parte nell'analisi nel frattempo. Sul banco le due
+righe del master passano da +6,6 ms a −1,7 e −7,2.
+
+Il click del CLICK TEST resta deliberatamente **fuori** dal riferimento: viene
+aggiunto all'analisi apposta, ed è tutta la funzione.
+
+E due diagnostiche che non c'erano e senza le quali questa indagine non si
+poteva fare: `fitResidual` e `fitCoverage` arrivano ora fino allo snapshot.
+
+Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
+
 ## iPhone e Mac fra le destinazioni, Vision no (25 agosto)
 
 Una sola build iOS, e le quattro destinazioni di Xcode decise invece che lasciate

@@ -59,6 +59,12 @@ struct BeatHypothesis
     /** Seconds per beat for the committed tempo, so consumers do not have to
         re-derive it while `bpm` is being updated. */
     float    periodSec   = 0.0f;
+    /** How well the beats being detected fit the committed grid, and how much
+        of the fit's window they filled. Diagnostics: nothing in the audio path
+        reads them, and they are the two numbers that say whether the evidence
+        under a tempo decision was worth anything. */
+    float    fitResidual = 1.0f;
+    float    fitCoverage = 0.0f;
 
     TempoRegime regime   = TempoRegime::unknown;
 

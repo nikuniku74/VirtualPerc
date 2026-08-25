@@ -79,7 +79,11 @@ private:
     void subtractSpeakerLeak (int numSamples, bool speaker) noexcept;
     void updateLeakDelay (int numSamples, bool speaker) noexcept;
     void applyAnalysisHpf (int numSamples) noexcept;
-    void pushOutputToRing (int numSamples) noexcept;
+    /** Store the part as it actually leaves the outputs, for the leak canceller
+        to subtract and for the level watcher to blame us with. `master` is part
+        of what the speaker emits, so it is part of what comes back on the
+        microphone. */
+    void pushOutputToRing (int numSamples, float master) noexcept;
     void applyAnalysisMakeup (int numSamples, float rawPeak, bool levelJumped) noexcept;
     /** Watches the analysis level *before* the make-up gain and counts the
         moments the input changes character - an empty room becoming a band.
@@ -144,6 +148,8 @@ private:
     std::atomic<int>   lastOctave { 0 };
     std::atomic<float> lastCombBpm { 0.0f };
     std::atomic<bool>  lastLevelSettled { false };
+    std::atomic<float> lastFitResidual { 1.0f };
+    std::atomic<float> lastFitCoverage { 0.0f };
     int seenBarNudge = 0;
 
     std::atomic<int>   lastStyle { 0 };

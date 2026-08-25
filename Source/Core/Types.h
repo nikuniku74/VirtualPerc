@@ -209,6 +209,10 @@ struct EngineSnapshot
         that to count as decided. */
     float combBpm              = 0.0f;
     bool  levelSettled         = false;
+    /** How well the detected beats fit the committed grid, and how much of the
+        fit's window they filled. Diagnostics only. */
+    float fitResidual          = 1.0f;
+    float fitCoverage          = 0.0f;
     /** Half or double the measured tempo: the level actually in force, whether
         the listener asked for it or AUTO settled on it. */
     int   tempoOctave          = 0;
