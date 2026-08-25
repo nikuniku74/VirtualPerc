@@ -131,14 +131,48 @@ ora passa; il test del TAP e' stato riscritto perche' la sua *premessa* non e'
 piu' vera (la battuta automatica su quel brano era giusta lo 0% del tempo prima
 e il 100% dopo, quindi non puo' piu' servire da controprova), non la sua tesi.
 
-### Cosa resta aperto
+### La stanza vuota la aggancia ancora, e non l'ho risolto
 
-L'app **aggancia ancora la stanza vuota**: 30 brani su 30 in MIXER, prima che
-qualcuno suoni. La ripartenza la corregge entro un terzo di secondo dall'attacco
-vero, ma sullo schermo per venti secondi c'e' scritto FOLLOWING a 150 BPM. La
-guardia che esiste (`ghostLockSamples`) vale solo in modalita' cassa e solo a
-percussione disarmata, e per estenderla serve una nozione di livello
-*assoluto* che questo giro non introduce.
+L'app **aggancia la stanza vuota**: 30 brani su 30 in MIXER, prima che qualcuno
+suoni, e in una misura diretta arriva a FOLLOWING a **99 BPM con confidenza
+0.91** davanti a un microfono che non sente nessuno. La ripartenza lo butta via
+entro un terzo di secondo dall'attacco vero, quindi il numero sbagliato dura
+solo finche' nessuno suona — ma se in quel momento premi START lo shaker parte
+davvero, al tempo della stanza.
+
+Ho provato a chiuderlo e mi sono fermato. Il vincolo che lo rende difficile e'
+misurato: **la band piu' piano che i test pretendono agganci e' piu' piano della
+stanza che inganna il tracker** (picco 0,0023 contro 0,0060). Quindi nessuna
+soglia sul livello puo' funzionare, e la regola deve riguardare la *forma* di
+quello che dice la rete. `VPRoom` misura i quattro candidati sulle due strade
+d'ascolto:
+
+| | stanza | band |
+|---|---|---|
+| p50 (pavimento dell'attivazione), MIXER | 0,051–0,079 | 0,001–0,033 |
+| p50, IPAD | 0,055–0,106 | 0,019–**0,048** |
+| p50/p95 | 0,21–0,80 | 0,00–**0,18** |
+| frame sopra il gate 0,40 della rete | 0,0–**0,9%** | **1,5%**–9,1% |
+
+Il pavimento separa benissimo in MIXER e **fallisce in IPAD**, dove il percorso
+acustico chiude i buchi fra una battuta e l'altra. Il gate a 0,40 separa in tutte
+e due ma 0,9% contro 1,5%, e la quota della stanza arriva tutta in una raffica
+nei primi secondi — cioe' esattamente quando la decisione viene presa: a 3,2 s la
+stanza aveva gia' fatto registrare **nove battute**, e il comb nominava 196 BPM,
+che a quel ritmo ci sta. Ho provato anche a chiedere che le battute rilevate
+stessero su una griglia: non funziona *prima* dell'aggancio, perche' il gate
+on-grid non e' ancora attivo e sulla musica gli ottavi fanno sembrare gli
+intervalli peggiori di quelli della stanza (rms 0,26–0,46 contro 0,15).
+
+Nessuno dei quattro ha un margine che valga la pena spedire, e l'errore nell'altra
+direzione — un'app che sullo stresso palco si rifiuta di seguire una band che
+suona piano — costa molto piu' di un numero sbagliato sullo schermo prima del
+concerto. Quindi resta aperto, con la misura in `scripts/probe_room.cpp` per chi
+ci riprova. Le due strade che non ho battuto: una regola *di prodotto* invece che
+di rilevamento (START che non arma finche' l'ingresso non e' cambiato da quando
+l'app e' stata aperta — ma se l'app viene aperta a musica gia' in corso non
+cambia mai), oppure un modello di rumore vero al posto di questo, che e' rumore
+filtrato a un polo e cioe' il caso ostile.
 
 ## Il core del tempo, rivisto (24 agosto)
 

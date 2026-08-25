@@ -313,6 +313,26 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPRoom
+        PRODUCT_NAME "VPRoom"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPRoom PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPRoom PRIVATE ${VP_CORE_SOURCES} scripts/probe_room.cpp)
+    target_include_directories (VPRoom PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPRoom PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPRoom PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPActivations
         PRODUCT_NAME "VPActivations"
         NEEDS_WEB_BROWSER FALSE
@@ -392,6 +412,9 @@ if (TARGET VPProbe)
 endif()
 if (TARGET VPActivations)
     vp_apply_ai_options (VPActivations)
+endif()
+if (TARGET VPRoom)
+    vp_apply_ai_options (VPRoom)
 endif()
 if (TARGET VPReplay)
     vp_apply_ai_options (VPReplay)
