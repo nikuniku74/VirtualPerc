@@ -2,7 +2,7 @@
 
 Live virtual percussionist for **iPadOS**, from the same build also on **iPhone** and on an Apple silicon **Mac** ("Designed for iPad"). The app listens to an acoustic drummer and plays a shaker that follows tempo and phase — accelerando, rallentando, no loop restart.
 
-Not on Apple Vision, deliberately: the analysis is tuned around a close kit mic and an iPad's own speaker into its own room, and a headset's array is neither. See [docs/PLATFORM.md](docs/PLATFORM.md).
+Not on Apple Vision, deliberately: the analysis is tuned around a close kit mic and an iPad's own speaker into its own room, and a headset's array is neither. That one is not a build setting — an iPhone/iPad app is offered on Apple Vision Pro and on Apple silicon Macs by default, and the opt-out is in App Store Connect under *Pricing and Availability*. See [docs/PLATFORM.md](docs/PLATFORM.md).
 
 Not a DAW. Not a BPM meter. Not a web app.
 

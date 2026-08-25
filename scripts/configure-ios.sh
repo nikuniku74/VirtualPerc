@@ -31,5 +31,7 @@ cmake "${ARGS[@]}"
 echo
 echo "Xcode project: $ROOT/build-ios/VirtualPercussionist.xcodeproj"
 echo "Open it, pick an iPad or an iPhone, enable the microphone, Run."
-echo "Destinations: iPhone, iPad and Mac (Designed for iPad). Apple Vision is off."
+echo "Destinazioni: iPhone e iPad (TARGETED_DEVICE_FAMILY 1,2)."
+echo "Mac si', Apple Vision no: quelle due si decidono in App Store Connect,"
+echo "  Pricing and Availability - non c'e' un build setting. Vedi docs/PLATFORM.md."
 echo "See docs/STATUS.md for what the bundled model can and cannot lock."

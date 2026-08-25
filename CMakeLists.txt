@@ -80,10 +80,13 @@ juce_add_gui_app (VirtualPercussionist
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
-    # iPhone and iPad. 1 is iPhone, 2 is iPad; Mac is not a device family here -
-    # a Mac gets this app either as the native build (no CMAKE_SYSTEM_NAME=iOS)
-    # or, on Apple silicon, as the iPad build under "Designed for iPad", which
-    # is the SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD setting below.
+    # iPhone and iPad. 1 is iPhone, 2 is iPad. This is the one that actually
+    # decides anything here: it becomes UIDeviceFamily in the Info.plist, which
+    # is what makes an iPhone a device this app will install on.
+    #
+    # A Mac gets the app either as the native build (no CMAKE_SYSTEM_NAME=iOS)
+    # or, on Apple silicon, as the iPad build under "Designed for iPad" - and
+    # that one is not a build setting at all. See below.
     TARGETED_DEVICE_FAMILY "1,2"
     STATUS_BAR_HIDDEN FALSE
     IPAD_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationPortraitUpsideDown;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
@@ -111,10 +114,33 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         # iPad's own speaker into its own room, and a headset's array is
         # neither. Being installable is not the same as working, and the App
         # Store does not draw that distinction for the buyer.
-        XCODE_ATTRIBUTE_SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD "YES"
-        XCODE_ATTRIBUTE_SUPPORTS_XR_COMPATIBLE "NO"
+        # Which destinations Xcode offers *locally*. With the visionOS SDK
+        # installed, Xcode adds "Apple Vision (Designed for iPad)" by itself to
+        # any target built against the iOS SDK; naming the platforms keeps the
+        # list to the two this app is for. Delete this line if the Mac
+        # (Designed for iPad) destination ever goes missing with it - that
+        # destination builds the iphoneos slice and should survive, but it is
+        # the one thing here worth checking on a real Xcode.
+        XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS "iphoneos iphonesimulator"
     )
 endif()
+
+# And the part no build setting decides.
+#
+# Whether an iPhone/iPad app is offered on Apple Vision Pro, and whether it is
+# offered on Macs with Apple silicon, are *App Store Connect* settings, not
+# Xcode ones. Apple's own help pages are explicit about it: the app is available
+# on both by default and the developer has to opt out, in Pricing and
+# Availability. There is no build setting that turns Vision off, and any that
+# looks like it does is being ignored.
+#
+#   App Store Connect -> the app -> Pricing and Availability
+#     "iPhone and iPad Apps on Apple Vision Pro"   -> deselect
+#     "iPhone and iPad Apps on Apple Silicon Mac"  -> leave selected
+#
+# So: iPhone and iPad come from TARGETED_DEVICE_FAMILY above and are settled
+# here. Mac stays on and Vision goes off in App Store Connect, and nowhere else.
+# See docs/PLATFORM.md.
 
 juce_generate_juce_header (VirtualPercussionist)
 

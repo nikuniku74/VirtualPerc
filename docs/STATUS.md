@@ -43,6 +43,34 @@ microfono - una ripresa ravvicinata del kit e la cassa dell'iPad nella sua
 stanza - e l'array di un visore non è né l'uno né l'altro. Installabile non è la
 stessa cosa che funzionante, e chi compra non vede la differenza.
 
+**Correzione (25 agosto).** La prima versione di questa tabella diceva che Mac e
+Vision si decidevano con due build setting, `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`
+e `SUPPORTS_XR_COMPATIBLE`. **Non è vero**, e le pagine di aiuto di Apple sono
+esplicite: un'app iPhone/iPad è offerta su Apple Vision Pro e sui Mac Apple
+silicon **per default**, e la si toglie in **App Store Connect**, sotto *Pricing
+and Availability*. Non esiste un build setting che spenga Vision; uno che sembra
+farlo viene semplicemente ignorato. Quelle due righe erano una supposizione
+scritta come se fosse un fatto, e sono state tolte.
+
+Quindi la lista vera è due voci in due posti:
+
+- **Xcode / CMake**: `TARGETED_DEVICE_FAMILY "1,2"`. È questa che fa comparire
+  iPhone, e finisce nell'Info.plist come `UIDeviceFamily`.
+- **App Store Connect** → Pricing and Availability: *iPhone and iPad Apps on
+  Apple Silicon Mac* selezionato, *iPhone and iPad Apps on Apple Vision Pro*
+  deselezionato.
+
+`SUPPORTED_PLATFORMS` è impostato a `iphoneos iphonesimulator`, ma solo per
+tenere in ordine l'elenco delle destinazioni **dentro Xcode**: con l'SDK
+visionOS installato, Xcode aggiunge da solo "Apple Vision (Designed for iPad)" a
+qualunque target compilato contro l'SDK iOS. È quello che offre l'IDE, non quello
+che può installare chi compra.
+
+E la ragione per cui non si vedeva niente cambiare: **il progetto Xcode è
+generato**. Le impostazioni stanno in `build-ios/VirtualPercussionist.xcodeproj`,
+quindi una finestra aperta prima della modifica mostra ancora le destinazioni
+vecchie. Serve `rm -rf build-ios && ./scripts/configure-ios.sh`.
+
 ### Il layout su uno schermo da telefono
 
 Due cose lo reggevano solo per caso su un iPad e non l'avrebbero retto su un

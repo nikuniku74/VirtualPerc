@@ -5,12 +5,34 @@
 One iOS build, and Xcode's four destinations answered deliberately rather than
 left to their defaults - because the defaults say yes to all of them.
 
-| Destination | | Why |
+| Destination | | Decided where |
 |---|---|---|
-| iPhone | **yes** | `TARGETED_DEVICE_FAMILY` 1 |
-| iPad | **yes** | `TARGETED_DEVICE_FAMILY` 2, and the device everything here was measured on |
-| Mac (Designed for iPad) | **yes** | `SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`. Apple silicon, same audio stack, and a laptop with an interface on it is a rig people have |
-| Apple Vision | **no** | `SUPPORTS_XR_COMPATIBLE=NO` |
+| iPhone | **yes** | `TARGETED_DEVICE_FAMILY 1` in `CMakeLists.txt` |
+| iPad | **yes** | `TARGETED_DEVICE_FAMILY 2`, and the device everything here was measured on |
+| Mac (Designed for iPad) | **yes** | App Store Connect |
+| Apple Vision | **no** | App Store Connect |
+
+Two of those four are not build settings, and that is the part worth knowing
+before hunting for one. Apple's help pages are explicit: an iPhone/iPad app is
+offered on **Apple Vision Pro** and on **Macs with Apple silicon** by default,
+and the developer opts out in App Store Connect under *Pricing and Availability*
+— [Vision](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/manage-availability-of-iphone-and-ipad-apps-on-apple-vision-pro),
+[Mac](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/manage-availability-of-iphone-and-ipad-apps-on-macs-with-apple-silicon/).
+There is no Xcode setting that turns Vision off; one that looks like it does is
+being ignored.
+
+So the checklist is two items in two places:
+
+- **Xcode / CMake** — `TARGETED_DEVICE_FAMILY "1,2"`. This is what puts iPhone
+  in the list, and it lands in the Info.plist as `UIDeviceFamily`.
+- **App Store Connect** — Pricing and Availability: leave *iPhone and iPad Apps
+  on Apple Silicon Mac* selected, deselect *iPhone and iPad Apps on Apple Vision
+  Pro*.
+
+`SUPPORTED_PLATFORMS` is set to `iphoneos iphonesimulator` as well, but only to
+keep Xcode's own destination list tidy: with the visionOS SDK installed Xcode
+adds "Apple Vision (Designed for iPad)" to any iOS target by itself. That is
+about what the IDE offers, not about what a buyer can install.
 
 Vision is off on purpose. The whole analysis is tuned around two microphone
 paths - a close kit mic, and an iPad's own speaker into its own room - and a
@@ -21,6 +43,14 @@ a claim the buyer can tell apart from "works".
 This is a **destination** list, not a port. A Mac still builds the app natively
 too (no `CMAKE_SYSTEM_NAME=iOS`), which is what the host tests and the probes
 run in.
+
+**After changing any of this, regenerate the project**: the settings live in
+`build-ios/VirtualPercussionist.xcodeproj`, which is generated, so an Xcode
+window opened before the change still shows the old destinations.
+
+```bash
+rm -rf build-ios && ./scripts/configure-ios.sh
+```
 
 ## iPadOS (priority 1)
 
