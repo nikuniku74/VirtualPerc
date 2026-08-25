@@ -57,8 +57,20 @@ public:
 
     /** The analysis input has changed character - an empty room becoming a band
         playing. Counted rather than flagged; see
-        BeatDecoder::notifyInputRestart. */
-    void setInputEpoch (uint32_t epoch) noexcept { neural.setInputEpoch (epoch); }
+        BeatDecoder::notifyInputRestart.
+
+        The tracker keeps one bit of its own from this: whether it has *ever*
+        seen the input change since the app was opened. Until it has, a tempo it
+        has found may be the room's - measured, an empty room reaches FOLLOWING
+        at 99 BPM with a confidence of 0.91 - and the percussion is held out. */
+    void setInputEpoch (uint32_t epoch) noexcept
+    {
+        if (seenEpoch && epoch != lastInputEpoch)
+            sawInputStart = true;
+        lastInputEpoch = epoch;
+        seenEpoch = true;
+        neural.setInputEpoch (epoch);
+    }
 
     struct Output
     {
@@ -159,6 +171,11 @@ private:
     bool tapHold = false;
     bool tapAligned = false;
     bool tapEstablished = false;
+    /** Whether the input has changed character since the app was opened, and
+        the last value the engine reported. See setInputEpoch. */
+    bool sawInputStart = false;
+    bool seenEpoch = false;
+    uint32_t lastInputEpoch = 0;
     bool waitForQuantize = false;
     bool heardMusic = false;
     bool hadPlayed = false;

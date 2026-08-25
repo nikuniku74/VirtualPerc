@@ -114,6 +114,9 @@ void BeatTracker::reset() noexcept
     tapHold = false;
     tapAligned = false;
     tapEstablished = false;
+    sawInputStart = false;
+    seenEpoch = false;
+    lastInputEpoch = 0;
     waitForQuantize = false;
     heardMusic = false;
     hadPlayed = false;
@@ -343,6 +346,9 @@ void BeatTracker::tap (double timeSeconds) noexcept
     }
 
     tapEstablished = true;
+    // Somebody tapped, so somebody is playing. That does not stop being true
+    // when they switch back to SEGUI and the tap stops owning the tempo.
+    sawInputStart = true;
     currentState = TrackingState::following;
     gridMuteSamples = static_cast<int> (sampleRate * 0.35);
     tapHold = true;
@@ -965,7 +971,33 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
 
+    // Whether what the clock is following is known to be somebody playing.
+    //
+    // The app listens from the moment it is opened, so before anyone plays it
+    // is analysing a room - and it locks to one: measured through the engine,
+    // FOLLOWING at 99 BPM with a confidence of 0.91 in front of a microphone
+    // that hears nobody, held that still for half a minute. Nothing in the
+    // signal separates that from a band: the quietest band the host tests
+    // insist must lock is *quieter* than the room that fools the tracker, so no
+    // level can decide it, and the activation's floor - the one statistic that
+    // does separate them on a line feed - closes up in a room, where the
+    // reflections fill the gaps between beats. See scripts/probe_room.cpp.
+    //
+    // What can be known is whether this input has ever *changed* since the app
+    // was opened, which is what an empty room turning into a band looks like
+    // and is the one thing a room alone never does. Until that has happened the
+    // percussion is armed and silent rather than playing to nobody.
+    //
+    // It has a blind spot and it is deliberate: an app opened onto a track
+    // already playing never sees a change, and waits. The listener releases it
+    // the same way they would tell it anything else - a tap, or a tempo set by
+    // hand - and the state on screen says which of the two it is waiting for.
+    // The alternative is a timeout, and a timeout long enough to be a guard is
+    // long enough to be a nuisance, while one short enough to be tolerable
+    // brings back the shaker playing to an empty stage.
+    const bool inputIsLive = sawInputStart || tapEstablished || ! tempoFollow;
     const bool canPlay = armed
+                      && inputIsLive
                       && (currentState == TrackingState::following
                           || currentState == TrackingState::lowConfidence
                           || currentState == TrackingState::recovering);
@@ -1025,6 +1057,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.levelSettled = haveHyp && hyp.levelSettled;
     if (! armed)
         out.followBar = FollowBar::paused;
+    else if (! inputIsLive && heldBpm > 40.0f
+             && (currentState == TrackingState::following
+                 || currentState == TrackingState::lowConfidence
+                 || currentState == TrackingState::recovering))
+        out.followBar = FollowBar::waitStart;
     else if (waitForQuantize && canPlay)
         out.followBar = FollowBar::waitBeat;
     else if (tapHold)

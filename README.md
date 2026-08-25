@@ -73,6 +73,10 @@ Simulator (no device signing):
 5. Speed up / slow down — it should follow without a restart
 6. STOP mutes the shaker; it keeps listening. START arms it again and waits for the next downbeat — it does not start at the instant you tap the button.
 
+The app is listening to the room long before anybody plays, and it will find a tempo in an empty room — measured, 99 BPM at a confidence of 0.91 with nobody in front of the microphone. So START arms the shaker but holds it silent until the analysis has heard the input actually *start*, and the state reads **ATTENDO CHE ATTACCHI** while it does. Press START early and the part comes in with the band, not before it.
+
+One case it cannot tell apart: a track that was already playing when the app was opened never *starts*, so it waits. One **TAP** releases it (so does setting the tempo by hand with FISSO). There is no timeout on purpose: long enough to be a guard is long enough to be a nuisance, and short enough to tolerate brings back a shaker playing to an empty stage.
+
 **SETUP** (top right) is everything you set once and never touch mid-song: the **clock** (AUTO, or 44.1 / 48 / 88.2 / 96 kHz), the buffer, MIXER vs IPAD, the theme, **CLICK TEST** and the debug panel — plus a read-out of the rate, buffer, latency and route the hardware actually gave.
 
 Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds the clock and the app opens at whatever it is already running at, so plugging into an X-Air at 48 kHz costs nothing: no click, and a track already playing through the same route keeps playing.

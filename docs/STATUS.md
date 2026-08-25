@@ -131,6 +131,41 @@ ora passa; il test del TAP e' stato riscritto perche' la sua *premessa* non e'
 piu' vera (la battuta automatica su quel brano era giusta lo 0% del tempo prima
 e il 100% dopo, quindi non puo' piu' servire da controprova), non la sua tesi.
 
+### La stanza vuota: agganciata sì, suonata no (24 agosto, seguito)
+
+Il difetto sotto e' rimasto - l'app **aggancia** la stanza vuota e non c'e' modo
+di impedirglielo - ma il danno vero era un altro: se in quel momento premi START
+lo shaker parte davvero, al tempo della stanza, su un palco vuoto.
+
+Quello si chiude senza dover distinguere una stanza da una band, perche' non
+serve la domanda difficile ("cos'e' questo?") ma quella facile: **questo ingresso
+e' cambiato da quando ho aperto l'app?** Una stanza da sola non cambia mai; una
+band che attacca sì, ed e' esattamente l'evento che il guardiano di livello gia'
+riconosce. Quindi START arma e tiene la percussione muta finche' l'analisi non ha
+visto l'ingresso *partire*, e sullo schermo c'e' scritto **ATTENDO CHE ATTACCHI**.
+
+Misurato: quindici secondi di stanza con lo shaker armato dal primo campione →
+**zero colpi**, stato `ATTENDO CHE ATTACCHI`, BPM 93,4 visibile ma non suonato.
+Poi attacca la band → 90 colpi, 120,00 BPM.
+
+**Il punto cieco e' voluto e va detto:** un brano gia' in corso quando l'app viene
+aperta non "parte" mai, quindi aspetta. Lo libera un **TAP**, o il tempo messo a
+mano con FISSO. Niente timeout, di proposito: uno abbastanza lungo da fare da
+guardia e' abbastanza lungo da dare fastidio, e uno abbastanza corto da tollerare
+riporta lo shaker che suona a sala vuota.
+
+E una conseguenza sui banchi che vale la pena scrivere: **ogni sonda e ogni test
+partiva con la musica al campione zero**, cioe' proprio nel punto cieco. Con la
+percussione tenuta fuori quei banchi non suonavano piu' niente - e uno dei test
+sull'attacco percepito passava perche' non c'era piu' niente da misurare, che e'
+il modo peggiore di passare. Adesso i due renderer dei test, `VPTiming` e
+`VPProbe` mettono un secondo di stanza davanti: `--pre` era gia' li' per questo,
+e il default e' un secondo invece di zero. Il grano dei numeri si sposta di poco
+(t_lock medio da freddo 2,32 s in MIXER e 2,38 s in IPAD), ma adesso i banchi
+misurano quello che fa un dispositivo.
+
+Host `VPTests`: **159 passed, 1 failed** - l'attacco percepito, rosso da prima.
+
 ### La stanza vuota la aggancia ancora, e non l'ho risolto
 
 L'app **aggancia la stanza vuota**: 30 brani su 30 in MIXER, prima che qualcuno

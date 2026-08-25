@@ -12,6 +12,8 @@
 //   t_lock     seconds until FOLLOWING, counted from the first beat of the
 //              song - so a negative one means it locked to an empty room
 //              before anybody played
+//   rst        times the analysis started its evidence again. One is the band
+//              starting; more than one is the level watcher being fooled
 //   t_2%       seconds until the reported tempo is within 2% and stays there
 //   span       BPM range after settling - a fixed tempo must have none
 //   wobble     mean |dBPM| per second after settling
@@ -308,7 +310,12 @@ int main (int argc, char** argv)
 {
     bool trace = false;
     float drift = 0.0f, jitter = 0.0f;
-    double preSeconds = 0.0;
+    // A second of room in front of the song even when nobody asks for one. The
+    // percussion is held out until the analysis has seen the input *start*, and
+    // a device is never handed music from sample zero, so a run with no room in
+    // front of it is a run in which nothing is ever played. `--pre 0` still
+    // gives the old behaviour for anyone who wants to see it.
+    double preSeconds = 1.0;
     bool sync = false;
     Listening mode = Listening::ipad;
     std::vector<const char*> rest;
@@ -366,7 +373,7 @@ int main (int argc, char** argv)
     const float tempos[] = { 76.0f, 92.0f, 104.0f, 118.0f, 128.0f, 140.0f };
 
     std::printf ("# ascolto: %s\n# materiale: %s\n", modeName, material);
-    if (preSeconds > 0.0)
+    if (preSeconds > 1.5)
         std::printf ("# stanza vuota per %.0f s prima che la band attacchi; t=0 e' la prima battuta\n",
                      preSeconds);
     if (sync)
@@ -430,7 +437,7 @@ int main (int argc, char** argv)
     std::printf ("mean span         %.2f BPM\n", spanAcc / nRuns);
     std::printf ("mean wobble       %.2f BPM/0.5s\n", wobbleAcc / nRuns);
     std::printf ("mean span (decoder only) %.2f BPM\n", spanNnAcc / nRuns);
-    if (preSeconds > 0.0)
+    if (preSeconds > 1.5)
         std::printf ("lock sulla stanza vuota %d   <- agganciati prima che qualcuno suonasse\n",
                      nEarlyLock);
     std::printf ("mean t_lock       %.2f s (%d agganciati)\n",

@@ -42,6 +42,7 @@ namespace
             case B::listening:       return text();
             case B::tapAlign:        return fuchsia();
             case B::waitBeat:        return fuchsia().withAlpha (0.75f);
+            case B::waitStart:       return text();
             case B::weakFollow:      return text();
             case B::recalin:         return text();
             case B::paused:          return mute();

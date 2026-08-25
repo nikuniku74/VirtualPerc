@@ -26,6 +26,8 @@ FOLLOWING → LOW_CONFIDENCE → RECOVERING → FOLLOWING
 
 Always listening while audio is running. START arms the shaker and waits for the next bar downbeat. STOP mutes percussion; analysis keeps following.
 
+START arms the shaker but holds it silent until the analysis has heard the input *start*: the app finds a tempo in an empty room, and a part playing to one is the thing a listener actually hears go wrong. A tap releases it. See `docs/AI_BEAT_TRACKING.md`.
+
 Listening from launch means that by the time anybody plays, the analysis has been running on an empty room for minutes. The level of the analysis bus, read before the make-up gain flattens it, says when that stops being true, and the evidence starts again there. See `docs/AI_BEAT_TRACKING.md`.
 
 ## What we refuse to do

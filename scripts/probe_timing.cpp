@@ -157,6 +157,13 @@ Landing measureLanding (const SongOptions& opt, double sr, unsigned seed, bool t
 
     std::vector<float> song (static_cast<size_t> (n), 0.0f);
     renderSong (song, opt, sr, seed);
+    // A second of room in front of it. The percussion is held out until the
+    // analysis has seen the input start - a device is never handed music from
+    // sample zero - so without this nothing is ever played and there is nothing
+    // to time. Turning the head down rather than inserting anything leaves the
+    // notated grid where it is.
+    for (int i = 0; i < static_cast<int> (sr * 1.0) && i < n; ++i)
+        song[static_cast<size_t> (i)] *= 0.02f;
     if (mode == Listening::ipad)
         speakerRoomMic (song, sr, seed, 0.55f);
 

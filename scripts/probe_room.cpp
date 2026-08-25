@@ -19,6 +19,11 @@
 //              beats. A pulse returns to nothing; a room never does.
 //   p50/p95    the same, scaled by how tall the peaks are.
 //   >0.4       how often the network clears its own beat gate.
+//   span       how far the reported tempo then wanders, and `fermo`, the
+//              longest stretch it holds inside 1%. "Wait until the tempo has
+//              settled" was the other candidate rule, and this is what killed
+//              it: the quietest room here locks at 110.5 BPM and holds it dead
+//              still for 31.5 s, where a real band gets as low as 5.5.
 //   FOLLOWING  and what the tracker does with all of it.
 //
 // The answer, measured: p50 separates in MIXER (room 0.051-0.079 against music
@@ -28,6 +33,11 @@
 // first seconds - which is exactly when the decision is made. Nothing here has
 // a margin worth shipping, and a rule that turns away a real band on stage is a
 // far worse failure than a wrong number on a screen before the gig.
+//
+// So the tracker still locks to a room, and what changed instead is what that
+// lock is allowed to *do*: the percussion is held out until the analysis has
+// heard the input start, which is a question about the input changing rather
+// than about what it is. See `inputIsLive` in BeatTracker.
 #include "Audio/VirtualPercussionEngine.h"
 
 #include "probe_song_render.h"
@@ -86,6 +96,12 @@ void run (const char* name, std::vector<float>& in, double sr, Listening mode)
     std::vector<float> act;
     vp::EngineSnapshot last {};
     double followedAt = -1.0;
+    // Once it has locked, how far the reported tempo then wanders, and the
+    // longest stretch it holds inside 1%. A clock worth playing to settles; the
+    // question is whether a clock locked to a room ever does.
+    float lo = 1.0e9f, hi = 0.0f;
+    float steadyRef = 0.0f;
+    double steadyFrom = -1.0, steadyBest = 0.0;
     int pos = 0;
     while (pos + block <= static_cast<int> (in.size()))
     {
@@ -105,6 +121,22 @@ void run (const char* name, std::vector<float>& in, double sr, Listening mode)
             act.push_back (last.pBeat);
         if (followedAt < 0.0 && last.state == vp::TrackingState::following)
             followedAt = static_cast<double> (pos) / sr;
+
+        const double t = static_cast<double> (pos) / sr;
+        if (followedAt >= 0.0 && last.bpm > 40.0f)
+        {
+            lo = std::min (lo, last.bpm);
+            hi = std::max (hi, last.bpm);
+            if (steadyRef > 40.0f && std::fabs (last.bpm - steadyRef) / steadyRef < 0.01f)
+            {
+                steadyBest = std::max (steadyBest, t - steadyFrom);
+            }
+            else
+            {
+                steadyRef = last.bpm;
+                steadyFrom = t;
+            }
+        }
         pos += block;
     }
 
@@ -123,14 +155,13 @@ void run (const char* name, std::vector<float>& in, double sr, Listening mode)
                                                       [] (float v) { return v > 0.40f; }))
               / static_cast<double> (act.size());
 
-    std::printf ("%-24s %-9s %7.1f %7.2f | %6.3f %6.3f %6.2f %6.1f%% | %5.1fx %8.4f\n",
+    std::printf ("%-24s %-9s %6.1f %7.2f | %6.3f %6.3f %6.2f %6.1f%% | %7.1f %6.1f\n",
                  name, followedAt < 0.0 ? "mai" : "FOLLOWING",
                  followedAt < 0.0 ? 0.0 : followedAt,
                  static_cast<double> (last.bpm),
                  static_cast<double> (p50), static_cast<double> (p95),
                  static_cast<double> (p50 / std::max (p95, 1.0e-6f)), overGate,
-                 static_cast<double> (last.analysisGain),
-                 static_cast<double> (last.inputPeak));
+                 static_cast<double> (hi >= lo ? hi - lo : 0.0f), steadyBest);
 }
 } // namespace
 
@@ -150,9 +181,9 @@ int main (int argc, char** argv)
         const auto mode = ipad ? Listening::ipad : Listening::mixer;
         std::printf ("\n# %s\n", ipad ? "IPAD (cassa -> stanza -> microfono)"
                                       : "MIXER (linea, nessuna stanza)");
-        std::printf ("%-24s %-9s %7s %7s | %6s %6s %6s %7s | %6s %8s\n",
+        std::printf ("%-24s %-9s %6s %7s | %6s %6s %6s %7s | %7s %6s\n",
                      "ingresso", "stato", "a (s)", "bpm", "p50", "p95", "p50/95",
-                     ">0.4", "gain", "picco");
+                     ">0.4", "span", "fermo");
 
         for (float peak : { 0.0006f, 0.006f, 0.03f })
         {

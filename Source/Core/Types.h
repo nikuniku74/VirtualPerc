@@ -104,6 +104,11 @@ enum class FollowBar : int
     weakFollow,
     recalin,
     waitBeat,
+    /** Armed, with a tempo, and deliberately not playing: the analysis has
+        never heard this input change since the app was opened, so what it is
+        following may be the room rather than anybody playing. See
+        BeatTracker::setInputEpoch. */
+    waitStart,
     paused
 };
 
@@ -134,6 +139,7 @@ inline const char* toBarString (FollowBar b) noexcept
         case FollowBar::weakFollow:      return "TEMPO INCERTO";
         case FollowBar::recalin:         return "RICALIBRO";
         case FollowBar::waitBeat:        return "ATTENDO BATTUTA";
+        case FollowBar::waitStart:       return "ATTENDO CHE ATTACCHI";
         case FollowBar::paused:          return "IN ASCOLTO - SHAKER OFF";
     }
     return "?";

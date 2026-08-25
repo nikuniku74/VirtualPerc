@@ -47,6 +47,26 @@ namespace
         }
     }
 
+    // An empty room in front of whatever is about to be fed.
+    //
+    // Every bench in this file used to start the music at sample zero, and that
+    // is the one case a device is never in: the app has been listening since it
+    // was opened. It matters directly now, because the percussion is held out
+    // until the analysis has seen the input *start* - see `inputIsLive` in
+    // BeatTracker - so a bench that never lets it start is a bench in which
+    // nothing ever plays.
+    //
+    // Turning the head of the buffer down to room level rather than inserting
+    // anything leaves every sample index, and every notated beat, exactly where
+    // it was.
+    void quietLeadIn (std::vector<float>& buf, double sr, double seconds = 1.0)
+    {
+        const int n = std::min (static_cast<int> (buf.size()),
+                                static_cast<int> (sr * seconds));
+        for (int i = 0; i < n; ++i)
+            buf[static_cast<size_t> (i)] *= 0.02f;
+    }
+
     // Kick / snare / hats at a steady tempo, beat one landing on sample zero, so
     // the true beat phase at any sample is known exactly.
     void renderKitTrack (std::vector<float>& dest, float bpm, double sr)
@@ -74,6 +94,7 @@ namespace
             dest[i] = s;
             ph += inc;
         }
+        quietLeadIn (dest, sr);
     }
 
     // One sharp broadband click per beat, first click on sample zero. Nothing
@@ -101,6 +122,7 @@ namespace
                     * std::exp (-t * 120.0f) * (b % 4 == 0 ? 0.9f : 0.6f);
             }
         }
+        quietLeadIn (dest, sr);
     }
 }
 
@@ -2470,6 +2492,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat) * std::exp (-tBeat * 8.0f);
                 ph += inc;
             }
+            quietLeadIn (kit, sr);
 
             vp::VirtualPercussionEngine kitEng;
             kitEng.prepare (sr, block, 1);
@@ -2877,6 +2900,86 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "after listening to a room for twenty seconds the tempo is still found promptly");
     }
 
+    // START pressed to an empty room does not start the shaker.
+    //
+    // This is the case the whole level watcher is for. A player presses START
+    // expecting the band in a moment; the analysis, left alone with a room, has
+    // already found a tempo in it - measured through the engine, FOLLOWING at
+    // 99 BPM with a confidence of 0.91 - and without this the part comes in on
+    // the next downbeat of a tempo nobody is playing.
+    {
+        const double sr = 48000.0;
+        const int block = 256;
+        const float bpm = 120.0f;
+        const int roomN = static_cast<int> (sr * 15.0) / block * block;
+        const int songN = static_cast<int> (sr * 25.0) / block * block;
+
+        std::vector<float> kit (static_cast<size_t> (songN), 0.0f);
+        renderKitTrack (kit, bpm, sr);
+        float kitPeak = 0.0f;
+        for (float v : kit)
+            kitPeak = std::max (kitPeak, std::abs (v));
+
+        std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+        {
+            std::mt19937 rng (0x5eed11u);
+            std::uniform_real_distribution<float> u (-1.0f, 1.0f);
+            float lp = 0.0f, peak = 0.0f;
+            for (int i = 0; i < roomN; ++i)
+            {
+                lp += (u (rng) - lp) * 0.05f;
+                in[static_cast<size_t> (i)] = lp;
+                peak = std::max (peak, std::abs (lp));
+            }
+            if (peak > 0.0f)
+                for (int i = 0; i < roomN; ++i)
+                    in[static_cast<size_t> (i)] *= kitPeak * 0.03f / peak;
+        }
+        std::copy (kit.begin(), kit.end(), in.begin() + roomN);
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().congasEnabled.store (false);
+        eng.start();   // armed from the first sample, as a player would
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        int hitsOnRoom = 0;
+        vp::FollowBar barOnRoom = vp::FollowBar::ready;
+        float bpmOnRoom = 0.0f;
+        vp::EngineSnapshot last {};
+        int pos = 0, blocks = 0;
+        while (pos + block <= static_cast<int> (in.size()))
+        {
+            const float* ins[1] = { in.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            last = eng.snapshot();
+            if (pos + block <= roomN)
+            {
+                hitsOnRoom = eng.shakerHits();
+                barOnRoom = last.followBar;
+                bpmOnRoom = last.bpm;
+            }
+            pos += block;
+            if ((++blocks % 10) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (4));
+        }
+
+        std::printf ("start-on-room  sulla stanza: colpi=%d bar=%s bpm=%.1f | dopo: colpi=%d bpm=%.2f\n",
+                     hitsOnRoom, vp::toBarString (barOnRoom),
+                     static_cast<double> (bpmOnRoom), eng.shakerHits(),
+                     static_cast<double> (last.bpm));
+        expect (hitsOnRoom == 0,
+                "START to an empty room does not start the shaker");
+        expect (barOnRoom == vp::FollowBar::waitStart,
+                "and the screen says what it is waiting for");
+        expect (eng.shakerHits() > 8 && std::fabs (last.bpm - bpm) < 6.0f,
+                "and once the band actually starts, it plays");
+    }
+
     // And the other half of it: a passage with the drums out is not a band
     // starting. A restart in the middle of a song throws away the grid the part
     // is playing on, so the level watcher has to tell a break from a beginning.
@@ -2907,24 +3010,28 @@ void vpRunAiBeatTests (int& passed, int& failed)
         float* outs[2] = { oL.data(), oR.data() };
 
         vp::EngineSnapshot last {};
-        double firstRestart = -1.0;
+        // The song itself starting is one restart and the right one - the
+        // renderer gives every bench a quiet lead-in now, because a device is
+        // never handed music from sample zero. What this test is about is
+        // whether the *dip* causes another.
+        int beforeDip = 0;
         int pos = 0, blocks = 0;
         while (pos + block <= n)
         {
             const float* ins[1] = { in.data() + pos };
             eng.process (ins, 1, outs, 2, block);
             last = eng.snapshot();
-            if (firstRestart < 0.0 && last.analysisRestarts > 0)
-                firstRestart = static_cast<double> (pos) / sr;
+            if (static_cast<double> (pos) / sr < 13.0)
+                beforeDip = last.analysisRestarts;
             pos += block;
             if ((++blocks % 10) == 0)
                 std::this_thread::sleep_for (std::chrono::milliseconds (4));
         }
 
-        std::printf ("breakdown  ripartenze=%d (prima a %.1f s)  bpm=%.2f  state=%s\n",
-                     last.analysisRestarts, firstRestart, static_cast<double> (last.bpm),
+        std::printf ("breakdown  ripartenze=%d (%d prima del buco)  bpm=%.2f  state=%s\n",
+                     last.analysisRestarts, beforeDip, static_cast<double> (last.bpm),
                      vp::toString (last.state));
-        expect (last.analysisRestarts == 0,
+        expect (last.analysisRestarts == beforeDip,
                 "a drums-out passage is not a band starting");
         expect (last.state == vp::TrackingState::following
                     && std::fabs (last.bpm - bpm) < 4.0f,
