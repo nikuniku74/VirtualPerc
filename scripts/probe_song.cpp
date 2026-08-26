@@ -62,6 +62,10 @@ struct Result
     float  phaseMean = 0.0f;
     float  phaseWorst = 0.0f;
     int    gaps = 0;
+    /** Share of the settled window the decoder spent calling the tempo fixed.
+        A record cut to a click should be at 100: anything less is the tracker
+        chasing a tempo that is not moving. */
+    float  fixedShare = 0.0f;
     /** Times the analysis was told to start its evidence again. One is the band
         starting; more than one means the level watcher was fooled by the song
         itself. */
@@ -163,6 +167,7 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     double errAcc = 0.0;
     int    errN = 0;
     int    prevBeatInBar = -1;
+    int    regimeSamples = 0, fixedSamples = 0;
     double settleAt = -1.0;
 
     int pos = 0, blocks = 0;
@@ -248,6 +253,9 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
                 lastSampleT = t;
             }
 
+            ++regimeSamples;
+            fixedSamples += snap.tempoRegime == 1 ? 1 : 0;
+
             const double tp = truePhase[static_cast<size_t> (pos)];
             const float err = vp::wrapCentered (
                 snap.beatPhase - static_cast<float> (tp - std::floor (tp)));
@@ -304,6 +312,10 @@ Result run (const SongOptions& opt, double sr, unsigned seed, float level, bool 
     r.span = (hi >= lo) ? hi - lo : 0.0f;
     r.spanNn = (nnHi >= nnLo) ? nnHi - nnLo : 0.0f;
     r.wobble = dbpmN > 0 ? static_cast<float> (dbpmAcc / dbpmN) : 0.0f;
+    r.fixedShare = regimeSamples > 0
+                       ? 100.0f * static_cast<float> (fixedSamples)
+                             / static_cast<float> (regimeSamples)
+                       : -1.0f;
     r.octave = r.bpmEnd > 1.0f ? std::log2 (r.bpmEnd / opt.bpm) : 0.0f;
     r.phaseMean = phaseN > 0 ? static_cast<float> (phaseAcc / phaseN) : 0.0f;
     r.errMean = errN > 0 ? static_cast<float> (errAcc / errN) : 0.0f;
@@ -385,11 +397,11 @@ int main (int argc, char** argv)
     if (sync)
         std::printf ("# analisi sincronizzata con l'audio a ogni blocco: il giro e' ripetibile\n");
     std::printf ("%-11s %-6s %-7s %-7s %-7s %-7s %-7s %-6s %-6s %-7s %-5s\n",
-                 "style", "bpm", "t_val", "t_lock", "t_2%", "err", "span", "jumps", "bars", "phase", "rst");
+                 "style", "bpm", "t_val", "t_lock", "t_2%", "err", "span", "jumps", "%fisso", "phase", "rst");
 
     int nRuns = 0, nOctave = 0, nUnstable = 0, nSlow = 0, totalBars = 0, totalJumps = 0, totalGaps = 0;
-    int nLocked = 0, nEarlyLock = 0, totalRestarts = 0, nValid = 0;
-    double validAcc = 0.0;
+    int nLocked = 0, nEarlyLock = 0, totalRestarts = 0, nValid = 0, nFixed = 0, nT2 = 0;
+    double validAcc = 0.0, fixedAcc = 0.0, t2Acc = 0.0;
     double spanAcc = 0.0, spanNnAcc = 0.0, wobbleAcc = 0.0, lockAcc = 0.0, errAcc = 0.0;
 
     for (const auto& style : styles)
@@ -417,6 +429,8 @@ int main (int argc, char** argv)
             wobbleAcc += r.wobble;
             if (r.lockSeen) { lockAcc += r.tLock; ++nLocked; }
             if (r.tValid >= 0.0) { validAcc += r.tValid; ++nValid; }
+            if (r.fixedShare >= 0.0f) { fixedAcc += r.fixedShare; ++nFixed; }
+            if (r.t2pct >= 0.0) { t2Acc += r.t2pct; ++nT2; }
             nEarlyLock += r.lockSeen && r.tLock < 0.0;
 
             totalGaps += r.gaps;
@@ -425,7 +439,8 @@ int main (int argc, char** argv)
             std::printf ("%-11s %-6.0f %-7.2f %-7.2f %-7.1f %-7.2f %-7.2f %-6d %-6d %-7.3f %-5d %s%s%s\n",
                          styleName (o), static_cast<double> (bpm), r.tValid, r.tLock, r.t2pct,
                          static_cast<double> (r.errMean),
-                         static_cast<double> (r.span), r.bigJumps, r.barBreaks,
+                         static_cast<double> (r.span), r.bigJumps,
+                         static_cast<int> (r.fixedShare),
                          static_cast<double> (r.phaseMean), r.restarts,
                          octaveBad ? "OCT " : "", unstable ? "WOBBLE " : "", slow ? "SLOW" : "");
             std::fflush (stdout);
@@ -448,6 +463,10 @@ int main (int argc, char** argv)
     if (preSeconds > 1.5)
         std::printf ("lock sulla stanza vuota %d   <- agganciati prima che qualcuno suonasse\n",
                      nEarlyLock);
+    std::printf ("mean t_2%%         %.2f s (%d brani)   <- e ci resta entro il 2%%\n",
+                 nT2 > 0 ? t2Acc / nT2 : -1.0, nT2);
+    std::printf ("tempo fisso       %.0f%% del tempo a regime\n",
+                 nFixed > 0 ? fixedAcc / nFixed : -1.0);
     std::printf ("mean t_val        %.2f s   <- il decoder pubblica un tempo\n",
                  nValid > 0 ? validAcc / nValid : -1.0);
     std::printf ("mean t_lock       %.2f s (%d agganciati)   <- e il tracker lo accetta\n",

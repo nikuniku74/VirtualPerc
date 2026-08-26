@@ -26,6 +26,66 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Quanto è stabile una volta agganciato (25 agosto)
+
+Domanda successiva a quella sotto: preso il tempo, si può tenerlo più fermo?
+Sì, di un quarto, e non dove pensavo.
+
+### Due ipotesi, misurate e scartate
+
+In IPAD il decoder passa solo il **63%** del tempo a regime dichiarando il tempo
+*fisso*, contro l'85% in MIXER — e un tempo «vivo» insegue, quindi oscilla. Le
+due condizioni che concedono il regime fisso sembravano le colpevoli:
+
+1. **Il residuo del fit** (`lastFitResidual < 0.05`, un numero senza nome in
+   mezzo alla condizione, ed esattamente dove sta il residuo del percorso
+   microfono). Rilassato a 0,065 / 0,08 / 0,10: **nessun effetto** — %fisso
+   resta 61-63, instabili 20, e il t_2% peggiora. Non era quello.
+2. **Il criterio di immobilità** (`kFixedSpread`, 0,9% sulla finestra da 24
+   battute). Allargato al 2% funziona sul materiale fermo — %fisso 63 → 75,
+   span 4,61 → 3,91 — e **rompe il caso vivo**: su una band con deriva il
+   tracker dichiara «fisso» il 68% del tempo invece del 39%. Cioè congela il
+   tempo di chi sta accelerando. Scartato.
+
+### Quello che invece funziona: non l'interruttore, la velocità
+
+`kRateLive` è quanto il tempo commesso si muove verso il fit a otto battute a
+ogni battuta, ed era **0,35** — un terzo della distanza. Su un microfono in una
+stanza quel fit è rumoroso, e inseguirlo così in fretta trasforma il rumore in un
+tempo che non sta fermo.
+
+| | prima (0,35) | dopo (0,22) |
+|---|---|---|
+| IPAD, tempo fisso: span | 4,61 BPM | **3,40** |
+| IPAD, tempo fisso: wobble | 0,20 | **0,15** |
+| IPAD, band che si muove: span | 5,89 | **5,21** |
+| IPAD, band: wobble | 0,26 | **0,22** |
+| MIXER, band: span | 12,67 | **10,83** |
+| MIXER, band: wobble | 0,33 | **0,27** |
+| gradino 120 → 132 | 5,46 s | **5,46 s** |
+| accelerando 120 → 140, fase peggiore | 0,178 batt. | **0,181 batt.** |
+
+La riga che decide è la terza: **migliora anche su materiale che si muove
+davvero**. Non è un baratto fra stabilità e fedeltà — una velocità che supera il
+bersaglio poi risuona, una che non lo supera no.
+
+E non è gratis più in basso: a **0,15** i banchi non migliorano ancora e il
+gradino da 120 a 132 passa da 5,46 a 7,28 s. A 0,22 gradino e accelerando sono
+identici alla cifra.
+
+Un numero che sembra peggiorare e non peggiora: il t_2% medio in IPAD passa da
+16,1 a 19,3 s. I brani «lenti» restano **15 su 30 identici**, e la media sale
+perché a 0,22 arriva alla banda del 2% **un brano in più** (24 invece di 23), e
+quello che si aggiunge è lento. Media su un denominatore diverso.
+
+Lo span medio in MIXER su materiale fermo passa da 6,48 a 7,44, ed è anche
+quello un artefatto: sono le righe a 76 BPM che si scambiano di posto
+(`syncopated 76` da 2,69 a 81,3 mentre `pad 76` va da 52,9 a 4,4), cioè la solita
+moneta sull'ottava. Le righe vere migliorano: `half-time 128` da 3,88 a 1,48,
+`straight 140` da 2,06 a 1,69.
+
+Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
+
 ## Perché ci mette a trovare il tempo, e dove sta il resto (25 agosto)
 
 Prima cosa: dividere l'attesa in due, perché finora era un numero solo. `VPProbe`

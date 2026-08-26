@@ -80,8 +80,21 @@ namespace
     constexpr int   kFastBeatsAlone = 5;
 
     // How fast the committed tempo moves per beat in each regime.
+    //
+    // The live rate used to be 0.35 and that was a third too fast for what it
+    // is fed: an eight-beat fit on a microphone in a room is noisy, and chasing
+    // it at a third of the distance per beat turns the noise into a tempo that
+    // will not sit still. Measured over thirty tracks, dropping it to 0.22
+    // takes the settled BPM range from 4.61 to 3.40 on the iPad path and the
+    // beat-to-beat wobble from 0.20 to 0.15, and - the part that decides it -
+    // does the same on material that genuinely moves, 5.89 to 5.21, because a
+    // rate that overshoots rings afterwards and one that does not, does not.
+    //
+    // It is not free below this. At 0.15 the same benches are no better and the
+    // step from 120 to 132 BPM takes 7.28 s to catch instead of 5.46; at 0.22
+    // that step and the 120-to-140 accelerando are unchanged to the digit.
     constexpr float kRateAcquiring = 0.70f;
-    constexpr float kRateLive      = 0.35f;
+    constexpr float kRateLive      = 0.22f;
 
     // A fixed tempo may only be refined, never dragged.
     constexpr float kFixedMaxStep = 0.015f;
