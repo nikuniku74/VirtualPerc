@@ -328,9 +328,6 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         havePhaseTarget = false;
     }
 
-    const float dErr = wrapCentered (phaseErrEma - prevPhaseErr);
-    prevPhaseErr = phaseErrEma;
-
     // Phase is corrected by *rate*, never by moving the grid.
     //
     // A standing error used to be worked off by subtracting it straight from
@@ -369,7 +366,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
                 dGain = 0.3f;
                 break;
             case FollowStrength::high:
-                tau = 0.55f;
+                tau = 0.70f;
                 steerLim = 0.050f;
                 steerCeil = 0.25f;
                 dGain = 1.2f;
@@ -399,6 +396,12 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         constexpr float kPhaseFloor = 0.012f;
         const float e = phaseErrEma > kPhaseFloor ? phaseErrEma - kPhaseFloor
                       : (phaseErrEma < -kPhaseFloor ? phaseErrEma + kPhaseFloor : 0.0f);
+        // The derivative must see the same dead-banded error as the
+        // proportional term. Differentiating phaseErrEma directly bypassed the
+        // floor above and put every decoder wobble straight back into the clock
+        // as a short tempo change.
+        const float dErr = wrapCentered (e - prevPhaseErr);
+        prevPhaseErr = e;
 
         // The limit exists to stop the loop living at its rail on the analysis's
         // own phase noise, and that noise is hundredths of a beat. A quarter of
@@ -424,6 +427,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     }
     else
     {
+        prevPhaseErr = phaseErrEma;
         steer = std::clamp (phaseErrEma * 0.08f, -0.030f, 0.030f);
     }
 

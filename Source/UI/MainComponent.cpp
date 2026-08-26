@@ -82,6 +82,15 @@ namespace
         g.setColour (hotFill || down ? fuchsia() : ink());
         g.fillRect (bounds);
 
+        // PARTE / STRUMENTI are a row of squares: without an edge they read as
+        // one bar. START/STOP stay flush - they are wide enough to be a pair.
+        const bool compact = button.getWidth() <= button.getHeight() + 8;
+        if (compact)
+        {
+            g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
+            g.drawRect (bounds.reduced (0.5f), 1.0f);
+        }
+
         if (active)
         {
             const float h = 3.0f;
@@ -105,15 +114,17 @@ void MainComponent::AppLookAndFeel::refreshColours()
     setColour (juce::Label::textColourId, mute());
 }
 
-juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
+juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
 {
-    return fontUi (juce::jmax (12.0f, (float) buttonHeight * 0.30f));
+    const float dim = juce::jmin ((float) buttonHeight, (float) juce::jmax (1, button.getWidth()));
+    return fontUi (juce::jmax (9.0f, dim * 0.28f));
 }
 
 void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
                                                     bool, bool)
 {
-    auto area = button.getLocalBounds().reduced (6, 4);
+    const bool compact = button.getWidth() <= button.getHeight() + 8;
+    auto area = button.getLocalBounds().reduced (compact ? 2 : 6, compact ? 2 : 4);
     if (area.isEmpty())
         return;
 
@@ -122,13 +133,17 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     const float w = juce::GlyphArrangement::getStringWidth (f, label);
     const float room = static_cast<float> (area.getWidth());
     if (w > room && w > 1.0f)
-        f = f.withHeight (juce::jmax (8.0f, f.getHeight() * room / w));
+        f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
 
     g.setFont (f);
+    const float alpha = button.isEnabled() ? (compact && ! button.getToggleState() ? 0.55f : 1.0f) : 0.5f;
     g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
                                                             : juce::TextButton::textColourOffId)
-                     .withMultipliedAlpha (button.isEnabled() ? 1.0f : 0.5f));
-    g.drawText (label, area, juce::Justification::centred, false);
+                     .withMultipliedAlpha (alpha));
+    if (compact)
+        g.drawFittedText (label, area, juce::Justification::centred, 2);
+    else
+        g.drawText (label, area, juce::Justification::centred, false);
 }
 
 void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
@@ -317,7 +332,6 @@ MainComponent::MainComponent()
     {
         const bool on = ! engine.settings().shakerEnabled.load();
         engine.settings().shakerEnabled.store (on);
-        shakerButton.setButtonText (on ? "SHAKER  ON" : "SHAKER  OFF");
         shakerButton.setToggleState (on, juce::dontSendNotification);
         savePrefs();
     };
@@ -354,7 +368,6 @@ MainComponent::MainComponent()
     {
         const bool on = ! engine.settings().congasEnabled.load();
         engine.settings().congasEnabled.store (on);
-        congasButton.setButtonText (on ? "CONGAS  ON" : "CONGAS  OFF");
         congasButton.setToggleState (on, juce::dontSendNotification);
         savePrefs();
     };
@@ -1112,11 +1125,9 @@ void MainComponent::loadPrefs()
         engine.setFixedBpm (storedBpm);
 
     const bool shakerOn = engine.settings().shakerEnabled.load();
-    shakerButton.setButtonText (shakerOn ? "SHAKER  ON" : "SHAKER  OFF");
     shakerButton.setToggleState (shakerOn, juce::dontSendNotification);
 
     const bool congasOn = engine.settings().congasEnabled.load();
-    congasButton.setButtonText (congasOn ? "CONGAS  ON" : "CONGAS  OFF");
     congasButton.setToggleState (congasOn, juce::dontSendNotification);
 }
 
@@ -1472,7 +1483,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // without this the meter and the microphone line simply fall off the end.
     const int naturalBpm = juce::jlimit (72, 156, area.getHeight() / 4);
     const int naturalBeats = juce::jlimit (52, 96, area.getHeight() / 6);
-    const int natural = 18 + 6 + 40 + 12 + naturalBpm + 16 + 36 + 18 + 10
+    const int natural = 18 + 6 + 18 + 6 + naturalBpm + 16 + 36 + 18 + 10
                         + naturalBeats + 20 + 10 + 10 + 18;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
@@ -1492,8 +1503,8 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     StageRows s;
     s.title = area.removeFromTop (px (18));
     area.removeFromTop (px (6));
-    s.pill = area.removeFromTop (px (40)).reduced (juce::jmax (0, area.getWidth() / 10), 0);
-    area.removeFromTop (px (12));
+    s.pill = area.removeFromTop (px (18));
+    area.removeFromTop (px (6));
     s.bpm = area.removeFromTop (bpmH);
     {
         // A bounded block, centred. Wider than this and the two octave buttons
@@ -1524,10 +1535,10 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 {
     cards.clearQuick();
 
-    // Proportional, not fixed: the same four cards have to fit an iPad in
-    // portrait, the same iPad turned, and a desktop window at an odd size.
-    // Fixed row heights are what made the feel controls undroppable in one
-    // orientation and impossible in the other.
+    // PARTE and STRUMENTI are one row of squares, sized to that row; leftover
+    // height goes to FEEL. Two fat rows of wide buttons is what would not fit
+    // a phone, and stretching the squares to fill leftover height would undo
+    // the space we just recovered.
     const int gap = 10;
     const int titleH = 18;
     auto card = [&] (juce::Rectangle<int> bounds, const char* title)
@@ -1536,10 +1547,36 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
         return bounds.reduced (12, 10).withTrimmedTop (titleH);
     };
 
+    const int padY = 10;
+    const int chrome = padY * 2 + titleH;
+    const int btnGap = 5;
+    const int innerW = juce::jmax (1, area.getWidth() - 24);
+    auto squareFor = [innerW, btnGap] (int count)
+    {
+        return juce::jlimit (24, 40, (innerW - btnGap * (count - 1)) / juce::jmax (1, count));
+    };
+
+    auto placeSquareRow = [btnGap] (juce::Rectangle<int> body,
+                                    std::initializer_list<juce::TextButton*> bs)
+    {
+        const int nBtn = static_cast<int> (bs.size());
+        const int side = juce::jmin (body.getHeight(),
+                                     (body.getWidth() - btnGap * (nBtn - 1)) / juce::jmax (1, nBtn));
+        const int total = nBtn * side + btnGap * juce::jmax (0, nBtn - 1);
+        auto row = body.withSizeKeepingCentre (total, side);
+        int i = 0;
+        for (auto* b : bs)
+        {
+            b->setBounds (row.removeFromLeft (side));
+            if (++i < nBtn)
+                row.removeFromLeft (btnGap);
+        }
+    };
+
     const int n = area.getHeight();
-    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.23f);
-    const int hPart      = juce::roundToInt (static_cast<float> (n) * 0.22f);
-    const int hInst      = juce::roundToInt (static_cast<float> (n) * 0.16f);
+    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.20f);
+    const int hPart      = chrome + squareFor (9);
+    const int hInst      = chrome + squareFor (6);
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
@@ -1550,31 +1587,14 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     {
         auto body = card (area.removeFromTop (hPart), "PARTE");
-        auto top = body.removeFromTop (body.getHeight() / 2);
-        const int wTop = top.getWidth() / 5;
-        styleAuto.setBounds (top.removeFromLeft (wTop).reduced (3));
-        styleMarcha.setBounds (top.removeFromLeft (wTop).reduced (3));
-        styleRock.setBounds (top.removeFromLeft (wTop).reduced (3));
-        styleDance.setBounds (top.removeFromLeft (wTop).reduced (3));
-        stylePop.setBounds (top.reduced (3));
-        const int wBot = body.getWidth() / 4;
-        styleSamba.setBounds (body.removeFromLeft (wBot).reduced (3));
-        styleFunk.setBounds (body.removeFromLeft (wBot).reduced (3));
-        styleReggae.setBounds (body.removeFromLeft (wBot).reduced (3));
-        styleBossa.setBounds (body.reduced (3));
+        placeSquareRow (body, { &styleAuto, &styleMarcha, &styleRock, &styleDance, &stylePop,
+                                &styleSamba, &styleFunk, &styleReggae, &styleBossa });
         area.removeFromTop (gap);
     }
 
     {
         auto body = card (area.removeFromTop (hInst), "STRUMENTI");
-        auto top = body.removeFromTop (body.getHeight() / 2);
-        shakerButton.setBounds (top.removeFromLeft (top.getWidth() / 2).reduced (3));
-        congasButton.setBounds (top.reduced (3));
-        const int w = body.getWidth() / 4;
-        subAuto.setBounds (body.removeFromLeft (w).reduced (3));
-        sub4.setBounds (body.removeFromLeft (w).reduced (3));
-        sub8.setBounds (body.removeFromLeft (w).reduced (3));
-        sub16.setBounds (body.reduced (3));
+        placeSquareRow (body, { &shakerButton, &congasButton, &subAuto, &sub4, &sub8, &sub16 });
         area.removeFromTop (gap);
     }
 
@@ -1715,29 +1735,34 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                     (float) rows.title.getWidth(), 1.2f);
     }
 
-    // What the tracker is doing, in one word, in a colour. This is the line a
-    // player glances at between phrases.
+    // What the tracker is doing: a coloured dot and the words, nothing else.
+    // The old filled pill ate a row a phone does not have, and shouted the
+    // same fact the colour already carries.
     {
         const auto stCol = stateColour (snap.followBar);
         const bool hot = stateIsHot (snap.followBar);
+        const juce::String label (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar)));
+        const auto f = fontUi (12.0f, false);
+        const float textW = juce::GlyphArrangement::getStringWidth (f, label);
+        const float dotR = 4.5f;
+        const float gapDot = 7.0f;
+        const float totalW = juce::jmin (static_cast<float> (rows.pill.getWidth()),
+                                         dotR * 2.0f + gapDot + textW);
+        const float x0 = static_cast<float> (rows.pill.getCentreX()) - totalW * 0.5f;
+        const float cy = static_cast<float> (rows.pill.getCentreY());
+        const juce::Point<float> dot { x0 + dotR, cy };
         if (hot)
-        {
-            g.setColour (stCol.withAlpha (0.28f));
-            g.fillRoundedRectangle (rows.pill.toFloat().expanded (4.0f), 24.0f);
-            g.setColour (stCol);
-            g.fillRoundedRectangle (rows.pill.toFloat(), 20.0f);
-            g.setColour (juce::Colours::white);
-        }
-        else
-        {
-            g.setColour (text().withAlpha (0.08f));
-            g.fillRoundedRectangle (rows.pill.toFloat(), 20.0f);
-            g.setColour (stCol);
-            g.drawRoundedRectangle (rows.pill.toFloat().reduced (0.6f), 20.0f, 1.4f);
-        }
-        g.setFont (fontUi (14.0f));
-        g.drawFittedText (juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar))),
-                          rows.pill, juce::Justification::centred, 1);
+            paintRadial (g, dot, 13.0f, stCol, 0.55f);
+        g.setColour (stCol);
+        g.fillEllipse (dot.x - dotR, dot.y - dotR, dotR * 2.0f, dotR * 2.0f);
+        auto textR = juce::Rectangle<float> (x0 + dotR * 2.0f + gapDot,
+                                            static_cast<float> (rows.pill.getY()),
+                                            juce::jmax (8.0f, totalW - dotR * 2.0f - gapDot),
+                                            static_cast<float> (rows.pill.getHeight()))
+                         .toNearestInt();
+        g.setFont (f);
+        g.setColour (hot ? text() : mute());
+        g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
     // The tempo, sized to the room it has rather than to a constant, so it is

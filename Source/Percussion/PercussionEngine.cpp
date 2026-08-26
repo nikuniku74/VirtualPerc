@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
  #include <juce_audio_formats/juce_audio_formats.h>
@@ -14,6 +15,9 @@ namespace vp
 namespace
 {
     constexpr float kPi = 3.14159265358979323846f;
+    // A fourth above recorded pitch. The VCSL takes are large drums; salsa
+    // dance loops sit higher, and at concert pitch the part reads as too low.
+    constexpr float kDrumTune = 1.334840f; // 2^(5/12)
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
@@ -88,15 +92,19 @@ namespace
 
     DrumSpec specFor (Stroke s) noexcept
     {
+        // A fourth above the concert-pitch figures: the VCSL membranophones
+        // are the large drums, and under a dance kick they read as too low.
+        // Shakers are unpitched and stay where they were.
+        constexpr float kTune = kDrumTune;
         switch (s)
         {
-            case Stroke::tumba: return {  82.0f, 0.10f,  8.5f, 0.30f, -0.30f };
-            case Stroke::open:  return { 178.0f, 0.09f, 12.0f, 0.20f,  0.16f };
-            case Stroke::slap:  return { 330.0f, 0.52f, 26.0f, 0.10f,  0.34f };
-            case Stroke::heel:  return { 120.0f, 0.42f, 46.0f, 0.07f, -0.10f };
-            case Stroke::toe:   return { 240.0f, 0.50f, 60.0f, 0.05f,  0.22f };
-            case Stroke::muff:  return { 190.0f, 0.30f, 34.0f, 0.09f,  0.12f };
-            default:            return { 180.0f, 0.30f, 20.0f, 0.12f,  0.0f };
+            case Stroke::tumba: return {  82.0f * kTune, 0.10f,  8.5f, 0.30f, -0.30f };
+            case Stroke::open:  return { 178.0f * kTune, 0.09f, 12.0f, 0.20f,  0.16f };
+            case Stroke::slap:  return { 330.0f * kTune, 0.52f, 26.0f, 0.10f,  0.34f };
+            case Stroke::heel:  return { 120.0f * kTune, 0.42f, 46.0f, 0.07f, -0.10f };
+            case Stroke::toe:   return { 240.0f * kTune, 0.50f, 60.0f, 0.05f,  0.22f };
+            case Stroke::muff:  return { 190.0f * kTune, 0.30f, 34.0f, 0.09f,  0.12f };
+            default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
 }
@@ -237,24 +245,12 @@ void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std:
     fadeTail (s.left, s.right, sampleRate);
 }
 
-bool PercussionEngine::loadRecordedStroke (Stroke stroke, std::vector<float>& mono) noexcept
+bool PercussionEngine::loadNamedWav (const char* name, std::vector<float>& mono) noexcept
 {
     mono.clear();
    #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
-    // Which recording stands in for which articulation. heel, toe and muff have
-    // no recording of their own and are derived from the open tone below,
-    // because that is physically what they are: the same drum with the hand
-    // left on the head.
-    const char* name = nullptr;
-    switch (stroke)
-    {
-        case Stroke::tumba:      name = "tumba_wav"; break;
-        case Stroke::open:       name = "open_wav"; break;
-        case Stroke::slap:       name = "slap_wav"; break;
-        case Stroke::shakerDown: name = "shaker_down_wav"; break;
-        case Stroke::shakerUp:   name = "shaker_up_wav"; break;
-        default: return false;
-    }
+    if (name == nullptr)
+        return false;
 
     int size = 0;
     const char* data = VpPercussionData::getNamedResource (name, size);
@@ -293,20 +289,20 @@ bool PercussionEngine::loadRecordedStroke (Stroke stroke, std::vector<float>& mo
     }
     return true;
    #else
-    juce::ignoreUnused (stroke);
+    juce::ignoreUnused (name);
     return false;
    #endif
 }
 
+
 void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float>& src,
-                                           Stroke stroke, int layer, std::uint32_t seed) noexcept
+                                           Stroke stroke, float force, std::uint32_t seed) noexcept
 {
-    // One recording per articulation is what the source library has, so the
-    // dynamic layers are derived rather than sampled. That is an approximation,
-    // but it is the right-shaped one: hitting a drum softer takes the top off
-    // the strike and shortens the ring, it does not just turn it down. The hard
-    // layer is the recording untouched.
-    const float force = static_cast<float> (layer) / static_cast<float> (kLayers - 1);
+    // `force` is 1 for a recording that already is that dynamic layer, and
+    // 0..1 when the layer is derived from a louder take: hitting a drum softer
+    // takes the top off the strike and shortens the ring, it does not just
+    // turn it down.
+    force = std::clamp (force, 0.0f, 1.0f);
     const DrumSpec spec = specFor (stroke);
     const bool shaker = stroke == Stroke::shakerDown || stroke == Stroke::shakerUp;
 
@@ -321,21 +317,22 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
         default: break;
     }
 
-    const int n = static_cast<int> (src.size());
+    const int nSrc = static_cast<int> (src.size());
     const float sr = static_cast<float> (sampleRate);
+    // Same fourth as the synthetic bank. Reading the take faster raises the
+    // membrane and shortens the ring, which is what a smaller drum does.
+    const float pitch = shaker ? 1.0f : kDrumTune;
+    const int n = std::max (16, static_cast<int> (static_cast<float> (nSrc) / pitch));
     dest.left.assign (static_cast<size_t> (n), 0.0f);
     dest.right.assign (static_cast<size_t> (n), 0.0f);
 
     // Softer strokes lose the top. One pole is enough - the ear reads the
     // change of brightness, not the slope of the filter.
-    const float cutoff = (shaker ? 3000.0f : 900.0f) + (shaker ? 9000.0f : 5000.0f) * force;
+    const float cutoff = (shaker ? 3000.0f : 1600.0f) + (shaker ? 9000.0f : 5200.0f) * force;
     const float a = 1.0f - std::exp (-2.0f * kPi * cutoff / sr);
     const float softening = 0.55f + 0.45f * force;
 
-    DeterministicRng local (seed);
-    // A couple of samples of start jitter, so two round-robin takes of a
-    // derived layer do not phase-cancel into the same click.
-    const int jitter = static_cast<int> (local.nextU32() % 24u);
+    juce::ignoreUnused (seed);
 
     const float wL = (1.0f - spec.pan) * 0.5f;
     const float wR = (1.0f + spec.pan) * 0.5f;
@@ -343,11 +340,22 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     float lp = 0.0f;
     for (int i = 0; i < n; ++i)
     {
-        const int j = std::min (n - 1, i + jitter);
-        lp += a * (src[static_cast<size_t> (j)] - lp);
+        // Do not vary a take by skipping samples at its start. The prepared
+        // recordings put the hand transient only a few samples wide at the
+        // front; the old 0..23-sample nudge skipped that transient in most
+        // round-robin slots and exposed the body peak about 12 ms later.
+        // Variation comes from the actual alternate takes and the per-hit
+        // gain spread, without moving what the listener hears as the strike.
+        const float srcPos = static_cast<float> (i) * pitch;
+        const int j0 = std::min (nSrc - 1, std::max (0, static_cast<int> (srcPos)));
+        const int j1 = std::min (nSrc - 1, j0 + 1);
+        const float frac = srcPos - static_cast<float> (j0);
+        const float x = src[static_cast<size_t> (j0)] * (1.0f - frac)
+                      + src[static_cast<size_t> (j1)] * frac;
+        lp += a * (x - lp);
         const float t = static_cast<float> (i) / sr;
         const float damp = extraDecay > 0.0f ? std::exp (-t * extraDecay) : 1.0f;
-        const float v = ((1.0f - softening) * lp + softening * src[static_cast<size_t> (j)]) * damp;
+        const float v = ((1.0f - softening) * lp + softening * x) * damp;
         dest.left[static_cast<size_t> (i)] = v * wL;
         dest.right[static_cast<size_t> (i)] = v * wR;
     }
@@ -417,27 +425,44 @@ float PercussionEngine::attackMsFor (Stroke s) const noexcept
 
 void PercussionEngine::buildBank() noexcept
 {
-    // The recordings are the OLPC Berklee Sound Library (CC BY 3.0). Anything
+    // Recordings are the Versilian Community Sample Library (CC0). Anything
     // they do not cover falls back to synthesis, so the app builds and plays
     // with or without Assets/Percussion.
-    std::vector<float> recording, openTone;
-    loadRecordedStroke (Stroke::open, openTone);
+    std::vector<float> openTone;
+    loadNamedWav ("open_wav", openTone);
+
+    static_assert (static_cast<int> (Stroke::shakerDown) == 0
+                   && static_cast<int> (Stroke::muff) == 7
+                   && kStrokes == 8);
+    static const char* kStem[kStrokes] = {
+        "shaker_down", "shaker_up", "tumba", "open", "slap",
+        nullptr, nullptr, nullptr
+    };
 
     for (int st = 0; st < kStrokes; ++st)
     {
         const Stroke stroke = static_cast<Stroke> (st);
-
         const bool derived = stroke == Stroke::heel || stroke == Stroke::toe || stroke == Stroke::muff;
-        bool haveSource = false;
+
+        std::vector<float> hard, hardB, med, soft;
         if (derived)
         {
-            recording = openTone;
-            haveSource = ! recording.empty();
+            hard = openTone;
         }
-        else
+        else if (kStem[st] != nullptr)
         {
-            haveSource = loadRecordedStroke (stroke, recording);
+            char name[64];
+            std::snprintf (name, sizeof name, "%s_wav", kStem[st]);
+            loadNamedWav (name, hard);
+            std::snprintf (name, sizeof name, "%s_b_wav", kStem[st]);
+            loadNamedWav (name, hardB);
+            std::snprintf (name, sizeof name, "%s_med_wav", kStem[st]);
+            loadNamedWav (name, med);
+            std::snprintf (name, sizeof name, "%s_soft_wav", kStem[st]);
+            loadNamedWav (name, soft);
         }
+
+        const bool haveSource = ! hard.empty();
         recorded[st] = haveSource;
 
         for (int layer = 0; layer < kLayers; ++layer)
@@ -449,55 +474,43 @@ void PercussionEngine::buildBank() noexcept
                                            + static_cast<std::uint32_t> (layer) * 104729u
                                            + static_cast<std::uint32_t> (rr) * 1299709u;
                 Sample& s = bank[st][layer][rr];
-                if (haveSource)
-                    layerFromRecording (s, recording, stroke, layer, seed);
-                else if (stroke == Stroke::shakerDown || stroke == Stroke::shakerUp)
-                    synthesizeShaker (s, stroke, layer, seed);
-                else
-                    synthesizeDrum (s, stroke, layer, seed);
-            }
-        }
-    }
-
-    // The low drum has two genuine takes in the library. Use the second one for
-    // the alternate round-robin slots, which is real variation rather than the
-    // same take with its start nudged.
-    std::vector<float> tumbaB;
-   #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
-    {
-        int size = 0;
-        if (VpPercussionData::getNamedResource ("tumba_b_wav", size) != nullptr && size > 0)
-        {
-            const int idx = static_cast<int> (Stroke::tumba);
-            std::vector<float> keep;
-            std::swap (keep, tumbaB);
-            // Reuse the loader by pointing it at the second take.
-            juce::WavAudioFormat wav;
-            const char* data = VpPercussionData::getNamedResource ("tumba_b_wav", size);
-            auto* stream = new juce::MemoryInputStream (data, static_cast<size_t> (size), false);
-            std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (stream, true));
-            if (reader != nullptr && reader->lengthInSamples > 0 && recorded[idx])
-            {
-                const int n = static_cast<int> (reader->lengthInSamples);
-                juce::AudioBuffer<float> buf (static_cast<int> (reader->numChannels), n);
-                reader->read (&buf, 0, n, 0, true, true);
-                const double ratio = sampleRate / reader->sampleRate;
-                const int outLen = std::max (16, static_cast<int> (n * ratio));
-                tumbaB.resize (static_cast<size_t> (outLen));
-                for (int i = 0; i < outLen; ++i)
+                if (! haveSource)
                 {
-                    const double src = static_cast<double> (i) / ratio;
-                    const int i0 = std::min (n - 1, static_cast<int> (src));
-                    tumbaB[static_cast<size_t> (i)] = buf.getSample (0, i0);
+                    if (stroke == Stroke::shakerDown || stroke == Stroke::shakerUp)
+                        synthesizeShaker (s, stroke, layer, seed);
+                    else
+                        synthesizeDrum (s, stroke, layer, seed);
+                    continue;
                 }
-                for (int layer = 0; layer < kLayers; ++layer)
-                    for (int rr = 1; rr < kRoundRobin; rr += 2)
-                        layerFromRecording (bank[idx][layer][rr], tumbaB, Stroke::tumba, layer,
-                                            0x1234u + static_cast<std::uint32_t> (layer * 31 + rr));
+
+                const std::vector<float>* src = &hard;
+                float force = static_cast<float> (layer) / static_cast<float> (kLayers - 1);
+
+                if (layer == 0 && ! soft.empty())
+                {
+                    src = &soft;
+                    force = 1.0f;
+                }
+                else if (layer == 1 && ! med.empty())
+                {
+                    src = &med;
+                    force = 1.0f;
+                }
+                else if (layer == kLayers - 1)
+                {
+                    src = (rr == 1 && ! hardB.empty()) ? &hardB : &hard;
+                    force = 1.0f;
+                }
+                else if (layer == 0 && ! med.empty())
+                {
+                    src = &med;
+                    force = 0.28f;
+                }
+
+                layerFromRecording (s, *src, stroke, force, seed);
             }
         }
     }
-   #endif
 
     measureBankAttacks();
 }
@@ -509,30 +522,32 @@ void PercussionEngine::measureBankAttacks() noexcept
     {
         // Averaged over the articulation's takes, not taken per take.
         //
-        // Several of the round-robin slots are the same recording with its
-        // start nudged, and that nudge is the variation - it is what stops four
-        // strokes in a row sounding like one buffer played four times.
-        // Compensating each take by its *own* attack measures the nudge and
-        // takes it straight back out again: measured on the bundled library it
-        // dropped the difference between two takes from 1.42 to 0.001, which is
-        // a round robin that has stopped being one. The compensation belongs to
-        // the articulation.
+        // The prepared alternate takes share one transient placement but differ
+        // in the body of the sound. Keep one timing value for the articulation
+        // so changing round-robin slot cannot change where a written stroke
+        // lands; per-take compensation would also conceal a badly aligned asset
+        // instead of letting the attack regression catch it.
         double sum = 0.0;
         int counted = 0;
-        for (int layer = 0; layer < kLayers; ++layer)
-            for (int rr = 0; rr < kRoundRobin; ++rr)
+        // Averaged over the hard layer's takes only. The soft/medium layers are
+        // either a quieter recording or a filtered one, and folding them into
+        // the mean pulls the compensation off the stroke the clock actually
+        // places - a slap that then lands three milliseconds before a shaker
+        // written on the same pulse.
+        const int layer = kLayers - 1;
+        for (int rr = 0; rr < kRoundRobin; ++rr)
+        {
+            const int a = measureAttack (bank[st][layer][rr].left, sampleRate);
+            if (a > 0)
             {
-                const int a = measureAttack (bank[st][layer][rr].left, sampleRate);
-                if (a > 0)
-                {
-                    sum += a;
-                    ++counted;
-                }
+                sum += a;
+                ++counted;
             }
+        }
         const int mean = counted > 0 ? static_cast<int> (sum / counted) : 0;
-        for (int layer = 0; layer < kLayers; ++layer)
+        for (int ly = 0; ly < kLayers; ++ly)
             for (int rr = 0; rr < kRoundRobin; ++rr)
-                bank[st][layer][rr].attack = mean;
+                bank[st][ly][rr].attack = mean;
         slowest = std::max (slowest, mean);
     }
 

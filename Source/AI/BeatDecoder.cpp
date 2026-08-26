@@ -53,7 +53,8 @@ namespace
     // which is what makes them survive an occasional bad beat: one outlier
     // widens the spread for as long as it stays in the window and then leaves,
     // where a consecutive-beat counter would have gone back to zero.
-    constexpr float kFixedSpread = 0.009f;   // 0.9% peak-to-peak = still
+    constexpr float kFixedSpreadRoom = 0.015f; // room onset scatter is wider
+    constexpr float kFixedSpreadLine = 0.009f; // a line feed has no such excuse
     constexpr float kLiveTrend   = 0.018f;   // 1.8% across the window = moving
 
     // Sustained disagreement between the committed tempo and the long fit. This
@@ -65,15 +66,11 @@ namespace
     // beats agreeing on a direction. Random jitter does not accumulate a sign;
     // a band changing tempo does.
     //
-    // Two tolerances, because there are two ways to be sure and they need
-    // different evidence. A gentle accelerando never puts a big number on the
-    // recent intervals, but it does lean the twenty-four beat window the same
-    // way, so a small deviation counts once the window agrees. A step change
-    // does the opposite: it is large immediately, and the window cannot
-    // corroborate it at all, because the moment the grid is wrong the on-grid
-    // gate stops admitting beats and the window has nothing left to move with.
-    // So a large deviation stands on its own, and just has to say so twice
-    // more.
+    // Two tolerances, because a line feed may use a large deviation as a fast
+    // exit while a gentle one needs corroboration from the long window. On the
+    // room path neither stands on the recent median alone: room-smoothed onsets
+    // cross both thresholds in one direction often enough to release a fixed
+    // record.
     constexpr float kFastDriftTolerance = 0.024f;
     constexpr float kFastDriftLarge     = 0.045f;
     constexpr int   kFastBeatsToLeaveFixed = 3;
@@ -956,7 +953,7 @@ void BeatDecoder::updateTempo() noexcept
     // level itself is still provisional - either would let a bad first guess
     // make itself permanent.
     const bool mayFix = haveWindow
-                        && spread < kFixedSpread
+                        && spread < (lineFeed ? kFixedSpreadLine : kFixedSpreadRoom)
                         && lastFitResidual < 0.05f
                         && ! combDisagrees
                         && tempo.levelSettled();
@@ -1002,12 +999,16 @@ void BeatDecoder::updateTempo() noexcept
             // beat window the same way; jitter does only the first.
             const bool windowAgrees = haveWindow && fastDriftSign != 0
                                       && trend * static_cast<float> (fastDriftSign) > 0.0f
-                                      && std::fabs (trend) > kLiveTrend * 0.25f;
+                                      && std::fabs (trend) > (lineFeed ? kLiveTrend * 0.25f
+                                                                      : kLiveTrend)
+                                      && (lineFeed || (moving
+                                                       && std::fabs (trend) > spread * 0.85f));
 
             if (beatsInRegime >= kRegimeMinBeats
                 && (fixedErrorBeats >= kBeatsToLeaveFixed
                     || (fastDriftBeats >= kFastBeatsToLeaveFixed && windowAgrees)
-                    || fastDriftLargeBeats >= kFastBeatsAlone
+                    || (fastDriftLargeBeats >= kFastBeatsAlone
+                        && (lineFeed || windowAgrees))
                     || (haveLong && std::fabs (anchorError) > 0.06f)))
             {
                 enterRegime (TempoRegime::live);

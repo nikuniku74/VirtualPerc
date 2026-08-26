@@ -157,11 +157,10 @@ private:
         void refreshColours();
 
         juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
-        /** Sized against the width as well as the height. Scaling by height
-            alone meant a button narrow enough - PARTE holds five of them - got
-            a label too wide for it, and JUCE answers that with an ellipsis:
-            MARCHA and DANCE came out as "MAR..." and "DAN..." the moment the
-            iPad was turned. */
+        /** Sized against the shorter side as well as the height. PARTE and
+            STRUMENTI are a row of squares, and scaling by height alone would
+            give each label more type than the square can hold - JUCE's answer
+            to that is an ellipsis, so MARCHA became "MAR..." on a phone. */
         void drawButtonText (juce::Graphics&, juce::TextButton&,
                              bool shouldDrawButtonAsHighlighted,
                              bool shouldDrawButtonAsDown) override;
@@ -203,7 +202,7 @@ private:
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
     juce::Label      bpmEdit;
-    juce::TextButton shakerButton { "SHAKER  ON" };
+    juce::TextButton shakerButton { "SHAKER" };
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
@@ -216,7 +215,7 @@ private:
     juce::TextButton buf256 { "256" }, buf512 { "512" };
     juce::TextButton procButton { "ELAB.  OFF" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
-    juce::TextButton congasButton { "CONGAS  ON" };
+    juce::TextButton congasButton { "CONGAS" };
     juce::TextButton styleAuto { "AUTO" };
     juce::TextButton styleMarcha { "MARCHA" }, styleRock { "ROCK" };
     juce::TextButton styleDance { "DANCE" }, stylePop { "POP" };

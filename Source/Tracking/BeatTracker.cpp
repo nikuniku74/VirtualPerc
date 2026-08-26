@@ -78,13 +78,14 @@ namespace
     // constant in milliseconds rather than in beats, which is what identifies
     // it as a fixed pipeline offset and not a rate error.
     //
-    // Trimming the lead by 18 ms takes that residual to -3..+2 ms across the
-    // same three tempi. The value is a calibration, not a derivation: it is
+    // Trimming the lead by 20 ms keeps the heard percussion within about 8 ms
+    // of the pulse across the same three tempi. The value is a calibration,
+    // not a derivation: it is
     // suspiciously close to one 20 ms hop, but the geometry in
     // NeuralBeatTracker::analysisSampleFor checks out frame by frame, so the
     // rest is most likely the network's own response offset. It is measured on
     // a click, so real material may sit a millisecond or two either side.
-    constexpr float kAnalysisLeadTrimSec = 0.018f;
+    constexpr float kAnalysisLeadTrimSec = 0.020f;
 }
 
 void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
@@ -711,8 +712,16 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // stopped moving, so any residual drift is ours to correct. While the tempo
     // is genuinely live the decoder is already chasing it and a second
     // controller would only fight the first.
+    // A line feed has one stable propagation path, so a sustained phase slope
+    // is useful evidence that the band is moving. Through the iPad speaker and
+    // microphone it is not: room reflections, auto gain and our own returned
+    // part move the apparent onset while BeatNet's committed period remains
+    // fixed. Integrating that motion made a steady record drift several BPM
+    // away from the decoder. Keep phase steering in both modes, but derive a
+    // rate correction from it only on MIXER.
     const bool trimTempo = tapOwnsTempo
-                           || (periodic && hyp.regime == TempoRegime::fixed
+                           || (! speakerFollow && periodic
+                               && hyp.regime == TempoRegime::fixed
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
 
@@ -804,7 +813,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // threw away the clock's whole loop state - its phase error, its
         // measured trim - for a correction that only ever concerned the count.
         // Rotating the index moves no phase and drops no pulse.
-        if (! waitForQuantize)
+        if (! waitForQuantize && ! speakerFollow)
             alignBarFromVotes (false);
     }
 
@@ -1050,24 +1059,28 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                         static_cast<int> (sampleRate * 10.0));
         const bool timedOut = quantizeWaitSamples > timeout;
 
-        // Before looking for the one, put the bar where the evidence says it
-        // is. Rotating the count is free - it moves no phase and drops no
-        // pulse - so it can be done as often as the vote changes its mind,
-        // right up until the moment of entry.
-        alignBarFromVotes (true);
+        // Before looking for the one on a line feed, put the bar where the
+        // evidence says it is. Through the iPad speaker the measured downbeat
+        // vote is near chance; acting on it only replaces one arbitrary count
+        // with another.
+        if (! speakerFollow)
+            alignBarFromVotes (true);
 
-        bool onOne = false;
+        bool onEntryBeat = false;
         for (int i = 0; i < out.clock.pulsesFired; ++i)
         {
             if (out.clock.pulseIndex[i] != 0)
                 continue;
-            if (out.clock.pulseBeatInBar[i] == 0 || timedOut)
+            // MIXER has a trustworthy bar and enters on its one. IPAD has a
+            // trustworthy pulse but not a trustworthy one, so waiting for that
+            // arbitrary count only adds zero to three beats of latency.
+            if (speakerFollow || out.clock.pulseBeatInBar[i] == 0 || timedOut)
             {
-                onOne = true;
+                onEntryBeat = true;
                 break;
             }
         }
-        if (onOne)
+        if (onEntryBeat)
         {
             waitForQuantize = false;
             waitForSongBeat = false;

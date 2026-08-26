@@ -17,6 +17,8 @@
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
 
+#include "../scripts/probe_song_render.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -1130,19 +1132,29 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (shBeat2 > shBeat1 * 1.05f,
                 "the rock shaker puts its weight on the backbeat");
 
-        // Dance: four-on-the-floor leaves the offbeats free, so the part fills
-        // them - and the shaker leans on the off-eighth where the open hat is.
+        // Dance: a salsa tumbao made busy for four-on-the-floor. Tumba on 1
+        // and 3, the slap on the "e" of 2 (not on 2 itself), opens closing
+        // the bar, and the shaker still leaning on the off-eighth.
         int danceOnTheA = 0;
         for (int step : { 3, 7, 11, 15 })
             if (congaVelocityAt (dance, step) > 0.4f)
                 ++danceOnTheA;
         const float danceShakerPulse = shakerVelocityAt (dance, 0);
         const float danceShakerOff = shakerVelocityAt (dance, 2);
-        std::printf ("groove-dance   hits on the a: %d/4   shaker pulse=%.2f off=%.2f\n",
-                     danceOnTheA, static_cast<double> (danceShakerPulse),
+        const float danceOn1 = congaVelocityAt (dance, 0);
+        const float danceOn2 = congaVelocityAt (dance, 4);
+        const float danceSlap = congaVelocityAt (dance, 5);
+        const float danceOn3 = congaVelocityAt (dance, 8);
+        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
+                     danceOnTheA,
+                     static_cast<double> (danceOn1), static_cast<double> (danceOn2),
+                     static_cast<double> (danceSlap), static_cast<double> (danceOn3),
+                     static_cast<double> (danceShakerPulse),
                      static_cast<double> (danceShakerOff));
         expect (danceOnTheA >= 3 && danceShakerOff > danceShakerPulse,
                 "dance leans on the sixteenth before the beat and accents the offbeat");
+        expect (danceOn1 > 0.4f && danceOn3 > 0.4f && danceOn2 < 0.01f && danceSlap > 0.4f,
+                "dance tumbao: tumba on 1 and 3, slap on the e of 2, nothing on 2");
 
         // Pop: the job is to be felt and not noticed, so it has to be the
         // sparsest of the four by a clear margin.
@@ -2012,6 +2024,55 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "one tap says where the bar starts, and the bar stays there");
         expect (! tapped || (sawDeclared && ! declaredLater),
                 "and the one is marked for a moment, only just after the tap");
+
+        // Through the iPad microphone the network's downbeat choice is at
+        // chance (see probe_bar), so waiting for that arbitrary "one" after
+        // START only adds up to three beats of latency. The beat pulse itself
+        // is reliable enough to quantize the entry.
+        {
+            const int shortN = static_cast<int> (sr * 24.0);
+            std::vector<float> startSong (static_cast<size_t> (shortN), 0.0f);
+            renderKitTrack (startSong, trackBpm, sr);
+
+            vp::VirtualPercussionEngine startEng;
+            startEng.setBeatModel (std::make_unique<SteadyBeatModel> (framesPerBeat));
+            startEng.prepare (sr, block, 1);
+            startEng.settings().followSource.store (
+                static_cast<int> (vp::FollowSource::speaker));
+
+            int startSample = -1, audibleSample = -1;
+            int startBlocks = 0;
+            for (int p = 0; p + block <= shortN; p += block)
+            {
+                const float* ins[1] = { startSong.data() + p };
+                startEng.process (ins, 1, outs, 2, block);
+                const auto s = startEng.snapshot();
+
+                if (startSample < 0
+                    && static_cast<double> (p) / sr > 8.0
+                    && s.state == vp::TrackingState::following
+                    && s.barPhase > 0.28f && s.barPhase < 0.34f)
+                {
+                    startSample = p;
+                    startEng.start();
+                }
+                else if (startSample >= 0 && s.percussionAudible)
+                {
+                    audibleSample = p;
+                    break;
+                }
+
+                if ((++startBlocks % 8) == 0)
+                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+            }
+
+            const double entryDelay = audibleSample >= startSample && startSample >= 0
+                                          ? static_cast<double> (audibleSample - startSample) / sr
+                                          : 99.0;
+            std::printf ("ipad-entry  delay=%.3f s\n", entryDelay);
+            expect (entryDelay < 0.75,
+                    "IPAD START enters on the next reliable beat, not an arbitrary downbeat");
+        }
     }
 
     // A figure has to be longer than the beat it sits on, and a phrase longer
@@ -2171,6 +2232,56 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // would all be late together instead.
         expect (perc.attackLeadMs() > 4.0f && perc.attackLeadMs() < 25.0f,
                 "the lead the clock is asked for matches the slowest attack in the bank");
+
+        // The dots on the stage light when the clock fires. A drum whose
+        // strike is still ten milliseconds into a swell is heard after them,
+        // which is what the VCSL takes did when they were trimmed to the body
+        // peak instead of the hand. Hold (the compensator) is skipped: this is
+        // the asset, not the scheduling.
+        {
+            const vp::Stroke drums[] = { vp::Stroke::tumba, vp::Stroke::open, vp::Stroke::slap };
+            bool allTight = true;
+            for (auto s : drums)
+            {
+                const int n = static_cast<int> (sr * 0.4);
+                std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+                vp::ClockTick silent;
+                perc.clearVoices();
+                perc.triggerForTest (s, 0.9f, 0);
+                perc.render (l.data(), r.data(), n, silent, true);
+
+                const int win = std::min (n, static_cast<int> (sr * 0.030));
+                float peak = 0.0f;
+                for (int i = 0; i < win; ++i)
+                    peak = std::max (peak, std::fabs (l[static_cast<size_t> (i)]));
+                if (peak < 1.0e-4f)
+                {
+                    allTight = false;
+                    continue;
+                }
+                int audible = 0;
+                while (audible < win && std::fabs (l[static_cast<size_t> (audible)]) < 0.05f * peak)
+                    ++audible;
+                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012));
+                int peakAt = audible;
+                float p = 0.0f;
+                for (int i = audible; i < strikeWin; ++i)
+                {
+                    const float a = std::fabs (l[static_cast<size_t> (i)]);
+                    if (a > p)
+                    {
+                        p = a;
+                        peakAt = i;
+                    }
+                }
+                const double ms = (peakAt - audible) / sr * 1000.0;
+                std::printf ("drum-strike  stroke=%d delta=%.2f ms\n",
+                             static_cast<int> (s), ms);
+                if (ms > 4.0)
+                    allTight = false;
+            }
+            expect (allTight, "drum strike peak is at the start of the asset, not into the swell");
+        }
     }
 
     // A record does not restart its bar in the middle, and neither may the
@@ -2572,6 +2683,69 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         "what is heard sits on the song pulse, not beside it");
                 expect (std::fabs (meanLate - meanEarly) < 0.02f,
                         "phase alignment holds over time instead of walking off");
+            }
+
+            // A fixed record through the iPad speaker is the case where the
+            // phase-derived tempo trim used to invent a rate error. BeatNet's
+            // committed tempo stayed near 118 BPM while the clock walked below
+            // 116: acoustic phase movement was being integrated as real drift.
+            {
+                constexpr double sr = 48000.0;
+                constexpr int block = 256;
+                constexpr float bpm = 118.0f;
+                const int preN = static_cast<int> (sr);
+                const int bodyN = static_cast<int> (sr * 60.0);
+
+                vp::probe::SongOptions opt;
+                opt.bpm = bpm;
+                std::vector<float> body (static_cast<size_t> (bodyN), 0.0f);
+                vp::probe::renderSong (body, opt, sr, 839u);
+
+                std::vector<float> song (static_cast<size_t> (preN + bodyN), 0.0f);
+                std::copy (body.begin(), body.end(), song.begin() + preN);
+                vp::probe::speakerRoomMic (song, sr, 839u, 0.55f);
+
+                vp::VirtualPercussionEngine eng;
+                eng.prepare (sr, block, 1);
+                eng.settings().followSource.store (
+                    static_cast<int> (vp::FollowSource::speaker));
+                eng.start();
+
+                std::vector<float> outL (static_cast<size_t> (block), 0.0f);
+                std::vector<float> outR (static_cast<size_t> (block), 0.0f);
+                float* outs[2] = { outL.data(), outR.data() };
+                const int hop = static_cast<int> (std::ceil (
+                    vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+
+                float worstClockFromDecoder = 0.0f;
+                int fixedBlocks = 0;
+                for (int pos = 0; pos + block <= preN + bodyN; pos += block)
+                {
+                    const float* ins[1] = { song.data() + pos };
+                    eng.process (ins, 1, outs, 2, block);
+
+                    const auto until = std::chrono::steady_clock::now()
+                                       + std::chrono::milliseconds (50);
+                    while (eng.analysisBacklog() > hop
+                           && std::chrono::steady_clock::now() < until)
+                        std::this_thread::yield();
+
+                    const auto s = eng.snapshot();
+                    const double songTime = static_cast<double> (pos - preN) / sr;
+                    if (songTime > 25.0 && s.tempoRegime == 1
+                        && s.neuralBpm > 50.0f)
+                    {
+                        worstClockFromDecoder = std::max (
+                            worstClockFromDecoder,
+                            std::fabs (s.targetBpm - s.neuralBpm));
+                        ++fixedBlocks;
+                    }
+                }
+
+                std::printf ("ipad-fixed-trim  fixed blocks=%d  max clock/decoder gap=%.2f BPM\n",
+                             fixedBlocks, static_cast<double> (worstClockFromDecoder));
+                expect (fixedBlocks > 100 && worstClockFromDecoder < 0.75f,
+                        "IPAD phase noise does not invent tempo drift on a fixed record");
             }
 
             constexpr double sr = 48000.0;

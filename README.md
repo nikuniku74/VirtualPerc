@@ -71,11 +71,18 @@ Simulator (no device signing):
 ## Live use
 
 1. USB-C audio interface + kit mic into the iPad, or play a track from the iPad speakers (Spotify, etc.)
-2. Mode **SPEAKER** (default on iPad) follows the sound in the room and ignores the shaker leaking back into the mic. **KIT MIC** is for a close kit microphone.
+2. **IPAD** (default) follows the sound in the room and removes the app's own
+   shaker and congas from the microphone analysis. **MIXER** is for a close
+   microphone or a line feed.
 3. Play time — the app is already analysing, but the shaker stays muted until START
-4. When the state shows **FOLLOWING**, press START; the shaker enters on the next downbeat
+4. When the state shows **FOLLOWING**, press START. MIXER enters on the next
+   reliable downbeat; IPAD enters on the next reliable beat because a tablet
+   speaker does not reproduce enough bass for automatic downbeat votes to be
+   trustworthy.
 5. Speed up / slow down — it should follow without a restart
-6. STOP mutes the shaker; it keeps listening. START arms it again and waits for the next downbeat — it does not start at the instant you tap the button.
+6. STOP mutes the shaker; it keeps listening. START arms it again and waits for
+   the next quantized entry — it does not start at the instant you tap the
+   button. Use TAP when you want to declare the bar's one explicitly.
 
 The app is listening to the room long before anybody plays, and it will find a tempo in an empty room — measured, 99 BPM at a confidence of 0.91 with nobody in front of the microphone. So START arms the shaker but holds it silent until the analysis has heard the input actually *start*, and the state reads **ATTENDO CHE ATTACCHI** while it does. Press START early and the part comes in with the band, not before it.
 
@@ -104,4 +111,4 @@ Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds
 
 JUCE is AGPLv3 or commercial. A closed-source App Store build needs a **JUCE commercial license**.
 
-The percussion recordings in `Assets/Percussion/` are from the OLPC Berklee Sound Library under **CC BY 3.0**. That is fine commercially, but the attribution is a licence condition: it has to appear on a Credits screen in the shipped app. See [Assets/Percussion/ATTRIBUTION.md](Assets/Percussion/ATTRIBUTION.md).
+The percussion recordings in `Assets/Percussion/` are from the Versilian Community Sample Library (CC0). See [Assets/Percussion/ATTRIBUTION.md](Assets/Percussion/ATTRIBUTION.md).

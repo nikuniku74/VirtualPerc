@@ -120,11 +120,11 @@ private:
         std::uint32_t age = 0;
     };
 
-    bool   loadRecordedStroke (Stroke stroke, std::vector<float>& mono) noexcept;
+    bool   loadNamedWav (const char* resourceName, std::vector<float>& mono) noexcept;
     void   buildBank() noexcept;
     void   measureBankAttacks() noexcept;
     void   layerFromRecording (Sample& dest, const std::vector<float>& src,
-                               Stroke stroke, int layer, std::uint32_t seed) noexcept;
+                               Stroke stroke, float force, std::uint32_t seed) noexcept;
     Voice& allocateVoice() noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset) noexcept;
     void   releaseStroke (Stroke stroke) noexcept;

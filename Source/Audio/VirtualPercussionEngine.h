@@ -169,6 +169,7 @@ private:
     float analysisHp = 0.0f;
     int leakDelaySamples = 0;
     int leakScanCountdown = 0;
+    bool leakDelayLocked = false;
     /** How much of our own output the input is carrying back, fitted per band
         and held across blocks. Two bands because the two return paths do not
         look alike: through the iPad's speaker the low end is simply not there,

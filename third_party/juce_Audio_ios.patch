@@ -67,7 +67,7 @@ index c9857b2d78..c0e317c7ce 100644
  
          const ScopeGuard disposeAudioQueueOnReturn { [&]
          {
-@@ -527,33 +520,14 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+@@ -527,10 +520,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
                                                      &size);
  
          if (propErr != noErr || size != sizeof (result))
@@ -78,27 +78,3 @@ index c9857b2d78..c0e317c7ce 100644
  
          return result;
      }
- 
-     double getSampleRate() const
-     {
--        const auto session = [AVAudioSession sharedInstance];
--
--        // On iOS 18 the AVAudioSession sample rate is not always accurate but
--        // probing the sample rate via an AudioQueue seems to work reliably
--        if (@available (iOS 18, *))
--        {
--            // We could verify that things seem to work as expected again
--            // from 18.7.3 and up, so avoid creating an AudioQueue. We
--            // have no way of testing the minor versions 18.7.0 to 18.7.2,
--            // as currently no simulator is available for 18.7.
--            if (@available (iOS 18.7.3, *))
--                return session.sampleRate;
--
--            return getSampleRateFromAudioQueue().value_or (session.sampleRate);
--        }
--
--        return session.sampleRate;
-+        return [AVAudioSession sharedInstance].sampleRate;
-     }
- 
-     double trySampleRate (double rate)

@@ -238,13 +238,11 @@ Three things here are what "the shaker and the congas break up" actually was:
 
 ### The sounds are recordings
 
-`Assets/Percussion/*.wav` are conga and shaker recordings from the **OLPC Berklee Sound Library, CC BY 3.0** — see `Assets/Percussion/ATTRIBUTION.md`, and note that the credit has to reach a screen in the shipped app, because attribution is a condition of the licence rather than a courtesy.
+`Assets/Percussion/*.wav` are conga, tumba, quinto and shaker recordings from the **Versilian Community Sample Library (CC0)** — see `Assets/Percussion/ATTRIBUTION.md`.
 
 They are embedded by CMake the same way `beatnet.onnx` is. If the folder is empty the build says so and the whole percussion bank falls back to synthesis, so the tree always builds and always plays; `recordedStrokeCount()` is asserted in the tests so a missing or unreadable asset fails loudly instead of degrading quietly.
 
-The most important thing done to them is the least interesting: each had **24–43 ms of silence in front of the transient**, which is 24–43 ms of lateness on every stroke against a clock calibrated to ±3 ms. `scripts/prepare-samples.sh` trims that, truncates before any second hit in the file, normalises and fades.
-
-What the library does not give us is a multi-sampled instrument — it is four conga hits and two shaker strokes. So the dynamic layers are *derived* from the recording by taking the top off and shortening the ring (the right-shaped approximation: hitting a drum softer does not merely turn it down), heel/toe/muff are the open tone damped, and round-robin is genuine only for the low drum, which has two takes. Replacing the library with a properly multi-sampled one is a file swap plus a re-run of the prepare script.
+`scripts/prepare_vcsl_samples.py` trims pre-roll, high-passes hall rumble, truncates before any second hit, normalises and fades. Loud and medium takes are separate recordings; the soft layer is still derived by taking the top off. heel/toe/muff are the open tone damped. Round-robin is a second take on every articulation, not only the low drum.
 
 - **Every stroke was one sample.** A conga slapped hard is brighter and shorter than one slapped softly, not the same recording with more gain on it. Each articulation is now synthesised at three dynamic layers — force makes the strike noisier, the attack faster and the head bend further into pitch — and each layer three times over with its own noise seed, so two consecutive strokes are different takes rather than the same take twice. The layer sets the timbre and the remainder of the velocity sets the level, so a crescendo moves smoothly instead of stepping.
 - **Every sample ended on a step.** Each is an exponential decay cut off at a fixed length, and none had decayed far by then — the shaker stopped at 21 % of its peak, the open conga at 11 %, the slap at 8 %. That is a click on *every* hit, not a rare glitch. A 12 ms raised-cosine fade is welded onto each sample at synthesis.

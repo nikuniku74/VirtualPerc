@@ -132,41 +132,54 @@ namespace
 
     // ----------------------------------------------------------------- dance
     //
-    // Four-on-the-floor leaves every offbeat free, and house percussion fills
-    // them. The figure is deliberately busy and lands mostly on the "a" of each
-    // beat - the sixteenth immediately before the next kick - which is what
-    // gives the part its forward lean.
+    // Transcribed from an eight-bar salsa conga dance loop at 120 BPM.
+    // Four-on-the-floor leaves 2 and 4 free of kick, but this part is not
+    // "the a of every beat": it is a tumbao made busy. Tumba on 1 and 3, the
+    // slap as the loudest stroke on the "e" of 2, opens filling the ands, and
+    // the open-open pair closing the bar. Even bars leave 4 empty so the
+    // phrase breathes.
     constexpr Hit kDanceA[] = {
-        {  0, Stroke::tumba, 0.70f },
-        {  3, Stroke::open,  0.80f },   // the "a" of 1
-        {  6, Stroke::slap,  0.66f },
-        {  7, Stroke::open,  0.86f },   // the "a" of 2
-        { 10, Stroke::tumba, 0.58f },
-        { 11, Stroke::open,  0.78f },
-        { 14, Stroke::slap,  0.68f },
-        { 15, Stroke::open,  0.90f },   // the "a" of 4
+        {  0, Stroke::tumba, 0.88f },
+        {  2, Stroke::open,  0.82f },
+        {  5, Stroke::slap,  0.94f },
+        {  6, Stroke::open,  0.68f },
+        {  7, Stroke::open,  0.74f },
+        {  8, Stroke::tumba, 0.90f },
+        {  9, Stroke::open,  0.86f },
+        { 10, Stroke::toe,   0.32f },
+        { 11, Stroke::open,  0.84f },
+        { 12, Stroke::tumba, 0.52f },
+        { 13, Stroke::toe,   0.36f },
+        { 14, Stroke::open,  0.70f },
+        { 15, Stroke::open,  0.78f },
     };
     constexpr Hit kDanceB[] = {
-        {  0, Stroke::tumba, 0.68f },
-        {  3, Stroke::open,  0.78f },
-        {  5, Stroke::toe,   0.30f },
-        {  7, Stroke::open,  0.84f },
-        {  8, Stroke::slap,  0.60f },
-        { 11, Stroke::open,  0.80f },
-        { 13, Stroke::toe,   0.30f },
-        { 15, Stroke::open,  0.92f },
+        {  0, Stroke::tumba, 0.86f },
+        {  2, Stroke::open,  0.80f },
+        {  5, Stroke::slap,  0.92f },
+        {  6, Stroke::open,  0.66f },
+        {  7, Stroke::open,  0.72f },
+        {  8, Stroke::tumba, 0.88f },
+        {  9, Stroke::open,  0.84f },
+        { 10, Stroke::toe,   0.30f },
+        { 11, Stroke::open,  0.82f },
+        { 14, Stroke::open,  0.72f },
+        { 15, Stroke::open,  0.80f },
     };
-    // The "a" of every beat stays - it is the whole character of the part - and
-    // the variation is in what sits between them.
     constexpr Hit kDanceC[] = {
-        {  0, Stroke::tumba, 0.72f },
-        {  3, Stroke::open,  0.82f },
-        {  5, Stroke::slap,  0.56f },
-        {  7, Stroke::open,  0.88f },
-        {  9, Stroke::toe,   0.28f },
-        { 11, Stroke::open,  0.80f },
-        { 12, Stroke::tumba, 0.54f },
-        { 15, Stroke::open,  0.94f },
+        {  0, Stroke::tumba, 0.88f },
+        {  2, Stroke::open,  0.84f },
+        {  5, Stroke::slap,  0.96f },
+        {  6, Stroke::slap,  0.62f },
+        {  7, Stroke::open,  0.76f },
+        {  8, Stroke::tumba, 0.90f },
+        {  9, Stroke::open,  0.86f },
+        { 10, Stroke::slap,  0.58f },
+        { 11, Stroke::open,  0.86f },
+        { 12, Stroke::tumba, 0.50f },
+        { 13, Stroke::open,  0.44f },
+        { 14, Stroke::open,  0.72f },
+        { 15, Stroke::open,  0.80f },
     };
     constexpr Hit kDanceFill[] = {
         {  8, Stroke::slap,  0.66f },
@@ -178,16 +191,16 @@ namespace
         { 14, Stroke::slap,  0.88f },
         { 15, Stroke::open,  0.96f },
     };
-    // The "a" of every beat stays. The first kick-side tumba is dropped so the
-    // bar leans even harder into the offbeats.
     constexpr Hit kDanceD[] = {
-        {  1, Stroke::toe,   0.28f },
-        {  3, Stroke::open,  0.84f },
-        {  6, Stroke::slap,  0.62f },
-        {  7, Stroke::open,  0.88f },
+        {  2, Stroke::open,  0.84f },
+        {  5, Stroke::slap,  0.90f },
+        {  6, Stroke::open,  0.64f },
+        {  7, Stroke::open,  0.74f },
+        {  8, Stroke::tumba, 0.86f },
         { 11, Stroke::open,  0.82f },
-        { 13, Stroke::slap,  0.58f },
-        { 15, Stroke::open,  0.92f },
+        { 13, Stroke::slap,  0.56f },
+        { 14, Stroke::open,  0.74f },
+        { 15, Stroke::open,  0.88f },
     };
 
     // ------------------------------------------------------------------- pop

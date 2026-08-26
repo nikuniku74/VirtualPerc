@@ -129,6 +129,7 @@ void VirtualPercussionEngine::reset() noexcept
     leakGainHi = 0.0f;
     leakDelaySamples = 0;
     leakScanCountdown = 0;
+    leakDelayLocked = false;
     peakEnv = 0.0f;
     makeupGain = 1.0f;
     levelFast = 0.0f;
@@ -326,9 +327,25 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
         return;
 
     if (leakDelaySamples < lo || leakDelaySamples > hi)
+    {
         leakDelaySamples = std::clamp (center, lo, hi);
+        leakDelayLocked = false;
+    }
 
-    auto scoreAt = [this, numSamples] (int d) noexcept -> double
+    double xx = 0.0;
+    for (int i = 0; i < numSamples; ++i)
+        xx += static_cast<double> (mono[static_cast<size_t> (i)])
+              * mono[static_cast<size_t> (i)];
+
+    // Do not move a delay estimate while the input block is empty. At the true
+    // delay its reference is empty too (scoreAt returns the sentinel), while a
+    // wrong delay may happen to contain an old stroke and score zero. Zero used
+    // to beat the sentinel, so silence actively pulled the search away from the
+    // right acoustic path between percussion hits.
+    if (xx < 1.0e-9)
+        return;
+
+    auto scoreAt = [this, numSamples, xx] (int d) noexcept -> double
     {
         double xy = 0.0, yy = 0.0;
         for (int i = 0; i < numSamples; ++i)
@@ -338,7 +355,20 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
             xy += static_cast<double> (mono[static_cast<size_t> (i)]) * y;
             yy += static_cast<double> (y) * y;
         }
-        return yy > 1.0e-12 ? xy / std::sqrt (yy) : -1.0e9;
+        return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
+    };
+    auto envelopeScoreAt = [this, numSamples, xx] (int d) noexcept -> double
+    {
+        double xy = 0.0, yy = 0.0;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const int ri = (ringWrite - d + i + ringSize) & (ringSize - 1);
+            const float y = outRing[static_cast<size_t> (ri)];
+            xy += static_cast<double> (std::abs (mono[static_cast<size_t> (i)]))
+                  * std::abs (y);
+            yy += static_cast<double> (y) * y;
+        }
+        return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
     };
 
     int best = leakDelaySamples;
@@ -346,19 +376,29 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
 
     if (--leakScanCountdown <= 0)
     {
-        leakScanCountdown = speaker ? 4 : 8;
+        // Search every block until one actually contains enough of our return
+        // to identify the path. Sparse percussion can put all of its attacks
+        // between a fixed every-fourth-block scan; once acquired, the cheaper
+        // cadence is sufficient to follow a moving acoustic path.
+        leakScanCountdown = speaker ? (leakDelayLocked ? 4 : 1) : 8;
         const int step = std::max (16, numSamples / 8);
+        int coarseBest = best;
+        double coarseScore = envelopeScoreAt (coarseBest);
         for (int d = lo; d <= hi; d += step)
         {
-            const double s = scoreAt (d);
-            if (s > bestScore)
+            // Search on magnitude first. A drum's raw waveform correlation is
+            // a needle only a few samples wide; a coarse step can jump over it.
+            // Its energy envelope is broad enough to nominate the right area,
+            // then the raw sample-by-sample refinement below finds the delay.
+            const double s = envelopeScoreAt (d);
+            if (s > coarseScore)
             {
-                bestScore = s;
-                best = d;
+                coarseScore = s;
+                coarseBest = d;
             }
         }
-        const int refineLo = std::max (lo, best - step);
-        const int refineHi = std::min (hi, best + step);
+        const int refineLo = std::max (lo, coarseBest - step);
+        const int refineHi = std::min (hi, coarseBest + step);
         for (int d = refineLo; d <= refineHi; ++d)
         {
             const double s = scoreAt (d);
@@ -369,9 +409,9 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
             }
         }
     }
-    else
+    else if (! speaker)
     {
-        const int step = speaker ? 8 : 16;
+        const int step = 16;
         for (int d : { leakDelaySamples - step, leakDelaySamples + step })
         {
             if (d < lo || d > hi)
@@ -385,7 +425,14 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
         }
     }
 
-    leakDelaySamples = best;
+    // A room full of unrelated music always has a largest correlation in the
+    // search window; "largest" alone does not make it our return path. Keep the
+    // previous estimate until the candidate actually explains the input.
+    if (bestScore > 0.12)
+    {
+        leakDelaySamples = best;
+        leakDelayLocked = true;
+    }
 }
 
 void VirtualPercussionEngine::applyAnalysisHpf (int numSamples) noexcept
