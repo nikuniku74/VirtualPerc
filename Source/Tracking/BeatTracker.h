@@ -153,7 +153,6 @@ private:
 
     double sampleRate = 48000.0;
     uint32_t lastBeatSerial = 0;
-    uint32_t lastDownbeatSerial = 0;
     uint32_t lastGridSerial = 0;
     bool seenSerials = false;
     float lastLeadMs = 0.0f;
@@ -200,7 +199,13 @@ private:
     int  autoHoldSamples = 0;
     int tapHoldSamples = 0;
     int downbeatHoldSamples = 0;
+    /** The bar as a histogram over its four quarters: how much downbeat the
+        network has found on each, decayed, and how many beats have gone into
+        it. The count is what says whether the shares mean anything yet, and it
+        is kept separately because activation and evidence are different
+        quantities - a network that is loud about every beat has said nothing. */
     float downbeatVotes[4] {};
+    float voteBeats = 0.0f;
     int   barDeclaredSamples = 0;
 
     int quantizeWaitSamples = 0;

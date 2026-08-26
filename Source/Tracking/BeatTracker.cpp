@@ -17,25 +17,36 @@ namespace
     // material the network never finds a downbeat in would then never start.
     constexpr double kBarsBeforeGivingUp = 4.0;
 
-    // Downbeats to collect before the vote is worth acting on while waiting to
-    // come in, and the larger number needed to move a bar that is already
-    // playing - where the correction is something the listener hears.
-    // Now weight, not a count: the sum of the confidences the network attached
-    // to the downbeats it has called. A weak call contributes 0.15, a certain
-    // one about 1, so these are roughly "three convincing downbeats" and "eight
-    // of them".
-    constexpr float kVotesToTrustTheBar = 3.0f;
-    constexpr float kVotesToMoveTheBar = 8.0f;
+    // Beats the histogram has to hold before it is worth acting on while
+    // waiting to come in, and the larger number needed to move a bar that is
+    // already playing - where the correction is something the listener hears.
+    // Beats and not downbeats: every beat now files an opinion, so this is
+    // three bars of evidence and eight bars of it, decayed.
+    constexpr float kBeatsToTrustTheBar = 12.0f;
+    constexpr float kBeatsToMoveTheBar = 32.0f;
 
-    // Per downbeat. Over sixteen of them the oldest evidence is worth a third
-    // of the newest, which is a phrase or two - long enough to be a vote and
-    // short enough to notice a section change.
-    constexpr float kVoteDecay = 0.93f;
+    // Per beat. Over sixty-four of them - sixteen bars - the oldest evidence is
+    // worth a third of the newest, which is a phrase or two: long enough to be
+    // a vote and short enough to notice a section change. It used to be applied
+    // per downbeat *event*, which on material the network was sure about was
+    // about once a bar and on material it was unsure about was hardly ever, so
+    // the window the vote covered was a function of how confident the network
+    // happened to be.
+    constexpr float kVoteDecay = 0.982f;
 
     // How far the winner has to stand clear of the runner-up before the bar is
-    // moved at all - and how much further while the part is playing.
+    // moved at all - and how much further while the part is playing. Shares of
+    // the histogram, so four quarters the network cannot separate sit at 0.25
+    // each and no margin at all is available: material that carries no bar
+    // leaves the count where it is instead of being rotated onto noise.
+    //
+    // Measured over the thirty rendered tracks, the margin the winner actually
+    // achieves separates the two cases cleanly: 0.34 on a line feed, where the
+    // network finds the true one in 73% of bars, against 0.014 through an iPad
+    // speaker and a room, where it is no better than a coin. See
+    // scripts/probe_bar.cpp.
     constexpr float kBarWinMargin = 0.10f;
-    constexpr float kBarWinMarginPlaying = 0.42f;
+    constexpr float kBarWinMarginPlaying = 0.20f;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
@@ -95,7 +106,6 @@ void BeatTracker::reset() noexcept
     currentState = TrackingState::listening;
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
-    lastDownbeatSerial = 0;
     lastGridSerial = 0;
     seenSerials = false;
     lastLeadMs = 0.0f;
@@ -127,6 +137,7 @@ void BeatTracker::reset() noexcept
     tapHoldSamples = 0;
     downbeatHoldSamples = 0;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+    voteBeats = 0.0f;
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     barDeclaredSamples = 0;
@@ -457,7 +468,8 @@ void BeatTracker::holdBarDecision() noexcept
     // held off. Without this the vote puts the bar back within a phrase and the
     // correction looks like it did nothing.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
-    downbeatVotes[0] = kVotesToMoveTheBar;
+    downbeatVotes[0] = kBeatsToMoveTheBar;
+    voteBeats = kBeatsToMoveTheBar;
     downbeatHoldSamples = static_cast<int> (sampleRate * kBarNudgeHoldSeconds);
 }
 
@@ -554,7 +566,11 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
         }
     }
 
-    if (best == 0 || totalVotes < (comingIn ? kVotesToTrustTheBar : kVotesToMoveTheBar))
+    // How much evidence there is, counted in beats rather than in activation:
+    // a network that is loud about everything must not look better supported
+    // than one that is quiet about everything, and the shares above already
+    // carry how loud it was.
+    if (best == 0 || voteBeats < (comingIn ? kBeatsToTrustTheBar : kBeatsToMoveTheBar))
         return;
 
     // Waiting to come in, a plurality is enough: nothing is playing yet, so a
@@ -568,15 +584,14 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
         return;
     if (! comingIn)
     {
-        // Far stricter once the part is playing, because the evidence is not
-        // good enough to spend a listener's attention on. Measured over thirty
-        // tracks the automatic answer is right about four times in ten - better
-        // than the one in four a coin would manage, and nowhere near good
-        // enough to justify moving a bar somebody is playing along to. A bar
-        // that is consistently wrong can be corrected with one tap; one that
-        // keeps moving cannot.
+        // Stricter once the part is playing, because a bar the listener can
+        // hear is being moved under them. It no longer has to be *far*
+        // stricter: the histogram is built from every beat rather than from
+        // the handful the network was confident enough to call, so the same
+        // margin now stands on four times the evidence and stops being a
+        // reading of the noise. A bar that is consistently wrong can be
+        // corrected with one tap; one that keeps moving cannot.
         if (bestVotes < runnerUp + kBarWinMarginPlaying
-            || totalVotes < kVotesToMoveTheBar
             || downbeatHoldSamples > 0)
             return;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
@@ -633,23 +648,18 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // count one beat twice on a small buffer and miss it entirely on a large
     // one, so beats arrive as monotonic serials instead.
     int newBeats = 0;
-    int newDownbeats = 0;
     if (haveHyp)
     {
         if (! seenSerials)
         {
             lastBeatSerial = hyp.beatSerial;
-            lastDownbeatSerial = hyp.downbeatSerial;
             lastGridSerial = hyp.gridSerial;
             seenSerials = true;
         }
         newBeats = static_cast<int> (hyp.beatSerial - lastBeatSerial);
-        newDownbeats = static_cast<int> (hyp.downbeatSerial - lastDownbeatSerial);
         lastBeatSerial = hyp.beatSerial;
-        lastDownbeatSerial = hyp.downbeatSerial;
     }
     const bool hadBeat = newBeats > 0;
-    const bool hadDownbeat = newDownbeats > 0;
 
     // Everything the analysis reports describes audio that arrived a while ago:
     // a 64 ms window, the FIFO backlog, and whenever the worker last ran. The
@@ -738,43 +748,60 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // beat the clock happened to start counting on. Measured over eight tracks,
     // the percussion came in on the one twice, and the misses were off by very
     // nearly a whole beat: the clock was on the beat and the bar was rotated.
-    if (hadDownbeat && ! tapHold)
+    //
+    // Every beat files an opinion about whether it was the one, and the bar is
+    // the quarter those opinions add up on - a histogram over the bar, not a
+    // tally of the events that happened to clear a threshold. The gated events
+    // are the loud half of the evidence and also the rare half: through an iPad
+    // speaker only 63% of beats clear the gate at all and on quieter material
+    // far fewer, and a vote taken over a handful of samples shows a wide margin
+    // on noise alone. Over every beat, the same margin is a measurement: 0.34
+    // where the network really has found the one, 0.014 where it has not.
+    if (hadBeat && ! tapHold)
     {
-        // Which beat of the bar this downbeat fell on, as the clock currently
-        // counts them. A single one of these is not worth acting on: the
-        // network answers "this is a strong beat" reliably and "this is *the*
-        // strong beat" much less so, and on material where beats one and three
-        // carry the same kick it splits almost evenly between them. Measured
-        // over eight tracks it put 7 of 12, 9 of 11, 10 of 19 and 13 of 25 on
-        // the true one - a plurality every time, and a coin toss taken one at a
-        // time. So they are counted and the majority is used, rather than the
-        // most recent one winning.
-        const int at = follower.beatPhase() < 0.5f
-                           ? follower.beatInBarIndex()
-                           : (follower.beatInBarIndex() + 1) & 3;
+        // Which quarter of the bar this beat fell on, in the clock's own count.
+        //
+        // Not the clock's phase *now*: what the analysis has just reported
+        // happened a measured while ago - up to 0.6 s of pipeline and device
+        // delay - and `hyp.beatPhase + leadBeats` is exactly how far the song
+        // has moved since. Taking that off the clock's position gives the
+        // position the clock was at when the beat actually sounded, and the
+        // beat belongs to the quarter nearest it. The old test read the phase
+        // now and called anything past the half "the next quarter", which files
+        // a beat one quarter late whenever the lead runs over half a beat.
+        //
+        // Unwrapped on purpose, which `songPhase` a few lines up is not: at
+        // 100 BPM the delay ceiling is a whole beat, and folded into one beat a
+        // lead of 1.2 reads as 0.2 and loses the beat it crossed.
+        const float posNow = static_cast<float> (follower.beatInBarIndex())
+                             + follower.beatPhase();
+        const float sinceBeat = hyp.beatPhase + leadBeats;
+        const int nearest = static_cast<int> (std::lround (posNow - sinceBeat));
+        const int at = ((nearest % 4) + 4) & 3;
 
-        // Weighted by how strongly the network called it, not one vote per
-        // event. On material where beats one and three carry the same kick -
-        // which is most material - the network fires on both, and counting
-        // events makes the bar a coin toss between them. It is still more
-        // confident about the true one, and that confidence is the only thing
-        // separating them, so it is what gets counted.
+        // Weighted by how strongly the network called this beat the one, which
+        // for most beats is "not at all" and is worth counting as such. On
+        // material where beats one and three carry the same kick - which is
+        // most material - the network fires on both, and what separates them is
+        // a difference in confidence too small to survive a threshold and quite
+        // large enough to survive a phrase of adding up.
         //
         // The whole tally decays as it goes. Without that, the first bars of a
         // track keep their say forever and a section change can never be heard;
         // with it the vote is always about the recent past.
         for (float& v : downbeatVotes)
             v *= kVoteDecay;
-        downbeatVotes[at] += std::max (0.15f, hyp.downbeatStrength);
+        voteBeats = voteBeats * kVoteDecay + 1.0f;
+        downbeatVotes[at] += std::clamp (hyp.beatDownbeat, 0.0f, 1.0f);
 
-        // While playing, the bar is corrected from the same vote - never from
-        // the single downbeat that just arrived.
+        // While playing, the bar is corrected from the whole histogram - never
+        // from the single beat that just arrived.
         //
-        // It used to snap on that one downbeat, which is what a listener hears
-        // as "one, two, one": the network puts a plurality of its downbeats on
-        // the true one and scatters the rest, so every stray one restarted the
-        // bar in the middle of it. Worse, it snapped the *phase* to do it,
-        // which threw away the clock's whole loop state - its phase error, its
+        // It used to snap on one downbeat, which is what a listener hears as
+        // "one, two, one": the network puts a plurality of its downbeats on the
+        // true one and scatters the rest, so every stray one restarted the bar
+        // in the middle of it. Worse, it snapped the *phase* to do it, which
+        // threw away the clock's whole loop state - its phase error, its
         // measured trim - for a correction that only ever concerned the count.
         // Rotating the index moves no phase and drops no pulse.
         if (! waitForQuantize)
@@ -840,7 +867,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // moved a moment ago: those are the two cases where somebody already
         // answered this question.
         if (! tapEstablished && tempoFollow && downbeatHoldSamples <= 0)
+        {
             std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+            voteBeats = 0.0f;
+        }
     }
 
     if (gridMuteSamples > 0)
@@ -864,7 +894,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         const float gridErr = wrapCentered (follower.beatPhase() - songPhase);
         if (! sounding && std::fabs (gridErr) > 0.04f)
         {
-            follower.snapPhase (songPhase);
+            // Nothing is playing, so the count goes over the boundary with the
+            // grid: the bar the part will come in on has to be the song's bar,
+            // and this is where that is decided.
+            follower.snapPhase (songPhase, true);
         }
         else
         {
@@ -943,7 +976,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // re-tune path beside this one already used, and this one did not.
             if (! sounding
                 || std::fabs (wrapCentered (follower.beatPhase() - songPhase)) > 0.12f)
-                follower.snapPhase (songPhase);
+                follower.snapPhase (songPhase, ! sounding);
         }
     }
 

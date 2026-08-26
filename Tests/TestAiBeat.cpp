@@ -2294,6 +2294,170 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "a mistaken downbeat costs the bar nothing and the tempo nothing");
     }
 
+    // Which of the four quarters is the one, when the network never says so out
+    // loud.
+    //
+    // The acceptance case from docs/SMART_PERCUSSION.md M2, on the material it
+    // is actually for: seven bars in ten the network leans towards the true
+    // one and in the other three it leans somewhere else, and *none* of it
+    // clears the threshold that used to make a beat a downbeat. That is not a
+    // corner - through an iPad speaker and a room only a fraction of beats
+    // clear that gate, and on a quiet passage none do. A bar decided by the
+    // events that cleared it is then decided by nothing at all, and the count
+    // stays wherever the clock happened to start.
+    //
+    // The check is delay-free by construction. Where the analysis geometry puts
+    // the model's beats in the audio is not something a test should have to
+    // re-derive, so the true answer is measured instead: the same run with a
+    // network that says the one loudly and every time places the bar, and the
+    // quiet run has to land in the same place at the same samples.
+    {
+        class VotedBeatModel final : public vp::IBeatModel
+        {
+        public:
+            VotedBeatModel (double framesPerBeat, bool clean)
+                : fpb (framesPerBeat), perfect (clean) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double beats = static_cast<double> (frame++) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const int    beatNo = static_cast<int> (std::llround (beats));
+                const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                         std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                // Two quarters off where the clock starts counting, so the bar
+                // has to actually be moved. Left aligned with it, an
+                // implementation that never moves the bar at all scores the
+                // same as one that finds it, and this test would pass on the
+                // code it exists to catch.
+                const int inBar = (((beatNo + 2) % 4) + 4) % 4;
+                const int bar = beatNo >= 0 ? beatNo / 4 : 0;
+
+                // Seven bars in ten the one is called; in the other three the
+                // call lands on the two, the three or the four instead, taken
+                // in turn so the run is the same every time it is made.
+                const int roll = ((bar % 10) + 10) % 10;
+                const int called = (perfect || roll < 7) ? 0 : 1 + (bar % 3);
+
+                // The reference run says it and means it. The run under test
+                // leans the same way and never raises its voice: 0.34 against
+                // 0.10 is a difference a histogram can add up over a phrase and
+                // a threshold at 0.40 cannot see at all.
+                const float loud = inBar == called ? pulse * 0.95f : 0.03f;
+                const float quiet = inBar == called ? 0.34f : 0.10f;
+
+                activations3[0] = pulse;
+                activations3[1] = perfect ? loud : quiet;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+        private:
+            double fpb;
+            bool   perfect;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        const int n = static_cast<int> (sr * 64.0);
+
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        // The quarter the clock is counting at a given sample, once it has
+        // settled. Sampled a third of the way into each beat, well clear of
+        // both boundaries: the clock leads the song by a few milliseconds by
+        // design, so a reading taken on a boundary is a reading of that lead.
+        auto barTrace = [&] (bool clean, std::vector<int>& into, int& gaps)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::make_unique<VotedBeatModel> (framesPerBeat, clean));
+            eng.prepare (sr, block, 1);
+            eng.start();
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            const double beatSamples = sr * 60.0 / static_cast<double> (trackBpm);
+            int nextSample = static_cast<int> (beatSamples / 3.0);
+            into.clear();
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { song.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                const auto snap = eng.snapshot();
+                while (nextSample < pos + block)
+                {
+                    into.push_back (snap.state == vp::TrackingState::following
+                                            && snap.bpm > 40.0f
+                                        ? std::clamp (static_cast<int> (snap.barPhase * 4.0f), 0, 3)
+                                        : -1);
+                    nextSample = static_cast<int> (beatSamples
+                                                   * (static_cast<double> (into.size()) + 1.0 / 3.0));
+                }
+                if ((pos / block % 8) == 0)
+                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+            }
+            gaps = static_cast<int> (eng.snapshot().analysisGaps);
+        };
+
+        std::vector<int> clean, noisy;
+        int cleanGaps = 0, noisyGaps = 0;
+        barTrace (true, clean, cleanGaps);
+        barTrace (false, noisy, noisyGaps);
+
+        // Where the two runs last disagreed. Everything after it is the bar
+        // holding the answer, and how long that tail is says whether it holds
+        // it for a phrase or for a moment.
+        const size_t upTo = std::min (clean.size(), noisy.size());
+        int compared = 0, rotations = 0, settledAt = -1, tail = 0, prev = -1;
+        for (size_t i = 0; i < upTo; ++i)
+        {
+            if (clean[i] < 0 || noisy[i] < 0)
+                continue;
+            ++compared;
+            const int off = ((noisy[i] - clean[i]) % 4 + 4) % 4;
+            if (off != 0)
+            {
+                settledAt = -1;
+                tail = 0;
+            }
+            else
+            {
+                if (settledAt < 0)
+                    settledAt = static_cast<int> (i);
+                ++tail;
+            }
+            if (prev >= 0 && off != prev)
+                ++rotations;
+            prev = off;
+        }
+
+        std::printf ("bar-vote       battiti=%d  sull'uno dal %d  poi %d di fila  rotazioni=%d  buchi=%d/%d\n",
+                     compared, settledAt, tail, rotations, cleanGaps, noisyGaps);
+
+        // A starved worker loses audio and with it the evidence, and the bar can
+        // land somewhere else on the way back - the same carve-out bar-integrity
+        // makes, and for the same reason.
+        const bool starved = cleanGaps > 0 || noisyGaps > 0;
+        // Sixteen bars, not the eight the note in SMART_PERCUSSION.md asks for.
+        // Eight is what the bar needs while the part is still waiting to come
+        // in, where a rotation costs nothing; here the engine is started at the
+        // top and is already playing, and moving a bar a listener can hear is
+        // deliberately held to eight bars of evidence before it is done at all.
+        expect (starved || (compared > 60 && settledAt >= 0 && settledAt <= 64),
+                "the bar finds the one on evidence no threshold would have passed");
+        expect (starved || tail >= 40,
+                "and then holds it for a phrase and more, not for a moment");
+        expect (starved || rotations <= 2,
+                "the count is not traded back and forth while the evidence argues");
+    }
+
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (48000.0, 128, 1);

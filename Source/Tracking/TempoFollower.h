@@ -43,7 +43,23 @@ public:
         of a second - or nothing is averaged at all and the loop chases the
         decoder's own uncertainty as if it were the band moving. */
     void setGridPhase (float targetPhase, float tauSeconds) noexcept;
-    void snapPhase (float targetPhase) noexcept;
+    /** Place the grid where the song is.
+
+        `keepBarInStep` decides what happens to the *count* when the move
+        crosses a beat boundary - which a correction of a few hundredths lands
+        on whenever the song sits near one. With it, the bar goes over the
+        boundary with the grid, so the count stays on the same beat of the song
+        it was on. Without it, the grid moves and the count does not, and the
+        bar quietly ends up a quarter away from where the song counts it.
+
+        Which is wanted depends on whether anything is playing. Silent, keeping
+        the count in step is free and it is the whole point: the bar the part
+        will come in on has to be the song's bar. Sounding, moving the count is
+        a bar moved under the listener - "one, two, one" - and not worth doing
+        for a correction of a few milliseconds, so there the count stays put and
+        the histogram in BeatTracker rotates the bar later, on evidence, if it
+        really is in the wrong place. */
+    void snapPhase (float targetPhase, bool keepBarInStep = false) noexcept;
     void snapDownbeat (float targetPhase = 0.0f) noexcept;
     void snapBeat (int beatIndex, float targetPhase = 0.0f) noexcept;
     void rotateBarIndex (int delta) noexcept;

@@ -115,9 +115,47 @@ void TempoFollower::setGridPhase (float targetPhase, float tauSeconds) noexcept
     havePhaseTarget = true;
 }
 
-void TempoFollower::snapPhase (float targetPhase) noexcept
+void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
 {
-    phase = static_cast<double> (wrap01 (targetPhase));
+    // Carry the count over the boundary the snap crosses.
+    //
+    // `beatInBar` is advanced in one place only - `advance`, when the phase
+    // runs past 1.0 - so a snap that *jumps* the phase past 1.0, or back over
+    // 0.0, moves the grid without the count following it. Forwards, the clock
+    // never wraps for that beat and the bar falls one behind the song;
+    // backwards, it wraps twice and the bar gains one. Either way the count is
+    // silently rotated by a quarter, and nothing downstream can tell that from
+    // the song genuinely being counted from somewhere else.
+    //
+    // It is not a rare case. While the part is waiting to come in the tracker
+    // re-places the grid on any error over four hundredths of a beat, so a song
+    // sitting near the boundary snaps across it repeatedly, and every crossing
+    // rotates the bar again. Measured over thirty rendered tracks, closing this
+    // took the entry onto the true one from 4 in 25 to 8 in 25 on a microphone
+    // in a room, and from 19 in 25 to 21 in 25 on a line feed - see
+    // scripts/probe_bar.cpp.
+    //
+    // A correction is the shortest way round, so that is what decides whether a
+    // boundary was crossed at all.
+    const double from = phase;
+    const double to = static_cast<double> (wrap01 (targetPhase));
+    if (keepBarInStep)
+    {
+        const double moved = from + static_cast<double> (wrapCentered (
+                                 static_cast<float> (to - from)));
+        if (moved >= 1.0)
+        {
+            beatInBar = (beatInBar + 1) & 3;
+            ++totalBeats;
+        }
+        else if (moved < 0.0)
+        {
+            beatInBar = (beatInBar + 3) & 3;
+            --totalBeats;
+        }
+    }
+
+    phase = to;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;

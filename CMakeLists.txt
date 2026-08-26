@@ -297,6 +297,25 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPBar
+        PRODUCT_NAME "VPBar"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPBar PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPBar PRIVATE ${VP_CORE_SOURCES} scripts/probe_bar.cpp)
+    target_include_directories (VPBar PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPBar PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPBar PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPCpu
         PRODUCT_NAME "VPCpu"
         NEEDS_WEB_BROWSER FALSE
@@ -494,6 +513,10 @@ endif()
 
 if (TARGET VPAlign)
     vp_apply_ai_options (VPAlign)
+endif()
+
+if (TARGET VPBar)
+    vp_apply_ai_options (VPBar)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

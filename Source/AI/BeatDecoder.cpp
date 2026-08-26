@@ -233,7 +233,9 @@ void BeatDecoder::reset() noexcept
     prevPulse = 0.0f;
     prevPrevPulse = 0.0f;
     prevDownbeat = 0.0f;
+    prevPrevDownbeat = 0.0f;
     lastDownbeatStrength = 0.0f;
+    lastBeatDownbeat = 0.0f;
     beatWrite = 0;
     beatFilled = 0;
     beatSerial = 0;
@@ -421,6 +423,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     prevPulse = 0.0f;
     prevPrevPulse = 0.0f;
     prevDownbeat = 0.0f;
+    prevPrevDownbeat = 0.0f;
     refractoryFrames = std::max (refractoryFrames, 3);
 
     // Evidence chains describe beats that are now gone. Nothing measured before
@@ -1203,6 +1206,15 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
         lastBeatSec = eventTimeSec;
         refractoryFrames = minRefr;
         beatsInBar = (beatsInBar + 1) % 4;
+
+        // What the network thought of *this* beat as a candidate for the one,
+        // gate or no gate. The peak is picked on max(pBeat, pDownbeat) and the
+        // two curves do not always crest on the same frame - a downbeat takes
+        // its mass from the beat class, so the downbeat curve can lead or lag
+        // by a frame - so the window is three frames wide, which is 60 ms and
+        // still well inside the shortest beat this ever runs at.
+        lastBeatDownbeat = std::max (prevDownbeat,
+                                     std::max (prevPrevDownbeat, pDownbeat));
         if (prevDownbeat > downThresh)
         {
             lastDownbeatStrength = prevDownbeat;
@@ -1234,6 +1246,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.downbeatSerial = downbeatSerial;
     hyp.gridSerial = gridSerial;
     hyp.downbeatStrength = lastDownbeatStrength;
+    hyp.beatDownbeat = lastBeatDownbeat;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
@@ -1245,6 +1258,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
 
     prevPrevPulse = prevPulse;
     prevPulse = pulseActivation;
+    prevPrevDownbeat = prevDownbeat;
     prevDownbeat = pDownbeat;
     return hyp;
 }

@@ -28,6 +28,7 @@ Shaker events must keep a monotonically increasing sample index (no loop restart
 | `VPAlign` | How long the clock takes to get onto the song, and what the phase the decoder hands it is worth. See [docs/CORE_TIMING_AUDIT.md](CORE_TIMING_AUDIT.md). |
 | `VPTiming` | Where the stroke lands to the ear, not where the clock scheduled it |
 | `VPProbe` | Whole engine over a rendered arrangement |
+| `VPBar` | Which of the four quarters the app calls the one, against material whose beat one is at sample zero. Reports the quarter the part came in on, the quarter the bar sat on afterwards, and - separately - how much the network gave it to work with. `--mixer` for a line feed, no flag for an iPad speaker in a room. |
 | `VPCpu` | Callback cost against its budget |
 
 ## Offline audio

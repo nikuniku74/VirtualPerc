@@ -180,7 +180,11 @@ private:
     float  prevPulse = 0.0f;
     float  prevPrevPulse = 0.0f;
     float  prevDownbeat = 0.0f;
+    float  prevPrevDownbeat = 0.0f;
     float  lastDownbeatStrength = 0.0f;
+    /** The downbeat activation of the beat last counted, gate or no gate. See
+        BeatHypothesis::beatDownbeat. */
+    float  lastBeatDownbeat = 0.0f;
     int    refractoryFrames = 0;
     int    beatsInBar = 0;
     uint64_t frame = 0;

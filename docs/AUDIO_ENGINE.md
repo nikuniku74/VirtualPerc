@@ -70,6 +70,25 @@ At 96 BPM and above the clock is on the beat and every remaining error is a whol
 
 At 68 and 84 BPM the clock itself is locked half a beat out, onto the offbeat. That is the slow-tempo octave and phase weakness documented above, not an entry problem, and it is where the next work on this belongs.
 
+### Which quarter is the one — measured end to end
+
+The measurements above look at the first sample of the percussion channel. `VPBar` (`scripts/probe_bar.cpp`) asks the whole question instead: over thirty rendered tracks whose beat one is at sample zero, which quarter did the part come in on, and which quarter did the bar sit on for the twenty seconds after that. Runs where the clock settled at half or double the song's tempo are reported and excluded — at the wrong metrical level the bar is neither right nor wrong, it walks.
+
+| | line feed, entry | line feed, held | mic in a room, entry | mic in a room, held |
+|---|---|---|---|---|
+| before | 19/25 | 21/25 | 4/25 | 3/25 |
+| the count carried over a phase snap | 21/25 | 20/25 | 8/25 | 6/25 |
+| **and the bar as a histogram** | **21/25** | **20/25** | **10/25** | **10/25** |
+
+Two faults, and the first is much the larger:
+
+- **A phase correction moved the grid and left the count behind.** `beatInBar` is advanced in one place, `advance()`, when the phase runs past 1.0. `snapPhase` *jumps* the phase, so a correction that crossed the boundary — which any correction lands on when the song sits near one — moved the grid without the count following: forwards the clock never wraps for that beat and the bar falls one behind the song, backwards it wraps twice and the bar gains one. While the part waits to come in the tracker re-places the grid on any error over four hundredths of a beat, so this happened repeatedly, and the bar the part then entered on was a quarter away from the song's for no reason anything downstream could see. The count now goes over the boundary with the grid — but only while nothing is playing. Sounding, moving the count is a bar moved under the listener, and that is left to the histogram below, on evidence.
+- **The bar was decided by the downbeats that cleared a threshold.** Those are the loud evidence and also the rare evidence: on a line feed 39% of beats clear the gate, through a speaker and a room 63%, and on a quiet passage none do — and a vote taken over a handful of samples shows a wide margin on noise alone. Every beat now files its downbeat activation into a histogram over the four quarters, decayed over sixteen bars, and the bar is rotated to the winner when it stands clear of the runner-up.
+
+**What is left is the network, and the app can now tell when that is so.** The histogram's margin separates the two listening paths cleanly: 0.34 on a line feed, where the network puts its downbeat on the true one in 73% of bars, against 0.014 through an iPad speaker and a room, where it is no better than a coin. Where the margin is absent the bar is not rotated at all, which is why the room figure moved from 3/25 — worse than chance, the app confidently following a misleading signal — to 10/25, which is chance. It is not the app finding the one in a room; it is the app no longer being certain about the wrong answer, and leaving TAP to settle it.
+
+Why the room is so much worse is not a mystery and is not the bar logic: the iPad speaker has almost nothing below 250 Hz, so the kick fundamental and the bass root — which is where this material marks its bar — never reach the network. On that path the network's downbeat activation is *strongest on the true three* (0.593 against 0.430 on the true one, winning 38% of bars against 18%). No amount of counting downstream turns that round.
+
 ### Choosing the style automatically — measured, and not good enough
 
 `StyleDetector` folds the analysis signal onto the bar in three bands and reads four rotation-invariant features from it: how evenly the low band lands on the four quarters (four-on-the-floor), the depth of the two-beat alternation in the snare band (backbeat), the high band on the offbeat against the beat (open hat), and energy on the odd sixteenths (syncopation).

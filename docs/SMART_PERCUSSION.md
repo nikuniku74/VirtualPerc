@@ -76,7 +76,7 @@ intelligente".
 | **B5** | Analisi | drop della FIFO non resettava feature/decoder → onset fantasma | ✅ fatto | R1 |
 | **B6** | Doc/codice | `AUTO` = ottavi nel codice, sedicesimi nella doc (aperto); "steal quietest" ora è vero | 🟡 parziale | — |
 | **M1** | Metrica | 4/4 cablato ovunque: niente 3/4, 6/8, 12/8 | 🔴 | R3 |
-| **M2** | Metrica | nessun decoder di battuta: il "1" arriva da una soglia su un frame | 🟠 parziale: voto su 3 downbeat all'ingresso, non ancora continuo | R3 |
+| **M2** | Metrica | nessun decoder di battuta: il "1" arriva da una soglia su un frame | 🟢 fatto: istogramma su ogni battito, più il conteggio che segue la griglia quando si sposta la fase. Misurato con `VPBar`: 21/25 all'ingresso su mandata di linea, 10/25 col microfono nella stanza, dove il tetto è la rete | R3 |
 | **M3** | Feel | swing ora *riproducibile* (parametro), ma non ancora *rilevato* dal brano | 🟠 | R4 |
 | **M4** | Feel | nessuna scelta half-time / double-time | 🟠 | R4 |
 | **P1** | Performance | pattern unico cablato, nessuna libreria di groove | ✅ `GrooveEngine` + 4 stili | R4 |
@@ -416,16 +416,48 @@ BeatNet risolve questo con il filtro a particelle sullo stato di battuta; noi
 abbiamo deliberatamente scelto un decoder deterministico (`TD-05`), quindi serve
 l'equivalente deterministico:
 
-**Da implementare**: un **istogramma circolare di downbeat** su `beatsPerBar`
-posizioni. Ogni beat aggiunge `pDownbeat` al bin corrispondente, con decadimento
-esponenziale su ~8 battute. La battuta si allinea al bin vincente **solo** quando
-supera il secondo di un margine stabilito e per N battute consecutive. Rotazione
-dell'indice tramite `rotateBarIndex` (già presente,
-`TempoFollower.cpp:133`), mai `snapDownbeat`, così la fase del beat non viene
-toccata quando si corregge soltanto la battuta.
+**Fatto**: l'istogramma circolare c'è. Ogni battito — non solo quelli che superano
+la soglia — aggiunge la propria attivazione di downbeat al bin corrispondente
+(`BeatHypothesis::beatDownbeat`, che il decoder pubblica per ogni beat), con
+decadimento su sedici battute. La battuta ruota sul bin vincente solo quando stacca
+il secondo di 0.10 mentre aspetta di entrare e di 0.20 mentre si suona, e solo con
+abbastanza prove: dodici battiti nel primo caso, trentadue nel secondo. La rotazione
+passa da `rotateBarIndex`, mai da `snapDownbeat`, quindi la fase non viene toccata.
 
-**Accettazione**: test con downbeat corretti al 70 % e 30 % di falsi su beat 2/3/4
-→ la battuta si allinea entro 8 battute e non ruota nelle 56 successive.
+Il difetto più grosso però non era il voto: era il conteggio. `snapPhase` sposta la
+fase di colpo, e `beatInBar` avanza soltanto dentro `advance()` quando la fase supera
+1.0 — quindi ogni correzione che scavalcava il confine spostava la griglia lasciando
+indietro il conto, e la battuta finiva un quarto più in là di dove il brano la conta.
+Succedeva di continuo: mentre la parte aspetta di entrare il tracker ripiazza la
+griglia per qualsiasi errore sopra 0.04 di battito. Adesso il conto scavalca il
+confine insieme alla griglia, ma solo quando non sta suonando nessuno: a parte in
+corso muovere il conto è una battuta spostata sotto le mani di chi ascolta, e la si
+lascia all'istogramma, sulle prove.
+
+**Misurato** (`scripts/probe_bar.cpp`, trenta brani generati con l'uno al campione
+zero, esclusi i casi in cui il clock si è fermato a metà o doppio tempo):
+
+| | linea, ingresso | linea, a regime | microfono in stanza, ingresso | a regime |
+|---|---|---|---|---|
+| prima | 19/25 | 21/25 | 4/25 | 3/25 |
+| conto che segue la griglia | 21/25 | 20/25 | 8/25 | 6/25 |
+| **più l'istogramma** | **21/25** | **20/25** | **10/25** | **10/25** |
+
+Col microfono nella stanza il tetto non è il conteggio ma la rete: lo speaker
+dell'iPad non passa niente sotto i 250 Hz, quindi la grancassa e il basso — che è
+dove questo materiale segna la battuta — alla rete non arrivano mai, e l'attivazione
+di downbeat è più forte sul *tre* vero (0.593 contro 0.430) che sull'uno. Il
+passaggio da 3/25 a 10/25 è l'app che smette di essere sicura della risposta
+sbagliata: il margine dell'istogramma vale 0.34 su una mandata di linea e 0.014
+nella stanza, e sotto margine la battuta non si ruota affatto. Lì restano il TAP e la
+correzione a mano, che è quello che serve.
+
+**Accettazione**: `bar-vote` in `Tests/TestAiBeat.cpp`. Una rete finta che punta
+sull'uno vero sette battute su dieci e altrove nelle altre tre, con l'uno spostato di
+due quarti rispetto a dove il clock comincia a contare, e **niente** che superi la
+soglia di 0.40 che prima decideva la battuta. La stessa presa con una rete che lo
+dice forte e sempre stabilisce dov'è la battuta; quella sotto soglia deve finire nello
+stesso posto agli stessi campioni. Sul codice precedente non ci arriva mai.
 
 ### M3 — Nessun rilevamento di swing
 

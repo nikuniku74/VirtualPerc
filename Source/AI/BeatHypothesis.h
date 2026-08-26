@@ -68,13 +68,27 @@ struct BeatHypothesis
 
     TempoRegime regime   = TempoRegime::unknown;
 
-    /** How strongly the network called the last downbeat, 0..1. The bar is
-        decided by a vote across the four beats, and counting one vote per event
-        makes that vote a coin toss on material where the network fires on beats
-        one and three alike - which is most material, because on most records
-        those two carry the same kick. Weighted by this, "fires often but
-        weakly" stops outvoting "fires less often and means it". */
+    /** How strongly the network called the last beat it was sure enough about
+        to count as a downbeat, 0..1. Diagnostic now: the bar is decided from
+        `beatDownbeat` below, over every beat rather than over the ones that
+        cleared a threshold, and this is what the threshold was seeing. */
     float    downbeatStrength = 0.0f;
+
+    /** The downbeat activation the network produced for the beat that
+        `beatSerial` has just counted, whether or not it cleared the gate that
+        makes a beat a *downbeat* - 0..1, and the peak of a three-frame window
+        around the beat, because the downbeat curve does not always crest on the
+        same frame as the beat curve.
+
+        The gated events are the loud half of the evidence and they are also the
+        rare half: on material the network is unsure about it never crosses the
+        gate at all, and the bar is then decided by nothing. Every beat carries
+        an opinion about whether it is the one, most of them quiet, and four
+        beats' worth of quiet opinions repeated over a phrase separate the one
+        from the three far better than a handful of confident ones. This is that
+        opinion, published per beat so the count downstream can be a histogram
+        over the bar rather than a tally of events. */
+    float    beatDownbeat = 0.0f;
 
     /** What the fold is naming, and whether the buffer is yet long enough for
         that to be a decision rather than the fastest thing in view. Diagnostic:
