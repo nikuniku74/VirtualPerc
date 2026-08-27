@@ -23,6 +23,9 @@ public:
     void setIntensity (float amount) noexcept;
     /** Output level of shaker and congas together. */
     void setVolume (float v) noexcept { volume = clamp01 (v); }
+    /** Balance between the two instruments. 0 is shaker at full and congas
+        silent, 0.5 is both at full, 1 is congas at full and shaker silent. */
+    void setInstrumentMix (float mix) noexcept { instrumentMix = clamp01 (mix); }
     void setReverbAmount (float amount) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
@@ -143,6 +146,7 @@ private:
     double sampleRate = 48000.0;
     float humanization = 0.35f;
     float volume = 0.8f;
+    float instrumentMix = 0.5f;
     float reverbAmount = 0.30f;
     float grooveBpm = 120.0f;
     int groovePulses = 4;

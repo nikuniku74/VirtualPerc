@@ -64,6 +64,7 @@ private:
     void refreshBufferButtons();
     void refreshSourceButton();
     void refreshProcButton();
+    void refreshMixLabels();
 
     void setSettingsOpen (bool open);
     void paintSettings (juce::Graphics&);
@@ -137,12 +138,12 @@ private:
         number they apply to. */
     struct StageRows
     {
-        juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoLine, beats, part, meter, mic;
+        juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoNudge,
+                             tempoLine, beats, part, meter, mic;
         /** The three columns the tempo row is divided into. The number gets the
             middle one and nothing else: given the whole row it grew until it
             ran under the two buttons and out of the column. */
         juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
-        juce::Rectangle<int> barShift;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
     juce::Rectangle<int> stageArea() const;
@@ -171,6 +172,9 @@ private:
         void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                                float sliderPos, float minSliderPos, float maxSliderPos,
                                juce::Slider::SliderStyle, juce::Slider&) override;
+        void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                               float sliderPosProportional, float rotaryStartAngle,
+                               float rotaryEndAngle, juce::Slider&) override;
     };
 
     /** Invisible hit target over the BPM, the quarters and the input meter.
@@ -194,7 +198,6 @@ private:
 
     juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
     juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
-    juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
     juce::TextButton followButton { "SEGUI" };
@@ -230,9 +233,9 @@ private:
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
-    juce::Slider shakerVolumeSlider;
-    juce::Label  shakerVolumeLabel { {}, "VOLUME" };
-    juce::Label  shakerVolumeValue { {}, "100%" };
+    juce::Slider mixSlider;
+    juce::Label  mixLabel { {}, "SHAKER" };
+    juce::Label  mixValue { {}, "CONGAS" };
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

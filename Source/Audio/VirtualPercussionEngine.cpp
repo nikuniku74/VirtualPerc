@@ -827,14 +827,6 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             tracker.setUserTempo (cfg.userBpm.load (std::memory_order_relaxed),
                                   cfg.userBpmGen.load (std::memory_order_relaxed));
     }
-    {
-        const int nudge = cfg.barNudge.load (std::memory_order_relaxed);
-        if (nudge != seenBarNudge)
-        {
-            tracker.nudgeBar (nudge - seenBarNudge);
-            seenBarNudge = nudge;
-        }
-    }
     const bool speaker = cfg.followSource.load (std::memory_order_relaxed)
                          == static_cast<int> (FollowSource::speaker);
     tracker.setSpeakerFollow (speaker);
@@ -847,6 +839,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                   + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
+    percussion.setInstrumentMix (cfg.instrumentMix.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
     // The two instruments switch independently. `setEnabled` is the master
     // gate, so it may only come off once both are off - otherwise turning the

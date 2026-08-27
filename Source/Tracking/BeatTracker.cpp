@@ -248,24 +248,20 @@ void BeatTracker::tap (double timeSeconds) noexcept
     const bool startsGroup = groupIdle || tapIoiFilled == 0;
     lastTapSec = timeSeconds;
 
-    // The tap is the one.
+    // The first tap of a group is the one.
     //
     // A single tap, on its own, does not say anything about the tempo - three
     // intervals are needed for that - but it says exactly where the bar starts,
     // and that is the thing the analysis cannot work out for itself. So the
-    // first tap of a group declares the downbeat whenever there is already a
-    // tempo to hang it on, and the count-in below keeps the same meaning: tap
-    // one-two-three-four and the one was the first of them.
-    if (startsGroup && ! tapEstablished && heldBpm > 50.0f
-        && (currentState == TrackingState::following
-            || currentState == TrackingState::lowConfidence
-            || currentState == TrackingState::recovering))
+    // first tap of a group declares the downbeat whether or not a tempo is
+    // already held: tap one-two-three-four and the one was the first of them.
+    if (startsGroup)
     {
         follower.snapBeat (0, 0.0f);
         holdBarDecision();
         barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
         // Deliberately not tapHold/tapEstablished: those hand the tempo to the
-        // tapper, and this tap was not about the tempo.
+        // tapper, and this tap may not have been about the tempo.
     }
 
     if (tapIoiFilled < 3)
@@ -533,12 +529,6 @@ void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples) no
         autoHoldSamples = 0;
         neural.setUserOctave (autoOctave);
     }
-}
-
-void BeatTracker::nudgeBar (int beats) noexcept
-{
-    follower.rotateBarIndex (beats);
-    holdBarDecision();
 }
 
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
@@ -887,7 +877,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     else if (! tapHold && tempoFollow && periodic && loudEnough && nnConf > 0.28f
              && currentState != TrackingState::listening
              && currentState != TrackingState::idle
-             && ! tapEstablished)
+             && ! tapEstablished
+             && downbeatHoldSamples <= 0)
     {
         // With nothing on the grid, put the grid where the song is.
         //
@@ -1071,10 +1062,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         {
             if (out.clock.pulseIndex[i] != 0)
                 continue;
-            // MIXER has a trustworthy bar and enters on its one. IPAD has a
-            // trustworthy pulse but not a trustworthy one, so waiting for that
-            // arbitrary count only adds zero to three beats of latency.
-            if (speakerFollow || out.clock.pulseBeatInBar[i] == 0 || timedOut)
+            // The first quarter lighting is the clock's one - what the four
+            // dots show - not the network's downbeat guess. Coming in on 2, 3
+            // or 4 is the part starting in the middle of the bar.
+            if (out.clock.pulseBeatInBar[i] == 0 || timedOut)
             {
                 onEntryBeat = true;
                 break;

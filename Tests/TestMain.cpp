@@ -428,6 +428,47 @@ int main()
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, block, 1);
+        feedSilence (eng, sr, block, 1.0f);
+        const float before = eng.snapshot().barPhase;
+        eng.tapAt (1.0);
+        feedSilence (eng, sr, block, 0.05f);
+        const auto after = eng.snapshot();
+        std::printf ("first-tap-quarter  before=%.3f  after=%.3f  declared=%d\n",
+                     static_cast<double> (before),
+                     static_cast<double> (after.barPhase),
+                     after.barDeclared ? 1 : 0);
+        expect (before > 0.20f,
+                "the clock had left beat one before the tap");
+        expect (after.barPhase < 0.10f && after.barDeclared,
+                "the first tap of a tempo group starts the first quarter");
+    }
+
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.start();
+        eng.tapAt (0.0);
+        eng.tapAt (0.5);
+        eng.tapAt (1.0);
+        eng.tapAt (1.5);
+        feedSilence (eng, sr, block, 2.2f);
+        const float before = eng.snapshot().barPhase;
+        eng.tapAt (3.8);
+        feedSilence (eng, sr, block, 0.05f);
+        const auto after = eng.snapshot();
+        std::printf ("retap-quarter  before=%.3f  after=%.3f  declared=%d\n",
+                     static_cast<double> (before),
+                     static_cast<double> (after.barPhase),
+                     after.barDeclared ? 1 : 0);
+        expect (before > 0.15f,
+                "a later group starts away from beat one");
+        expect (after.barPhase < 0.10f && after.barDeclared,
+                "the first tap of a new group is the one, even after a count-in");
+    }
+
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
         eng.start();
         eng.tapAt (0.0);
         eng.tapAt (0.5);

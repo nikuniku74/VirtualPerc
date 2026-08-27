@@ -50,13 +50,6 @@ public:
     void setTempoOctave (int octaves) noexcept;
     void setTempoOctaveAuto (bool on) noexcept;
 
-    /** Move the bar on by whole beats, because the listener says so. Clears the
-        tally and holds the automatic alignment off for a while afterwards: the
-        evidence that produced the current bar is exactly the evidence that
-        has just been overruled, so leaving it in place would let it undo the
-        correction within a phrase. */
-    void nudgeBar (int beats) noexcept;
-
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
     /** The analysis input has changed character - an empty room becoming a band

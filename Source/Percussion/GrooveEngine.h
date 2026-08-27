@@ -72,7 +72,8 @@ public:
         who is not trying. Drives velocity spread, micro-timing and ghosts. */
     void setHumanize (float amount) noexcept;
 
-    /** 0 = straight eighths, 1 = the off-eighth sits on the triplet. */
+    /** 0 = straight eighths, 1 = triplet feel: the off-eighth sits two
+        thirds of the way through the beat, and the 16ths move with it. */
     void setSwing (float amount) noexcept;
 
     /** Drives how busy the part is: ghost notes, and whether a bar takes a

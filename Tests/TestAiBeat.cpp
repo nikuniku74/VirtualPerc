@@ -1222,6 +1222,23 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (std::fabs (onDelay) < 1.0e-4f && offDelay > 0.15f && offDelay < 0.18f,
                 "swing moves the off-eighth onto the triplet and leaves the pulse alone");
 
+        // The same warp has to carry the 16ths with it. Leaving "e" and "a"
+        // on the straight grid while "&" jumps to the triplet is why a swung
+        // shaker on sixteenths sounded broken rather than shuffled.
+        gr.setShakerSubdivision (vp::Subdivision::sixteenth);
+        auto delayAt = [&gr, &ev] (int step) -> float
+        {
+            const int n = gr.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
+            return n > 0 ? ev[0].delayBeats : -1.0f;
+        };
+        const float eDelay = delayAt (1);
+        const float aDelay = delayAt (3);
+        std::printf ("groove-swing-16  e=%.4f  and=%.4f  a=%.4f beat\n",
+                     static_cast<double> (eDelay), static_cast<double> (offDelay),
+                     static_cast<double> (aDelay));
+        expect (eDelay > 0.07f && eDelay < 0.10f && aDelay > 0.07f && aDelay < 0.10f,
+                "16ths sit on the warped 8th-swing grid, not on the straight 16ths");
+
         gr.prepare (0x99u);
         gr.setSwing (0.0f);
         gr.setHumanize (0.8f);
@@ -1245,6 +1262,80 @@ void vpRunAiBeatTests (int& passed, int& failed)
                      static_cast<double> (dMin), static_cast<double> (dMax));
         expect (vMax - vMin > 0.05f && dMax - dMin > 1.0e-4f && dMin >= 0.0f,
                 "humanisation moves both the weight and the timing, and never asks to play early");
+    }
+
+    {
+        // Full swing has to be *heard* on the off-eighth even when the clock
+        // is running sixteenths. Scheduling the delay was not enough: the next
+        // 16th pulse released the same stroke before the delayed one sounded,
+        // so the shuffle never left the engine.
+        constexpr double sr = 48000.0;
+        constexpr float bpm = 120.0f;
+        const int beatN = static_cast<int> (sr * 60.0 / static_cast<double> (bpm));
+        const int sixteenth = beatN / 4;
+        const int block = 256;
+
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setReverbAmount (0.0f);
+        perc.setVolume (1.0f);
+        perc.setHumanization (0.0f);
+        perc.setIntensity (0.0f);
+        perc.setSwing (1.0f);
+        perc.setCongasEnabled (false);
+        perc.setShakerEnabled (true);
+        perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+        perc.setGroove (bpm, 4);
+        perc.setGrooveStyle (vp::GrooveStyle::marcha);
+
+        std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
+        std::vector<float> audio;
+        const int total = beatN + sixteenth * 2;
+        audio.reserve (static_cast<size_t> (total + block));
+
+        vp::ClockTick idle;
+        idle.tempoBpm = bpm;
+
+        int sample = 0;
+        int nextPulseAt = 0;
+        int pulse = 0;
+        while (sample < total)
+        {
+            vp::ClockTick tick = idle;
+            if (pulse < 8 && nextPulseAt >= sample && nextPulseAt < sample + block)
+            {
+                tick.pulsesFired = 1;
+                tick.pulseOffset[0] = nextPulseAt - sample;
+                tick.pulseIndex[0] = pulse % 4;
+                tick.pulseBeatInBar[0] = (pulse / 4) % 4;
+                tick.barPulse[0] = pulse;
+                ++pulse;
+                nextPulseAt += sixteenth;
+            }
+            perc.render (L.data(), R.data(), block, tick, true);
+            audio.insert (audio.end(), L.begin(), L.end());
+            sample += block;
+        }
+
+        auto energyAround = [&] (double beats, int halfWin) -> double
+        {
+            const int centre = static_cast<int> (beats * static_cast<double> (beatN));
+            double e = 0.0;
+            const int n = static_cast<int> (audio.size());
+            for (int i = std::max (0, centre - halfWin); i < std::min (n, centre + halfWin); ++i)
+            {
+                const double x = static_cast<double> (audio[static_cast<size_t> (i)]);
+                e += x * x;
+            }
+            return e;
+        };
+        const int win = sixteenth / 5;
+        const double eStraight = energyAround (0.50, win);
+        const double eSwung = energyAround (2.0 / 3.0, win);
+        std::printf ("perc-swing-heard  straight=%.4f  triplet=%.4f\n",
+                     eStraight, eSwung);
+        expect (eSwung > eStraight * 1.8,
+                "full swing is heard on the triplet, not cancelled by the next 16th");
     }
 
     {
@@ -1305,6 +1396,52 @@ void vpRunAiBeatTests (int& passed, int& failed)
        #endif
         expect (energy > 1.0e-6 && rel > 0.05,
                 "two strokes of the same kind are different takes, not the same buffer twice");
+    }
+
+    {
+        // One balance, not two volumes. At the centre both instruments sit at
+        // full; past it the quieter side falls and the louder side stays.
+        constexpr double sr = 48000.0;
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+        perc.setVolume (1.0f);
+
+        auto energyOf = [&perc, sr] (vp::Stroke s) -> double
+        {
+            perc.clearVoices();
+            const int n = static_cast<int> (sr * 0.4);
+            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+            vp::ClockTick silent;
+            perc.triggerForTest (s, 0.9f, 0);
+            perc.render (l.data(), r.data(), n, silent, true);
+            double e = 0.0;
+            for (float x : l)
+                e += static_cast<double> (x) * x;
+            return e;
+        };
+
+        perc.setInstrumentMix (0.5f);
+        const double shMid = energyOf (vp::Stroke::shakerDown);
+        const double cgMid = energyOf (vp::Stroke::tumba);
+
+        perc.setInstrumentMix (1.0f);
+        const double shCongas = energyOf (vp::Stroke::shakerDown);
+        const double cgCongas = energyOf (vp::Stroke::tumba);
+
+        perc.setInstrumentMix (0.0f);
+        const double shShaker = energyOf (vp::Stroke::shakerDown);
+        const double cgShaker = energyOf (vp::Stroke::tumba);
+
+        std::printf ("instrument-mix  mid sh=%.4f cg=%.4f  congas sh=%.4f cg=%.4f  shaker sh=%.4f cg=%.4f\n",
+                     shMid, cgMid, shCongas, cgCongas, shShaker, cgShaker);
+        expect (shMid > 1.0e-6 && cgMid > 1.0e-6,
+                "at the centre both instruments still sound");
+        expect (shCongas < shMid * 0.05 && cgCongas > cgMid * 0.80,
+                "full congas silences the shaker and leaves the drums");
+        expect (cgShaker < cgMid * 0.05 && shShaker > shMid * 0.80,
+                "full shaker silences the drums and leaves the shaker");
     }
 
     {
@@ -2025,10 +2162,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (! tapped || (sawDeclared && ! declaredLater),
                 "and the one is marked for a moment, only just after the tap");
 
-        // Through the iPad microphone the network's downbeat choice is at
-        // chance (see probe_bar), so waiting for that arbitrary "one" after
-        // START only adds up to three beats of latency. The beat pulse itself
-        // is reliable enough to quantize the entry.
+        // START waits for the first quarter to light - the clock's one, which
+        // is what the four dots show - and not for the next any-beat. Coming
+        // in on 2, 3 or 4 is the thing a listener hears as the part starting
+        // in the middle of the bar.
         {
             const int shortN = static_cast<int> (sr * 24.0);
             std::vector<float> startSong (static_cast<size_t> (shortN), 0.0f);
@@ -2041,6 +2178,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 static_cast<int> (vp::FollowSource::speaker));
 
             int startSample = -1, audibleSample = -1;
+            float audiblePhase = -1.0f;
             int startBlocks = 0;
             for (int p = 0; p + block <= shortN; p += block)
             {
@@ -2059,6 +2197,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 else if (startSample >= 0 && s.percussionAudible)
                 {
                     audibleSample = p;
+                    audiblePhase = s.barPhase;
                     break;
                 }
 
@@ -2069,9 +2208,11 @@ void vpRunAiBeatTests (int& passed, int& failed)
             const double entryDelay = audibleSample >= startSample && startSample >= 0
                                           ? static_cast<double> (audibleSample - startSample) / sr
                                           : 99.0;
-            std::printf ("ipad-entry  delay=%.3f s\n", entryDelay);
-            expect (entryDelay < 0.75,
-                    "IPAD START enters on the next reliable beat, not an arbitrary downbeat");
+            std::printf ("ipad-entry  delay=%.3f s  phase=%.3f\n",
+                         entryDelay, static_cast<double> (audiblePhase));
+            expect (startSample >= 0 && audibleSample >= 0
+                        && (audiblePhase < 0.08f || audiblePhase > 0.98f),
+                    "START enters when the first quarter lights, not on the next any-beat");
         }
     }
 

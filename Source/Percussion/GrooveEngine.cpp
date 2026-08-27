@@ -628,11 +628,24 @@ float GrooveEngine::humanVelocity (float base) noexcept
 
 float GrooveEngine::humanDelay (int step) noexcept
 {
-    // Swing first: it is a feel, not an error, so it does not scale with
-    // humanize and it lands only on the off-eighths.
+    // Swing is a warp of the beat, not a late off-eighth. The "&" sits on
+    // the triplet at full amount; "e" and "a" ride the same stretch so a
+    // 16th-grid part shuffles instead of fighting the delayed 8ths.
     float delay = 0.0f;
-    if ((step % 4) == 2)
-        delay += swing * kFullSwingBeats;
+    if (swing > 1.0e-6f)
+    {
+        const int s = ((step % 4) + 4) % 4;
+        const float d = swing * kFullSwingBeats;
+        const float u = 0.25f * static_cast<float> (s);
+        float t = u;
+        if (s == 0)
+            t = 0.0f;
+        else if (u < 0.5f)
+            t = u * (0.5f + d) / 0.5f;
+        else
+            t = (0.5f + d) + (u - 0.5f) * (0.5f - d) / 0.5f;
+        delay += std::max (0.0f, t - u);
+    }
 
     // Then the part that is an error. Biased late by half its spread so the
     // result never asks to be scheduled before the grid position - the clock

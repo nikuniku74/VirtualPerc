@@ -233,6 +233,9 @@ struct EngineSettings
 {
     std::atomic<float> masterVolume    { 0.90f };
     std::atomic<float> percussionVolume{ 1.00f };
+    /** Balance between the two instruments. 0 is shaker at full and congas
+        silent, 0.5 is both at full, 1 is congas at full and shaker silent. */
+    std::atomic<float> instrumentMix   { 0.50f };
     /** Linear gain on the mixed input, before leak subtraction and makeup.
         0 silences the tracker; 2 is +6 dB. Does not touch the output. */
     std::atomic<float> inputGain       { 1.00f };
@@ -262,11 +265,6 @@ struct EngineSettings
     // there is better than leaving every track that reads at the wrong level
     // waiting for a tap. A tap on the halve or double button takes it back.
     std::atomic<bool>  tempoOctaveAuto { true };
-    // Counter, not a position: every increment moves the bar on by one beat.
-    // Where beat one is cannot be read reliably from what the network gives us
-    // - see docs/STATUS.md - so the listener gets to say, and saying it has to
-    // be one tap however wrong the analysis currently is.
-    std::atomic<int>   barNudge        { 0 };
     // SEGUI (true, default) lets BeatNet / tap-follow / mixer analysis drive
     // the clock. FISSO freezes a BPM and ignores neural tempo updates; tap
     // and the on-screen nudge still write the number. Generation bumps when

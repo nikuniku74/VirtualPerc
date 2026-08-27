@@ -150,7 +150,6 @@ private:
     std::atomic<bool>  lastLevelSettled { false };
     std::atomic<float> lastFitResidual { 1.0f };
     std::atomic<float> lastFitCoverage { 0.0f };
-    int seenBarNudge = 0;
 
     std::atomic<int>   lastStyle { 0 };
     std::atomic<float> lastStyleConf { 0.0f };

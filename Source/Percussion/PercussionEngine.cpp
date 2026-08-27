@@ -616,7 +616,7 @@ void PercussionEngine::releaseStroke (Stroke stroke) noexcept
 {
     const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
     for (auto& v : voices)
-        if (v.active && v.stroke == stroke && v.fadeStep <= 0.0f)
+        if (v.active && v.stroke == stroke && v.fadeStep <= 0.0f && v.pos >= 0)
             v.fadeStep = step;
 }
 
@@ -770,9 +770,44 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         }
     }
 
+    // Steal at the moment the new stroke is heard, not when it was queued.
+    // A swung 16th is scheduled on the previous pulse and starts after the
+    // next one has already fired; releasing then deleted it before it sounded.
+    {
+        const float steal = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
+        for (int i = 0; i < kVoices; ++i)
+        {
+            auto& v = voices[i];
+            if (! v.active || v.sample == nullptr)
+                continue;
+            int startAt = 0;
+            if (v.pos >= 0)
+                continue;
+            if (v.pos + numSamples <= 0)
+                continue;
+            startAt = -v.pos;
+            for (int j = 0; j < kVoices; ++j)
+            {
+                if (i == j)
+                    continue;
+                auto& o = voices[j];
+                if (! o.active || o.stroke != v.stroke || o.fadeStep > 0.0f)
+                    continue;
+                const bool earlier = o.pos >= 0
+                                  || (o.pos < 0 && -o.pos < startAt);
+                if (earlier)
+                    o.fadeStep = steal;
+            }
+        }
+    }
+
     int active = 0;
     int releasing = 0;
-    const float g = volume;
+    // Centre: both sit at full. Past the centre the quieter side falls
+    // linearly to silence; the louder side stays at one, so moving the mix
+    // never makes the instrument you are turning toward quieter.
+    const float shakerG = instrumentMix <= 0.5f ? 1.0f : 2.0f * (1.0f - instrumentMix);
+    const float congaG  = instrumentMix >= 0.5f ? 1.0f : 2.0f * instrumentMix;
     for (auto& v : voices)
     {
         if (! v.active || v.sample == nullptr)
@@ -780,6 +815,8 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         ++active;
         if (v.fadeStep > 0.0f)
             ++releasing;
+        const bool shaker = v.stroke == Stroke::shakerDown || v.stroke == Stroke::shakerUp;
+        const float g = volume * (shaker ? shakerG : congaG);
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));

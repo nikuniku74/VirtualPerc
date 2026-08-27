@@ -155,6 +155,8 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
 
 int MainComponent::AppLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
 {
+    if (slider.isRotary())
+        return juce::jmax (8, juce::jmin (slider.getWidth(), slider.getHeight()) / 6);
     return slider.isVertical() ? 13 : 18;
 }
 
@@ -233,6 +235,58 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
     g.fillEllipse (sliderPos - tr + 2.6f, cy - tr + 2.6f, (tr - 2.6f) * 2.0f, (tr - 2.6f) * 2.0f);
 }
 
+void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+                                                      float sliderPos, float rotaryStartAngle,
+                                                      float rotaryEndAngle, juce::Slider& slider)
+{
+    auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (3.0f);
+    const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+    if (radius < 6.0f)
+        return;
+
+    const auto centre = bounds.getCentre();
+    const float toAngle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+    const float lineW = juce::jlimit (4.5f, 9.0f, radius * 0.18f);
+    const float arcRadius = radius - lineW * 0.5f;
+    const float alpha = slider.isEnabled() ? 1.0f : 0.45f;
+
+    juce::Path track;
+    track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                         rotaryStartAngle, rotaryEndAngle, true);
+    g.setColour (text().withAlpha (0.10f * alpha));
+    g.strokePath (track, juce::PathStrokeType (lineW + 3.0f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+    g.setColour (sliderTrack().withMultipliedAlpha (alpha));
+    g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+
+    if (slider.isEnabled() && sliderPos > 0.002f)
+    {
+        juce::Path value;
+        value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                             rotaryStartAngle, toAngle, true);
+        g.setColour (fuchsia());
+        g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                                   juce::PathStrokeType::rounded));
+    }
+
+    const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
+    paintRadial (g, centre, innerR * 1.7f, fuchsia(), 0.14f * alpha);
+    g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
+    g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
+    g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
+    g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
+
+    const float pointerLen = innerR * 0.70f;
+    const float pointerW = juce::jlimit (2.4f, 4.0f, innerR * 0.14f);
+    const auto tip = juce::Point<float> (
+        centre.x + pointerLen * std::cos (toAngle - juce::MathConstants<float>::halfPi),
+        centre.y + pointerLen * std::sin (toAngle - juce::MathConstants<float>::halfPi));
+    g.setColour (fuchsia().withMultipliedAlpha (alpha));
+    g.drawLine (centre.x, centre.y, tip.x, tip.y, pointerW);
+    g.fillEllipse (centre.x - pointerW, centre.y - pointerW, pointerW * 2.0f, pointerW * 2.0f);
+}
+
 MainComponent::MainComponent()
 {
     darkMode = juce::Desktop::getInstance().isDarkModeActive();
@@ -287,15 +341,6 @@ MainComponent::MainComponent()
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
-    setupBtn (barButton, ink());
-
-    // Where beat one is cannot be read reliably from what the network gives us,
-    // so this moves it on by one. Same answer as the octave pair: a measurement
-    // that will not come out is offered to the listener instead of guessed at.
-    barButton.onClick = [this]
-    {
-        engine.settings().barNudge.fetch_add (1);
-    };
 
     // Half and double. The one part of the metrical level the signal does not
     // decide - full eighths under a slow tempo read as well at the double - is
@@ -407,7 +452,12 @@ MainComponent::MainComponent()
                        juce::dontSendNotification);
 
         addAndMakeVisible (s);
-        s.setSliderStyle (juce::Slider::LinearVertical);
+        // Vertical drag, not circular: the old faders were up/down, and a
+        // finger cannot describe an arc on a 50-point disc.
+        s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+        s.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
+                               juce::MathConstants<float>::pi * 2.8f, true);
+        s.setMouseDragSensitivity (180);
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         s.setRange (minV, maxV, 0.01);
         s.setValue (initial, juce::dontSendNotification);
@@ -425,9 +475,17 @@ MainComponent::MainComponent()
         s.onDragEnd = [this] { savePrefs(); };
     };
 
-    setupFader (shakerVolumeSlider, shakerVolumeLabel, shakerVolumeValue, "VOLUME",
-                0.0, 1.0, 1.00, 1.0,
-                [this] (float v) { engine.settings().percussionVolume.store (v); });
+    setupFader (mixSlider, mixLabel, mixValue, "SHAKER",
+                0.0, 1.0, 0.50, 0.50,
+                [this] (float v) { engine.settings().instrumentMix.store (v); });
+    mixValue.setText ("CONGAS", juce::dontSendNotification);
+    mixSlider.onValueChange = [this]
+    {
+        const float v = static_cast<float> (mixSlider.getValue());
+        engine.settings().instrumentMix.store (v);
+        refreshMixLabels();
+        savePrefs (false);
+    };
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 2.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().inputGain.store (v); });
@@ -514,6 +572,7 @@ MainComponent::MainComponent()
     engine.settings().swing.store (0.00f);
     engine.settings().masterVolume.store (0.90f);
     engine.settings().percussionVolume.store (1.00f);
+    engine.settings().instrumentMix.store (0.50f);
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
@@ -587,7 +646,7 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &halveButton, &doubleButton, &barButton,
+        &styleBossa, &halveButton, &doubleButton,
         &settingsButton, &settingsClose, &procButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -607,8 +666,7 @@ void MainComponent::refreshThemeColours()
     swingValue.setColour (juce::Label::textColourId, fuchsia());
     intensityLabel.setColour (juce::Label::textColourId, mute());
     intensityValue.setColour (juce::Label::textColourId, fuchsia());
-    shakerVolumeLabel.setColour (juce::Label::textColourId, mute());
-    shakerVolumeValue.setColour (juce::Label::textColourId, fuchsia());
+    refreshMixLabels();
     inputGainLabel.setColour (juce::Label::textColourId, mute());
     inputGainValue.setColour (juce::Label::textColourId, fuchsia());
     bpmEdit.setColour (juce::Label::textColourId, fuchsia());
@@ -1009,6 +1067,22 @@ void MainComponent::refreshSourceButton()
     paintChoice (sourceButton, speaker);
 }
 
+void MainComponent::refreshMixLabels()
+{
+    mixLabel.setText ("SHAKER", juce::dontSendNotification);
+    mixValue.setText ("CONGAS", juce::dontSendNotification);
+    const float mix = static_cast<float> (mixSlider.getValue());
+    // The favoured pole takes the accent colour so the knob reads as a
+    // balance, not as a volume with a number on top.
+    mixLabel.setColour (juce::Label::textColourId, mix < 0.45f ? fuchsia() : mute());
+    mixValue.setColour (juce::Label::textColourId, mix > 0.55f ? fuchsia() : mute());
+    if (mix >= 0.45f && mix <= 0.55f)
+    {
+        mixLabel.setColour (juce::Label::textColourId, fuchsia());
+        mixValue.setColour (juce::Label::textColourId, fuchsia());
+    }
+}
+
 void MainComponent::setSettingsOpen (bool open)
 {
     settingsButton.setToggleState (open, juce::dontSendNotification);
@@ -1091,11 +1165,10 @@ void MainComponent::loadPrefs()
     engine.settings().congasEnabled.store (
         prefs->getBoolValue ("congasEnabled", engine.settings().congasEnabled.load()));
 
-    const float vol = clamp01 (prefs->getDoubleValue ("percussionVolume", 1.0), 1.0);
-    engine.settings().percussionVolume.store (vol);
-    shakerVolumeSlider.setValue (static_cast<double> (vol), juce::dontSendNotification);
-    shakerVolumeValue.setText (juce::String (juce::roundToInt (static_cast<double> (vol) * 100.0)) + "%",
-                               juce::dontSendNotification);
+    const float mix = clamp01 (prefs->getDoubleValue ("instrumentMix", 0.50), 0.50);
+    engine.settings().instrumentMix.store (mix);
+    mixSlider.setValue (static_cast<double> (mix), juce::dontSendNotification);
+    refreshMixLabels();
 
     const float inGain = juce::jlimit (0.0, 2.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
@@ -1147,8 +1220,8 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());
     prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
-    prefs->setValue ("percussionVolume",
-                     static_cast<double> (engine.settings().percussionVolume.load()));
+    prefs->setValue ("instrumentMix",
+                     static_cast<double> (engine.settings().instrumentMix.load()));
     prefs->setValue ("inputGain",
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
@@ -1483,7 +1556,11 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // without this the meter and the microphone line simply fall off the end.
     const int naturalBpm = juce::jlimit (72, 156, area.getHeight() / 4);
     const int naturalBeats = juce::jlimit (52, 96, area.getHeight() / 6);
-    const int natural = 18 + 6 + 18 + 6 + naturalBpm + 16 + 36 + 18 + 10
+    const bool follow = engine.settings().tempoFollow.load();
+    // SEGUI/FISSO live on the status row now, so the old 36-point mode row is
+    // only kept for the ± BPM nudge that appears under FISSO.
+    const int natural = 18 + 6 + 36 + 6 + naturalBpm + 16
+                        + (follow ? 0 : 28) + 18 + 10
                         + naturalBeats + 20 + 10 + 10 + 18;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
@@ -1503,7 +1580,12 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     StageRows s;
     s.title = area.removeFromTop (px (18));
     area.removeFromTop (px (6));
-    s.pill = area.removeFromTop (px (18));
+    s.pill = area.removeFromTop (px (36));
+    {
+        const int btnW = juce::jlimit (56, 84, s.pill.getWidth() / 6);
+        s.tempoMode = s.pill.removeFromRight (btnW * 2 + 4);
+        s.pill.removeFromRight (8); // keep the status line off the two buttons
+    }
     area.removeFromTop (px (6));
     s.bpm = area.removeFromTop (bpmH);
     {
@@ -1517,13 +1599,11 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
         s.bpmNumber = block.reduced (8, 0);
     }
     s.bpmLabel = area.removeFromTop (px (16));
-    s.tempoMode = area.removeFromTop (px (36));
+    if (! follow)
+        s.tempoNudge = area.removeFromTop (px (28));
     s.tempoLine = area.removeFromTop (px (18));
     area.removeFromTop (px (10));
     s.beats = area.removeFromTop (beatsH);
-    // Beside the dots, because that is what it moves.
-    s.barShift = s.beats.removeFromRight (juce::jmin (96, s.beats.getWidth() / 4))
-                        .reduced (2, beatsH / 4);
     s.part = area.removeFromTop (px (20));
     area.removeFromTop (px (10));
     s.meter = area.removeFromTop (px (10)).reduced (juce::jmax (0, area.getWidth() / 6), 2);
@@ -1599,23 +1679,24 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     }
 
     {
-        // Two faders on the left: output of shaker/congas, then how loud the
-        // tracker hears the room or the aux. The three sends sit beside them.
+        // Mix on the left: SHAKER / CONGAS still name the two poles, equal
+        // when the pointer is at noon. Then how loud the tracker hears the
+        // room or the aux.
         auto body = card (area, "FEEL");
-        const int nFaders = 5;
-        const int faderW = body.getWidth() / nFaders;
-        auto placeFader = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
+        const int nKnobs = 5;
+        const int knobColW = body.getWidth() / nKnobs;
+        auto placeKnob = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
         {
-            auto col = body.removeFromLeft (faderW);
+            auto col = body.removeFromLeft (knobColW);
             val.setBounds (col.removeFromTop (18));
             name.setBounds (col.removeFromBottom (16));
-            s.setBounds (col.reduced (4, 2));
+            s.setBounds (col.reduced (2, 2));
         };
-        placeFader (shakerVolumeValue, shakerVolumeLabel, shakerVolumeSlider);
-        placeFader (inputGainValue, inputGainLabel, inputGainSlider);
-        placeFader (swingValue, swingLabel, swingSlider);
-        placeFader (intensityValue, intensityLabel, intensitySlider);
-        placeFader (reverbValue, reverbLabel, reverbSlider);
+        placeKnob (mixValue, mixLabel, mixSlider);
+        placeKnob (inputGainValue, inputGainLabel, inputGainSlider);
+        placeKnob (swingValue, swingLabel, swingSlider);
+        placeKnob (intensityValue, intensityLabel, intensitySlider);
+        placeKnob (reverbValue, reverbLabel, reverbSlider);
     }
 
     swingSlider.setVisible (true);
@@ -1627,9 +1708,9 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     reverbSlider.setVisible (true);
     reverbLabel.setVisible (true);
     reverbValue.setVisible (true);
-    shakerVolumeSlider.setVisible (true);
-    shakerVolumeLabel.setVisible (true);
-    shakerVolumeValue.setVisible (true);
+    mixSlider.setVisible (true);
+    mixLabel.setVisible (true);
+    mixValue.setVisible (true);
     inputGainSlider.setVisible (true);
     inputGainLabel.setVisible (true);
     inputGainValue.setVisible (true);
@@ -1666,7 +1747,6 @@ void MainComponent::resized()
     const auto rows = stageRows (stage);
     halveButton.setBounds (rows.octaveDown);
     doubleButton.setBounds (rows.octaveUp);
-    barButton.setBounds (rows.barShift);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
                                                          stage.getRight(), rows.meter.getBottom());
@@ -1675,16 +1755,17 @@ void MainComponent::resized()
     {
         const bool follow = engine.settings().tempoFollow.load();
         auto mode = rows.tempoMode;
-        const int btnW = juce::jlimit (72, 108, mode.getWidth() / 5);
-        const int nudgeW = juce::jmax (36, mode.getHeight() - 4);
-        const int editW = 78;
-        const int total = btnW * 2 + (follow ? 0 : nudgeW * 2 + editW + 12);
-        auto block = mode.withSizeKeepingCentre (juce::jmin (mode.getWidth(), total), mode.getHeight());
-        followButton.setBounds (block.removeFromLeft (btnW).reduced (3, 2));
-        fixedButton.setBounds (block.removeFromLeft (btnW).reduced (3, 2));
-        if (! follow)
+        const int btnW = juce::jmax (1, mode.getWidth() / 2);
+        followButton.setBounds (mode.removeFromLeft (btnW).reduced (2, 2));
+        fixedButton.setBounds (mode.reduced (2, 2));
+        if (! follow && ! rows.tempoNudge.isEmpty())
         {
-            block.removeFromLeft (8);
+            auto nudge = rows.tempoNudge;
+            const int nudgeW = juce::jmax (36, nudge.getHeight());
+            const int editW = 78;
+            const int total = nudgeW * 2 + editW + 8;
+            auto block = nudge.withSizeKeepingCentre (juce::jmin (nudge.getWidth(), total),
+                                                      nudge.getHeight());
             bpmNudgeDown.setBounds (block.removeFromLeft (nudgeW).reduced (2));
             bpmEdit.setBounds (block.removeFromLeft (editW).reduced (2, 4));
             bpmNudgeUp.setBounds (block.removeFromLeft (nudgeW).reduced (2));
@@ -1748,7 +1829,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float gapDot = 7.0f;
         const float totalW = juce::jmin (static_cast<float> (rows.pill.getWidth()),
                                          dotR * 2.0f + gapDot + textW);
-        const float x0 = static_cast<float> (rows.pill.getCentreX()) - totalW * 0.5f;
+        // Left of the leftover pill so SEGUI/FISSO own the right edge.
+        const float x0 = static_cast<float> (rows.pill.getX());
         const float cy = static_cast<float> (rows.pill.getCentreY());
         const juce::Point<float> dot { x0 + dotR, cy };
         if (hot)
@@ -1845,7 +1927,10 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // before START, not after.
     beatStrip = rows.beats;
     {
-        const int bandW = juce::jmin (rows.beats.getWidth(), 400);
+        // A compact cluster, centred in the row: the four quarters are a
+        // count, not a full-width ruler.
+        const int bandW = juce::jmin (rows.beats.getWidth(),
+                                      juce::jmax (200, rows.beats.getHeight() * 6));
         const auto band = rows.beats.withSizeKeepingCentre (bandW, rows.beats.getHeight());
         // The lit beat wears a halo of 1.8 radii, so the radius has to leave
         // room for it inside the row - otherwise the glow spills onto the line
@@ -1854,7 +1939,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float y = static_cast<float> (band.getCentreY());
         const float step = static_cast<float> (band.getWidth()) / 4.0f;
         const int beatIdx = juce::jlimit (0, 3, static_cast<int> (snap.barPhase * 4.0f));
-        const bool running = snap.bpm > 40.0f;
+        const bool running = snap.bpm > 40.0f || snap.barDeclared;
 
         g.setColour (text().withAlpha (0.10f));
         g.fillRoundedRectangle (static_cast<float> (band.getX()) + step * 0.5f, y - 1.0f,
