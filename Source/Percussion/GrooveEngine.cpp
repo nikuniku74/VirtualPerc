@@ -19,8 +19,12 @@ namespace
     // What makes this a marcha and not a list of conga hits is the last two
     // entries: open, open on 4 and the "and" of 4, together, pulling into the
     // next bar. Everything before them is there to leave room for that.
+    //
+    // The heel-toe pair that opens the bar starts on the "e" of 1 rather than
+    // on the one: the band has the downbeat, and a muffled stroke underneath it
+    // is inaudible anyway.
     constexpr Hit kMarchaA[] = {
-        {  0, Stroke::heel,  0.34f },
+        {  1, Stroke::heel,  0.34f },
         {  2, Stroke::toe,   0.30f },
         {  4, Stroke::slap,  0.94f },   // the crack on 2
         {  6, Stroke::toe,   0.28f },
@@ -30,7 +34,7 @@ namespace
         { 14, Stroke::open,  0.92f },
     };
     constexpr Hit kMarchaB[] = {
-        {  0, Stroke::heel,  0.32f },
+        {  1, Stroke::heel,  0.32f },
         {  2, Stroke::toe,   0.29f },
         {  4, Stroke::slap,  0.92f },
         {  6, Stroke::heel,  0.26f },
@@ -45,7 +49,7 @@ namespace
     // second half - and the phrase reads A B A C, so the change lands where a
     // listener is already expecting one.
     constexpr Hit kMarchaC[] = {
-        {  0, Stroke::heel,  0.32f },
+        {  1, Stroke::heel,  0.32f },
         {  2, Stroke::toe,   0.28f },
         {  4, Stroke::slap,  0.90f },
         {  6, Stroke::toe,   0.30f },
@@ -68,7 +72,7 @@ namespace
     // that is the marcha - but the tumba answers early, so this is a different
     // riff rather than C played again.
     constexpr Hit kMarchaD[] = {
-        {  0, Stroke::heel,  0.30f },
+        {  1, Stroke::heel,  0.30f },
         {  2, Stroke::toe,   0.28f },
         {  4, Stroke::slap,  0.88f },
         {  5, Stroke::heel,  0.22f },
@@ -86,7 +90,7 @@ namespace
     // of 4, the second of which is what pushes into the next bar. Doubling the
     // backbeat is the commonest way to make a rock track sound crowded.
     constexpr Hit kRockA[] = {
-        {  0, Stroke::tumba, 0.84f },   // the one
+        {  2, Stroke::tumba, 0.84f },   // the "and" of 1, never the one itself
         {  3, Stroke::heel,  0.24f },
         {  6, Stroke::open,  0.74f },   // and of 2
         {  8, Stroke::tumba, 0.60f },
@@ -94,7 +98,7 @@ namespace
         { 14, Stroke::open,  0.90f },   // and of 4 - the push
     };
     constexpr Hit kRockB[] = {
-        {  0, Stroke::tumba, 0.82f },
+        {  2, Stroke::tumba, 0.82f },
         {  4, Stroke::slap,  0.58f },   // a light answer on the backbeat
         {  6, Stroke::open,  0.72f },
         {  8, Stroke::tumba, 0.58f },
@@ -105,7 +109,7 @@ namespace
     // Still nothing on 2 and 4 - that is the drummer's - but the bar leaves with
     // a pickup on the last sixteenth.
     constexpr Hit kRockC[] = {
-        {  0, Stroke::tumba, 0.86f },
+        {  2, Stroke::tumba, 0.86f },
         {  3, Stroke::heel,  0.22f },
         {  6, Stroke::open,  0.76f },
         {  8, Stroke::tumba, 0.62f },
@@ -121,8 +125,8 @@ namespace
     };
     // Still off 2 and 4. A slap on the "a" of 2 is a pickup, not a backbeat.
     constexpr Hit kRockD[] = {
-        {  0, Stroke::tumba, 0.84f },
-        {  2, Stroke::heel,  0.22f },
+        {  1, Stroke::heel,  0.22f },
+        {  2, Stroke::tumba, 0.84f },
         {  6, Stroke::open,  0.70f },
         {  7, Stroke::slap,  0.42f },
         {  8, Stroke::tumba, 0.58f },
@@ -139,7 +143,7 @@ namespace
     // the open-open pair closing the bar. Even bars leave 4 empty so the
     // phrase breathes.
     constexpr Hit kDanceA[] = {
-        {  0, Stroke::tumba, 0.88f },
+        {  1, Stroke::tumba, 0.88f },
         {  2, Stroke::open,  0.82f },
         {  5, Stroke::slap,  0.94f },
         {  6, Stroke::open,  0.68f },
@@ -154,7 +158,7 @@ namespace
         { 15, Stroke::open,  0.78f },
     };
     constexpr Hit kDanceB[] = {
-        {  0, Stroke::tumba, 0.86f },
+        {  1, Stroke::tumba, 0.86f },
         {  2, Stroke::open,  0.80f },
         {  5, Stroke::slap,  0.92f },
         {  6, Stroke::open,  0.66f },
@@ -167,7 +171,7 @@ namespace
         { 15, Stroke::open,  0.80f },
     };
     constexpr Hit kDanceC[] = {
-        {  0, Stroke::tumba, 0.88f },
+        {  1, Stroke::tumba, 0.88f },
         {  2, Stroke::open,  0.84f },
         {  5, Stroke::slap,  0.96f },
         {  6, Stroke::slap,  0.62f },
@@ -209,19 +213,19 @@ namespace
     // middle of the record, so the part is mostly space: the one, a light lift
     // into 3, and the push into the next bar.
     constexpr Hit kPopA[] = {
-        {  0, Stroke::tumba, 0.72f },
+        {  2, Stroke::tumba, 0.72f },
         {  7, Stroke::toe,   0.30f },
         { 14, Stroke::open,  0.80f },
     };
     constexpr Hit kPopB[] = {
-        {  0, Stroke::tumba, 0.70f },
+        {  2, Stroke::tumba, 0.70f },
         {  8, Stroke::open,  0.56f },
         { 11, Stroke::toe,   0.28f },
         { 14, Stroke::open,  0.82f },
     };
     // Even the variation stays out of the way.
     constexpr Hit kPopC[] = {
-        {  0, Stroke::tumba, 0.74f },
+        {  2, Stroke::tumba, 0.74f },
         {  6, Stroke::toe,   0.26f },
         { 11, Stroke::open,  0.52f },
         { 14, Stroke::open,  0.84f },
@@ -234,7 +238,7 @@ namespace
     };
     // Still mostly space. A muffled tone on 3 is as busy as this part gets.
     constexpr Hit kPopD[] = {
-        {  0, Stroke::tumba, 0.72f },
+        {  2, Stroke::tumba, 0.72f },
         {  4, Stroke::heel,  0.22f },
         {  8, Stroke::muff,  0.36f },
         { 14, Stroke::open,  0.82f },
@@ -247,7 +251,7 @@ namespace
     // syncopated around those two posts rather than paired at the end of the
     // bar, which is the whole difference between this and a marcha.
     constexpr Hit kSambaA[] = {
-        {  0, Stroke::heel,  0.28f },
+        {  1, Stroke::heel,  0.28f },
         {  2, Stroke::toe,   0.32f },
         {  4, Stroke::tumba, 0.90f },   // samba 2
         {  6, Stroke::open,  0.70f },
@@ -258,7 +262,7 @@ namespace
         { 15, Stroke::open,  0.58f },
     };
     constexpr Hit kSambaB[] = {
-        {  0, Stroke::heel,  0.26f },
+        {  1, Stroke::heel,  0.26f },
         {  3, Stroke::open,  0.52f },
         {  4, Stroke::tumba, 0.88f },
         {  6, Stroke::open,  0.66f },
@@ -278,7 +282,7 @@ namespace
         { 15, Stroke::open,  0.70f },
     };
     constexpr Hit kSambaD[] = {
-        {  0, Stroke::tumba, 0.46f },
+        {  1, Stroke::tumba, 0.46f },
         {  2, Stroke::toe,   0.30f },
         {  4, Stroke::tumba, 0.86f },
         {  7, Stroke::open,  0.64f },
@@ -303,7 +307,7 @@ namespace
     // makes it funk rather than rock is the sixteenth slaps *around* them and
     // the open that lands on the "a" of 4 - the one a horn section would hit.
     constexpr Hit kFunkA[] = {
-        {  0, Stroke::tumba, 0.78f },
+        {  1, Stroke::tumba, 0.78f },
         {  2, Stroke::heel,  0.22f },
         {  3, Stroke::slap,  0.50f },   // e of 1
         {  6, Stroke::open,  0.62f },
@@ -313,8 +317,8 @@ namespace
         { 15, Stroke::open,  0.88f },   // a of 4
     };
     constexpr Hit kFunkB[] = {
-        {  0, Stroke::tumba, 0.74f },
-        {  1, Stroke::heel,  0.20f },
+        {  1, Stroke::tumba, 0.74f },
+        {  2, Stroke::heel,  0.20f },
         {  3, Stroke::slap,  0.48f },
         {  6, Stroke::open,  0.58f },
         {  7, Stroke::toe,   0.24f },
@@ -322,7 +326,7 @@ namespace
         { 15, Stroke::open,  0.90f },
     };
     constexpr Hit kFunkC[] = {
-        {  0, Stroke::tumba, 0.80f },
+        {  1, Stroke::tumba, 0.80f },
         {  3, Stroke::slap,  0.54f },
         {  6, Stroke::open,  0.64f },
         {  9, Stroke::heel,  0.22f },
@@ -331,7 +335,7 @@ namespace
         { 15, Stroke::open,  0.92f },
     };
     constexpr Hit kFunkD[] = {
-        {  0, Stroke::tumba, 0.76f },
+        {  1, Stroke::tumba, 0.76f },
         {  3, Stroke::slap,  0.56f },
         {  5, Stroke::toe,   0.24f },
         {  6, Stroke::open,  0.60f },
@@ -403,14 +407,14 @@ namespace
     // the "a" of 1, the "and" of 2, the "and" of 3, the "and" of 4. Sparse
     // enough to sit under a vocal, clave-shaped enough not to be pop.
     constexpr Hit kBossaA[] = {
-        {  0, Stroke::tumba, 0.70f },
+        {  2, Stroke::tumba, 0.70f },
         {  3, Stroke::open,  0.62f },
         {  6, Stroke::muff,  0.40f },
         { 10, Stroke::open,  0.68f },
         { 14, Stroke::open,  0.78f },
     };
     constexpr Hit kBossaB[] = {
-        {  0, Stroke::tumba, 0.66f },
+        {  2, Stroke::tumba, 0.66f },
         {  3, Stroke::open,  0.58f },
         {  6, Stroke::toe,   0.28f },
         { 10, Stroke::open,  0.72f },
@@ -418,7 +422,7 @@ namespace
         { 14, Stroke::open,  0.80f },
     };
     constexpr Hit kBossaC[] = {
-        {  0, Stroke::tumba, 0.72f },
+        {  2, Stroke::tumba, 0.72f },
         {  3, Stroke::open,  0.64f },
         {  7, Stroke::slap,  0.36f },
         { 10, Stroke::open,  0.66f },
@@ -426,7 +430,7 @@ namespace
         { 15, Stroke::toe,   0.28f },
     };
     constexpr Hit kBossaD[] = {
-        {  0, Stroke::tumba, 0.68f },
+        {  2, Stroke::tumba, 0.68f },
         {  3, Stroke::open,  0.60f },
         {  6, Stroke::muff,  0.38f },
         {  8, Stroke::heel,  0.22f },
@@ -695,7 +699,22 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         }
     }
 
-    if (congasOn)
+    // The congas never play the first quarter's down-stroke.
+    //
+    // That is where the band already is: the kick, the bass and the downbeat of
+    // whatever the guitarist is playing all land there together, and a conga on
+    // top of them adds nothing that can be heard as a separate voice - it just
+    // thickens an attack that was already the loudest moment in the bar. A
+    // percussionist standing next to a drummer plays *around* the one: the low
+    // tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth
+    // late, and the one itself is left to the band.
+    //
+    // Every table below has been written that way, and this is the guard that
+    // keeps it true: it costs one comparison per pulse and it means a pattern
+    // edited later cannot quietly put a stroke back on the downbeat. The shaker
+    // is not covered by it - a shaker on the pulse is the pulse, and it is what
+    // the listener follows.
+    if (congasOn && step != 0)
     {
         // An eight-bar sentence: A B A C  D B A, then the fill. The first four
         // bars are still the original phrase - state it, answer it, state it,

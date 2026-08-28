@@ -58,6 +58,13 @@ public:
         trigger (stroke, velocity, sampleOffset);
     }
 
+    /** How far above their recorded pitch the drums are being played, as a
+        frequency ratio. Diagnostic: a measurement taken in a fixed window of
+        the *recording* has to scale by this to keep asking the same question
+        once the bank is tuned somewhere else. Shakers are unpitched and are
+        not affected by it. */
+    static float drumTuneRatio() noexcept;
+
     /** How many articulations are sounding from a recording rather than from
         the synthesis fallback. Worth asserting on: a missing or unreadable
         asset would otherwise degrade silently back to the synthetic bank. */

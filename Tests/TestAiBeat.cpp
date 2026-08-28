@@ -1142,19 +1142,23 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const float danceShakerPulse = shakerVelocityAt (dance, 0);
         const float danceShakerOff = shakerVelocityAt (dance, 2);
         const float danceOn1 = congaVelocityAt (dance, 0);
+        const float danceOnE1 = congaVelocityAt (dance, 1);
         const float danceOn2 = congaVelocityAt (dance, 4);
         const float danceSlap = congaVelocityAt (dance, 5);
         const float danceOn3 = congaVelocityAt (dance, 8);
-        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
+        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f e-di-1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
                      danceOnTheA,
-                     static_cast<double> (danceOn1), static_cast<double> (danceOn2),
+                     static_cast<double> (danceOn1), static_cast<double> (danceOnE1),
+                     static_cast<double> (danceOn2),
                      static_cast<double> (danceSlap), static_cast<double> (danceOn3),
                      static_cast<double> (danceShakerPulse),
                      static_cast<double> (danceShakerOff));
         expect (danceOnTheA >= 3 && danceShakerOff > danceShakerPulse,
                 "dance leans on the sixteenth before the beat and accents the offbeat");
-        expect (danceOn1 > 0.4f && danceOn3 > 0.4f && danceOn2 < 0.01f && danceSlap > 0.4f,
-                "dance tumbao: tumba on 1 and 3, slap on the e of 2, nothing on 2");
+        expect (danceOn1 < 0.01f && danceOnE1 > 0.4f && danceOn3 > 0.4f
+                    && danceOn2 < 0.01f && danceSlap > 0.4f,
+                "dance tumbao: the one left to the band, tumba on its e and on 3, "
+                "slap on the e of 2, nothing on 2");
 
         // Pop: the job is to be felt and not noticed, so it has to be the
         // sparsest of the four by a clear margin.
@@ -1200,6 +1204,46 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 if (sameShape (all[i], all[j]))
                     allDistinct = false;
         expect (allDistinct, "every style is a different part");
+
+        // The one belongs to the band.
+        //
+        // Every style, every bar of the eight-bar sentence including the fill,
+        // with the ghost notes turned all the way up so the random half of the
+        // part is exercised too: nothing that is not a shaker may be scheduled
+        // on the first quarter's down-stroke. The tables are written that way
+        // and `eventsAt` enforces it, so this fails if either is edited apart
+        // from the other.
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0xC04A5u);
+            gr.setHumanize (1.0f);
+            gr.setIntensity (1.0f);
+            int congasOnTheOne = 0, shakersOnTheOne = 0;
+            for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            {
+                gr.setStyle (static_cast<vp::GrooveStyle> (st));
+                for (int bar = 0; bar < 64; ++bar)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (bar, 0, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        if (ev[i].stroke == vp::Stroke::shakerDown
+                            || ev[i].stroke == vp::Stroke::shakerUp)
+                            ++shakersOnTheOne;
+                        else
+                            ++congasOnTheOne;
+                    }
+                }
+            }
+            std::printf ("groove-uno     congas sull'uno=%d  shaker sull'uno=%d "
+                         "(8 stili x 64 battute)\n",
+                         congasOnTheOne, shakersOnTheOne);
+            expect (congasOnTheOne == 0,
+                    "no style ever puts a conga on the first quarter's down-stroke");
+            expect (shakersOnTheOne > 0,
+                    "and the shaker still marks it, because a shaker on the pulse is the pulse");
+        }
     }
 
     {
@@ -2379,7 +2423,14 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // which is what the VCSL takes did when they were trimmed to the body
         // peak instead of the hand. Hold (the compensator) is skipped: this is
         // the asset, not the scheduling.
+        //
+        // The window is a window on the *recording*, so it scales with the
+        // tuning: the drums are read faster than they were recorded, and a
+        // fixed twelve milliseconds of output covers more and more of the take
+        // as the bank is tuned up until it reaches the body swell - which then
+        // fails the check for a reason that has nothing to do with the strike.
         {
+            const double tune = static_cast<double> (vp::PercussionEngine::drumTuneRatio());
             const vp::Stroke drums[] = { vp::Stroke::tumba, vp::Stroke::open, vp::Stroke::slap };
             bool allTight = true;
             for (auto s : drums)
@@ -2403,7 +2454,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 int audible = 0;
                 while (audible < win && std::fabs (l[static_cast<size_t> (audible)]) < 0.05f * peak)
                     ++audible;
-                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012));
+                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012 / tune));
                 int peakAt = audible;
                 float p = 0.0f;
                 for (int i = audible; i < strikeWin; ++i)
@@ -2416,8 +2467,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     }
                 }
                 const double ms = (peakAt - audible) / sr * 1000.0;
-                std::printf ("drum-strike  stroke=%d delta=%.2f ms\n",
-                             static_cast<int> (s), ms);
+                std::printf ("drum-strike  stroke=%d delta=%.2f ms  (finestra %.1f ms, accordatura x%.3f)\n",
+                             static_cast<int> (s), ms, 12.0 / tune, tune);
                 if (ms > 4.0)
                     allTight = false;
             }

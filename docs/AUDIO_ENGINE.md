@@ -33,6 +33,12 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 `GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is on a **sixteenth grid** even though the loud strokes sit on eighths, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting selects how dense the *shaker* is, not the clock.
 
+### The one belongs to the band
+
+No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enforces it as well as every table observing it. The band is already there — kick, bass and the downbeat of whatever the guitarist is playing, together — and a conga on top of that is not heard as a percussionist, it is heard as a thicker attack. A player standing next to a drummer plays *around* the one: the low tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth late, and the one is left alone. Per style: marcha and samba put the heel on the "e" of 1; rock, pop and bossa put the low tone on the "and"; dance and funk on the "e", where those parts already live in sixteenths; reggae is one-drop and never had anything there.
+
+The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
+
 ### Four styles
 
 A player does not bring a marcha to a rock track, so the styles are four different parts rather than variations on one:
@@ -40,9 +46,9 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | Style | Congas | Shaker | Ghosts |
 |---|---|---|---|
 | **marcha** | the tumbao: slap on 2, bass on 3, the paired open tones closing the bar | eighths, weight on the pulse | busy |
-| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the one and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
+| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the "and" of 1 and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
 | **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
-| **pop** | mostly space: the one, a light lift, the push into the next bar | eighths, level and quiet | almost none |
+| **pop** | mostly space: a light low tone off the one, a lift, the push into the next bar | eighths, level and quiet | almost none |
 
 ### Coming in on the one
 
@@ -253,6 +259,8 @@ Three things here are what "the shaker and the congas break up" actually was:
 `Assets/Percussion/*.wav` are conga, tumba, quinto and shaker recordings from the **Versilian Community Sample Library (CC0)** — see `Assets/Percussion/ATTRIBUTION.md`.
 
 They are embedded by CMake the same way `beatnet.onnx` is. If the folder is empty the build says so and the whole percussion bank falls back to synthesis, so the tree always builds and always plays; `recordedStrokeCount()` is asserted in the tests so a missing or unreadable asset fails loudly instead of degrading quietly.
+
+They are tuned up by a **minor seventh** (`kDrumTune`, 2^(10/12)) — one number, driving the synthesised bank and the playback rate of the recordings together so the two halves cannot end up tuned against each other. The VCSL takes are the large drums of the library and they are recorded slack: at concert pitch the part reads as a floor tom under a band, and the tumbao's low tone disappears into the bass guitar instead of answering it. A perfect fourth was the first correction and was not enough. At a minor seventh the tumba's fundamental is 146 Hz and the open tone 317 — a conga and a quinto, not two toms.
 
 `scripts/prepare_vcsl_samples.py` trims pre-roll, high-passes hall rumble, truncates before any second hit, normalises and fades. Loud and medium takes are separate recordings; the soft layer is still derived by taking the top off. heel/toe/muff are the open tone damped. Round-robin is a second take on every articulation, not only the low drum.
 
