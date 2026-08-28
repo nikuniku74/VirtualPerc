@@ -88,6 +88,8 @@ The app is listening to the room long before anybody plays, and it will find a t
 
 One case it cannot tell apart: a track that was already playing when the app was opened never *starts*, so it waits. One **TAP** releases it (so does setting the tempo by hand with FISSO). There is no timeout on purpose: long enough to be a guard is long enough to be a nuisance, and short enough to tolerate brings back a shaker playing to an empty stage.
 
+**SPOSTA L'1** moves the bar on by one quarter, and the app then leaves it alone. Which of the four quarters is the one is the part of this the analysis is worst at — through the iPad's own speaker it is no better than a coin, measured — so once you have said where the one is, nothing moves it again: not the analysis, not a section change, not a new song. The button lights to say the count is yours. A **TAP** that declares the one lights it too. Four presses take the one all the way round the bar and back to where it started; the fifth hands the count back to the app and the light goes out.
+
 **SETUP** (top right) is everything you set once and never touch mid-song: the **clock** (AUTO, or 44.1 / 48 / 88.2 / 96 kHz), the buffer, MIXER vs IPAD, the theme, **CLICK TEST** and the debug panel — plus a read-out of the rate, buffer, latency and route the hardware actually gave.
 
 Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds the clock and the app opens at whatever it is already running at, so plugging into an X-Air at 48 kHz costs nothing: no click, and a track already playing through the same route keeps playing.

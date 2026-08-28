@@ -452,7 +452,27 @@ sbagliata: il margine dell'istogramma vale 0.34 su una mandata di linea e 0.014
 nella stanza, e sotto margine la battuta non si ruota affatto. Lì restano il TAP e la
 correzione a mano, che è quello che serve.
 
-**Accettazione**: `bar-vote` in `Tests/TestAiBeat.cpp`. Una rete finta che punta
+E dove la rete non ce la fa, decide chi ascolta, una volta sola. **SPOSTA L'1** —
+e un **TAP** che dichiara l'uno — ora *blocca* il conteggio invece di tenerlo
+fermo trenta secondi: l'istogramma continua a costruirsi, così la risposta c'è
+nel momento in cui si toglie il blocco, ma niente ruota più niente. Quattro
+pressioni portano l'uno tutto intorno alla battuta, la quinta restituisce il
+conteggio all'app e la luce si spegne. Trenta secondi erano il peggio dei due
+mondi: abbastanza da sembrare che avesse funzionato, troppo poco perché la
+battuta messa a mano arrivasse in fondo al brano.
+
+La correzione automatica, per parte sua, **ruota soltanto**: `rotateBarIndex` e
+nient'altro — nessuna fase, nessun tempo, nessun livello metrico. È questo che la
+rende accettabile su una pluralità invece che su una certezza. L'unica eccezione
+va nel verso opposto ed è voluta: quando il clock ripiazza la fase, il conteggio
+la segue, così una battuta resta sul battito del brano su cui stava. E succede
+solo a parte silenziosa.
+
+**Accettazione**: `bar-vote` in `Tests/TestAiBeat.cpp`, più `bar-lock` per il
+blocco: la stessa provocazione — una rete il cui downbeat si sposta di due quarti
+a metà presa — ruota la battuta se è libera e non la tocca affatto se è bloccata.
+
+**Accettazione (voto)**: Una rete finta che punta
 sull'uno vero sette battute su dieci e altrove nelle altre tre, con l'uno spostato di
 due quarti rispetto a dove il clock comincia a contare, e **niente** che superi la
 soglia di 0.40 che prima decideva la battuta. La stessa presa con una rete che lo

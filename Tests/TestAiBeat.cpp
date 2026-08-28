@@ -2710,6 +2710,150 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "the count is not traded back and forth while the evidence argues");
     }
 
+    // Locked, the count is the listener's and nothing else moves it.
+    //
+    // The automatic alignment only ever *rotates* the bar - it moves no phase
+    // and no tempo, so a correction costs the clock nothing. That is the right
+    // trade while the app is guessing, and it is still the wrong answer when
+    // the listener already knows better than the network: through a microphone
+    // in a room the vote is no better than a coin, so a one placed by hand was
+    // being moved off again within the same song. It used to be held for thirty
+    // seconds; now it is held until the listener hands it back.
+    //
+    // Both runs get the same provocation: a network whose downbeat moves by two
+    // quarters half way through, which is what a section change looks like from
+    // here. Free, the bar has to follow it. Locked, it must not move at all -
+    // and "at all" is checkable without knowing where the one truly is, because
+    // a bar that is never rotated counts 0 1 2 3 0 1 2 3 forever, and every
+    // rotation shows up as a step that is not +1.
+    {
+        class MovingBarModel final : public vp::IBeatModel
+        {
+        public:
+            explicit MovingBarModel (double framesPerBeat) : fpb (framesPerBeat) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double beats = static_cast<double> (frame++) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const int    beatNo = static_cast<int> (std::llround (beats));
+                const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                         std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                const int shift = moved.load (std::memory_order_relaxed) ? 2 : 0;
+                const int inBar = (((beatNo + shift) % 4) + 4) % 4;
+                activations3[0] = pulse;
+                activations3[1] = inBar == 0 ? pulse * 0.95f : 0.03f;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+            std::atomic<bool> moved { false };
+        private:
+            double fpb;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        const int n = static_cast<int> (sr * 64.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        struct Run { int rotations = 0; int advances = 0; float span = 0.0f; int gaps = 0; };
+
+        auto go = [&] (bool lock)
+        {
+            auto model = std::make_unique<MovingBarModel> (framesPerBeat);
+            auto* raw = model.get();
+
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::move (model));
+            eng.prepare (sr, block, 1);
+            eng.start();
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            Run r;
+            float lo = 1.0e9f, hi = 0.0f;
+            int prevBeat = -1;
+            bool asked = false, provoked = false;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const double t = static_cast<double> (pos) / sr;
+
+                // The listener says where the one is - the same thing the
+                // on-screen control does, without the nudge, so the two runs
+                // differ in the lock and in nothing else.
+                if (lock && ! asked && t > 18.0)
+                {
+                    eng.settings().barLocked.store (true);
+                    asked = true;
+                }
+                if (! provoked && t > 24.0)
+                {
+                    raw->moved.store (true);
+                    provoked = true;
+                }
+
+                const float* ins[1] = { song.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                const auto snap = eng.snapshot();
+
+                // Only after the provocation, and only while the clock is
+                // actually following: before that the grid is still being
+                // placed, and placing it carries the count with it on purpose.
+                if (t > 26.0 && snap.state == vp::TrackingState::following && snap.bpm > 40.0f)
+                {
+                    lo = std::min (lo, snap.bpm);
+                    hi = std::max (hi, snap.bpm);
+                    const int beatInBar = std::clamp (
+                        static_cast<int> (snap.barPhase * 4.0f), 0, 3);
+                    if (beatInBar != prevBeat)
+                    {
+                        if (prevBeat >= 0)
+                        {
+                            ++r.advances;
+                            if (beatInBar != ((prevBeat + 1) & 3))
+                                ++r.rotations;
+                        }
+                        prevBeat = beatInBar;
+                    }
+                }
+                if ((pos / block % 8) == 0)
+                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+            }
+            r.span = hi >= lo ? hi - lo : 0.0f;
+            r.gaps = static_cast<int> (eng.snapshot().analysisGaps);
+            return r;
+        };
+
+        const Run free_ = go (false);
+        const Run held = go (true);
+
+        std::printf ("bar-lock       libera: %d rotazioni su %d passi (span %.2f)   "
+                     "bloccata: %d su %d (span %.2f)  buchi=%d/%d\n",
+                     free_.rotations, free_.advances, static_cast<double> (free_.span),
+                     held.rotations, held.advances, static_cast<double> (held.span),
+                     free_.gaps, held.gaps);
+
+        const bool starved = free_.gaps > 0 || held.gaps > 0;
+        expect (starved || free_.rotations >= 1,
+                "left to itself the bar follows the network when the network moves");
+        expect (starved || (held.advances > 40 && held.rotations == 0),
+                "locked, nothing moves the count but the listener");
+        // And the correction the free run did make was a rotation and nothing
+        // else: the tempo is untouched either way. The phase is covered by
+        // phase-lock; what matters here is that moving the bar is not paid for
+        // in either of them.
+        expect (starved || (free_.span < 1.0f && held.span < 1.0f),
+                "moving the bar costs the tempo nothing, and holding it costs nothing either");
+    }
+
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (48000.0, 128, 1);

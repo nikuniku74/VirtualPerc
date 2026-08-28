@@ -166,6 +166,10 @@ struct EngineSnapshot
     bool  tapLocked            = false;
     /** A tap has just said where beat one is; the UI marks the one for a moment. */
     bool  barDeclared          = false;
+    /** And whether the count is now the listener's to move. A tap sets this as
+        well as the on-screen control does, so the control has to read it back
+        rather than remember what it last asked for. */
+    bool  barLocked            = false;
     FollowBar followBar        = FollowBar::ready;
     int   bufferSize           = 0;
     int   shakerVoices         = 0;
@@ -265,6 +269,23 @@ struct EngineSettings
     // there is better than leaving every track that reads at the wrong level
     // waiting for a tap. A tap on the halve or double button takes it back.
     std::atomic<bool>  tempoOctaveAuto { true };
+    // Counter, not a position: every increment moves the bar on by one beat.
+    // Where beat one is cannot be read reliably from what the network gives us
+    // - see docs/STATUS.md - so the listener gets to say, and saying it has to
+    // be one tap however wrong the analysis currently is.
+    std::atomic<int>   barNudge        { 0 };
+    // And having said it, it stays said. The automatic alignment is a vote over
+    // what the network calls a downbeat, and where the network is no better
+    // than a coin - a microphone in a room, measured - that vote would move a
+    // bar the listener has just placed by hand. Locked, nothing moves the count
+    // but the listener: not the vote, not a new song, not a section change.
+    //
+    // Set by moving the one and by a tap that declares it, cleared by taking
+    // the on-screen control all the way round the bar. It does not stop the
+    // count from *following the grid* when the clock re-places it - that is
+    // what keeps a locked bar on the same beat of the song rather than letting
+    // it drift a quarter away. See TempoFollower::snapPhase.
+    std::atomic<bool>  barLocked       { false };
     // SEGUI (true, default) lets BeatNet / tap-follow / mixer analysis drive
     // the clock. FISSO freezes a BPM and ignores neural tempo updates; tap
     // and the on-screen nudge still write the number. Generation bumps when
