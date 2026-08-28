@@ -119,6 +119,7 @@ private:
     std::atomic<float> lastBeat { 0.0f };
     std::atomic<float> lastBar { 0.0f };
     std::atomic<bool>  lastBarDeclared { false };
+    std::atomic<bool>  lastBarLocked { false };
     std::atomic<float> lastPeak { 0.0f };
     std::atomic<float> lastCallbackMs { 0.0f };
     std::atomic<int>   lastState { 0 };

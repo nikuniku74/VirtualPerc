@@ -89,6 +89,18 @@ Two faults, and the first is much the larger:
 
 Why the room is so much worse is not a mystery and is not the bar logic: the iPad speaker has almost nothing below 250 Hz, so the kick fundamental and the bass root — which is where this material marks its bar — never reach the network. On that path the network's downbeat activation is *strongest on the true three* (0.593 against 0.430 on the true one, winning 38% of bars against 18%). No amount of counting downstream turns that round.
 
+### And the listener's answer stands
+
+Two properties follow from that, and they are the reason the automatic answer is safe to have at all.
+
+**The correction only ever rotates.** `alignBarFromVotes` moves the count with `rotateBarIndex` and nothing else — no phase, no tempo, no metrical level. Moving a bar therefore costs the clock nothing, which is what makes it worth doing on a plurality rather than on a certainty. It used to snap the *phase* to move the bar, which threw the whole loop state away for a correction that only ever concerned the count.
+
+The one exception is the count following the grid when the grid is re-placed, and it runs the other way round: the phase moves and the count goes with it, so that a bar stays on the beat of the song it was on. That happens only while nothing is playing — see `TempoFollower::snapPhase`.
+
+**A one placed by hand is not moved again.** The automatic alignment used to be held off for thirty seconds after the listener moved the bar, which is long enough to look like it worked and short enough that the bar was moved back before the song was over. On material where the vote is no better than a coin that is the worst of both. Now moving the one — with **SPOSTA L'1**, or with a **TAP** that declares it — locks the count: the histogram carries on being built, so the answer is there the moment the lock comes off, but nothing rotates anything. Four presses take the one all the way round the bar; the fifth hands the count back to the app.
+
+`bar-lock` in the tests is the property, on the same provocation for both: a network whose downbeat moves by two quarters half way through, which is what a section change looks like from here. Free, the bar follows it. Locked, it does not move at all — checkable without knowing where the one truly is, because a bar that is never rotated counts 0 1 2 3 forever and every rotation is a step that is not +1.
+
 ### Choosing the style automatically — measured, and not good enough
 
 `StyleDetector` folds the analysis signal onto the bar in three bands and reads four rotation-invariant features from it: how evenly the low band lands on the four quarters (four-on-the-floor), the depth of the two-beat alternation in the snare band (backbeat), the high band on the offbeat against the beat (open hat), and energy on the odd sixteenths (syncopation).

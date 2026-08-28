@@ -52,8 +52,6 @@ namespace
     // two disagreeing votes can trade the bar back and forth inside one phrase.
     constexpr double kBarMoveHoldSeconds = 9.6;
 
-    // And a good deal longer after the listener has moved it by hand.
-    constexpr double kBarNudgeHoldSeconds = 30.0;
 
     // AUTO half/double. The range a percussionist counts in, a little over an
     // octave wide - and that overlap is the hysteresis: a tempo just halved from
@@ -136,6 +134,7 @@ void BeatTracker::reset() noexcept
     armed = false;
     tapHoldSamples = 0;
     downbeatHoldSamples = 0;
+    barLocked = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
     quantizeWaitSamples = 0;
@@ -464,13 +463,16 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
 void BeatTracker::holdBarDecision() noexcept
 {
     // The evidence that produced the current bar is exactly the evidence that
-    // has just been overruled, so it is cleared and the automatic alignment is
-    // held off. Without this the vote puts the bar back within a phrase and the
-    // correction looks like it did nothing.
+    // has just been overruled, so it is cleared - and the count becomes the
+    // listener's until they hand it back. It used to be held for thirty
+    // seconds instead, which is long enough to look like it worked and short
+    // enough that the bar the listener placed by hand was moved again before
+    // the song was over. On material where the vote is no better than a coin
+    // that is the worst of both: the correction appears to take, and then goes.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     downbeatVotes[0] = kBeatsToMoveTheBar;
     voteBeats = kBeatsToMoveTheBar;
-    downbeatHoldSamples = static_cast<int> (sampleRate * kBarNudgeHoldSeconds);
+    barLocked = true;
 }
 
 void BeatTracker::setTempoOctave (int octaves) noexcept
@@ -542,6 +544,13 @@ void BeatTracker::nudgeBar (int beats) noexcept
 
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
 {
+    // The listener has placed the one. Nothing here moves it - not a plurality,
+    // not a certainty, not a new song. The histogram carries on being built, so
+    // that the moment the lock comes off the answer is already there rather
+    // than three bars away.
+    if (barLocked)
+        return;
+
     float score[4] {};
     float totalVotes = 0.0f;
     for (int i = 0; i < 4; ++i)
@@ -999,6 +1008,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.barPhase = follower.barPhase();
     barDeclaredSamples = std::max (0, barDeclaredSamples - numSamples);
     out.barDeclared = barDeclaredSamples > 0;
+    out.barLocked = barLocked;
     out.analysisGaps = neural.discontinuities();
     out.analysisWakeups = neural.wakeups();
     out.analysisBacklog = neural.backlog();

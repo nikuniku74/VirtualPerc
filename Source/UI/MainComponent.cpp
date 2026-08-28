@@ -277,9 +277,29 @@ MainComponent::MainComponent()
     // Where beat one is cannot be read reliably from what the network gives us,
     // so this moves it on by one. Same answer as the octave pair: a measurement
     // that will not come out is offered to the listener instead of guessed at.
+    //
+    // And having moved it, the listener owns it: the button lights and the
+    // automatic alignment stops touching the count. Four taps take the one all
+    // the way round the bar and back to where it started; the fifth hands it
+    // back to the app. That is the octave pair's idiom on one button - the
+    // button that turned the automatic answer off is the button that turns it
+    // on - and it is the only shape that fits, because this button also has to
+    // stay free to nudge two or three times in a row.
     barButton.onClick = [this]
     {
-        engine.settings().barNudge.fetch_add (1);
+        auto& s = engine.settings();
+        if (s.barLocked.load() && barTapsSinceLock >= 4)
+        {
+            s.barLocked.store (false);
+            barTapsSinceLock = 0;
+        }
+        else
+        {
+            s.barNudge.fetch_add (1);
+            s.barLocked.store (true);
+            ++barTapsSinceLock;
+        }
+        refreshBarButton();
     };
 
     // Half and double. The one part of the metrical level the signal does not
@@ -607,6 +627,7 @@ void MainComponent::refreshThemeColours()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshOctaveButtons();
+    refreshBarButton();
     refreshTempoModeButtons();
     refreshClockButtons();
     refreshBufferButtons();
@@ -1224,6 +1245,22 @@ void MainComponent::applyStyleAuto (bool on)
     savePrefs();
 }
 
+void MainComponent::refreshBarButton()
+{
+    // Lit means the count is the listener's. A tap on the tempo declares the one
+    // as well, so this reads the engine back rather than trusting what the
+    // button last asked for - press TAP and the button lights on its own.
+    const bool locked = engine.settings().barLocked.load();
+    if (! locked)
+        barTapsSinceLock = 0;
+    barButton.setButtonText (locked ? juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI"))
+                                    : juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")));
+    barButton.setToggleState (locked, juce::dontSendNotification);
+    barButton.setColour (juce::TextButton::buttonColourId, locked ? fuchsia() : ink());
+    barButton.setColour (juce::TextButton::textColourOffId,
+                         locked ? juce::Colours::white : text());
+}
+
 void MainComponent::refreshStyleButtons()
 {
     const bool autoOn = engine.settings().grooveAuto.load();
@@ -1338,6 +1375,11 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
     applyLatencyFromDevice();
+
+    // A tap can lock the bar without this button being touched, so the button
+    // follows the engine rather than its own last press.
+    if (barButton.getToggleState() != snap.barLocked)
+        refreshBarButton();
 
     // Is the device still calling us? It can stop without saying so - iOS
     // restarting its media server leaves every audio object in the process

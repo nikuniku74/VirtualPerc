@@ -787,6 +787,16 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             tracker.nudgeBar (nudge - seenBarNudge);
             seenBarNudge = nudge;
         }
+        // Read before the write-back below, and honoured in both directions.
+        // The setting is a request from the screen *and* a read-out of what the
+        // tracker decided - a tap locks the bar without this button being
+        // touched - so the two have to be reconciled here, once, with the read
+        // first. Written back one-way it was the tracker's answer overwriting
+        // the listener's request before the request was ever looked at, and the
+        // lock could not be set at all.
+        const bool wantLocked = cfg.barLocked.load (std::memory_order_relaxed);
+        if (wantLocked != tracker.barIsLocked())
+            tracker.setBarLocked (wantLocked);
     }
     const bool speaker = cfg.followSource.load (std::memory_order_relaxed)
                          == static_cast<int> (FollowSource::speaker);
@@ -957,6 +967,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
     lastBarDeclared.store (tr.barDeclared, std::memory_order_relaxed);
+    // Straight back into the setting, because a tap locks the bar too and the
+    // control on screen has to light up for that as well as for its own press.
+    lastBarLocked.store (tr.barLocked, std::memory_order_relaxed);
+    cfg.barLocked.store (tr.barLocked, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
     lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
@@ -1017,6 +1031,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.beatPhase = lastBeat.load (std::memory_order_relaxed);
     s.barPhase = lastBar.load (std::memory_order_relaxed);
     s.barDeclared = lastBarDeclared.load (std::memory_order_relaxed);
+    s.barLocked = lastBarLocked.load (std::memory_order_relaxed);
     s.latencyMs = latencyMs.load (std::memory_order_relaxed);
     s.inputPeak = lastPeak.load (std::memory_order_relaxed);
     s.callbackMs = lastCallbackMs.load (std::memory_order_relaxed);

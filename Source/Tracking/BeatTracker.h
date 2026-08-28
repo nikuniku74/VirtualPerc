@@ -51,11 +51,25 @@ public:
     void setTempoOctaveAuto (bool on) noexcept;
 
     /** Move the bar on by whole beats, because the listener says so. Clears the
-        tally and holds the automatic alignment off for a while afterwards: the
-        evidence that produced the current bar is exactly the evidence that
-        has just been overruled, so leaving it in place would let it undo the
-        correction within a phrase. */
+        tally and locks the bar: the evidence that produced the current bar is
+        exactly the evidence that has just been overruled, so leaving the
+        automatic alignment free to act on it would undo the correction within a
+        phrase. */
     void nudgeBar (int beats) noexcept;
+
+    /** Whether the count is the listener's to move and nobody else's.
+
+        Locked, `alignBarFromVotes` does nothing at all: the histogram keeps
+        being built, because it costs nothing and is right again the moment the
+        lock comes off, but it never rotates anything. Moving the one and a tap
+        that declares it both set this; only the listener clears it.
+
+        It does not freeze the count against the *grid*. When the clock
+        re-places its phase over a beat boundary the count still goes with it -
+        that is what keeps a locked bar on the beat of the song it was locked
+        to, instead of drifting a quarter away from it. */
+    void setBarLocked (bool on) noexcept { barLocked = on; }
+    bool barIsLocked() const noexcept { return barLocked; }
 
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
@@ -107,6 +121,10 @@ public:
             UI can show that the gesture landed rather than leaving the player
             guessing whether the bar moved because of them. */
         bool          barDeclared = false;
+        /** And whether the count is now the listener's. Reported rather than
+            assumed, because a tap sets it as well as the on-screen control, and
+            the screen has to say so either way. */
+        bool          barLocked = false;
         /** Times the analysis lost audio because the worker fell behind, and
             how many loops that worker has run. Both are diagnostics, and both
             are worth having: a gap costs the recent evidence, and a worker
@@ -199,6 +217,7 @@ private:
     int  autoHoldSamples = 0;
     int tapHoldSamples = 0;
     int downbeatHoldSamples = 0;
+    bool barLocked = false;
     /** The bar as a histogram over its four quarters: how much downbeat the
         network has found on each, decayed, and how many beats have gone into
         it. The count is what says whether the shares mean anything yet, and it

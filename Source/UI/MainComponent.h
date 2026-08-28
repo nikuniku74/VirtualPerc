@@ -81,6 +81,7 @@ private:
     void applyTempoOctave (int octaves);
     void applyTempoOctaveAuto();
     void refreshOctaveButtons();
+    void refreshBarButton();
 
     /** The margin every full-screen page starts from: what the design wants,
         widened per side to whatever the system says is unusable. On a phone
@@ -196,6 +197,9 @@ private:
     juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
     juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
+    /** Presses since the count became the listener's. Four is all the way round
+        the bar, and the one after that hands it back to the app. */
+    int barTapsSinceLock = 0;
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
     juce::TextButton followButton { "SEGUI" };
