@@ -6,6 +6,68 @@
 namespace vp
 {
 
+namespace
+{
+    /** How little the clock may be asked to believe the tempo it is handed. */
+    constexpr float kMinTempoTrust = 0.30f;
+
+    /** And what "not believing it" costs, in seconds: at no trust at all the
+        clock averages the target over this long instead of taking it.
+        Two and a half seconds is about five beats at 120 BPM - long enough to
+        ride out a passage whose beats are badly placed, short enough that a
+        real change arriving in the middle of one is still taken inside a
+        phrase. At full trust it is not applied at all.
+
+        A floor on the constant rather than a multiplier of it, because the
+        pathology lives in the *small* corrections. Measured on a passage
+        without a drummer the committed tempo wanders about a BPM and a half
+        either way, which is inside the band the clock closes in 45 ms - so
+        stretching that by three still takes every wobble whole, and the wobble
+        is what comes out as phase. */
+    constexpr float kPoorEvidenceTauSec = 2.50f;
+
+    /** How far the clock will lean away from its own grid while the evidence is
+        poor, in beats.
+
+        This is the one that matters, and finding out why took a bench. A
+        passage without a drummer does not make the analysis noisy so much as
+        make it *late*: a pad and a bass note swell into the beat where a stick
+        lands on it, the activation crests a couple of frames after the beat,
+        and the fit follows that faithfully for as long as the passage lasts.
+        Measured with `VPAlign`, the same passage with the lateness taken out
+        costs 29.5 ms at worst - the same as an accelerando - and with 44 ms of
+        it costs 79.5 ms. It is an offset held for ten seconds, so no averaging
+        shorter than the passage can touch it: at full smoothing the clock still
+        followed it to within a millisecond or two.
+
+        What it can be given is a limit. The clock stays free to correct the
+        small errors that are the analysis being imprecise, and refuses to
+        follow a large one until the evidence supporting it is as good as this
+        song has been giving. The refusal is bounded and self-clearing - the
+        limit lifts the moment the fit tightens again - which is what separates
+        it from holding the tempo. docs/STATUS.md records five attempts at
+        holding, and each one cost half a bar on an accelerando because a held
+        tempo integrates into a phase error with no bound at all; a lean that
+        cannot exceed two hundredths of a beat costs at most that.
+
+        Two hundredths of a beat is 10 ms at 120 BPM: under what a listener
+        picks out, and well over the 0.012 the loop treats as its own noise
+        floor, so an ordinary correction is not touched by it. */
+    constexpr float kPoorLeanBeats = 0.020f;
+
+    /** Above which the analysis is not leaning, it is somewhere else.
+
+        The cap above must never be able to strand the clock. A lean is small by
+        construction - a stroke heard a few tens of milliseconds late, which at
+        any tempo this app follows is under a tenth of a beat - while a new
+        song, an edit or a grid the decoder has just re-anchored puts the target
+        a quarter beat away or more. Those have to be followed at once and
+        whatever the evidence looks like, because the evidence looking poor is
+        exactly what a song that has just changed produces. So the cap applies
+        below this and not above it. */
+    constexpr float kLeanIsElsewhere = 0.15f;
+}
+
 void TempoFollower::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
@@ -37,6 +99,7 @@ void TempoFollower::reset() noexcept
     reanchor = false;
     havePhaseObservation = false;
     tempoTrimEnabled = false;
+    tempoTrust = 1.0f;
 }
 
 void TempoFollower::resetClock() noexcept
@@ -56,6 +119,11 @@ void TempoFollower::resetClock() noexcept
     samplesSincePulse = static_cast<int> (sampleRate * 30.0);
     havePhaseObservation = false;
     reanchor = true;
+}
+
+void TempoFollower::setTempoTrust (float trust) noexcept
+{
+    tempoTrust = std::clamp (trust, kMinTempoTrust, 1.0f);
 }
 
 void TempoFollower::setTempoTrimEnabled (bool on) noexcept
@@ -269,9 +337,18 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     // part and the tempo was never actually still. It is still fast - a couple
     // of BPM closes in about a fifth of a second, which no listener hears as a
     // change of speed - but it is a glide now rather than a jump.
-    const float tau = std::fabs (err) <= (locked ? 2.5f : 1.2f)
-                          ? 0.045f
-                          : (locked ? 0.55f : 0.90f);
+    const float glide = std::fabs (err) <= (locked ? 2.5f : 1.2f)
+                            ? 0.045f
+                            : (locked ? 0.55f : 0.90f);
+
+    // Floored while the beats the tempo was fitted through are worse placed
+    // than this song's own - which is what a passage with the drummer out looks
+    // like from inside the fit, and is measured in Tracking/PhaseTrust.h. At
+    // full trust, which is everything else including an accelerando, `poor` is
+    // zero and this is the same number it has always been.
+    const float poor = (1.0f - std::clamp (tempoTrust, kMinTempoTrust, 1.0f))
+                       / (1.0f - kMinTempoTrust);
+    const float tau = std::max (glide, poor * kPoorEvidenceTauSec);
     const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
                                      / (tau * static_cast<float> (sampleRate)));
     tempo += err * a;
@@ -326,6 +403,19 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
                                          / (tau * static_cast<float> (sampleRate)));
         phaseErrEma += (phaseTarget - phaseErrEma) * a;
         havePhaseTarget = false;
+
+        // And however long it is averaged over, how far it may go. See
+        // kPoorLeanBeats: a passage whose beats are badly placed moves the
+        // analysis's phase as an offset held for the length of the passage, and
+        // an offset is the one thing a low-pass cannot take out.
+        const float poorLean = (1.0f - std::clamp (tempoTrust, kMinTempoTrust, 1.0f))
+                               / (1.0f - kMinTempoTrust);
+        if (poorLean > 0.0f && std::fabs (phaseTarget) < kLeanIsElsewhere)
+        {
+            const float lim = kPoorLeanBeats
+                              + (1.0f - poorLean) * (kLeanIsElsewhere - kPoorLeanBeats);
+            phaseErrEma = std::clamp (phaseErrEma, -lim, lim);
+        }
     }
 
     // Phase is corrected by *rate*, never by moving the grid.

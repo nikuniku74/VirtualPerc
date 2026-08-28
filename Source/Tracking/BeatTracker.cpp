@@ -102,6 +102,7 @@ void BeatTracker::prepare (double sr) noexcept
 void BeatTracker::reset() noexcept
 {
     follower.reset();
+    evidence.reset();
     currentState = TrackingState::listening;
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
@@ -138,6 +139,7 @@ void BeatTracker::reset() noexcept
     barLocked = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
+    barRotations = 0;
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     barDeclaredSamples = 0;
@@ -604,6 +606,7 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     }
 
     follower.rotateBarIndex (-best);
+    ++barRotations;
 
     // Rotating renumbers the beats, so the tally rotates with them rather than
     // being thrown away: the evidence is still good, it is just about different
@@ -648,6 +651,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
     const bool periodic = haveHyp && hyp.valid && nnBpm > 50.0f;
+
+    // How well the analysis is fitting, against how well it has been fitting on
+    // this song. Nothing downstream of this touches the tempo - see the note on
+    // EvidenceTrust for why that is the whole point - it only decides how long
+    // the clock averages the phase before steering on it.
+    if (haveHyp && hyp.valid)
+        evidence.observe (hyp.fitResidual, hyp.fitCoverage,
+                          static_cast<double> (numSamples) / sampleRate);
 
     // The worker publishes one hypothesis per 20 ms analysis frame into a
     // single slot, while this runs once per audio block. Reading `peak` would
@@ -711,6 +722,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // be handed a latency figure of its own as well, which it stored and never
     // used: two names for one correction, one of them doing nothing.
     follower.setLocked (holding && currentState != TrackingState::listening);
+
+    // And how fast it should adopt the tempo it is handed. Full trust - which
+    // is everything the analysis fits as well as it has been fitting this song,
+    // an accelerando included - is the glide the clock has always had; a
+    // passage whose beats are worse placed than the song's own is averaged
+    // instead of followed. A tempo the listener owns is not the analysis's to
+    // slow down.
+    follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has
@@ -877,6 +896,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (haveHyp && seenSerials && hyp.gridSerial != lastGridSerial)
     {
         lastGridSerial = hyp.gridSerial;
+        // What this song was giving belonged to the grid that has just gone.
+        // Carried across, a song that fits worse than the last one would read
+        // as poor evidence on every hypothesis, and the clock would be at its
+        // slowest exactly where it has the furthest to go.
+        evidence.restart();
         // Not over a bar the listener placed by hand, and not over one that was
         // moved a moment ago: those are the two cases where somebody already
         // answered this question.
@@ -892,8 +916,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     else if (! tapHold && tempoFollow && periodic && loudEnough && nnConf > 0.28f
              && currentState != TrackingState::listening
              && currentState != TrackingState::idle
-             && ! tapEstablished
-             && downbeatHoldSamples <= 0)
+             && ! tapEstablished)
     {
         // With nothing on the grid, put the grid where the song is.
         //
@@ -906,8 +929,28 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // This is also the whole of the time the part spends waiting to come
         // in, which used to be excluded here altogether: through the entire
         // wait the phase was never corrected at all.
+        // The bar hold used to gate this whole block, and it is a hold on the
+        // *count*: `alignBarFromVotes` sets it after rotating the bar so that
+        // two disagreeing votes cannot trade the one back and forth inside a
+        // phrase. Rotating the index moves no phase - the comment where it
+        // happens says so - so there was nothing here for it to protect, and
+        // for 9.6 seconds after every automatic bar move the better of the two
+        // phase sources was switched off for no reason. Only on a line feed:
+        // through a speaker the downbeat vote is near chance and the bar is
+        // never rotated automatically, so it never fired there at all.
+        //
+        // Not an outage, and worth being exact about it: `observeOnsetPhase`
+        // above is outside the gate and keeps steering the loop on every beat
+        // throughout, so what those 9.6 seconds cost was the averaged target
+        // and not the correction. It is the quieter of the two - it is what the
+        // whole of setGridPhase's time constant exists to produce - and having
+        // it switched off by a decision about the count is still wrong.
+        //
+        // The hold stays on the snap below, which is a different thing: that
+        // one carries the count over the beat boundary it crosses, so it can
+        // move the bar the vote has just placed.
         const float gridErr = wrapCentered (follower.beatPhase() - songPhase);
-        if (! sounding && std::fabs (gridErr) > 0.04f)
+        if (! sounding && downbeatHoldSamples <= 0 && std::fabs (gridErr) > 0.04f)
         {
             // Nothing is playing, so the count goes over the boundary with the
             // grid: the bar the part will come in on has to be the song's bar,
@@ -921,7 +964,15 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // times a second and each one carries its own phase error - so the
             // clock follows the band and not the decoder. While still acquiring
             // it is worth being wrong quickly.
-            follower.setGridPhase (songPhase, holding ? 0.90f : 0.25f);
+            //
+            // How long is not one number any more: it opens up while the
+            // beats being fitted are worse placed than this song's own, which
+            // is what a passage without a drummer looks like from inside the
+            // fit. See Tracking/PhaseTrust.h - including the shorter constant
+            // for a line feed that was tried there and measured as noise.
+            follower.setGridPhase (songPhase,
+                                   gridPhaseTau (kGridTauHolding, holding,
+                                                 evidence.trust()));
         }
     }
 
@@ -1019,6 +1070,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisWakeups = neural.wakeups();
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
+    out.barRotations = barRotations;
+    out.evidenceTrust = evidence.trust();
+    out.gridTauSec = gridPhaseTau (kGridTauHolding, holding, evidence.trust());
 
     // Whether what the clock is following is known to be somebody playing.
     //

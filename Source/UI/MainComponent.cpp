@@ -2336,7 +2336,17 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  ottava " + juce::String (snap.tempoOctave));
         lines.add ("pBeat " + juce::String (snap.pBeat, 3) + "  valid " + juce::String (snap.hypValid ? 1 : 0)
                    + "  conf " + juce::String (snap.confidence, 3));
-        lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3));
+        lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3)
+                   + "  rot " + juce::String (snap.barRotations));
+        // How well the analysis is fitting against how well it has been fitting
+        // this song, and the constant the clock is therefore averaging its
+        // phase over. Below one is a passage the fit is finding hard - the
+        // drummer out, usually - and the two numbers together say whether the
+        // app has noticed something the listener can hear.
+        lines.add ("prove " + juce::String (snap.evidenceTrust, 2)
+                   + "  tau " + juce::String (snap.gridTauSec, 2) + " s"
+                   + "  fit " + juce::String (snap.fitResidual, 3)
+                   + "/" + juce::String (snap.fitCoverage, 2));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
                    + juce::String (snap.leadMs, 1) + " ms");

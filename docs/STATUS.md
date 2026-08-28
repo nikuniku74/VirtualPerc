@@ -158,6 +158,114 @@ cambiare, è il segnale.
 Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
 `VPDecoderProbe`: 5 fallimenti, gli stessi di prima.
 
+## Il buco senza batteria: il meccanismo non era quello (28 agosto)
+
+Seguito della sezione qui sotto, che chiudeva con «serve un discriminante che
+non venga dal fit — `TempoEstimator` ne ha uno, la salience, e la prima cosa da
+fare è misurare quei due valori, non scrivere un'altra regola». Fatto. La
+salience non separa niente, e il meccanismo del guasto non è quello che quella
+sezione dava per scontato.
+
+### Il banco
+
+`VPAlign` ha due sezioni nuove e la seconda è quella che conta: monta
+attivazioni della forma che BeatNet produce, le fa passare per `BeatDecoder`
+**e per `TempoFollower` guidato come lo guida `BeatTracker`**, e misura la fase
+dell'**orologio** contro la griglia scritta. Tutte le altre sonde qui misurano
+il decoder; quello che si sente è l'orologio. Deterministica, senza rete e senza
+audio.
+
+```bash
+cmake --build build --target VPAlign && ./build/VPAlign_artefacts/Release/VPAlign
+```
+
+### La salience non separa. Il residuo, relativo, sì
+
+| | buco | accelerando | separa? |
+|---|---|---|---|
+| salience del pettine, nel passaggio | 0,992 | 1,000 (saturata) | **no** |
+| confidenza del decoder | 0,83 | 0,86 | **no** |
+| residuo fuori dal passaggio | 0,048 | 0,044 | — |
+| residuo **dentro** il passaggio | **0,063** (+31%) | 0,040 (−9%) | **sì** |
+
+La salience è `clamp(best / 0.5)` e su materiale periodico sta contro il
+fondoscala: non è una grandezza continua lassù, ed è per questo che non decide
+niente. Il residuo **contro quello che questo brano stava già dando** decide —
+che è esattamente la forma che la sezione sotto aveva indovinato («la soglia
+dev'essere relativa») e non aveva provato.
+
+### Il meccanismo: non è il tempo che scivola, è l'analisi che arriva tardi
+
+Questa è la parte che cambia la cura. Nel banco, lo stesso passaggio con il
+ritardo sistematico tolto costa **29,5 ms** al peggio — quanto un accelerando —
+e con 44 ms di ritardo dentro costa **79,5 ms**. Un passaggio senza batteria non
+rende l'analisi *rumorosa*, la rende **in ritardo**: un pad e una nota di basso
+salgono dentro il battito dove una bacchetta ci atterra sopra, l'attivazione
+culmina un paio di frame dopo, e il fit ci va dietro fedelmente per tutta la
+durata del passaggio.
+
+È un **offset tenuto per dieci secondi**, e un offset è l'unica cosa che nessuna
+media può togliere: a lisciatura piena l'orologio lo seguiva lo stesso a un
+millisecondo. Quello che gli si può dare è un **limite**.
+
+### Cosa è stato spedito
+
+`Tracking/PhaseTrust.h`: quanto bene l'analisi sta agganciando i battiti contro
+quanto bene stava agganciandoli *su questo brano*. Guida tre cose, e nessuna
+delle tre è il tempo:
+
+- la costante su cui la fase viene mediata prima che l'anello la veda;
+- un **pavimento** sotto la planata di velocità dell'orologio, così un bersaglio
+  costruito su battiti mal piazzati viene mediato invece che preso;
+- un **tetto** su quanto l'orologio si sposta dalla propria griglia.
+
+Tutte e tre sono limitate e si sciolgono da sole: niente si aggancia, niente va
+rilasciato, e appena il fit si stringe le costanti sono quelle di prima. Il
+tetto non vale sopra 0,15 di battito, dove l'analisi non sta pendendo ma è
+*altrove* — una canzone nuova, uno stacco, una griglia ri-ancorata — e va
+seguita subito. La linea di base riparte con `gridSerial`: quello che dava
+questo brano era di questo brano.
+
+L'orologio contro la griglia scritta, media su otto brani:
+
+| | buco media | buco peggio | accel media | accel peggio |
+|---|---|---|---|---|
+| prima | 23,2 | 52,4 | 20,5 | 44,5 |
+| solo la costante di fase | 21,9 | 49,9 | 19,5 | 43,0 |
+| solo l'orologio | 19,8 | 46,3 | 18,2 | 38,5 |
+| **tutte e due (spedito)** | **19,4** | **46,0** | **18,9** | **38,1** |
+
+**L'accelerando migliora anche lui**, ed è la cosa che nessuno dei cinque
+tentativi qui sotto era riuscito a fare: tutti costavano mezza battuta lì per
+salvare il buco. Il motivo è che nessuno di questi tre limiti tocca il tempo, e
+una band che accelera con il batterista dentro non lascia mai la fiducia sotto
+uno — quindi non viene rallentata da niente.
+
+### Cosa è stato provato e non spedito
+
+Una costante di fase più corta su una mandata di linea (0,35 s contro 0,90).
+`docs/CORE_TIMING_AUDIT.md` quasi la propone — gli 0,9 s c'erano per ingoiare
+scatti di fase che non esistono più — e sul percorso di linea il rumore
+dell'analisi è davvero più basso. Misurata da un capo all'altro non è un
+miglioramento: **23,2 → 23,8 ms medi e 52,4 → 54,1 al peggio** attraverso un
+passaggio, e dentro un millisecondo di niente su un accelerando. La fase del
+decoder è già in ritardo su un tempo che si muove, quindi mediarla di meno
+insegue il ritardo più da vicino, non la band. Il numero sta in `VPAlign`
+(`tau linea, senza prove`) e la nota sta in `PhaseTrust.h`, così non viene
+riproposta dalla sola teoria.
+
+### E una tenuta che non c'entrava niente
+
+`alignBarFromVotes` tiene fermo il **conto** per 9,6 s dopo aver ruotato la
+battuta, così due voti in disaccordo non se la passano avanti e indietro dentro
+una frase. Quella tenuta chiudeva anche lo **sterzo di fase**, che con la
+rotazione di un indice non ha niente a che vedere. Da essere precisi:
+`observeOnsetPhase` sta fuori dal cancello e continuava a guidare l'anello a
+ogni battito, quindi quei 9,6 s costavano il bersaglio *mediato* e non la
+correzione — ma è il più quieto dei due, ed è tutto quello per cui la costante
+di `setGridPhase` esiste. Toglieva solo in MIXER: in IPAD il voto sulla battuta
+è vicino al caso e la battuta non viene mai ruotata da sola.
+
 ## Il buco senza batteria: cinque tentativi, nessuno spedito (25 agosto)
 
 Seguito della sezione sotto, che aveva lasciato la diagnosi e non la cura. La

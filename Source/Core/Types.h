@@ -199,6 +199,13 @@ struct EngineSnapshot
         turning into a band playing. One per song is what a set looks like; one
         in the middle of a song is this watcher being fooled. */
     int   analysisRestarts     = 0;
+    /** Times the automatic alignment has rotated the bar, and how well the
+        analysis is fitting compared with how well it has been fitting this
+        song (1 down to 0.3), with the constant the clock is therefore
+        averaging its phase over. Diagnostics. */
+    int   barRotations         = 0;
+    float evidenceTrust        = 1.0f;
+    float gridTauSec           = 0.0f;
     /** Measured analysis-plus-output delay the clock runs ahead by, so that what
         is played lands on the pulse the listener hears. */
     float leadMs               = 0.0f;

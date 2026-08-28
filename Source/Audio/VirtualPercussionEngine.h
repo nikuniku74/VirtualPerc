@@ -143,6 +143,11 @@ private:
         does this is a driver whose other numbers are also suspect. */
     std::atomic<int>   badInputSamples { 0 };
     std::atomic<int>   lastGaps { 0 };
+    /** The bar rotations the automatic alignment has made, and how much the
+        analysis is being believed. Diagnostics; see BeatTracker::Output. */
+    std::atomic<int>   lastBarRotations { 0 };
+    std::atomic<float> lastEvidenceTrust { 1.0f };
+    std::atomic<float> lastGridTauSec { 0.0f };
     std::atomic<int>   lastBacklog { 0 };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };

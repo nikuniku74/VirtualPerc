@@ -30,6 +30,20 @@ public:
     void setFollowStrength (FollowStrength s) noexcept { follow = s; }
     void setLocked (bool on) noexcept { locked = on; }
     void setTempoTrimEnabled (bool on) noexcept;
+    /** How much the clock should believe the tempo it is being handed, 0..1,
+        relative to how well the analysis has been fitting this song. 1 - the
+        default, and what everything that does not set it gets - is exactly the
+        rate glide the clock has always had. Below it the glide is stretched in
+        proportion, so a target built out of badly placed beats is averaged
+        rather than followed.
+
+        This is not a freeze and cannot become one: the target is still adopted,
+        the stretch is bounded, and it goes away the moment the evidence comes
+        back. docs/STATUS.md records five attempts at the same passage that
+        worked by *holding* the tempo, and all five cost half a bar on an
+        accelerando; a band speeding up with its drummer still playing never
+        leaves trust below one, so it is never slowed here at all. */
+    void setTempoTrust (float trust) noexcept;
     void resetClock() noexcept;
 
     /** Where the analysis says the song's pulse is, and how long the loop
@@ -114,6 +128,8 @@ private:
     bool reanchor = false;
     bool havePhaseObservation = false;
     bool tempoTrimEnabled = false;
+    /** See setTempoTrust. 1 is the clock as it has always been. */
+    float tempoTrust = 1.0f;
     FollowStrength follow = FollowStrength::medium;
 };
 

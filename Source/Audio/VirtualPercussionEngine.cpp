@@ -1020,6 +1020,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastBarLocked.store (tr.barLocked, std::memory_order_relaxed);
     cfg.barLocked.store (tr.barLocked, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
+    lastBarRotations.store (tr.barRotations, std::memory_order_relaxed);
+    lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
+    lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
     lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
     lastPeak.store (peak, std::memory_order_relaxed);
@@ -1103,6 +1106,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
+    s.barRotations = lastBarRotations.load (std::memory_order_relaxed);
+    s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
+    s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));
     s.analysisBacklog = lastBacklog.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);

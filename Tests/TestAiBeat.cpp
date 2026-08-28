@@ -16,6 +16,7 @@
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
+#include "Tracking/PhaseTrust.h"
 
 #include "../scripts/probe_song_render.h"
 
@@ -2903,6 +2904,209 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // in either of them.
         expect (starved || (free_.span < 1.0f && held.span < 1.0f),
                 "moving the bar costs the tempo nothing, and holding it costs nothing either");
+    }
+
+    {
+        // Moving the bar must not cost the phase.
+        //
+        // `alignBarFromVotes` holds the count still for 9.6 seconds after it
+        // rotates the bar, so that two disagreeing votes cannot trade the one
+        // back and forth inside a phrase. That hold used to gate the phase
+        // steering as well, which rotating an index has nothing to do with.
+        //
+        // This is a guard on the whole area rather than a demonstration of that
+        // one gate, and the difference is worth stating: `observeOnsetPhase` is
+        // outside the gate and kept steering the loop on every beat throughout,
+        // so the gate cost the averaged target and not the correction, and this
+        // test passes with it and without it. What it does catch is the change
+        // that takes the phase away *altogether* while the count is held - the
+        // thing that gate looked like it was already doing.
+        //
+        // The network moves its bar by two quarters half way through, which is
+        // what a section change looks like to the vote; when the rotation lands
+        // the test moves the song half a beat underneath it and asks whether
+        // the clock comes with it inside five seconds.
+        class RotateThenSpliceModel final : public vp::IBeatModel
+        {
+        public:
+            RotateThenSpliceModel (double framesPerBeat, double switchAtSec,
+                                   std::atomic<bool>& arm)
+                : fpb (framesPerBeat),
+                  switchFrame (switchAtSec * (vp::kBeatModelSampleRate / vp::kBeatModelHop)),
+                  armed (arm) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                if (armed.load (std::memory_order_relaxed) && offset == 0.0)
+                    offset = fpb * 0.5;   // half a beat, once
+                const double f = static_cast<double> (frame++);
+                const double beats = (f - offset) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const float pulse = 0.03f + 0.95f * static_cast<float> (
+                                        std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                const int beatNo = static_cast<int> (std::llround (beats));
+                const int inBar = (((beatNo + 2) % 4) + 4) % 4;
+                // The bar the network is calling moves half way through, by two
+                // quarters, which is what a section change looks like to the
+                // vote. The rotation that follows is the one under test: it
+                // happens while the part is playing, and that is the only kind
+                // that holds the count still afterwards.
+                const int called = f < switchFrame ? 0 : 2;
+                activations3[0] = pulse;
+                activations3[1] = inBar == called ? pulse * 0.95f : 0.05f;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+        private:
+            double fpb;
+            double switchFrame;
+            std::atomic<bool>& armed;
+            double offset = 0.0;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        const int n = static_cast<int> (sr * 90.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        std::atomic<bool> arm { false };
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::make_unique<RotateThenSpliceModel> (framesPerBeat, 25.0, arm));
+        eng.prepare (sr, block, 1);
+        eng.start();
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        // The clock leads the song by the pipeline and the output path, so the
+        // absolute phase error is not zero by design. What is measured is the
+        // *change*: the phase held just before the splice against the phase
+        // held five seconds after it. A constant lead cancels out of that.
+        float beforeSplice = -1.0f, afterSplice = -1.0f;
+        double armedAt = -1.0;
+        int rotatedFor = 0;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            const auto snap = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+
+            if (armedAt < 0.0)
+            {
+                // The moment a rotation lands is the moment the count is held
+                // still for 9.6 seconds, and that hold is what is under test.
+                // Splice into the middle of it.
+                if (snap.barRotations > 0 && snap.state == vp::TrackingState::following
+                    && snap.bpm > 40.0f)
+                {
+                    if (++rotatedFor > 4)
+                    {
+                        beforeSplice = snap.beatPhase;
+                        arm.store (true, std::memory_order_relaxed);
+                        armedAt = t;
+                    }
+                }
+            }
+            else if (t > armedAt + 5.0 && afterSplice < 0.0f)
+            {
+                afterSplice = snap.beatPhase;
+            }
+            if ((pos / block % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        }
+
+        // Half a beat moved under it. A clock that was steered follows and the
+        // difference is about half a beat; one that was blinded stays where it
+        // was and the difference is nothing.
+        const float moved = std::fabs (vp::wrapCentered (afterSplice - beforeSplice));
+        std::printf ("bar-hold       rotazioni=%d  splice a %.1f s   "
+                     "fase mossa di %.3f di battito\n",
+                     eng.snapshot().barRotations, armedAt,
+                     static_cast<double> (moved));
+        const bool starved = eng.snapshot().analysisGaps > 0;
+        expect (starved || (armedAt > 0.0 && moved > 0.30f),
+                "a bar rotated while the part is playing does not cost the phase");
+    }
+
+    {
+        // How well the analysis is fitting, against how well it has been
+        // fitting this song. This is what opens the clock's phase constant and
+        // floors its rate glide through a passage with the drummer out, and the
+        // whole of its value is that it separates that passage from a band
+        // speeding up - which is what the five attempts recorded in
+        // docs/STATUS.md could not do. The residuals below are the ones
+        // `VPAlign` measures on the two.
+        vp::EvidenceTrust ev;
+        auto feed = [&ev] (float residual, double seconds)
+        {
+            for (int i = 0; i < static_cast<int> (seconds * 50.0); ++i)
+                ev.observe (residual, 1.0f, 0.020);
+        };
+
+        feed (0.045f, 40.0);
+        const float settled = ev.trust();
+
+        // A band speeding up keeps its drummer, so its fit does not go wide.
+        vp::EvidenceTrust accel = ev;
+        feed (0.040f, 10.0);
+        const float onAccel = ev.trust();
+
+        // The drummer stops. Same song, same tempo, beats a third worse placed.
+        vp::EvidenceTrust hole = accel;
+        for (int i = 0; i < 500; ++i)
+            hole.observe (0.063f, 1.0f, 0.020);
+        const float inHole = hole.trust();
+
+        // And comes back. The constant has to come back with it, on its own,
+        // with nothing to release: a hold that has to be let go of is what the
+        // rejected attempts all were.
+        for (int i = 0; i < 150; ++i)
+            hole.observe (0.045f, 1.0f, 0.020);
+        const float after = hole.trust();
+
+        std::printf ("prove-fit      fermo=%.2f  accelerando=%.2f  buco=%.2f  "
+                     "dopo=%.2f  (base %.4f)\n",
+                     static_cast<double> (settled), static_cast<double> (onAccel),
+                     static_cast<double> (inHole), static_cast<double> (after),
+                     static_cast<double> (hole.baseline()));
+        expect (settled > 0.99f && onAccel > 0.99f,
+                "a fit as good as this song has been giving is believed whole, "
+                "and one that tightens is too");
+        expect (inHole < 0.60f,
+                "a passage whose beats are a third worse placed is not");
+        expect (after > 0.99f,
+                "and the moment they are well placed again it is believed whole again");
+
+        // A new song is not this song fitting badly. The baseline goes with the
+        // grid, or a track that fits worse than the last would read as poor
+        // evidence for its whole length - and the clock would be slowest to
+        // move exactly where it has furthest to go.
+        hole.restart();
+        for (int i = 0; i < 50; ++i)
+            hole.observe (0.090f, 1.0f, 0.020);
+        expect (hole.trust() > 0.99f, "a new grid starts from its own baseline");
+
+        // The constant the clock is handed: unchanged at full trust, opened up
+        // below it, capped, and short while still acquiring.
+        const float full = vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f);
+        const float poor = vp::gridPhaseTau (vp::kGridTauHolding, true, 0.30f);
+        const float acquiring = vp::gridPhaseTau (vp::kGridTauHolding, false, 0.30f);
+        std::printf ("prove-tau      pieno=%.2f s  scarso=%.2f s  in acquisizione=%.2f s\n",
+                     static_cast<double> (full), static_cast<double> (poor),
+                     static_cast<double> (acquiring));
+        expect (std::fabs (full - vp::kGridTauHolding) < 1.0e-4f
+                    && poor > full && poor <= vp::kGridTauMax + 1.0e-4f
+                    && acquiring < full,
+                "the phase constant opens with the evidence, is capped, "
+                "and is short while still acquiring");
     }
 
     {

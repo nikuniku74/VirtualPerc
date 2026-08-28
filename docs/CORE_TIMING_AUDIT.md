@@ -276,6 +276,29 @@ sente niente.
   nuova fa avanzare il bersaglio alla velocità giusta invece di puntare al
   passato.
 
+## Seguito (28 agosto)
+
+`VPAlign` ha due sezioni in più, e la seconda porta il banco fino in fondo:
+guida `BeatDecoder` **e** `TempoFollower` insieme e misura la fase
+dell'**orologio** contro la griglia scritta, che è il numero che si sente. Serve
+per il passaggio senza batteria, e i risultati stanno in `docs/STATUS.md`. Due
+cose riguardano direttamente questo documento:
+
+- **Gli 0,9 s di lisciatura di fase.** La sezione 1 qui sopra chiude con «gli
+  0,9 s esistevano per ingoiare proprio quegli scatti; non ci sono più», che si
+  legge come un invito ad accorciarli — almeno su una mandata di linea, dove il
+  percorso è uno solo e fermo. Misurato da un capo all'altro, **non è un
+  miglioramento**: 0,35 s al posto di 0,90 costa 23,2 → 23,8 ms medi e
+  52,4 → 54,1 al peggio attraverso un passaggio, e su un accelerando non cambia
+  niente di misurabile. La fase del decoder è già in ritardo su un tempo che si
+  muove, quindi mediarla di meno insegue quel ritardo più da vicino invece della
+  band. Non spedito; la riga sta in `VPAlign` (`tau linea, senza prove`) e la
+  nota in `Tracking/PhaseTrust.h`.
+- **La costante adesso si apre da sola** quando i battiti che il fit sta
+  agganciando sono piazzati peggio di quelli che *questo brano* stava dando, e
+  con lei il pavimento della planata di velocità e un tetto sulla pendenza.
+  Vedi `Tracking/PhaseTrust.h`.
+
 ## Cosa resta aperto
 
 Un problema di **livello metrico**, non di fase, e fuori dal giro di questo

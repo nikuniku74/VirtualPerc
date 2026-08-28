@@ -3,6 +3,7 @@
 #include "AI/BeatHypothesis.h"
 #include "AI/NeuralBeatTracker.h"
 #include "AI/IBeatModel.h"
+#include "Tracking/PhaseTrust.h"
 #include "Tracking/TempoFollower.h"
 
 #include <cstdint>
@@ -138,6 +139,19 @@ public:
             picked it. Reported rather than assumed, so the screen can say what
             the part is being played at rather than what was asked for. */
         int           tempoOctave = 0;
+        /** How well the analysis is fitting compared with how well it has been
+            fitting on this song, 1 down to 0.3, and the constant the clock is
+            therefore averaging its phase over. Diagnostics: together they say
+            whether a passage the listener can hear going soft is one the clock
+            has noticed. */
+        float         evidenceTrust = 1.0f;
+        float         gridTauSec = 0.0f;
+        /** How many times the automatic alignment has rotated the bar since the
+            tracker was reset. Diagnostic, and the only way from outside to know
+            that a rotation has just happened - which is the moment the count is
+            held still, and therefore the moment worth asking what else that
+            hold is stopping. */
+        int           barRotations = 0;
     };
 
     void start() noexcept;
@@ -165,6 +179,7 @@ private:
 
     NeuralBeatTracker neural;
     TempoFollower     follower;
+    EvidenceTrust     evidence;
 
     TrackingState currentState = TrackingState::idle;
     Subdivision userSubdivision = Subdivision::autoDetect;
@@ -226,6 +241,7 @@ private:
         quantities - a network that is loud about every beat has said nothing. */
     float downbeatVotes[4] {};
     float voteBeats = 0.0f;
+    int   barRotations = 0;
     int   barDeclaredSamples = 0;
 
     int quantizeWaitSamples = 0;
