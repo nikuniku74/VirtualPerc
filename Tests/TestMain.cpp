@@ -637,6 +637,14 @@ int main()
             eng.settings().reverbAmount.store (0.0f);
             if (style >= 0)
                 eng.settings().grooveStyle.store (style);
+            // Hold the part still. This measures the canceller, and the
+            // canceller's residual depends on how much part there is to
+            // cancel - which is why it is run over every style rather than
+            // whichever one happens to be the default. Dynamics would move it
+            // for the same reason and for a reason that is an artefact here:
+            // the only thing on this rig's input is the app's own return, so
+            // the band the dynamics would be reading is us.
+            eng.settings().dynamicsFollow.store (false);
             eng.setReportedLatencyMs (150.0f);
 
             const int delay = static_cast<int> ((0.150 + acousticExtraMs * 0.001) * sr);

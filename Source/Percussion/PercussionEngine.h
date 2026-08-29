@@ -44,6 +44,8 @@ public:
         return static_cast<float> (bankAttackLead) / static_cast<float> (sampleRate) * 1000.0f;
     }
     void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
+    /** How much the band is giving, 0..1. See Percussion/BandDynamics.h. */
+    void setDynamics (float amount) noexcept { groove.setDynamics (amount); }
     void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
     void silence() noexcept;

@@ -236,6 +236,8 @@ private:
     /** Measures this rig's round trip instead of taking the device's word for
         it. See Audio/LatencyProbe.h. */
     juce::TextButton latencyButton { "LATENZA" };
+    /** Whether the part follows the band's dynamics. See BandDynamics.h. */
+    juce::TextButton dynamicsButton { "DINAMICA" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Label  reverbValue { {}, "30%" };

@@ -222,6 +222,11 @@ struct EngineSnapshot
     float kickQuietSec         = 0.0f;
     int   kickOnsets           = 0;
     bool  kickTrusted          = false;
+    /** How much the band is giving, 0..1, and whether the part has stood down
+        because the passage does not want it. */
+    float bandDynamics         = 1.0f;
+    bool  dynamicsFollow       = true;
+    bool  standingDown         = false;
     /** True when the kick channel says the drummer has stopped while the rest
         of the band is still playing. Not an inference: the channel is silent. */
     bool  drumsOut             = false;
@@ -279,6 +284,12 @@ struct EngineSettings
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
     std::atomic<bool>  shakerEnabled   { true };
     std::atomic<bool>  congasEnabled   { true };
+    // Whether the part follows the band's dynamics: quieter and thinner when
+    // the band comes down, silent in a passage that does not want it. On by
+    // default - it is the difference between a part that is correct and a
+    // player who is listening - and switchable, because a fixed part is what
+    // some jobs want. See Percussion/BandDynamics.h.
+    std::atomic<bool>  dynamicsFollow  { true };
     std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::marcha) };
     // Let the music choose the part. Off by default: measured at 3 cases in 9
     // against material whose style is known, which is no better than always

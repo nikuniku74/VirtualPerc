@@ -12,6 +12,7 @@
 #include "AI/StubBeatModel.h"
 #include "Audio/LatencyProbe.h"
 #include "Audio/VirtualPercussionEngine.h"
+#include "Percussion/BandDynamics.h"
 #include "Percussion/GrooveEngine.h"
 #include "Percussion/PercussionEngine.h"
 #include "Platform/NativeAudioBridge.h"
@@ -3639,6 +3640,200 @@ void vpRunAiBeatTests (int& passed, int& failed)
                      static_cast<double> (unrouted));
         expect (unrouted < 0.0f,
                 "and refuses to answer when the sweep never came back");
+    }
+
+    {
+        // How much the band is giving, and what the part does about it.
+        //
+        // Everything else in this engine answers "when". This is the first
+        // thing that answers "how much", which is most of the difference
+        // between a part that is correct and a player who is listening.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+
+        // The listener. Fed a level that walks from full to a quiet verse and
+        // back, at the block rate the engine really calls it at.
+        {
+            vp::BandDynamics dyn;
+            dyn.prepare (sr);
+            auto hold = [&] (float level, double seconds)
+            {
+                for (int i = 0; i < static_cast<int> (seconds * sr) / block; ++i)
+                    dyn.observe (level, block);
+            };
+
+            hold (0.30f, 8.0);                       // the band, full
+            const float atFull = dyn.level();
+            hold (0.30f * 0.20f, 6.0);               // -14 dB: a verse
+            const float atVerse = dyn.level();
+            const bool stoodDownInVerse = dyn.wantsSilence();
+            hold (0.30f * 0.045f, 6.0);              // -27 dB: an exposed vocal
+            const float atExposed = dyn.level();
+            const bool stoodDown = dyn.wantsSilence();
+            hold (0.30f, 4.0);                       // and the band is back
+            const float back = dyn.level();
+            const bool backIn = ! dyn.wantsSilence();
+
+            std::printf ("dinamica    pieno=%.2f  strofa=%.2f  voce sola=%.2f  ritorno=%.2f\n",
+                         static_cast<double> (atFull), static_cast<double> (atVerse),
+                         static_cast<double> (atExposed), static_cast<double> (back));
+            expect (atFull > 0.95f && back > 0.95f,
+                    "at the loudest this song gets, the part is the part as written");
+            expect (atVerse < 0.40f && atVerse > 0.05f,
+                    "a verse fourteen decibels down is read as a verse, not as silence");
+            expect (! stoodDownInVerse,
+                    "and a verse is still a passage a percussionist plays");
+            expect (atExposed < 0.10f && stoodDown,
+                    "an exposed vocal is a passage they stop for");
+            expect (backIn,
+                    "and they come back when the band does");
+
+            // Nothing at all is not a musical decision. An engine that has been
+            // handed silence has not heard a quiet passage, it has heard
+            // nothing, and it must behave exactly as it did before.
+            vp::BandDynamics cold;
+            cold.prepare (sr);
+            for (int i = 0; i < 400; ++i)
+                cold.observe (0.0f, block);
+            expect (cold.level() > 0.99f && ! cold.wantsSilence(),
+                    "silence on the input is not a quiet passage and does not stand the part down");
+        }
+
+        // The part. At full dynamics it is what is written; as the band comes
+        // down it thins from the bottom, and what survives at the floor is the
+        // skeleton - the slap, the low tone, the pair that closes the bar.
+        {
+            auto strokesPerBar = [] (float dynamics)
+            {
+                vp::GrooveEngine gr;
+                gr.prepare (0xD17u);
+                gr.setStyle (vp::GrooveStyle::marcha);
+                gr.setHumanize (0.0f);
+                gr.setIntensity (0.0f);
+                gr.setDynamics (dynamics);
+                int congas = 0, shakers = 0;
+                float loudest = 0.0f;
+                for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (0, s, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        if (ev[i].stroke == vp::Stroke::shakerDown
+                            || ev[i].stroke == vp::Stroke::shakerUp)
+                            ++shakers;
+                        else
+                        {
+                            ++congas;
+                            loudest = std::max (loudest, ev[i].velocity);
+                        }
+                    }
+                }
+                struct R { int congas, shakers; float loudest; };
+                return R { congas, shakers, loudest };
+            };
+
+            const auto full = strokesPerBar (1.0f);
+            const auto half = strokesPerBar (0.5f);
+            const auto floorD = strokesPerBar (0.05f);
+            std::printf ("dinamica    congas per battuta: pieno=%d  meta'=%d  fondo=%d   "
+                         "(colpo piu' forte %.2f -> %.2f)\n",
+                         full.congas, half.congas, floorD.congas,
+                         static_cast<double> (full.loudest),
+                         static_cast<double> (floorD.loudest));
+            expect (full.congas == 8,
+                    "at full dynamics the figure is the figure as written");
+            // Eight strokes, then four, then four. The step is not a fault and
+            // smoothing it would be: these figures are written bimodally on
+            // purpose - the heel and toe that fill the gaps sit at 0.28-0.34
+            // and the strokes that *are* the figure sit at 0.82-0.94 - so what
+            // thinning finds is the seam between the two, which is exactly the
+            // line a player drops to. Below it there is nothing left to take
+            // away that would not be taking away the part.
+            expect (half.congas < full.congas && floorD.congas <= half.congas,
+                    "and it thins as the band comes down, rather than only getting quieter");
+            expect (floorD.congas >= 3 && floorD.congas <= full.congas / 2,
+                    "down to the skeleton of the figure, and no further");
+            // A ghost note is written at 0.16, so anything comfortably above
+            // that is still being played rather than brushed.
+            expect (floorD.loudest > 0.25f,
+                    "and what is left is played like a stroke, not like a whisper");
+            expect (floorD.shakers < full.shakers,
+                    "the shaker thins with it - the return stroke goes before the pulse does");
+        }
+    }
+
+    {
+        // And the whole chain: does the part actually follow the band?
+        //
+        // The song has a verse fourteen decibels under its chorus, which is an
+        // ordinary arrangement and is the first material in this repository to
+        // have one at all - everything was measured on takes with no dynamics
+        // in them, which is a poor way to judge a part that is supposed to be
+        // listening. The percussion is rendered on its own output, so its level
+        // in each section can be measured directly.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 120.0f;
+        opt.breakdown = false;          // one thing at a time: this is dynamics
+        opt.fills = true;
+        opt.quietSectionDb = 14.0f;     // bars 0-7 of every 16 are the verse
+        const int n = static_cast<int> (sr * 40.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::renderSong (mix, opt, sr, 55u, &truePhase);
+
+        auto drive = [&] (bool follow)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().dynamicsFollow.store (follow);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.start();
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            double quietSum = 0.0, loudSum = 0.0;
+            int quietN = 0, loudN = 0;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { mix.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                if (static_cast<double> (pos) / sr < 12.0)
+                    continue;           // let it settle and let the reference form
+                const double bar = truePhase[static_cast<size_t> (pos)] / 4.0;
+                const bool verse = (static_cast<int> (bar) % 16) < 8;
+                double e = 0.0;
+                for (int i = 0; i < block; ++i)
+                    e += static_cast<double> (oL[static_cast<size_t> (i)])
+                         * oL[static_cast<size_t> (i)];
+                if (verse) { quietSum += e; ++quietN; }
+                else       { loudSum += e; ++loudN; }
+            }
+            const double q = quietN > 0 ? std::sqrt (quietSum / quietN) : 0.0;
+            const double l = loudN > 0 ? std::sqrt (loudSum / loudN) : 0.0;
+            return l > 1.0e-9 ? 20.0 * std::log10 (std::max (1.0e-9, q) / l) : 0.0;
+        };
+
+        const double fixedPart = drive (false);
+        const double listening = drive (true);
+        std::printf ("dinamica    parte in strofa contro ritornello: "
+                     "fissa %.1f dB   che ascolta %.1f dB  (band -14 dB)\n",
+                     fixedPart, listening);
+        expect (std::fabs (fixedPart) < 2.5,
+                "with dynamics off the part plays the verse exactly as loud as the chorus");
+        // Three decibels, and that is the *smaller* half of what happens: half
+        // the strokes of the figure have gone as well, and an RMS taken over
+        // the section counts only the level. The band came down 14 dB; a
+        // player does not come down by 14, they come down a few and play less.
+        expect (listening < fixedPart - 3.0,
+                "with them on it comes down with the band");
     }
 
     {

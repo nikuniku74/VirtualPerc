@@ -75,6 +75,13 @@ struct SongOptions
         to twelve milliseconds of their own average, and the beat the band plays
         is the average of several people doing that. */
     float jitterMs = 0.0f;
+
+    /** How far the first half of every sixteen bars sits below the second, in
+        decibels. Zero is a take with no arrangement in it at all, which is what
+        everything in this repository was measured on until the part started
+        listening to how much the band was giving. Twelve to sixteen is an
+        ordinary verse against an ordinary chorus. */
+    float quietSectionDb = 0.0f;
 };
 
 /** The arrangement split the way a desk splits it.
@@ -180,6 +187,27 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
         const int    sixIdx = static_cast<int> (inBeat * 4.0);
 
         const bool drumsOut = opt.breakdown && (bar % 16) >= 8 && (bar % 16) < 12;
+        // The arrangement's own dynamics. Eased over an eighth of a bar at the
+        // seam rather than stepped: a band coming out of a verse takes about
+        // that long, and a step would be an edit.
+        float section = 1.0f;
+        if (opt.quietSectionDb > 0.0f)
+        {
+            const double inSixteen = std::fmod (beats * 0.25, 16.0);
+            const float quiet = std::pow (10.0f, -opt.quietSectionDb / 20.0f);
+            const double ease = 0.125;
+            const double d = inSixteen < 8.0 ? (8.0 - inSixteen) : (16.0 - inSixteen);
+            const float toward = inSixteen < 8.0 ? quiet : 1.0f;
+            const float from = inSixteen < 8.0 ? 1.0f : quiet;
+            section = d < ease ? from + (toward - from) * static_cast<float> (d / ease)
+                               : toward;
+            section = inSixteen < 8.0 ? (d < ease ? quiet + (1.0f - quiet)
+                                                       * static_cast<float> (1.0 - d / ease)
+                                                 : quiet)
+                                      : (d < ease ? 1.0f + (quiet - 1.0f)
+                                                       * static_cast<float> (1.0 - d / ease)
+                                                  : 1.0f);
+        }
         const bool fillBar = opt.fills && (bar % 8) == 7;
         const float root = roots[bar % 4];
 
@@ -284,6 +312,7 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
         }
 
         constexpr float kMixGain = 0.32f;
+        sKick *= section; sSnare *= section; sHats *= section; sMusic *= section;
         dest[i] = (sKick + sSnare + sHats + sMusic) * kMixGain;
         if (stems != nullptr)
         {

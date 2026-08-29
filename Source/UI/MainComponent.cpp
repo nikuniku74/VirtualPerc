@@ -339,6 +339,7 @@ MainComponent::MainComponent()
     setupBtn (styleReggae, ink());
     setupBtn (styleBossa, ink());
     setupBtn (styleTwoOne, ink());
+    setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
@@ -495,6 +496,15 @@ MainComponent::MainComponent()
     styleReggae.onClick = [this] { applyStyle (vp::GrooveStyle::reggae); };
     styleBossa.onClick  = [this] { applyStyle (vp::GrooveStyle::bossa); };
     styleTwoOne.onClick = [this] { applyStyle (vp::GrooveStyle::twoOne); };
+    // Not in SETUP: this one is a musical choice and belongs next to the other
+    // musical choices, where it can be reached mid-song.
+    dynamicsButton.onClick = [this]
+    {
+        auto& v = engine.settings().dynamicsFollow;
+        v.store (! v.load());
+        savePrefs (true);
+        refreshStyleButtons();
+    };
 
     subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
@@ -718,7 +728,8 @@ void MainComponent::refreshThemeColours()
         &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &styleTwoOne, &halveButton, &doubleButton, &barButton,
+        &styleBossa, &styleTwoOne, &dynamicsButton, &halveButton, &doubleButton,
+        &barButton,
         &settingsButton, &settingsClose, &procButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -1267,6 +1278,8 @@ void MainComponent::loadPrefs()
 
     engine.settings().grooveAuto.store (
         prefs->getBoolValue ("grooveAuto", engine.settings().grooveAuto.load()));
+    engine.settings().dynamicsFollow.store (
+        prefs->getBoolValue ("dynamicsFollow", engine.settings().dynamicsFollow.load()));
 
     const int oct = prefs->getIntValue ("tempoOctave",
                                         engine.settings().tempoOctave.load());
@@ -1331,6 +1344,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("subdivision", engine.settings().subdivision.load());
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
     prefs->setValue ("grooveAuto", engine.settings().grooveAuto.load());
+    prefs->setValue ("dynamicsFollow", engine.settings().dynamicsFollow.load());
     prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());
     prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
@@ -1473,6 +1487,15 @@ void MainComponent::refreshStyleButtons()
     // Never lit by AUTO: the chooser decides between four genres and this one
     // is not a genre. See the note on GrooveStyle::twoOne.
     paint (styleTwoOne, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::twoOne), false);
+
+    // Lit while it is on; the text says what it is doing right now, because
+    // "the part went quiet" is the kind of thing a player wants confirmed
+    // rather than wondered about.
+    const bool followDyn = engine.settings().dynamicsFollow.load();
+    dynamicsButton.setButtonText (! followDyn ? "DINAMICA"
+                                              : (snap.standingDown ? "IN ASCOLTO"
+                                                                   : "DINAMICA"));
+    paint (dynamicsButton, followDyn, followDyn && snap.standingDown);
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -1829,7 +1852,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
         auto body = card (area.removeFromTop (hPart), "PARTE");
         placeSquareRow (body, { &styleAuto, &styleMarcha, &styleRock, &styleDance, &stylePop,
                                 &styleSamba, &styleFunk, &styleReggae, &styleBossa,
-                                &styleTwoOne });
+                                &styleTwoOne, &dynamicsButton });
         area.removeFromTop (gap);
     }
 
@@ -2449,6 +2472,9 @@ void MainComponent::paint (juce::Graphics& g)
         // phase over. Below one is a passage the fit is finding hard - the
         // drummer out, usually - and the two numbers together say whether the
         // app has noticed something the listener can hear.
+        lines.add (juce::String ("dinamica ") + (snap.dynamicsFollow ? "ON " : "OFF")
+                   + "  banda " + juce::String (snap.bandDynamics, 2)
+                   + (snap.standingDown ? "  IN ASCOLTO" : ""));
         lines.add ("latenza  dispositivo " + juce::String (snap.latencyMs, 1)
                    + " ms   misurata " + (engine.measuredLatency() > 0.0f
                                               ? juce::String (engine.measuredLatency(), 1) + " ms"

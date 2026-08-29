@@ -82,6 +82,8 @@ int main (int argc, char** argv)
     float mix = 0.5f, reverb = 0.30f;
     bool click = false;
     bool congas = true, shaker = true;
+    float dynamics = 1.0f;
+    bool arc = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -97,6 +99,8 @@ int main (int argc, char** argv)
         else if (a == "--mix")       mix = std::stof (next());
         else if (a == "--reverb")    reverb = std::stof (next());
         else if (a == "--click")     click = true;
+        else if (a == "--dynamics")  dynamics = std::stof (next());
+        else if (a == "--arc")       arc = true;
         else if (a == "--no-congas") congas = false;
         else if (a == "--no-shaker") shaker = false;
         else
@@ -104,7 +108,8 @@ int main (int argc, char** argv)
             std::printf ("uso: VPRender [--style marcha|rock|dance|pop|samba|funk|reggae|bossa]\n"
                          "              [--bpm 124] [--bars 8] [--out file.wav] [--click]\n"
                          "              [--humanize 0.35] [--swing 0] [--intensity 0.5]\n"
-                         "              [--mix 0.5] [--reverb 0.30] [--no-congas] [--no-shaker]\n");
+                         "              [--mix 0.5] [--reverb 0.30] [--no-congas] [--no-shaker]\n"
+                         "              [--dynamics 1.0] [--arc]\n");
             return 1;
         }
     }
@@ -127,6 +132,7 @@ int main (int argc, char** argv)
     perc.setSwing (swing);
     perc.setIntensity (intensity);
     perc.setInstrumentMix (mix);
+    perc.setDynamics (dynamics);
     perc.setReverbAmount (reverb);
     perc.setCongasEnabled (congas);
     perc.setShakerEnabled (shaker);
@@ -165,6 +171,18 @@ int main (int argc, char** argv)
         // Silent through the run-up: the clock is already counting, so the part
         // comes in on a downbeat instead of wherever the file happens to start.
         const bool audible = pos >= lead;
+        // `--arc` walks the dynamics down and back over the take, so what the
+        // part does as a band comes off and returns can be heard in one file
+        // rather than inferred from three. The engine gets this from
+        // BandDynamics; here it is simply swept, because this program is about
+        // the part and not about the listening.
+        if (arc && audible)
+        {
+            const double through = static_cast<double> (pos - lead)
+                                   / static_cast<double> (std::max (1, body));
+            const double u = 1.0 - std::cos (2.0 * 3.14159265358979 * through);
+            perc.setDynamics (static_cast<float> (0.06 + 0.94 * (u * 0.5)));
+        }
         perc.render (bl.data(), br.data(), n, tick, audible);
         std::memcpy (L.data() + pos, bl.data(), sizeof (float) * static_cast<size_t> (n));
         std::memcpy (R.data() + pos, br.data(), sizeof (float) * static_cast<size_t> (n));
