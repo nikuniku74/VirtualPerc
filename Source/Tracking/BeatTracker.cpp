@@ -34,6 +34,33 @@ namespace
     // happened to be.
     constexpr float kVoteDecay = 0.982f;
 
+    /** Harmonic changes the histogram has to hold before the harmony is allowed
+        to place the bar. One change is an anecdote; eight is a section, and on
+        material that changes chord once a bar that is eight bars of agreement.
+        Decayed with the same constant as the network's votes, so an arrangement
+        that stops moving stops answering. */
+    constexpr float kChangesToTrustTheBar = 8.0f;
+
+    /** How much clearer than the network the harmony has to be before it is
+        allowed to answer. On top of the ordinary margins, so coming in it needs
+        0.30 of the histogram clear of the runner-up and playing it needs 0.40.
+        
+        Not near-unanimity: in the engine even the good case only reaches
+        0.35-0.45, because a chord change is timed to a quarter of a beat at
+        best and the votes spread over two quarters. Asking for more than the
+        good case can give was the first attempt, and it switched the whole
+        thing off.
+
+        And this is the *second* line of defence, not the first. On material the
+        harmony has nothing to say about, what actually protects the bar is that
+        the network is asked first and answers - the margin only matters where
+        both are unsure. Worth being exact about, because the margin on a kit
+        track is not a stable number: measured at 0.10 on one run and 0.36 on
+        another of the same material, which is a chroma reading drums and
+        getting a different answer each time. It is not a line that would hold
+        on its own, and it is not being asked to. */
+    constexpr float kHarmonyExtraMargin = 0.20f;
+
     // How far the winner has to stand clear of the runner-up before the bar is
     // moved at all - and how much further while the part is playing. Shares of
     // the histogram, so four quarters the network cannot separate sit at 0.25
@@ -110,6 +137,11 @@ void BeatTracker::reset() noexcept
     kickOnGrid = 0.0f;
     kickSeen = 0.0f;
     pendingKicks = 0;
+    std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
+    harmonyVoteCount = 0.0f;
+    harmonicChangeCount = 0;
+    barFromHarmony = false;
+    pendingHarmony = 0;
     currentState = TrackingState::listening;
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
@@ -557,13 +589,51 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     if (barLocked)
         return;
 
+    // Two sources, asked in order, and the order is the whole design.
+    //
+    // The network answers first wherever it has a clear opinion: it is being
+    // asked the question directly, and where it can answer it is the better
+    // source. The harmony is asked only when the network could not - which is
+    // most of the time through an iPad's own speaker, where its downbeat vote
+    // is measured at no better than a coin, and always on material with no
+    // drums in it, where there is nothing for it to vote on at all.
+    //
+    // Neither is folded into the other. They are different quantities of
+    // different quality, and adding them would hide which one answered - the
+    // debug panel says `BATTUTA DALL'ARMONIA` when it was the second.
+    if (tryAlignFrom (downbeatVotes, voteBeats, comingIn, 0.0f))
+    {
+        barFromHarmony = false;
+        return;
+    }
+    // And the harmony is allowed to *answer*, never to overrule. It is asked
+    // second, and it is held to a far higher bar than the network - not because
+    // it is worse but because it is the fallback, and a fallback that acts on a
+    // plurality is a fallback that moves the count on material it has nothing
+    // to say about. Measured on a kit track, where the chroma finds changes
+    // that are drums rather than chords, a plurality was enough to have it
+    // rotating the bar five times and settling on none; near-unanimity is not.
+    // On the material it is for - a band with no drummer - the winner takes
+    // every vote, so the stricter line costs nothing there.
+    if (harmonyVoteCount >= kChangesToTrustTheBar
+        && tryAlignFrom (harmonyVotes, harmonyVoteCount * 4.0f, comingIn,
+                         kHarmonyExtraMargin))
+    {
+        barFromHarmony = true;
+        return;
+    }
+}
+
+bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
+                                bool comingIn, float extraMargin) noexcept
+{
     float score[4] {};
     float totalVotes = 0.0f;
     for (int i = 0; i < 4; ++i)
-        totalVotes += downbeatVotes[i];
+        totalVotes += votes[i];
 
     for (int i = 0; i < 4; ++i)
-        score[i] = totalVotes > 1.0e-6f ? downbeatVotes[i] / totalVotes : 0.25f;
+        score[i] = totalVotes > 1.0e-6f ? votes[i] / totalVotes : 0.25f;
 
     int best = 0;
     float bestVotes = 0.0f, runnerUp = 0.0f;
@@ -585,8 +655,8 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // a network that is loud about everything must not look better supported
     // than one that is quiet about everything, and the shares above already
     // carry how loud it was.
-    if (best == 0 || voteBeats < (comingIn ? kBeatsToTrustTheBar : kBeatsToMoveTheBar))
-        return;
+    if (best == 0 || beatsOfEvidence < (comingIn ? kBeatsToTrustTheBar : kBeatsToMoveTheBar))
+        return false;
 
     // Waiting to come in, a plurality is enough: nothing is playing yet, so a
     // rotation costs nothing and the alternative is entering on the wrong beat.
@@ -595,8 +665,8 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // whoever is second.
     // Scores are normalised now, so a clear win is a margin over the runner-up
     // rather than a share of a total.
-    if (bestVotes < runnerUp + kBarWinMargin)
-        return;
+    if (bestVotes < runnerUp + kBarWinMargin + extraMargin)
+        return false;
     if (! comingIn)
     {
         // Stricter once the part is playing, because a bar the listener can
@@ -606,9 +676,9 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
         // margin now stands on four times the evidence and stops being a
         // reading of the noise. A bar that is consistently wrong can be
         // corrected with one tap; one that keeps moving cannot.
-        if (bestVotes < runnerUp + kBarWinMarginPlaying
+        if (bestVotes < runnerUp + kBarWinMarginPlaying + extraMargin
             || downbeatHoldSamples > 0)
-            return;
+            return false;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
 
@@ -619,11 +689,19 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // being thrown away: the evidence is still good, it is just about different
     // indices now. Clearing it instead meant every correction started the
     // argument again from nothing.
+    // Both histograms rotate, whichever answered: they are two opinions about
+    // the same count, and leaving one un-rotated would have it argue for the
+    // position the bar has just been moved off.
     float rotated[4];
     for (int i = 0; i < 4; ++i)
         rotated[i] = downbeatVotes[(i + best) & 3];
     for (int i = 0; i < 4; ++i)
         downbeatVotes[i] = rotated[i];
+    for (int i = 0; i < 4; ++i)
+        rotated[i] = harmonyVotes[(i + best) & 3];
+    for (int i = 0; i < 4; ++i)
+        harmonyVotes[i] = rotated[i];
+    return true;
 }
 
 void BeatTracker::notifyKickOnset (int sampleOffset, float strength) noexcept
@@ -633,6 +711,15 @@ void BeatTracker::notifyKickOnset (int sampleOffset, float strength) noexcept
     pendingKickOffset[pendingKicks] = sampleOffset;
     pendingKickStrength[pendingKicks] = std::clamp (strength, 0.0f, 1.0f);
     ++pendingKicks;
+}
+
+void BeatTracker::notifyHarmonicChange (int sampleOffset, float strength) noexcept
+{
+    if (pendingHarmony >= kMaxPendingHarmony || ! std::isfinite (strength))
+        return;
+    pendingHarmonyOffset[pendingHarmony] = sampleOffset;
+    pendingHarmonyStrength[pendingHarmony] = std::clamp (strength, 0.0f, 1.0f);
+    ++pendingHarmony;
 }
 
 void BeatTracker::setKickChannelState (bool assigned, float quietSeconds) noexcept
@@ -903,7 +990,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // threw away the clock's whole loop state - its phase error, its
         // measured trim - for a correction that only ever concerned the count.
         // Rotating the index moves no phase and drops no pulse.
-        if (! waitForQuantize && ! speakerFollow)
+        // Through the iPad's own speaker the network's downbeat vote is near
+        // chance, so the bar is normally left alone there. The harmony is a
+        // different source and the speaker does not take it away - a tablet
+        // speaker has no low end, but chords are not low end - so when the
+        // harmony is answering, the bar can be placed in either mode.
+        if (! waitForQuantize && (! speakerFollow || barFromHarmony))
             alignBarFromVotes (false);
     }
 
@@ -963,6 +1055,30 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                             std::max (0.75f, pendingKickStrength[k]), 1);
         }
         pendingKicks = 0;
+
+        // ----------------------------------------------------------- harmony
+        //
+        // Where the chords moved, filed against the quarter they moved on. Same
+        // unwrapped arithmetic as the kick and the network, and for the same
+        // reason: the change is already this old by the time the clock is asked
+        // where it is, and folded into one beat a lead over a beat long files
+        // it against the wrong quarter.
+        for (int h = 0; h < pendingHarmony; ++h)
+        {
+            const float leadSec = static_cast<float> (numSamples - pendingHarmonyOffset[h])
+                                      / static_cast<float> (sampleRate)
+                                  + reportedLatencyMs * 0.001f;
+            const float posNow = static_cast<float> (follower.beatInBarIndex())
+                                 + follower.beatPhase();
+            const int nearest = static_cast<int> (std::lround (posNow - leadSec / beatSeconds));
+            const int at = ((nearest % 4) + 4) & 3;
+            for (float& v : harmonyVotes)
+                v *= kVoteDecay;
+            harmonyVoteCount = harmonyVoteCount * kVoteDecay + 1.0f;
+            harmonyVotes[at] += pendingHarmonyStrength[h];
+            ++harmonicChangeCount;
+        }
+        pendingHarmony = 0;
 
         // And the passage with the drummer out, which on this channel is not an
         // inference. Long enough not to fire on the ordinary gap between two
@@ -1182,6 +1298,20 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
     out.barRotations = barRotations;
+    out.harmonicChanges = harmonicChangeCount;
+    out.barFromHarmony = barFromHarmony;
+    {
+        float total = 1.0e-9f, best = 0.0f, second = 0.0f;
+        for (float v : harmonyVotes)
+            total += v;
+        for (float v : harmonyVotes)
+        {
+            const float s = v / total;
+            if (s > best) { second = best; best = s; }
+            else if (s > second) second = s;
+        }
+        out.harmonyMargin = best - second;
+    }
     out.kickOnsets = kickOnsetCount;
     out.kickTrusted = kickTrusted;
     out.drumsOut = evidence.drumsAreOut();
@@ -1238,7 +1368,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // evidence says it is. Through the iPad speaker the measured downbeat
         // vote is near chance; acting on it only replaces one arbitrary count
         // with another.
-        if (! speakerFollow)
+        if (! speakerFollow || barFromHarmony)
             alignBarFromVotes (true);
 
         bool onEntryBeat = false;

@@ -224,6 +224,11 @@ struct EngineSnapshot
     bool  kickTrusted          = false;
     /** How much the band is giving, 0..1, and whether the part has stood down
         because the passage does not want it. */
+    /** Chord changes counted, and whether the bar is being placed from them
+        rather than from the network. */
+    int   harmonicChanges      = 0;
+    bool  barFromHarmony       = false;
+    float harmonyMargin        = 0.0f;
     float bandDynamics         = 1.0f;
     bool  dynamicsFollow       = true;
     bool  standingDown         = false;

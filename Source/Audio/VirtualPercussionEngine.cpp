@@ -100,6 +100,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     rawIn.assign (static_cast<size_t> (maxBlock), 0.0f);
     latencyProbe.prepare (sampleRate);
     bandDynamics.prepare (sampleRate);
+    harmony.prepare (sampleRate);
     standingDown = false;
     wantStandDown = false;
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -1002,6 +1003,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         ++tapRead;
     }
 
+    // Where the chords moved. On the analysis bus for the same reason the
+    // dynamics are: our own part has been taken out of it, and a shaker is not
+    // a chord change but a conga's ring is close enough to one to be worth not
+    // handing to a chroma.
+    {
+        HarmonicChange::Change ch[HarmonicChange::kMaxChanges];
+        const int got = harmony.process (mono.data(), numSamples, ch,
+                                         HarmonicChange::kMaxChanges);
+        for (int i = 0; i < got; ++i)
+            tracker.notifyHarmonicChange (ch[i].offset, ch[i].strength);
+    }
+
     tracker.setInputEpoch (analysisEpoch);
     const auto tr = tracker.process (mono.data(), numSamples);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
@@ -1110,6 +1123,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
     lastKickTrusted.store (tr.kickTrusted, std::memory_order_relaxed);
     lastDrumsOut.store (tr.drumsOut, std::memory_order_relaxed);
+    lastHarmonicChanges.store (tr.harmonicChanges, std::memory_order_relaxed);
+    lastBarFromHarmony.store (tr.barFromHarmony, std::memory_order_relaxed);
+    lastHarmonyMargin.store (tr.harmonyMargin, std::memory_order_relaxed);
     lastDynamics.store (followDynamics ? bandDynamics.level() : 1.0f,
                         std::memory_order_relaxed);
     lastStandingDown.store (standingDown, std::memory_order_relaxed);
@@ -1213,6 +1229,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.kickOnsets = lastKickOnsets.load (std::memory_order_relaxed);
     s.kickTrusted = lastKickTrusted.load (std::memory_order_relaxed);
     s.drumsOut = lastDrumsOut.load (std::memory_order_relaxed);
+    s.harmonicChanges = lastHarmonicChanges.load (std::memory_order_relaxed);
+    s.barFromHarmony = lastBarFromHarmony.load (std::memory_order_relaxed);
+    s.harmonyMargin = lastHarmonyMargin.load (std::memory_order_relaxed);
     s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
     s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
     s.standingDown = lastStandingDown.load (std::memory_order_relaxed);

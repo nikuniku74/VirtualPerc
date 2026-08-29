@@ -6,6 +6,7 @@
 #include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
 #include "Audio/LatencyProbe.h"
+#include "Tracking/HarmonicChange.h"
 #include "Tracking/KickOnsetDetector.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
@@ -198,6 +199,12 @@ private:
     std::atomic<float> measuredLatencyMs { 0.0f };
     /** How much the band is giving, and whether the part has stood down. The
         stand-down is taken at a bar line, never in the middle of a figure. */
+    /** When the harmony moves. Runs on the analysis bus, which is where the
+        band is and where our own part has already been taken out. */
+    HarmonicChange     harmony;
+    std::atomic<int>   lastHarmonicChanges { 0 };
+    std::atomic<bool>  lastBarFromHarmony { false };
+    std::atomic<float> lastHarmonyMargin { 0.0f };
     BandDynamics       bandDynamics;
     bool               standingDown = false;
     bool               wantStandDown = false;
