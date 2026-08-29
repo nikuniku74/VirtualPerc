@@ -39,6 +39,12 @@ No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enf
 
 The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
 
+### At most two strokes to a quarter
+
+No written figure puts more than **two conga strokes in a quarter**, and nothing audible does either with the ghost generator wide open. The fill bar is exempt, because that is what a fill is.
+
+The dance part was the reason: it was thirteen strokes a bar, three and four to a quarter, because it was transcribed from a salsa percussion loop — a record where the congas *are* the record. Under a live band they are not. The space between the strokes is where the rest of the band is, and a part that fills it is a wall however good the figure inside it is. Dance is now six a bar and says the same thing: the low drum answering the one from its "e", nothing at all on 2, the slap as the loudest stroke on the "e" of 2, the opens closing the bar.
+
 ### Four styles
 
 A player does not bring a marcha to a rock track, so the styles are four different parts rather than variations on one:
@@ -47,7 +53,7 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 |---|---|---|---|
 | **marcha** | the tumbao: slap on 2, bass on 3, the paired open tones closing the bar | eighths, weight on the pulse | busy |
 | **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the "and" of 1 and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
-| **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
+| **dance** | a tumbao stated rather than filled in: low drum on the "e" of 1 and on 3, slap on the "e" of 2, opens closing the bar | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
 | **pop** | mostly space: a light low tone off the one, a lift, the push into the next bar | eighths, level and quiet | almost none |
 
 ### Coming in on the one

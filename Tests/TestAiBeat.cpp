@@ -1133,9 +1133,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (shBeat2 > shBeat1 * 1.05f,
                 "the rock shaker puts its weight on the backbeat");
 
-        // Dance: a salsa tumbao made busy for four-on-the-floor. Tumba on 1
-        // and 3, the slap on the "e" of 2 (not on 2 itself), opens closing
-        // the bar, and the shaker still leaning on the off-eighth.
+        // Dance: a salsa tumbao *stated*, not filled in. The low drum answers
+        // the one from its "e" and lands on 3, the slap is the loudest stroke
+        // and sits on the "e" of 2 (never on 2 itself), the opens close the
+        // bar, and the shaker still leans on the off-eighth.
+        //
+        // Two of the four "a"s carry a stroke, not three: the part used to be
+        // thirteen strokes a bar and is now six, so the lean onto the sixteenth
+        // before the beat is stated twice in the bar instead of being played
+        // through it. Anything that asks for more than two here is asking for
+        // the wall back.
         int danceOnTheA = 0;
         for (int step : { 3, 7, 11, 15 })
             if (congaVelocityAt (dance, step) > 0.4f)
@@ -1154,7 +1161,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                      static_cast<double> (danceSlap), static_cast<double> (danceOn3),
                      static_cast<double> (danceShakerPulse),
                      static_cast<double> (danceShakerOff));
-        expect (danceOnTheA >= 3 && danceShakerOff > danceShakerPulse,
+        expect (danceOnTheA >= 2 && danceOnTheA <= 2 && danceShakerOff > danceShakerPulse,
                 "dance leans on the sixteenth before the beat and accents the offbeat");
         expect (danceOn1 < 0.01f && danceOnE1 > 0.4f && danceOn3 > 0.4f
                     && danceOn2 < 0.01f && danceSlap > 0.4f,
@@ -1244,6 +1251,79 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     "no style ever puts a conga on the first quarter's down-stroke");
             expect (shakersOnTheOne > 0,
                     "and the shaker still marks it, because a shaker on the pulse is the pulse");
+        }
+
+        // And at most two conga strokes to a quarter.
+        //
+        // The dance part used to be thirteen a bar - three and four to a
+        // quarter - because it was transcribed from a percussion loop, where
+        // the congas are the record. Under a live band they are not: the space
+        // between the strokes is where the rest of the band is, and a part that
+        // fills it is a wall however good the figure inside it is.
+        //
+        // The fill bar is exempt, because that is what a fill is. The ghost
+        // notes are counted here at full intensity and full humanisation, which
+        // is the busiest the part can ever be - the rule is about what is heard,
+        // so a stroke has to clear a velocity that would be audible under a
+        // band before it counts against it. The written figures are checked
+        // separately with the ghosts off, so the tables themselves keep the
+        // rule whatever the ghost generator is doing.
+        {
+            auto worstQuarter = [] (float humanize, float intensity, float floorVel,
+                                    int& atStyle, int& atBar)
+            {
+                vp::GrooveEngine gr;
+                gr.prepare (0xB1A5u);
+                gr.setHumanize (humanize);
+                gr.setIntensity (intensity);
+                int worst = 0;
+                for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+                {
+                    gr.setStyle (static_cast<vp::GrooveStyle> (st));
+                    for (int bar = 0; bar < 64; ++bar)
+                    {
+                        if (gr.isFillBar (bar))
+                            continue;
+                        for (int q = 0; q < 4; ++q)
+                        {
+                            int n = 0;
+                            for (int s = q * 4; s < q * 4 + 4; ++s)
+                            {
+                                vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                                const int got = gr.eventsAt (bar, s, ev,
+                                                             vp::GrooveEngine::kMaxEvents);
+                                for (int i = 0; i < got; ++i)
+                                    if (ev[i].stroke != vp::Stroke::shakerDown
+                                        && ev[i].stroke != vp::Stroke::shakerUp
+                                        && ev[i].velocity >= floorVel)
+                                        ++n;
+                            }
+                            if (n > worst)
+                            {
+                                worst = n;
+                                atStyle = st;
+                                atBar = bar;
+                            }
+                        }
+                    }
+                }
+                return worst;
+            };
+
+            int s1 = 0, b1 = 0, s2 = 0, b2 = 0;
+            // The figures alone: ghosts off.
+            const int written = worstQuarter (0.35f, 0.0f, 0.0f, s1, b1);
+            // And everything that would be heard, with the ghost generator at
+            // the top of its range.
+            const int played = worstQuarter (1.0f, 1.0f, 0.25f, s2, b2);
+            std::printf ("groove-densita  figure=%d/quarto (%s bar %d)   "
+                         "suonati=%d/quarto (%s bar %d)\n",
+                         written, vp::toString (static_cast<vp::GrooveStyle> (s1)), b1,
+                         played, vp::toString (static_cast<vp::GrooveStyle> (s2)), b2);
+            expect (written <= 2,
+                    "no written figure puts more than two conga strokes in a quarter");
+            expect (played <= 2,
+                    "and nothing audible does either, with the ghosts wide open");
         }
     }
 

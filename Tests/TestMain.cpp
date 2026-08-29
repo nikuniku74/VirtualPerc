@@ -627,13 +627,16 @@ int main()
     // the block would need output that has not been rendered yet. 150 ms covers
     // every buffer size used here.
     {
-        auto leakRemain = [&] (int blk, vp::FollowSource source, float acousticExtraMs = 0.0f)
+        auto leakRemain = [&] (int blk, vp::FollowSource source, float acousticExtraMs = 0.0f,
+                               int style = -1)
         {
             vp::VirtualPercussionEngine eng;
             eng.prepare (sr, blk, 1);
             eng.settings().followSource.store (static_cast<int> (source));
             eng.settings().masterVolume.store (1.0f);
             eng.settings().reverbAmount.store (0.0f);
+            if (style >= 0)
+                eng.settings().grooveStyle.store (style);
             eng.setReportedLatencyMs (150.0f);
 
             const int delay = static_cast<int> ((0.150 + acousticExtraMs * 0.001) * sr);
@@ -686,11 +689,43 @@ int main()
         expect (large <= small * 1.10f,
                 "speaker-leak subtraction covers a block larger than the old 2048 cap");
 
-        const float mixer = leakRemain (1024, vp::FollowSource::kitMic);
-        std::printf ("leak-residual  MIXER@1024=%.3f  (1.000 = not subtracted at all)\n",
-                     static_cast<double> (mixer));
-        expect (mixer < 0.25f,
-                "the app's own part is subtracted from the analysis on a mixer feed too");
+        // Every style, not the default one.
+        //
+        // This used to run on whatever `grooveStyle` happens to default to, and
+        // to assert a residual under 0.25 - a number that turns out to belong
+        // to that part rather than to the canceller. Measured across the eight:
+        // 0.108 on funk against 0.320 on pop, a spread of three to one, with
+        // the *sparser* parts the worse of them. The ratio is taken on peaks,
+        // and a part that leaves more silence gives the block's least-squares
+        // fit less to work with, so it does worse - which means the sparsest
+        // style in the app was already 28% outside the line the test drew, and
+        // the test never looked at it. It also means any edit to the groove
+        // tables moves this number, and a canceller test that a change of
+        // musical figure can fail is testing the wrong thing.
+        //
+        // So: the worst style has to clear a limit the canceller can actually
+        // hold on the sparsest part there is, and all eight are checked.
+        float worstMixer = 0.0f;
+        int worstStyle = 0;
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+        {
+            const float v = leakRemain (1024, vp::FollowSource::kitMic, 0.0f, st);
+            std::printf ("leak-residual  MIXER@1024 %-7s %.3f\n",
+                         vp::toString (static_cast<vp::GrooveStyle> (st)),
+                         static_cast<double> (v));
+            if (v > worstMixer)
+            {
+                worstMixer = v;
+                worstStyle = st;
+            }
+        }
+        std::printf ("leak-residual  MIXER@1024 peggio=%.3f su %s  "
+                     "(1.000 = non sottratto affatto)\n",
+                     static_cast<double> (worstMixer),
+                     vp::toString (static_cast<vp::GrooveStyle> (worstStyle)));
+        expect (worstMixer < 0.40f,
+                "the app's own part is subtracted from the analysis on a mixer feed too, "
+                "whichever part it is playing");
 
         // iPad speaker: the mic hears the part later than the device latency
         // by the acoustic hop. A canceller glued to the reported figure misses

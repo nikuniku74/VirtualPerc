@@ -54,7 +54,6 @@ namespace
         {  4, Stroke::slap,  0.90f },
         {  6, Stroke::toe,   0.30f },
         {  8, Stroke::tumba, 0.78f },
-        {  9, Stroke::heel,  0.24f },
         { 11, Stroke::tumba, 0.46f },
         { 12, Stroke::open,  0.88f },
         { 14, Stroke::open,  0.95f },
@@ -136,74 +135,55 @@ namespace
 
     // ----------------------------------------------------------------- dance
     //
-    // Transcribed from an eight-bar salsa conga dance loop at 120 BPM.
-    // Four-on-the-floor leaves 2 and 4 free of kick, but this part is not
-    // "the a of every beat": it is a tumbao made busy. Tumba on 1 and 3, the
-    // slap as the loudest stroke on the "e" of 2, opens filling the ands, and
-    // the open-open pair closing the bar. Even bars leave 4 empty so the
-    // phrase breathes.
+    // A tumbao stated, not a tumbao filled in. The posts are the same ones the
+    // salsa loop this was transcribed from puts down - the low drum answering
+    // the one from its "e", nothing at all on 2, the slap as the loudest
+    // stroke on the "e" of 2, and the open tones closing the bar into the next
+    // - and everything that was only joining them up is gone.
+    //
+    // It used to be thirteen strokes a bar, three and four to a quarter. That
+    // is a percussion loop, and under a band it is a wall: the whole point of
+    // a conga part is the space between the strokes, because that is where the
+    // rest of the band is. Six a bar says the same figure and leaves the room.
     constexpr Hit kDanceA[] = {
-        {  1, Stroke::tumba, 0.88f },
-        {  2, Stroke::open,  0.82f },
-        {  5, Stroke::slap,  0.94f },
-        {  6, Stroke::open,  0.68f },
-        {  7, Stroke::open,  0.74f },
-        {  8, Stroke::tumba, 0.90f },
-        {  9, Stroke::open,  0.86f },
-        { 10, Stroke::toe,   0.32f },
-        { 11, Stroke::open,  0.84f },
-        { 12, Stroke::tumba, 0.52f },
-        { 13, Stroke::toe,   0.36f },
-        { 14, Stroke::open,  0.70f },
-        { 15, Stroke::open,  0.78f },
+        {  1, Stroke::tumba, 0.90f },   // the one answered, not doubled
+        {  5, Stroke::slap,  0.94f },   // the "e" of 2 - the loudest stroke
+        {  8, Stroke::tumba, 0.88f },   // the three
+        { 11, Stroke::open,  0.80f },
+        { 14, Stroke::open,  0.78f },   // and the pair into the next bar
+        { 15, Stroke::open,  0.86f },
     };
     constexpr Hit kDanceB[] = {
         {  1, Stroke::tumba, 0.86f },
-        {  2, Stroke::open,  0.80f },
         {  5, Stroke::slap,  0.92f },
-        {  6, Stroke::open,  0.66f },
-        {  7, Stroke::open,  0.72f },
-        {  8, Stroke::tumba, 0.88f },
-        {  9, Stroke::open,  0.84f },
-        { 10, Stroke::toe,   0.30f },
-        { 11, Stroke::open,  0.82f },
-        { 14, Stroke::open,  0.72f },
-        { 15, Stroke::open,  0.80f },
+        {  7, Stroke::open,  0.74f },   // the answer sits on the "a" of 2
+        {  8, Stroke::tumba, 0.86f },
+        { 14, Stroke::open,  0.80f },
     };
     constexpr Hit kDanceC[] = {
         {  1, Stroke::tumba, 0.88f },
-        {  2, Stroke::open,  0.84f },
         {  5, Stroke::slap,  0.96f },
-        {  6, Stroke::slap,  0.62f },
-        {  7, Stroke::open,  0.76f },
-        {  8, Stroke::tumba, 0.90f },
-        {  9, Stroke::open,  0.86f },
-        { 10, Stroke::slap,  0.58f },
-        { 11, Stroke::open,  0.86f },
-        { 12, Stroke::tumba, 0.50f },
-        { 13, Stroke::open,  0.44f },
-        { 14, Stroke::open,  0.72f },
-        { 15, Stroke::open,  0.80f },
+        {  6, Stroke::open,  0.70f },
+        { 10, Stroke::open,  0.74f },   // the bar that goes somewhere: the
+        { 14, Stroke::open,  0.76f },   // opens walk up instead of repeating
+        { 15, Stroke::open,  0.88f },
     };
+    // A fill is the one bar that may be busier than the rule allows - it is
+    // what a fill is - but eight straight sixteenths is a drum machine. Six,
+    // with a gap in them, is a player.
     constexpr Hit kDanceFill[] = {
-        {  8, Stroke::slap,  0.66f },
-        {  9, Stroke::open,  0.60f },
-        { 10, Stroke::slap,  0.74f },
-        { 11, Stroke::open,  0.68f },
-        { 12, Stroke::slap,  0.82f },
-        { 13, Stroke::open,  0.76f },
+        {  8, Stroke::slap,  0.70f },
+        { 10, Stroke::open,  0.74f },
+        { 11, Stroke::slap,  0.68f },
+        { 13, Stroke::open,  0.82f },
         { 14, Stroke::slap,  0.88f },
         { 15, Stroke::open,  0.96f },
     };
     constexpr Hit kDanceD[] = {
-        {  2, Stroke::open,  0.84f },
+        {  2, Stroke::open,  0.84f },   // no low drum at all in this one
         {  5, Stroke::slap,  0.90f },
-        {  6, Stroke::open,  0.64f },
-        {  7, Stroke::open,  0.74f },
         {  8, Stroke::tumba, 0.86f },
         { 11, Stroke::open,  0.82f },
-        { 13, Stroke::slap,  0.56f },
-        { 14, Stroke::open,  0.74f },
         { 15, Stroke::open,  0.88f },
     };
 
@@ -254,12 +234,10 @@ namespace
         {  1, Stroke::heel,  0.28f },
         {  2, Stroke::toe,   0.32f },
         {  4, Stroke::tumba, 0.90f },   // samba 2
-        {  6, Stroke::open,  0.70f },
-        {  7, Stroke::slap,  0.48f },
+        {  7, Stroke::slap,  0.52f },
         { 10, Stroke::toe,   0.28f },
         { 12, Stroke::tumba, 0.86f },   // samba 4
         { 14, Stroke::open,  0.78f },
-        { 15, Stroke::open,  0.58f },
     };
     constexpr Hit kSambaB[] = {
         {  1, Stroke::heel,  0.26f },
@@ -277,9 +255,7 @@ namespace
         {  6, Stroke::open,  0.72f },
         {  9, Stroke::heel,  0.24f },
         { 12, Stroke::tumba, 0.80f },
-        { 13, Stroke::slap,  0.56f },
         { 14, Stroke::open,  0.84f },
-        { 15, Stroke::open,  0.70f },
     };
     constexpr Hit kSambaD[] = {
         {  1, Stroke::tumba, 0.46f },
@@ -308,8 +284,7 @@ namespace
     // the open that lands on the "a" of 4 - the one a horn section would hit.
     constexpr Hit kFunkA[] = {
         {  1, Stroke::tumba, 0.78f },
-        {  2, Stroke::heel,  0.22f },
-        {  3, Stroke::slap,  0.50f },   // e of 1
+        {  3, Stroke::slap,  0.50f },   // the "a" of 1
         {  6, Stroke::open,  0.62f },
         { 10, Stroke::toe,   0.26f },
         { 11, Stroke::slap,  0.46f },
@@ -318,7 +293,6 @@ namespace
     };
     constexpr Hit kFunkB[] = {
         {  1, Stroke::tumba, 0.74f },
-        {  2, Stroke::heel,  0.20f },
         {  3, Stroke::slap,  0.48f },
         {  6, Stroke::open,  0.58f },
         {  7, Stroke::toe,   0.24f },
