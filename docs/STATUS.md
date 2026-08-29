@@ -158,6 +158,87 @@ cambiare, è il segnale.
 Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
 `VPDecoderProbe`: 5 fallimenti, gli stessi di prima.
 
+## Prendere piu' di un canale dal banco (29 agosto)
+
+La cosa piu' grande che mancava, e adesso c'e'. Un mixer digitale ha la cassa
+su un canale suo, e quel canale e' un segnale diverso dal mix in tutto quello
+che conta: uno strumento, un attacco per evento, nessun basso che tiene sotto,
+e muto per esattamente il tempo in cui il batterista non suona.
+
+`SETUP -> INGRESSO -> CASSA` dice su quale ingresso arriva. `NO` e' il default e
+tutta la via e' spenta finche' non se ne nomina uno.
+
+### Quello che si e' misurato
+
+| | |
+|---|---|
+| attacchi di cassa datati, contro tempi noti al campione | **0,56 ms** medi, 0,62 al peggio |
+| silenzio del canale in uno stacco di quattro battute | **8,3 s** contro 0,00 con il kit dentro |
+| fase dell'orologio, solo mix | rms 17,0-19,4 ms |
+| fase dell'orologio, mix + cassa | **rms 11,8-15,3 ms** |
+
+L'ultima riga e' contro una rete a cui vengono *dati* i battiti veri, quindi non
+e' il canale che rimedia a una rete scarsa: e' quello che aggiunge sopra il
+meglio che una rete potrebbe fare. L'rms migliora a ogni corsa, del 15-40%.
+
+**Il peggio no.** Fra le corse: 48,6 -> 27,4, poi 51,4 -> 49,4, poi 47,9 -> 34,7,
+poi 27,7 -> 35,9. A volte molto meglio, una volta peggio. E' dominato da eventi
+singoli - il riaggancio in uscita da uno stacco, un fill - e un evento singolo
+non e' una cosa che un anello di fase piu' fermo previene. Il test non lo
+pretende.
+
+### La latenza, misurata
+
+`SETUP -> PROVE -> LATENZA`: sweep da 30 ms, cattura, correlazione. Esatta al
+campione da 6 a 96 ms, entro 2 ms **con la band che suona sopra**, e si rifiuta
+di rispondere quando lo sweep non torna invece di inventare un numero. Prima
+l'orologio girava sulla latenza dichiarata dal sistema piu' una costante di
+20 ms tarata una volta su un click: due numeri ragionevoli, nessuno dei due una
+misura di *questo* rig.
+
+### Provato e non spedito: la battuta dalla cassa
+
+Un pattern di cassa *dichiara* la battuta - quasi ogni band suona il primo
+quarto piu' forte del terzo - dove la rete deve dedurla da una curva di
+attivazione, e attraverso la cassa dell'iPad quella deduzione e' misurata come
+una monetina. Sembra il posto ovvio dove il canale dovrebbe vincere.
+
+Implementato in due forme e nessuna delle due dimostrata:
+
+1. **Somma delle forze per quarto.** Troppo smussata: la cassa su 1 e 3 divide
+   55 a 45 fra due quarti, e il margine che la battuta deve superare per essere
+   spostata sotto un ascoltatore e' 0,20.
+2. **Un voto per battuta, al quarto che porta il colpo piu' forte.** E' la
+   forma giusta - non e' che l'uno porta piu' cassa di tutto il resto, e' che
+   porta *il colpo piu' forte della battuta* - ma non sono riuscito a
+   dimostrarla.
+
+Il motivo e' il banco, non l'idea. Per misurarla serve che l'orologio parta
+sulla battuta **sbagliata** (partendo giusto, un codice che non fa niente
+segna uguale a uno che la trova), e in quella configurazione la corsa deve
+essere abbastanza lunga da far agganciare l'orologio, poi da far guadagnare
+fiducia al canale, poi da accumulare otto battute di voti - e a quel punto una
+sola misura dura minuti e non sta in una suite che qualcuno aspetta.
+
+**Non spedita.** La battuta e' udibile e questo file e' pieno di avvisi su cosa
+succede a toccarla senza misurare. Il posto giusto per riprenderla e' una sonda
+sul motore, non un test, con un brano da un paio di minuti - e la prima cosa da
+fare e' quella, non riscrivere la regola una terza volta.
+
+### E cosa resta
+
+- **Un corpus vero.** Tutto qui e' misurato su materiale sintetico, con la
+  griglia nota al campione. La forma dei guasti regge; i millisecondi vanno
+  riverificati su registrazioni vere dal vivo. `probe_song_render.h` adesso da'
+  anche gli stem separati, quindi il banco per riceverle c'e'.
+- **Il livello metrico** resta il guasto peggiore quando capita: un'ottava
+  sbagliata e' un fallimento totale. Il canale cassa e' il posto da cui
+  risolverlo, per la stessa ragione per cui e' il posto giusto per la battuta.
+- **Anticipare invece di seguire.** Un percussionista sa che un fill vuol dire
+  uno stacco. Il contatore di battute c'e'; il modello di forma sopra no. E'
+  l'ultimo da fare, non il primo: e' il piu' affascinante ed e' quello che
+  sbaglia peggio se la base sotto non e' solida.
+
 ## Il buco senza batteria: il meccanismo non era quello (28 agosto)
 
 Seguito della sezione qui sotto, che chiudeva con «serve un discriminante che
