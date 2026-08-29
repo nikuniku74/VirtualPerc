@@ -77,15 +77,45 @@ struct SongOptions
     float jitterMs = 0.0f;
 };
 
+/** The arrangement split the way a desk splits it.
+
+    A live rig does not hand the app a mix and nothing else: on any digital
+    console the kick is on its own channel, and that channel is a different
+    signal from the mix in every way that matters to a beat tracker - one
+    instrument, one attack per event, no bass note sustaining through it, and
+    silent for exactly as long as the drummer is not playing.
+
+    Filled only when `renderSong` is given somewhere to put it. `mix` is what
+    `dest` gets and is the sum of all of them. */
+struct SongStems
+{
+    std::vector<float> kick;    // the kick drum alone
+    std::vector<float> snare;   // snare and fills
+    std::vector<float> hats;    // hats and cymbals
+    std::vector<float> music;   // bass, pad, lead - everything that is not a drum
+
+    void prepare (size_t n)
+    {
+        kick.assign (n, 0.0f);
+        snare.assign (n, 0.0f);
+        hats.assign (n, 0.0f);
+        music.assign (n, 0.0f);
+    }
+};
+
 // A full mix at a fixed tempo. Beat one is at sample zero, so the true beat
 // phase at any sample is exactly known.
 /** Renders the arrangement, and optionally reports where the beats truly fell.
 
     `truePhase`, when given, receives the exact position in beats at every
     sample - which is the only way to score a tracker against material that does
-    not hold still, because "the tempo" is then a curve and not a number. */
+    not hold still, because "the tempo" is then a curve and not a number.
+
+    `stems`, when given, receives the same arrangement split per instrument
+    group. The sum of the four is exactly `dest`. */
 inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double sr,
-                        unsigned seed, std::vector<double>* truePhase = nullptr)
+                        unsigned seed, std::vector<double>* truePhase = nullptr,
+                        SongStems* stems = nullptr)
 {
     std::mt19937 rng (seed);
     const double nominalBeatSec = 60.0 / static_cast<double> (opt.bpm);
@@ -116,6 +146,8 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
 
     if (truePhase != nullptr)
         truePhase->assign (dest.size(), 0.0);
+    if (stems != nullptr)
+        stems->prepare (dest.size());
 
     // Chord roots for a four-bar loop, in Hz.
     const float roots[4] = { 110.0f, 146.83f, 98.0f, 130.81f };
@@ -151,7 +183,10 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
         const bool fillBar = opt.fills && (bar % 8) == 7;
         const float root = roots[bar % 4];
 
-        float s = 0.0f;
+        // One accumulator per instrument group, so the same arithmetic can be
+        // handed out as a desk would hand it out. `s` is still their sum and
+        // still what `dest` gets, so the mix is bit-identical to before.
+        float sKick = 0.0f, sSnare = 0.0f, sHats = 0.0f, sMusic = 0.0f;
 
         if (! drumsOut)
         {
@@ -167,7 +202,7 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
                 // at all, which is what this material used to have.
                 const float weight = beatInBar == 0 ? 1.0f : 0.82f;
                 const float env = decay (tBeat, 26.0f);
-                s += weight * 0.95f * std::sin (2.0f * kPi * (48.0f + 30.0f * env) * tBeat) * env;
+                sKick += weight * 0.95f * std::sin (2.0f * kPi * (48.0f + 30.0f * env) * tBeat) * env;
             }
 
             // A cymbal on the one of every fourth bar. The single clearest
@@ -176,12 +211,12 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
             if (beatInBar == 0 && (bar % 4) == 0 && inBeat < 0.9)
             {
                 const float env = decay (tBeat, 3.2f);
-                s += 0.30f * noiseAt (rng) * env;
+                sHats += 0.30f * noiseAt (rng) * env;
             }
             if (opt.syncopated && beatInBar == 1 && sixIdx == 3 && sixteenth < 0.5)
             {
                 const float env = decay (tSix, 30.0f);
-                s += 0.55f * std::sin (2.0f * kPi * (48.0f + 26.0f * env) * tSix) * env;
+                sKick += 0.55f * std::sin (2.0f * kPi * (48.0f + 26.0f * env) * tSix) * env;
             }
 
             // Snare, with the shell tone as well as the noise: the noise alone
@@ -191,8 +226,8 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
             if (snareHere && inBeat < 0.35)
             {
                 const float env = decay (tBeat, 17.0f);
-                s += (0.45f * noiseAt (rng) + 0.30f * std::sin (2.0f * kPi * 195.0f * tBeat)
-                      + 0.18f * std::sin (2.0f * kPi * 331.0f * tBeat)) * env * 0.85f;
+                sSnare += (0.45f * noiseAt (rng) + 0.30f * std::sin (2.0f * kPi * 195.0f * tBeat)
+                           + 0.18f * std::sin (2.0f * kPi * 331.0f * tBeat)) * env * 0.85f;
             }
 
             // Hats on the eighths, alternating strong and weak, with the odd
@@ -204,14 +239,14 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
                 const bool open = ((beatIdx * 2 + (onBeat ? 0 : 1)) % 8) == 7;
                 const float env = decay (tEig, open ? 9.0f : 45.0f);
                 const float amp = (onBeat ? 0.22f : 0.15f) * (open ? 1.4f : 1.0f);
-                s += amp * noiseAt (rng) * env;
+                sHats += amp * noiseAt (rng) * env;
             }
 
             if (fillBar && beatInBar == 3 && sixteenth < 0.5)
             {
                 const float env = decay (tSix, 22.0f);
-                s += (0.5f * noiseAt (rng)
-                      + 0.3f * std::sin (2.0f * kPi * (150.0f + 40.0f * sixIdx) * tSix)) * env;
+                sSnare += (0.5f * noiseAt (rng)
+                           + 0.3f * std::sin (2.0f * kPi * (150.0f + 40.0f * sixIdx) * tSix)) * env;
             }
         }
 
@@ -229,26 +264,34 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
             const float tb = static_cast<float> ((secondHalf ? inBar - 2.0 : inBar) * beatSec);
             const float env = 0.25f + 0.75f * decay (tb, 3.0f);
             const float note = secondHalf ? root * 0.75f : root * 0.5f;
-            s += (secondHalf ? 0.30f : 0.46f) * std::sin (2.0f * kPi * note * tb) * env;
+            sMusic += (secondHalf ? 0.30f : 0.46f) * std::sin (2.0f * kPi * note * tb) * env;
         }
 
         // Pad. No transient whatsoever; pure smear across the beats.
         if (opt.sustained)
         {
             const float t = static_cast<float> (i) / static_cast<float> (sr);
-            s += 0.16f * (std::sin (2.0f * kPi * root * t)
-                          + 0.7f * std::sin (2.0f * kPi * root * 1.26f * t)
-                          + 0.6f * std::sin (2.0f * kPi * root * 1.5f * t)) * 0.33f;
+            sMusic += 0.16f * (std::sin (2.0f * kPi * root * t)
+                               + 0.7f * std::sin (2.0f * kPi * root * 1.26f * t)
+                               + 0.6f * std::sin (2.0f * kPi * root * 1.5f * t)) * 0.33f;
         }
 
         // Lead line, deliberately not on the grid: a real record has one.
         {
             const double lead = std::fmod (beats * 1.5 + 0.25, 4.0);
             const float tl = static_cast<float> (lead * beatSec);
-            s += 0.20f * std::sin (2.0f * kPi * root * 3.0f * tl) * decay (tl, 3.0f);
+            sMusic += 0.20f * std::sin (2.0f * kPi * root * 3.0f * tl) * decay (tl, 3.0f);
         }
 
-        dest[i] = s * 0.32f;
+        constexpr float kMixGain = 0.32f;
+        dest[i] = (sKick + sSnare + sHats + sMusic) * kMixGain;
+        if (stems != nullptr)
+        {
+            stems->kick[i]  = sKick  * kMixGain;
+            stems->snare[i] = sSnare * kMixGain;
+            stems->hats[i]  = sHats  * kMixGain;
+            stems->music[i] = sMusic * kMixGain;
+        }
         ph += inc;
     }
 }

@@ -16,6 +16,7 @@
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
+#include "Tracking/KickOnsetDetector.h"
 #include "Tracking/PhaseTrust.h"
 
 #include "../scripts/probe_song_render.h"
@@ -3237,6 +3238,121 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && acquiring < full,
                 "the phase constant opens with the evidence, is capped, "
                 "and is short while still acquiring");
+    }
+
+    {
+        // The kick channel, timed on the audio instead of on the frame grid.
+        //
+        // The neural path reports beats on a 20 ms grid, so its times carry
+        // +/-10 ms of quantisation before anything else goes wrong. A desk
+        // hands the app the kick on its own channel, and a kick strike on a
+        // channel with nothing else on it can be timed to the sample. This
+        // scores that against material whose kick times are known exactly.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 122.0f;
+        opt.breakdown = true;      // bars 8-11 of every 16 have the drums out
+        opt.fills = true;
+        const int n = static_cast<int> (sr * 40.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::SongStems stems;
+        vp::probe::renderSong (mix, opt, sr, 991u, &truePhase, &stems);
+
+        // The stems have to add up to the mix, or everything below is measuring
+        // a different song from the one the rest of the suite uses.
+        double worstSum = 0.0;
+        for (int i = 0; i < n; ++i)
+            worstSum = std::max (worstSum, std::fabs (
+                static_cast<double> (mix[static_cast<size_t> (i)])
+                - (stems.kick[static_cast<size_t> (i)] + stems.snare[static_cast<size_t> (i)]
+                   + stems.hats[static_cast<size_t> (i)] + stems.music[static_cast<size_t> (i)])));
+        expect (worstSum < 1.0e-6,
+                "the stems are the mix, split - not a second rendering of it");
+
+        vp::KickOnsetDetector det;
+        det.prepare (sr);
+        std::vector<int> found;
+        float quietInBreak = 0.0f, quietWithKit = 1.0e9f;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            vp::KickOnsetDetector::Onset on[vp::KickOnsetDetector::kMaxOnsets];
+            const int got = det.process (stems.kick.data() + pos, block, on,
+                                         vp::KickOnsetDetector::kMaxOnsets);
+            for (int i = 0; i < got; ++i)
+                found.push_back (pos + on[i].offset);
+
+            const double bar = truePhase[static_cast<size_t> (pos)] / 4.0;
+            const bool drumsOut = (static_cast<int> (bar) % 16) >= 8
+                                  && (static_cast<int> (bar) % 16) < 12;
+            const double t = static_cast<double> (pos) / sr;
+            if (t > 6.0)
+            {
+                if (drumsOut)
+                    quietInBreak = std::max (quietInBreak, det.quietSeconds());
+                else if (t > 8.0)
+                    quietWithKit = std::min (quietWithKit, det.quietSeconds());
+            }
+        }
+
+        // Where the kicks truly are: beats 1 and 3 of every bar, from the
+        // notated grid the renderer reports per sample.
+        std::vector<int> truth;
+        for (int i = 1; i < n; ++i)
+        {
+            const double a = truePhase[static_cast<size_t> (i - 1)];
+            const double b = truePhase[static_cast<size_t> (i)];
+            if (std::floor (a) == std::floor (b))
+                continue;
+            const int beat = static_cast<int> (std::floor (b));
+            const int bar = beat / 4;
+            if ((bar % 16) >= 8 && (bar % 16) < 12)
+                continue;                       // drums out
+            if ((beat % 4) == 0 || (beat % 4) == 2)
+                truth.push_back (i);
+        }
+
+        int matched = 0;
+        double sumAbsMs = 0.0, worstMs = 0.0;
+        for (int t : truth)
+        {
+            int best = -1;
+            double bestD = 1.0e9;
+            for (int f : found)
+            {
+                const double dms = std::fabs (f - t) / sr * 1000.0;
+                if (dms < bestD) { bestD = dms; best = f; }
+            }
+            if (best >= 0 && bestD < 45.0)
+            {
+                ++matched;
+                sumAbsMs += bestD;
+                worstMs = std::max (worstMs, bestD);
+            }
+        }
+        const double meanMs = matched > 0 ? sumAbsMs / matched : 999.0;
+        std::printf ("kick-onset  veri=%d  trovati=%d  agganciati=%d  "
+                     "errore medio %.2f ms  peggio %.2f ms\n",
+                     static_cast<int> (truth.size()), static_cast<int> (found.size()),
+                     matched, meanMs, worstMs);
+        expect (matched >= static_cast<int> (truth.size()) * 95 / 100,
+                "the kick channel gives up nearly every strike the drummer played");
+        // The frame grid the neural path reports on is 20 ms, so anything under
+        // half of that is already better than the best the rest of the chain
+        // can do; this is the number that makes the channel worth having.
+        expect (meanMs < 6.0 && worstMs < 20.0,
+                "and times them far closer than the analysis frame grid can");
+        // Spurious detections: the channel carries one instrument, so anything
+        // much past the number of strikes is the detector inventing beats.
+        expect (static_cast<int> (found.size()) < truth.size() * 6 / 5,
+                "without inventing strikes that were not played");
+
+        std::printf ("kick-onset  silenzio: con il kit %.2f s, nello stacco %.2f s\n",
+                     static_cast<double> (quietWithKit), static_cast<double> (quietInBreak));
+        expect (quietWithKit < 0.6f && quietInBreak > 1.5f,
+                "and the channel says plainly when the drummer has stopped");
     }
 
     {
