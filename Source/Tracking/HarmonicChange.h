@@ -108,6 +108,7 @@ public:
         changeStartedAt = 0;
         usable = false;
         loudestWindow = 0.0f;
+        usableShare = 0.0f;
         histWrite = 0;
         histFilled = 0;
         for (auto& row : history)
@@ -224,6 +225,21 @@ public:
     /** How far the harmony has moved from its own recent average, 0..1. */
     float changeNow() const noexcept { return lastChange; }
 
+    /** What share of recent windows carried a chord at all, 0..1.
+
+        This is a property of the **material**, and that is why it exists. The
+        histogram of where changes land is not: measured on the same kit track
+        across five runs its winning margin came out 0.07, 0.10, 0.36, 0.38 and
+        0.58, because a chroma pointed at drums finds a different arbitrary
+        answer each time. A threshold on that separates nothing, and one was
+        tried and let the harmony rotate the bar on a drum track three times.
+
+        How often the signal is tonal at all does separate them, and it barely
+        moves: on a band with a chord under it nearly every window passes, on a
+        kit track hardly any do. It is the question "is there harmony here",
+        asked before "where does it change". */
+    float tonalShare() const noexcept { return usableShare; }
+
 private:
     static constexpr double kPi = 3.14159265358979;
     /** Everything harmonic is under 6 kHz, so the whole thing runs there. */
@@ -256,6 +272,8 @@ private:
     /** Windows the per-bin median runs over. Five hops is 215 ms: longer than
         any drum, shorter than any chord. */
     static constexpr int kMedianHops = 5;
+    /** Per hop, so about fifteen seconds to turn over. */
+    static constexpr float kShareRate = 0.003f;
 
     float analyseWindow() noexcept
     {
@@ -342,6 +360,9 @@ private:
         const bool tonal = peak > kTonalAtLeast;
 
         usable = loudEnough && tonal;
+        // Over about fifteen seconds, so a chorus does not have to prove it
+        // again and a passage that stops being harmonic stops answering.
+        usableShare += ((usable ? 1.0f : 0.0f) - usableShare) * kShareRate;
         if (! usable)
             return 0.0f;
 
@@ -389,6 +410,7 @@ private:
     float acc = 0.0f, lastChange = 0.0f, peakHeld = 0.0f;
     bool  haveReference = false, usable = false;
     float loudestWindow = 0.0f;
+    float usableShare = 0.0f;
     float history[kMedianHops][12] {};
     int   histWrite = 0, histFilled = 0;
     std::int64_t absPos = 0, changeStartedAt = 0;

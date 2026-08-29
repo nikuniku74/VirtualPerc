@@ -61,6 +61,23 @@ namespace
         on its own, and it is not being asked to. */
     constexpr float kHarmonyExtraMargin = 0.20f;
 
+    /** And the gate that actually holds: what share of the signal carried a
+        chord at all. The margin above is not a line - measured on one kit track
+        across five runs it came out anywhere from 0.07 to 0.58 - because a
+        chroma pointed at drums finds a different arbitrary answer every time,
+        and at 0.58 it rotated the bar on that track three times. How often the
+        material is tonal is a property of the material rather than of a draw,
+        and it separates them:
+
+            a kit track                        tonal share 0.32
+            a band with no drummer             tonal share 0.55
+
+        Thin - a factor of a little under two, where the kick channel's own
+        guard separates by four - and it is the honest width of it. The line is
+        set below the good case rather than half way, because both figures are
+        maxima over their runs and the gate reads the instantaneous value. */
+    constexpr float kHarmonicShareToTrust = 0.42f;
+
     // How far the winner has to stand clear of the runner-up before the bar is
     // moved at all - and how much further while the part is playing. Shares of
     // the histogram, so four quarters the network cannot separate sit at 0.25
@@ -139,6 +156,7 @@ void BeatTracker::reset() noexcept
     pendingKicks = 0;
     std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
     harmonyVoteCount = 0.0f;
+    harmonicShare = 0.0f;
     harmonicChangeCount = 0;
     barFromHarmony = false;
     pendingHarmony = 0;
@@ -615,7 +633,8 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // rotating the bar five times and settling on none; near-unanimity is not.
     // On the material it is for - a band with no drummer - the winner takes
     // every vote, so the stricter line costs nothing there.
-    if (harmonyVoteCount >= kChangesToTrustTheBar
+    if (harmonicShare > kHarmonicShareToTrust
+        && harmonyVoteCount >= kChangesToTrustTheBar
         && tryAlignFrom (harmonyVotes, harmonyVoteCount * 4.0f, comingIn,
                          kHarmonyExtraMargin))
     {

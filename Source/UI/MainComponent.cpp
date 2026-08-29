@@ -2474,6 +2474,7 @@ void MainComponent::paint (juce::Graphics& g)
         // app has noticed something the listener can hear.
         lines.add ("armonia  cambi " + juce::String (snap.harmonicChanges)
                    + "  margine " + juce::String (snap.harmonyMargin, 2)
+                   + "  tonale " + juce::String (snap.harmonicShare, 2)
                    + (snap.barFromHarmony ? "   BATTUTA DALL'ARMONIA" : ""));
         lines.add (juce::String ("dinamica ") + (snap.dynamicsFollow ? "ON " : "OFF")
                    + "  banda " + juce::String (snap.bandDynamics, 2)

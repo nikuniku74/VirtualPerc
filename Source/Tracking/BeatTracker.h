@@ -99,6 +99,15 @@ public:
         is weighted as one. See Tracking/HarmonicChange.h. */
     void notifyHarmonicChange (int sampleOffset, float strength) noexcept;
 
+    /** What share of the recent signal carried a chord at all, 0..1 - see
+        HarmonicChange::tonalShare. The harmony may only place the bar on
+        material that is actually harmonic, and this is the only thing measured
+        here that says so stably. */
+    void setHarmonicShare (float share) noexcept
+    {
+        harmonicShare = std::isfinite (share) ? std::clamp (share, 0.0f, 1.0f) : 0.0f;
+    }
+
 
     /** How long the kick channel has been silent, and whether one is assigned
         at all. A negative value means none is, and everything the kick path
@@ -325,6 +334,7 @@ private:
     float harmonyVoteCount = 0.0f;
     int   harmonicChangeCount = 0;
     bool  barFromHarmony = false;
+    float harmonicShare = 0.0f;
     static constexpr int kMaxPendingHarmony = 4;
     int   pendingHarmony = 0;
     int   pendingHarmonyOffset[kMaxPendingHarmony] {};

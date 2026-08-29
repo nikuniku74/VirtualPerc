@@ -2815,6 +2815,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // decides how strict the harmony path has to be before it is allowed to
         // answer, and it belongs next to the material it was taken on.
         float lastHarmonyMargin = 0.0f;
+        float lastHarmonicShare = 0.0f;
 
         auto barTrace = [&] (bool clean, std::vector<int>& into, int& gaps)
         {
@@ -2850,6 +2851,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
             gaps = static_cast<int> (eng.snapshot().analysisGaps);
             lastHarmonyMargin = std::max (lastHarmonyMargin,
                                           eng.snapshot().harmonyMargin);
+            lastHarmonicShare = std::max (lastHarmonicShare,
+                                          eng.snapshot().harmonicShare);
         };
 
         std::vector<int> clean, noisy;
@@ -2886,8 +2889,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
 
         std::printf ("bar-vote       battiti=%d  sull'uno dal %d  poi %d di fila  rotazioni=%d  buchi=%d/%d\n",
                      compared, settledAt, tail, rotations, cleanGaps, noisyGaps);
-        std::printf ("bar-vote       margine dell'armonia su un kit: %.2f\n",
-                     static_cast<double> (lastHarmonyMargin));
+        std::printf ("bar-vote       su un kit: margine %.2f  quota tonale %.2f\n",
+                     static_cast<double> (lastHarmonyMargin),
+                     static_cast<double> (lastHarmonicShare));
 
         // A starved worker loses audio and with it the evidence, and the bar can
         // land somewhere else on the way back - the same carve-out bar-integrity
@@ -4239,19 +4243,22 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         == (static_cast<int> (std::floor (truth)) & 3))
                         ++hits;
                 }
-                struct R { double right; int changes; bool fromHarmony; float margin; };
+                struct R { double right; int changes; bool fromHarmony;
+                           float margin; float share; };
                 const auto s = eng.snapshot();
                 return R { seen > 0 ? static_cast<double> (hits) / seen : 0.0,
-                           s.harmonicChanges, s.barFromHarmony, s.harmonyMargin };
+                           s.harmonicChanges, s.barFromHarmony, s.harmonyMargin,
+                           s.harmonicShare };
             };
 
             const auto locked = barTrace (false);
             const auto free_ = barTrace (true);
             std::printf ("armonia     battuta su materiale senza batteria: "
                          "bloccata %.0f%%   dall'armonia %.0f%%  "
-                         "(%d cambi, margine %.2f, attiva=%d)\n",
+                         "(%d cambi, margine %.2f, tonale %.2f, attiva=%d)\n",
                          locked.right * 100.0, free_.right * 100.0,
                          free_.changes, static_cast<double> (free_.margin),
+                         static_cast<double> (free_.share),
                          free_.fromHarmony ? 1 : 0);
             expect (free_.changes >= 8 && free_.fromHarmony,
                     "the harmony gathers enough changes to be allowed to place the bar");

@@ -205,6 +205,7 @@ private:
     std::atomic<int>   lastHarmonicChanges { 0 };
     std::atomic<bool>  lastBarFromHarmony { false };
     std::atomic<float> lastHarmonyMargin { 0.0f };
+    std::atomic<float> lastHarmonicShare { 0.0f };
     BandDynamics       bandDynamics;
     bool               standingDown = false;
     bool               wantStandDown = false;

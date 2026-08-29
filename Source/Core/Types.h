@@ -229,6 +229,8 @@ struct EngineSnapshot
     int   harmonicChanges      = 0;
     bool  barFromHarmony       = false;
     float harmonyMargin        = 0.0f;
+    /** What share of the recent signal carried a chord at all. */
+    float harmonicShare        = 0.0f;
     float bandDynamics         = 1.0f;
     bool  dynamicsFollow       = true;
     bool  standingDown         = false;

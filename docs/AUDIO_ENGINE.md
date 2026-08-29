@@ -57,9 +57,18 @@ Harmony changes on bar lines. Not always and not only, but the distribution is n
 | **no drums at all** | 20 | **100 %** |
 | snare stem alone | 4 | — |
 
-On a full mix it is a lean rather than an answer, and that is the right result: where there are drums the app already has two better sources. Where there are none it had nothing. End to end, with the clock started two quarters out of step and a network that finds every beat and cannot find the bar — which is what a real one does on this material — the count went from **0 % right to 100 %**.
+On a full mix it is a lean rather than an answer, and that is the right result: where there are drums the app already has two better sources. Where there are none it had nothing. End to end, with the clock started two quarters out of step and a network that finds every beat and cannot find the bar — which is what a real one does on this material — the count went from **0 % right to 60–100 %**, depending on how soon the gate below opens.
 
-The network is asked first and the harmony only when it has not answered: the harmony may **answer**, never overrule. And it is held to a higher margin than the network to do it — not because it is worse but because it is the fallback, and a fallback that acts on a plurality moves the count on material it knows nothing about. At equal thresholds it rotated the bar five times on a kit track and settled on none.
+The network is asked first and the harmony only when it has not answered: the harmony may **answer**, never overrule. And it is the fallback, so it is held to more than the network — a fallback that acts on a plurality moves the count on material it knows nothing about. At equal thresholds it rotated the bar five times on a kit track and settled on none.
+
+The margin on its own is **not** the guard, and finding that out cost a red build. Measured on one kit track across five runs the harmony's winning margin came out 0.07, 0.10, 0.36, 0.38 and 0.58: a chroma pointed at drums finds a different arbitrary answer every time, so no threshold on it separates anything, and at 0.58 it rotated the bar three times on a track with no chords in it. What does hold is a property of the **material** rather than of a draw — what share of recent windows carried a chord at all:
+
+| | tonal share |
+|---|---|
+| kit track | 0.31–0.32 |
+| band with no drummer | 0.55–0.56 |
+
+Thin: a factor of a little under two, where the kick channel's own guard separates by four. The line sits below the good case rather than half way, because both figures are maxima over their runs and the gate reads the instantaneous value. With it, the bar on drum-free material goes from 0 % right to 60–100 % depending on the run, and the kit track is left alone.
 
 ### The form
 

@@ -1013,6 +1013,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                          HarmonicChange::kMaxChanges);
         for (int i = 0; i < got; ++i)
             tracker.notifyHarmonicChange (ch[i].offset, ch[i].strength);
+        tracker.setHarmonicShare (harmony.tonalShare());
+        lastHarmonicShare.store (harmony.tonalShare(), std::memory_order_relaxed);
     }
 
     tracker.setInputEpoch (analysisEpoch);
@@ -1254,6 +1256,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.harmonicChanges = lastHarmonicChanges.load (std::memory_order_relaxed);
     s.barFromHarmony = lastBarFromHarmony.load (std::memory_order_relaxed);
     s.harmonyMargin = lastHarmonyMargin.load (std::memory_order_relaxed);
+    s.harmonicShare = lastHarmonicShare.load (std::memory_order_relaxed);
     s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
     s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
     s.standingDown = lastStandingDown.load (std::memory_order_relaxed);
