@@ -1082,6 +1082,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         }
     }
 
+
     if (stretcher.hasLoop())
     {
         stretch.setLiveClock (tr.bpm, tr.beatPhase, tr.confidence);

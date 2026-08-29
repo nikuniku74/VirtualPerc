@@ -99,6 +99,7 @@ public:
         is weighted as one. See Tracking/HarmonicChange.h. */
     void notifyHarmonicChange (int sampleOffset, float strength) noexcept;
 
+
     /** How long the kick channel has been silent, and whether one is assigned
         at all. A negative value means none is, and everything the kick path
         does is then switched off. */

@@ -3927,6 +3927,84 @@ void vpRunAiBeatTests (int& passed, int& failed)
                        sections };
         };
 
+        // Does the clock need protecting through the bars the band fills on?
+        //
+        // It seemed obvious that it would. A fill is the most misleading bar in
+        // a song for a beat tracker - the pattern the network has been reading
+        // stops and is replaced by onsets that are not beats - and once the
+        // sentence is aligned to the band's sections the app knows which bar
+        // that is *before* it arrives. So the app was made to hold the clock's
+        // ground through it, the same way it does when the kit drops out.
+        //
+        // It could not be shown to help, and it could not be shown to hurt
+        // either. The figures across runs: 9.83 and 43.02 and 1.68 and 9.30 ms
+        // with the anticipation off, 8.98 and 61.38 and 9.17 with it on -
+        // overlapping ranges from a measurement that moves by a factor of five
+        // on the same configuration, and draining the analysis worker every
+        // block did not settle it. A single pair of those numbers looks like a
+        // clean five-to-one result in either direction depending on which pair
+        // is taken, which is exactly the trap.
+        //
+        // So it is not shipped. Not because it is wrong - flooring the evidence
+        // for one bar in eight is the same bounded, self-clearing mechanism
+        // that works when the kit drops out - but because a change to the
+        // timing path that cannot be shown to help does not go in. What is left
+        // is the measurement, as a loose guard that the clock does not collapse
+        // through a fill bar without any help at all.
+        auto phaseThroughFills = [&] (bool follow)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().dynamicsFollow.store (follow);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.start();
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            std::vector<double> errs;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { mix.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                // Drain the analysis worker every block. Without it how much
+                // CPU the worker happened to get decides the answer: the same
+                // configuration measured 9.8 ms on one run and 43.0 on the
+                // next, which is not a measurement of anything.
+                for (int spin = 0; spin < 20000; ++spin)
+                {
+                    if (eng.snapshot().analysisBacklog <= block)
+                        break;
+                    std::this_thread::yield();
+                }
+                const double t = static_cast<double> (pos) / sr;
+                if (t < 14.0)
+                    continue;
+                const double beats = truePhase[static_cast<size_t> (pos)];
+                // The band's fill bar and the bar after it, which is where a
+                // clock that was pulled by one shows the damage.
+                const int songBar = static_cast<int> (beats / 4.0);
+                if ((songBar % 8) != 7 && (songBar % 8) != 0)
+                    continue;
+                const auto s = eng.snapshot();
+                if (s.bpm < 40.0f)
+                    continue;
+                errs.push_back (std::fabs (vp::wrapCentered (
+                    static_cast<float> (s.beatPhase - (beats - std::floor (beats))))));
+            }
+            if (errs.size() < 20)
+                return 999.0;
+            double mean = 0.0;
+            for (double e : errs) mean += e;
+            mean /= static_cast<double> (errs.size());
+            double sq = 0.0;
+            for (double e : errs) sq += (e - mean) * (e - mean);
+            return std::sqrt (sq / errs.size()) * 60.0 / opt.bpm * 1000.0;
+        };
+
         const auto loose = fillAlignment (false);
         const auto aligned = fillAlignment (true);
         std::printf ("forma       il fill cade dove cade quello della band: "
@@ -3936,6 +4014,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "the band changing section is something the app can now notice");
         expect (aligned.agree > loose.agree,
                 "and starting the sentence there puts the fill nearer the band's");
+
+        const double throughFills = phaseThroughFills (true);
+        std::printf ("forma       fase attraverso le battute di fill: %.2f ms\n",
+                     throughFills);
+        // Loose on purpose: the number itself is not stable enough to hold a
+        // tight line, and a tight line on an unstable number is a test that
+        // fails for reasons that have nothing to do with the code. What this
+        // catches is a collapse, which is what it is for.
+        expect (throughFills < 30.0,
+                "the clock does not come apart through the bars the band fills on");
 
         const double fixedPart = drive (false);
         const double listening = drive (true);

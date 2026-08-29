@@ -39,6 +39,38 @@ No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enf
 
 The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
 
+### The harmony, and the bar
+
+The first thing in the app that looks at **pitch**. Everything else it listens to is percussive: the network is trained on beat activations, the kick channel is one drum, the level meter does not care what note it is — and that left the strongest cue about where a bar begins on the table.
+
+Harmony changes on bar lines. Not always and not only, but the distribution is not close, and it is the only cue on the list that survives when the drums do not: a voice with a guitar behind it has no kick, no snare and a beat activation curve the network was never trained for — and still changes chord, and still changes it on the bar.
+
+`HarmonicChange` is a chromagram — twelve pitch classes over three octaves by Goertzel on a decimated signal — and the cosine distance between what is sounding now and what has been sounding. Pitch classes rather than a spectrum on purpose: a drum is broadband, so it lands on every bin at once and barely moves the vector's *direction*, where a chord moves it a long way. Three things were found by measuring rather than by design:
+
+- **A chord is a step; a drum is an impulse.** Peak-picking the change function reported 41 chord changes on a *drum stem*. What a drum cannot do is stay moved, so a change now has to hold for three hops.
+- **Energy and tonality gates.** A near-silent window normalises to a unit vector made of arithmetic noise whose direction wanders freely — 59 more false changes on the same drum stem. And a broadband hit gives a flat chroma, and flat is not a chord.
+- **A per-bin median over five windows.** In the time-frequency plane a hit is a vertical line and a chord a horizontal one.
+
+| | changes | on the downbeat |
+|---|---|---|
+| full mix | 38 | 39 % (chance is 25 %) |
+| **no drums at all** | 20 | **100 %** |
+| snare stem alone | 4 | — |
+
+On a full mix it is a lean rather than an answer, and that is the right result: where there are drums the app already has two better sources. Where there are none it had nothing. End to end, with the clock started two quarters out of step and a network that finds every beat and cannot find the bar — which is what a real one does on this material — the count went from **0 % right to 100 %**.
+
+The network is asked first and the harmony only when it has not answered: the harmony may **answer**, never overrule. And it is held to a higher margin than the network to do it — not because it is worse but because it is the fallback, and a fallback that acts on a plurality moves the count on material it knows nothing about. At equal thresholds it rotated the bar five times on a kit track and settled on none.
+
+### The form
+
+The eight-bar sentence — state it, answer it, state it, go somewhere, and a fill on the way out — was counted from wherever the part happened to come in, which is to say from nowhere. A band's fills land on the bar before the section changes; the app's landed every eighth bar counted from an arbitrary start, so on average they missed by four.
+
+A section boundary is the one piece of musical form that reads off a level meter: a verse does not become a chorus quietly. Sampled once a bar — a step measured *inside* a bar is a fill or a stab — with four bars between boundaries, because a band that lifts over two of them is one section change and a sentence restarted twice inside itself is worse than one never restarted.
+
+Measured with the part started three bars out of step with the song: the app's fill bar coincides with the band's **70 % → 90 %** of the time.
+
+**Tried and not shipped: anticipating the fill.** Once the sentence is aligned, the app knows which bar the band fills on *before* it arrives, and a fill is the most misleading bar in a song for a beat tracker. So the clock was made to hold its ground through it. It could not be shown to help and could not be shown to hurt: across runs the phase through those bars measured 9.83, 43.02, 1.68 and 9.30 ms without it against 8.98, 61.38 and 9.17 with — overlapping ranges from a measurement that moves five-fold on the same configuration, and draining the analysis worker every block did not settle it. A change to the timing path that cannot be shown to help does not go in. The measurement is left behind as a loose guard.
+
 ### Quanto, non solo quando
 
 Everything else in this engine answers **when**: the tracker finds the pulse, the clock places it, the tables say which stroke falls on which sixteenth. Nothing answered **how much**, and that is most of the difference between a part that is correct and a player who is listening.

@@ -144,6 +144,7 @@ public:
     void setDrumsOut (bool on) noexcept { drumsOut = on; }
     bool drumsAreOut() const noexcept { return drumsOut; }
 
+
     /** 1 when the analysis is fitting as well as it has been, down to
         `kMinTrust` when it is fitting much worse. */
     float trust() const noexcept { return drumsOut ? kMinTrust : current; }
