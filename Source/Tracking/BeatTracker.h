@@ -88,6 +88,18 @@ public:
         See Tracking/KickOnsetDetector.h. */
     void notifyKickOnset (int sampleOffset, float strength) noexcept;
 
+    /** The harmony has moved. `sampleOffset` is relative to the start of the
+        block about to be processed and may be negative; `strength` is 0..1.
+
+        Used for one thing: which quarter is the one. Harmony changes on bar
+        lines, and on material with no drums in it that is the only cue there
+        is - measured on a drum-free arrangement, every single change landed on
+        the downbeat, where the network's own vote through a speaker is no
+        better than a coin. On a full mix it is a lean rather than an answer and
+        is weighted as one. See Tracking/HarmonicChange.h. */
+    void notifyHarmonicChange (int sampleOffset, float strength) noexcept;
+
+
     /** How long the kick channel has been silent, and whether one is assigned
         at all. A negative value means none is, and everything the kick path
         does is then switched off. */
@@ -177,6 +189,14 @@ public:
         int           kickOnsets = 0;
         bool          kickTrusted = false;
         bool          drumsOut = false;
+        /** Harmonic changes counted, and whether the bar is currently being
+            placed from them rather than from the network. */
+        int           harmonicChanges = 0;
+        bool          barFromHarmony = false;
+        /** How clear the harmony's histogram is: the winner's share of it less
+            the runner-up's. Near one is a chord on every bar line; near zero is
+            material the chroma has nothing to say about. */
+        float         harmonyMargin = 0.0f;
         /** How many times the automatic alignment has rotated the bar since the
             tracker was reset. Diagnostic, and the only way from outside to know
             that a rotation has just happened - which is the moment the count is
@@ -204,6 +224,10 @@ public:
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
+    /** One source's opinion about the bar, acted on or not. Returns true when
+        it moved the count, so the caller can stop asking. */
+    bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
+                       float extraMargin) noexcept;
     void updateAutoOctave (float bpm, bool periodic, int numSamples) noexcept;
     void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
@@ -291,6 +315,20 @@ private:
     float downbeatVotes[4] {};
     float voteBeats = 0.0f;
     int   barRotations = 0;
+
+    /** The bar as the harmony votes on it, one vote per chord change, decayed
+        the same way the network's is. Kept apart from the network's histogram
+        rather than added into it: they are not the same quality of evidence -
+        on material with no drums the harmony is the only evidence there is -
+        and mixing them would hide which one answered. */
+    float harmonyVotes[4] {};
+    float harmonyVoteCount = 0.0f;
+    int   harmonicChangeCount = 0;
+    bool  barFromHarmony = false;
+    static constexpr int kMaxPendingHarmony = 4;
+    int   pendingHarmony = 0;
+    int   pendingHarmonyOffset[kMaxPendingHarmony] {};
+    float pendingHarmonyStrength[kMaxPendingHarmony] {};
     int   barDeclaredSamples = 0;
 
     int quantizeWaitSamples = 0;

@@ -18,6 +18,7 @@
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
+#include "Tracking/HarmonicChange.h"
 #include "Tracking/KickOnsetDetector.h"
 #include "Tracking/PhaseTrust.h"
 
@@ -2809,6 +2810,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // settled. Sampled a third of the way into each beat, well clear of
         // both boundaries: the clock leads the song by a few milliseconds by
         // design, so a reading taken on a boundary is a reading of that lead.
+        // How clear the chroma's own opinion about the bar is on material that
+        // is mostly drums. Printed rather than asserted: it is the number that
+        // decides how strict the harmony path has to be before it is allowed to
+        // answer, and it belongs next to the material it was taken on.
+        float lastHarmonyMargin = 0.0f;
+
         auto barTrace = [&] (bool clean, std::vector<int>& into, int& gaps)
         {
             vp::VirtualPercussionEngine eng;
@@ -2841,6 +2848,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     std::this_thread::sleep_for (std::chrono::milliseconds (2));
             }
             gaps = static_cast<int> (eng.snapshot().analysisGaps);
+            lastHarmonyMargin = std::max (lastHarmonyMargin,
+                                          eng.snapshot().harmonyMargin);
         };
 
         std::vector<int> clean, noisy;
@@ -2877,6 +2886,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
 
         std::printf ("bar-vote       battiti=%d  sull'uno dal %d  poi %d di fila  rotazioni=%d  buchi=%d/%d\n",
                      compared, settledAt, tail, rotations, cleanGaps, noisyGaps);
+        std::printf ("bar-vote       margine dell'armonia su un kit: %.2f\n",
+                     static_cast<double> (lastHarmonyMargin));
 
         // A starved worker loses audio and with it the evidence, and the bar can
         // land somewhere else on the way back - the same carve-out bar-integrity
@@ -3688,6 +3699,45 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (backIn,
                     "and they come back when the band does");
 
+            // Density, the second input. Level alone cannot tell a quiet full
+            // band from an exposed voice, and those two want opposite things: a
+            // band turned down wants the part turned down, a voice on its own
+            // wants most of the part gone. The two reasons are combined by
+            // taking the smaller, so a bar that is loud and nearly empty is
+            // still played sparsely.
+            {
+                vp::BandDynamics dense, sparse;
+                dense.prepare (sr);
+                sparse.prepare (sr);
+                for (int i = 0; i < static_cast<int> (12.0 * sr) / block; ++i)
+                {
+                    dense.observe (0.30f, block);
+                    sparse.observe (0.30f, block);
+                    dense.setDensity (13.0f, true);    // a band going
+                    sparse.setDensity (3.0f, true);    // a voice and a chord
+                }
+                std::printf ("dinamica    stessa forza, battuta piena=%.2f  "
+                             "battuta vuota=%.2f\n",
+                             static_cast<double> (dense.level()),
+                             static_cast<double> (sparse.level()));
+                expect (dense.level() > 0.95f,
+                        "a bar that is full is played as written, however loud it is");
+                expect (sparse.level() < 0.25f,
+                        "and one that is nearly empty is not, at exactly the same level");
+
+                // And it has no vote until the fold has seen enough bars to be
+                // describing the music rather than the clock finding the bar.
+                vp::BandDynamics unsettled;
+                unsettled.prepare (sr);
+                for (int i = 0; i < 400; ++i)
+                {
+                    unsettled.observe (0.30f, block);
+                    unsettled.setDensity (1.0f, false);
+                }
+                expect (unsettled.level() > 0.95f,
+                        "density that has not settled does not get a vote");
+            }
+
             // Nothing at all is not a musical decision. An engine that has been
             // handed silence has not heard a quiet passage, it has heard
             // nothing, and it must behave exactly as it did before.
@@ -3821,6 +3871,160 @@ void vpRunAiBeatTests (int& passed, int& failed)
             return l > 1.0e-9 ? 20.0 * std::log10 (std::max (1.0e-9, q) / l) : 0.0;
         };
 
+        // Where the fill lands.
+        //
+        // The eight-bar sentence - state it, answer it, state it, go somewhere,
+        // and a fill on the way out - was counted from wherever the part
+        // happened to come in, which is to say from nowhere. The band's fills
+        // land on the bar before the section changes. This measures how often
+        // the app's fill bar is one of those, which for an unaligned phrase is
+        // one time in eight by construction.
+        // Started three bars into the song, so the sentence the part counts is
+        // three bars out of step with the one the band is playing. Started
+        // together, a phrase that is never re-aligned scores exactly the same
+        // as one that is, and this would pass on code that does nothing.
+        int fillStart = 0;
+        while (fillStart < n && truePhase[static_cast<size_t> (fillStart)] < 12.0)
+            ++fillStart;
+
+        auto fillAlignment = [&] (bool follow)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().dynamicsFollow.store (follow);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.start();
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            int agreed = 0, seenBars = 0, lastSongBar = -1, sections = 0;
+            for (int pos = 0; fillStart + pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { mix.data() + fillStart + pos };
+                eng.process (ins, 1, outs, 2, block);
+                if (static_cast<double> (pos) / sr < 14.0)
+                    continue;
+                const int songBar = static_cast<int> (
+                    truePhase[static_cast<size_t> (fillStart + pos)] / 4.0);
+                if (songBar == lastSongBar)
+                    continue;
+                lastSongBar = songBar;
+                const auto s = eng.snapshot();
+                sections = s.sectionChanges;
+                // The band's own fill is the bar before its section turns over.
+                const bool bandFills = (songBar % 8) == 7;
+                const bool appFills = (((s.phraseBar % 8) + 8) % 8) == 7;
+                ++seenBars;
+                if (bandFills == appFills)
+                    ++agreed;
+            }
+            struct R { double agree; int sections; };
+            return R { seenBars > 0 ? static_cast<double> (agreed) / seenBars : 0.0,
+                       sections };
+        };
+
+        // Does the clock need protecting through the bars the band fills on?
+        //
+        // It seemed obvious that it would. A fill is the most misleading bar in
+        // a song for a beat tracker - the pattern the network has been reading
+        // stops and is replaced by onsets that are not beats - and once the
+        // sentence is aligned to the band's sections the app knows which bar
+        // that is *before* it arrives. So the app was made to hold the clock's
+        // ground through it, the same way it does when the kit drops out.
+        //
+        // It could not be shown to help, and it could not be shown to hurt
+        // either. The figures across runs: 9.83 and 43.02 and 1.68 and 9.30 ms
+        // with the anticipation off, 8.98 and 61.38 and 9.17 with it on -
+        // overlapping ranges from a measurement that moves by a factor of five
+        // on the same configuration, and draining the analysis worker every
+        // block did not settle it. A single pair of those numbers looks like a
+        // clean five-to-one result in either direction depending on which pair
+        // is taken, which is exactly the trap.
+        //
+        // So it is not shipped. Not because it is wrong - flooring the evidence
+        // for one bar in eight is the same bounded, self-clearing mechanism
+        // that works when the kit drops out - but because a change to the
+        // timing path that cannot be shown to help does not go in. What is left
+        // is the measurement, as a loose guard that the clock does not collapse
+        // through a fill bar without any help at all.
+        auto phaseThroughFills = [&] (bool follow)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().dynamicsFollow.store (follow);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.start();
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            std::vector<double> errs;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { mix.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                // Drain the analysis worker every block. Without it how much
+                // CPU the worker happened to get decides the answer: the same
+                // configuration measured 9.8 ms on one run and 43.0 on the
+                // next, which is not a measurement of anything.
+                for (int spin = 0; spin < 20000; ++spin)
+                {
+                    if (eng.snapshot().analysisBacklog <= block)
+                        break;
+                    std::this_thread::yield();
+                }
+                const double t = static_cast<double> (pos) / sr;
+                if (t < 14.0)
+                    continue;
+                const double beats = truePhase[static_cast<size_t> (pos)];
+                // The band's fill bar and the bar after it, which is where a
+                // clock that was pulled by one shows the damage.
+                const int songBar = static_cast<int> (beats / 4.0);
+                if ((songBar % 8) != 7 && (songBar % 8) != 0)
+                    continue;
+                const auto s = eng.snapshot();
+                if (s.bpm < 40.0f)
+                    continue;
+                errs.push_back (std::fabs (vp::wrapCentered (
+                    static_cast<float> (s.beatPhase - (beats - std::floor (beats))))));
+            }
+            if (errs.size() < 20)
+                return 999.0;
+            double mean = 0.0;
+            for (double e : errs) mean += e;
+            mean /= static_cast<double> (errs.size());
+            double sq = 0.0;
+            for (double e : errs) sq += (e - mean) * (e - mean);
+            return std::sqrt (sq / errs.size()) * 60.0 / opt.bpm * 1000.0;
+        };
+
+        const auto loose = fillAlignment (false);
+        const auto aligned = fillAlignment (true);
+        std::printf ("forma       il fill cade dove cade quello della band: "
+                     "senza sezioni %.0f%%   con %.0f%%  (%d sezioni trovate)\n",
+                     loose.agree * 100.0, aligned.agree * 100.0, aligned.sections);
+        expect (aligned.sections >= 1,
+                "the band changing section is something the app can now notice");
+        expect (aligned.agree > loose.agree,
+                "and starting the sentence there puts the fill nearer the band's");
+
+        const double throughFills = phaseThroughFills (true);
+        std::printf ("forma       fase attraverso le battute di fill: %.2f ms\n",
+                     throughFills);
+        // Loose on purpose: the number itself is not stable enough to hold a
+        // tight line, and a tight line on an unstable number is a test that
+        // fails for reasons that have nothing to do with the code. What this
+        // catches is a collapse, which is what it is for.
+        expect (throughFills < 30.0,
+                "the clock does not come apart through the bars the band fills on");
+
         const double fixedPart = drive (false);
         const double listening = drive (true);
         std::printf ("dinamica    parte in strofa contro ritornello: "
@@ -3834,6 +4038,227 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // player does not come down by 14, they come down a few and play less.
         expect (listening < fixedPart - 3.0,
                 "with them on it comes down with the band");
+    }
+
+    {
+        // When the harmony moves, and whether it moves on the bar.
+        //
+        // This is the first thing in the app that looks at pitch at all, and it
+        // exists for the app's worst measured failure: which quarter is the
+        // one. Through an iPad's own speaker the network's downbeat vote is no
+        // better than a coin. A chord change is not.
+        //
+        // The material changes chord on every bar line - a four-bar cycle of
+        // roots - so where the changes land against the notated grid is
+        // exactly the question, and the answer is known.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 116.0f;
+        opt.breakdown = false;
+        opt.fills = true;
+        const int n = static_cast<int> (sr * 45.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::SongStems stems;
+        vp::probe::renderSong (mix, opt, sr, 313u, &truePhase, &stems);
+
+        auto changesOn = [&] (const std::vector<float>& signal)
+        {
+            vp::HarmonicChange hc;
+            hc.prepare (sr);
+            int perQuarter[4] = { 0, 0, 0, 0 };
+            int total = 0;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                vp::HarmonicChange::Change ch[vp::HarmonicChange::kMaxChanges];
+                const int got = hc.process (signal.data() + pos, block, ch,
+                                            vp::HarmonicChange::kMaxChanges);
+                for (int i = 0; i < got; ++i)
+                {
+                    const int at = pos + ch[i].offset;
+                    if (at < static_cast<int> (sr * 4.0) || at >= n)
+                        continue;   // the reference has to form first
+                    // Which quarter of the bar it landed on, from the notated
+                    // grid the renderer reports per sample.
+                    const double beats = truePhase[static_cast<size_t> (at)];
+                    const int q = ((static_cast<int> (std::lround (beats)) % 4) + 4) % 4;
+                    ++perQuarter[q];
+                    ++total;
+                }
+            }
+            struct R { int q[4]; int total; };
+            return R { { perQuarter[0], perQuarter[1], perQuarter[2], perQuarter[3] }, total };
+        };
+
+        const auto full = changesOn (mix);
+        std::printf ("armonia     cambi sul mix: %d   per quarto %d/%d/%d/%d\n",
+                     full.total, full.q[0], full.q[1], full.q[2], full.q[3]);
+        expect (full.total >= 8,
+                "the harmony moving is something the app can now see at all");
+        const double onOne = full.total > 0
+                                 ? static_cast<double> (full.q[0]) / full.total : 0.0;
+        std::printf ("armonia     quota sull'uno: %.0f%%  (il caso e' 25%%)\n", onOne * 100.0);
+        // On a full mix this is a lean and not an answer, and that is the
+        // honest reading of it. The drums are the reason: hats on every eighth
+        // and a snare with a shell pitch keep failing the tonality gate, so the
+        // window that finally passes it is not always the window the chord
+        // changed in, and a change that really was on the one gets filed a beat
+        // away. A per-bin median over five hops takes some of that out - 35% to
+        // 39% - and not the rest.
+        //
+        // Which is the right result rather than a disappointing one. Where
+        // there are drums the app already has two better sources: the kick
+        // channel, and a network trained on exactly that. What it has nothing
+        // at all for is the case below.
+        expect (onOne > 0.33,
+                "on a full mix the harmony leans towards the downbeat");
+
+        // The case the whole thing is for: no drums at all. A voice and an
+        // instrument behind it have no kick, no snare and a beat activation
+        // curve the network was never trained on - and still change chord on
+        // the bar. `music` is the arrangement with every drum taken out.
+        const auto sparse = changesOn (stems.music);
+        const double sparseOnOne = sparse.total > 0
+                                       ? static_cast<double> (sparse.q[0]) / sparse.total : 0.0;
+        std::printf ("armonia     senza batteria: %d cambi, %.0f%% sull'uno\n",
+                     sparse.total, sparseOnOne * 100.0);
+        // And this is what it is for. A voice with an instrument behind it has
+        // no kick to time, no snare to count from, and a beat activation curve
+        // the network was never trained on. It still changes chord, and it
+        // still changes it on the bar - measured here at every single one.
+        expect (sparse.total >= 8 && sparseOnOne > 0.85,
+                "and with no drums in the signal it finds the bar exactly, "
+                "which is the case nothing else in the app can see at all");
+
+        // And it must not fire on drums. A snare is broadband, so it lands on
+        // every pitch class at once and moves the chroma vector's *direction*
+        // hardly at all - which is the reason this is chroma and not a spectral
+        // flux, and is worth asserting rather than believing.
+        const auto drumsOnly = changesOn (stems.snare);
+        std::printf ("armonia     solo rullante: %d cambi\n", drumsOnly.total);
+        expect (drumsOnly.total <= full.total / 3,
+                "a drum is not a chord change");
+
+        // And now the whole chain, on the case this exists for: a band with no
+        // drummer. The clock is started two quarters into the bar, so the count
+        // it begins with is wrong and something has to move it - started on the
+        // one, code that never moves the bar at all would score the same as
+        // code that finds it, which is the trap the older bar test names.
+        {
+            int startAt = 0;
+            while (startAt < n && truePhase[static_cast<size_t> (startAt)] < 2.0)
+                ++startAt;
+
+            // A network that finds every beat and cannot find the bar. That is
+            // not a straw man: it is what the measurements say a real one does
+            // through an iPad's own speaker, and on material with no drums it
+            // is generous - a beat tracker trained on full mixes has nothing to
+            // work with here at all.
+            class BeatButNoBarModel final : public vp::IBeatModel
+            {
+            public:
+                BeatButNoBarModel (const std::vector<double>& phase, double songSr)
+                    : truePhase (phase), sr_ (songSr) {}
+                bool prepare (int) override { return true; }
+                void reset() override {}
+                bool infer (const float*, int, float activations3[3]) override
+                {
+                    const double t = static_cast<double> (frame++)
+                                     * vp::kBeatModelHop / vp::kBeatModelSampleRate;
+                    const size_t s = static_cast<size_t> (t * sr_);
+                    float pulse = 0.03f;
+                    if (s < truePhase.size())
+                    {
+                        const double beats = truePhase[s];
+                        const double d = std::fabs (beats - std::round (beats));
+                        pulse = 0.03f + 0.95f * static_cast<float> (
+                                    std::exp (-0.5 * (d / 0.055) * (d / 0.055)));
+                    }
+                    activations3[0] = pulse;
+                    activations3[1] = 0.05f;      // no opinion about the bar at all
+                    activations3[2] = 1.0f - pulse;
+                    return true;
+                }
+            private:
+                const std::vector<double>& truePhase;
+                double sr_;
+                long long frame = 0;
+            };
+
+            auto barTrace = [&] (bool useHarmony)
+            {
+                vp::VirtualPercussionEngine eng;
+                eng.setBeatModel (std::make_unique<BeatButNoBarModel> (truePhase, sr));
+                eng.prepare (sr, block, 1);
+                eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+                eng.settings().dynamicsFollow.store (false);   // one thing at a time
+                eng.start();
+
+                std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+                std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+                float* outs[2] = { oL.data(), oR.data() };
+                std::vector<float> hush (static_cast<size_t> (block), 0.0f);
+
+                // Silence first: the app holds the part out until it has heard
+                // the input change since it was opened, or it locks to an empty
+                // room. Which is also how it is really used - armed, then band.
+                for (int i = 0; i < static_cast<int> (sr * 2.0) / block; ++i)
+                {
+                    const float* quiet[1] = { hush.data() };
+                    eng.process (quiet, 1, outs, 2, block);
+                }
+
+                int hits = 0, seen = 0;
+                for (int pos = 0; startAt + pos + block <= n; pos += block)
+                {
+                    // The drum-free arrangement, optionally with the harmony
+                    // path switched off so the two runs differ in one thing.
+                    const float* ins[1] = { stems.music.data() + startAt + pos };
+                    eng.process (ins, 1, outs, 2, block);
+                    if (! useHarmony)
+                        eng.settings().barLocked.store (true);   // nothing may move it
+                    for (int spin = 0; spin < 20000; ++spin)
+                    {
+                        if (eng.snapshot().analysisBacklog <= block)
+                            break;
+                        std::this_thread::yield();
+                    }
+
+                    const auto s = eng.snapshot();
+                    const double t = static_cast<double> (pos) / sr;
+                    if (t < 18.0 || s.bpm < 40.0f)
+                        continue;
+                    const double truth = truePhase[static_cast<size_t> (startAt + pos)];
+                    const double inBeat = truth - std::floor (truth);
+                    if (inBeat <= 0.25 || inBeat >= 0.45)
+                        continue;
+                    ++seen;
+                    if (std::clamp (static_cast<int> (s.barPhase * 4.0f), 0, 3)
+                        == (static_cast<int> (std::floor (truth)) & 3))
+                        ++hits;
+                }
+                struct R { double right; int changes; bool fromHarmony; float margin; };
+                const auto s = eng.snapshot();
+                return R { seen > 0 ? static_cast<double> (hits) / seen : 0.0,
+                           s.harmonicChanges, s.barFromHarmony, s.harmonyMargin };
+            };
+
+            const auto locked = barTrace (false);
+            const auto free_ = barTrace (true);
+            std::printf ("armonia     battuta su materiale senza batteria: "
+                         "bloccata %.0f%%   dall'armonia %.0f%%  "
+                         "(%d cambi, margine %.2f, attiva=%d)\n",
+                         locked.right * 100.0, free_.right * 100.0,
+                         free_.changes, static_cast<double> (free_.margin),
+                         free_.fromHarmony ? 1 : 0);
+            expect (free_.changes >= 8 && free_.fromHarmony,
+                    "the harmony gathers enough changes to be allowed to place the bar");
+            expect (free_.right > locked.right + 0.5,
+                    "and it puts the count on the song's one, which nothing else "
+                    "in the app could have done here");
+        }
     }
 
     {

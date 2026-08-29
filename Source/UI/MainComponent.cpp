@@ -2472,6 +2472,9 @@ void MainComponent::paint (juce::Graphics& g)
         // phase over. Below one is a passage the fit is finding hard - the
         // drummer out, usually - and the two numbers together say whether the
         // app has noticed something the listener can hear.
+        lines.add ("armonia  cambi " + juce::String (snap.harmonicChanges)
+                   + "  margine " + juce::String (snap.harmonyMargin, 2)
+                   + (snap.barFromHarmony ? "   BATTUTA DALL'ARMONIA" : ""));
         lines.add (juce::String ("dinamica ") + (snap.dynamicsFollow ? "ON " : "OFF")
                    + "  banda " + juce::String (snap.bandDynamics, 2)
                    + (snap.standingDown ? "  IN ASCOLTO" : ""));

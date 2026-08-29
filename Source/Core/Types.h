@@ -224,9 +224,18 @@ struct EngineSnapshot
     bool  kickTrusted          = false;
     /** How much the band is giving, 0..1, and whether the part has stood down
         because the passage does not want it. */
+    /** Chord changes counted, and whether the bar is being placed from them
+        rather than from the network. */
+    int   harmonicChanges      = 0;
+    bool  barFromHarmony       = false;
+    float harmonyMargin        = 0.0f;
     float bandDynamics         = 1.0f;
     bool  dynamicsFollow       = true;
     bool  standingDown         = false;
+    /** Section boundaries the band's dynamics have marked, and where the
+        eight-bar sentence has got to since the last one. */
+    int   sectionChanges       = 0;
+    int   phraseBar            = 0;
     /** True when the kick channel says the drummer has stopped while the rest
         of the band is still playing. Not an inference: the channel is silent. */
     bool  drumsOut             = false;

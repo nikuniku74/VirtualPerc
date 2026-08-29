@@ -100,6 +100,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     rawIn.assign (static_cast<size_t> (maxBlock), 0.0f);
     latencyProbe.prepare (sampleRate);
     bandDynamics.prepare (sampleRate);
+    harmony.prepare (sampleRate);
     standingDown = false;
     wantStandDown = false;
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -1002,6 +1003,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         ++tapRead;
     }
 
+    // Where the chords moved. On the analysis bus for the same reason the
+    // dynamics are: our own part has been taken out of it, and a shaker is not
+    // a chord change but a conga's ring is close enough to one to be worth not
+    // handing to a chroma.
+    {
+        HarmonicChange::Change ch[HarmonicChange::kMaxChanges];
+        const int got = harmony.process (mono.data(), numSamples, ch,
+                                         HarmonicChange::kMaxChanges);
+        for (int i = 0; i < got; ++i)
+            tracker.notifyHarmonicChange (ch[i].offset, ch[i].strength);
+    }
+
     tracker.setInputEpoch (analysisEpoch);
     const auto tr = tracker.process (mono.data(), numSamples);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
@@ -1017,12 +1030,19 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // Fold the analysis signal onto the bar to see which part the music is
     // asking for. Only while the clock is actually on the song: folding audio
     // onto a bar the tracker has not found yet just smears every bin.
+    // Folded whenever anything is going to read it: the automatic style
+    // chooser wants it, and so do the dynamics - how *full* the bar is separates
+    // a quiet band from an exposed voice, and level alone cannot. It is three
+    // one-pole filters and an accumulate per sample either way.
     const bool autoStyle = cfg.grooveAuto.load (std::memory_order_relaxed);
-    if (autoStyle)
+    const bool wantDynamics = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    if (autoStyle || wantDynamics)
     {
         const bool clockStable = tr.state == TrackingState::following
                                  && tr.clock.tempoBpm > 40.0f;
         styleDetector.process (mono.data(), numSamples, tr.barPhase, clockStable);
+        bandDynamics.setDensity (styleDetector.features().occupancy,
+                                 styleDetector.barsObserved() > 4.0f);
     }
     const GrooveStyle chosen = autoStyle
                                    ? styleDetector.style()
@@ -1036,7 +1056,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // something - and the same going the other way: coming back in on the "a"
     // of three is not an entrance. `wrappedBar` is the clock saying the count
     // has just come round, which is the only moment either is worth doing.
-    const bool followDynamics = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    const bool followDynamics = wantDynamics;
     percussion.setDynamics (followDynamics ? bandDynamics.level() : 1.0f);
     if (! followDynamics)
     {
@@ -1048,7 +1068,20 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         wantStandDown = bandDynamics.wantsSilence();
         if (tr.clock.wrappedBar || ! tr.percussionShouldPlay)
             standingDown = wantStandDown;
+
+        // And the form. A band's fills land on the bar before the section
+        // changes; the app's eight-bar sentence was counted from wherever the
+        // part happened to come in, so on average its fill missed the band's by
+        // four bars. Sampling the level once a bar is enough to find a section
+        // boundary - a verse does not become a chorus quietly - and starting
+        // the sentence there puts the fill where the band puts theirs.
+        if (tr.clock.wrappedBar && bandDynamics.sectionChangedAtBar())
+        {
+            percussion.alignPhrase();
+            ++sectionCount;
+        }
     }
+
 
     if (stretcher.hasLoop())
     {
@@ -1110,9 +1143,14 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
     lastKickTrusted.store (tr.kickTrusted, std::memory_order_relaxed);
     lastDrumsOut.store (tr.drumsOut, std::memory_order_relaxed);
+    lastHarmonicChanges.store (tr.harmonicChanges, std::memory_order_relaxed);
+    lastBarFromHarmony.store (tr.barFromHarmony, std::memory_order_relaxed);
+    lastHarmonyMargin.store (tr.harmonyMargin, std::memory_order_relaxed);
     lastDynamics.store (followDynamics ? bandDynamics.level() : 1.0f,
                         std::memory_order_relaxed);
     lastStandingDown.store (standingDown, std::memory_order_relaxed);
+    lastSections.store (sectionCount, std::memory_order_relaxed);
+    lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
@@ -1213,9 +1251,14 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.kickOnsets = lastKickOnsets.load (std::memory_order_relaxed);
     s.kickTrusted = lastKickTrusted.load (std::memory_order_relaxed);
     s.drumsOut = lastDrumsOut.load (std::memory_order_relaxed);
+    s.harmonicChanges = lastHarmonicChanges.load (std::memory_order_relaxed);
+    s.barFromHarmony = lastBarFromHarmony.load (std::memory_order_relaxed);
+    s.harmonyMargin = lastHarmonyMargin.load (std::memory_order_relaxed);
     s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
     s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
     s.standingDown = lastStandingDown.load (std::memory_order_relaxed);
+    s.sectionChanges = lastSections.load (std::memory_order_relaxed);
+    s.phraseBar = lastPhraseBar.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));
