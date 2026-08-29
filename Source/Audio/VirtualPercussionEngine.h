@@ -4,6 +4,8 @@
 #include "Percussion/PercussionEngine.h"
 #include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
+#include "Audio/LatencyProbe.h"
+#include "Tracking/KickOnsetDetector.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
 
@@ -42,6 +44,30 @@ public:
     const EngineSettings& settings() const noexcept { return cfg; }
 
     void setReportedLatencyMs (float ms) noexcept { latencyMs.store (ms, std::memory_order_relaxed); }
+
+    /** Measure this rig's round trip instead of taking the device's word for
+        it: a short sweep goes out, whatever comes back is captured, and the two
+        are correlated. See Audio/LatencyProbe.h for why the reported figure is
+        not the same quantity.
+
+        `startLatencyMeasurement` arms it and returns at once. When
+        `latencyMeasurementReady` goes true, call `finishLatencyMeasurement`
+        from a thread that is not the audio thread: it does the correlation and
+        returns the round trip in milliseconds, or a negative number when the
+        sweep did not come back clearly enough to believe. A believed result is
+        kept and is what the clock runs on from then on. */
+    void  startLatencyMeasurement() noexcept { latencyProbe.start(); }
+    bool  latencyMeasurementRunning() const noexcept { return latencyProbe.isRunning(); }
+    bool  latencyMeasurementReady() const noexcept { return latencyProbe.ready(); }
+    float finishLatencyMeasurement() noexcept;
+    void  cancelLatencyMeasurement() noexcept { latencyProbe.cancel(); }
+    /** The measured round trip, or 0 when nobody has measured one. */
+    float measuredLatency() const noexcept { return measuredLatencyMs.load (std::memory_order_relaxed); }
+    /** Restore a figure measured in an earlier session. */
+    void  setMeasuredLatency (float ms) noexcept
+    {
+        measuredLatencyMs.store (ms > 0.0f && ms < 400.0f ? ms : 0.0f, std::memory_order_relaxed);
+    }
 
     /** Accepts any block length. Anything longer than the size prepare() was
         given is split - never truncated: a truncated block leaves the tail of
@@ -143,6 +169,34 @@ private:
         does this is a driver whose other numbers are also suspect. */
     std::atomic<int>   badInputSamples { 0 };
     std::atomic<int>   lastGaps { 0 };
+    /** The bar rotations the automatic alignment has made, and how much the
+        analysis is being believed. Diagnostics; see BeatTracker::Output. */
+    std::atomic<int>   lastBarRotations { 0 };
+    /** The kick channel, when the listener has assigned one. The detector runs
+        on the raw channel before any of the analysis conditioning: the leak
+        canceller and the high-pass exist to protect a *microphone* from the
+        app's own output, and a desk send of the kick has neither problem. */
+    KickOnsetDetector  kickDetector;
+    std::vector<float> kickScratch;
+    std::atomic<int>   lastKickChannel { -1 };
+    std::atomic<float> lastKickLevel { 0.0f };
+    std::atomic<float> lastKickQuiet { 0.0f };
+    std::atomic<int>   lastKickOnsets { 0 };
+    std::atomic<bool>  lastKickTrusted { false };
+    std::atomic<bool>  lastDrumsOut { false };
+    /** The rig's own round trip, measured rather than reported. See
+        Audio/LatencyProbe.h. Zero means nobody has measured it and the
+        device's own figure is what the clock is running on. */
+    LatencyProbe       latencyProbe;
+    /** The input as the device delivered it, before the leak subtraction, the
+        rumble high-pass and the make-up gain. The latency probe has to hear its
+        own sweep come back, and the leak canceller's whole job is removing the
+        app's own output from what the analysis sees - so a probe fed the
+        conditioned bus would be listening for something already subtracted. */
+    std::vector<float> rawIn;
+    std::atomic<float> measuredLatencyMs { 0.0f };
+    std::atomic<float> lastEvidenceTrust { 1.0f };
+    std::atomic<float> lastGridTauSec { 0.0f };
     std::atomic<int>   lastBacklog { 0 };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };

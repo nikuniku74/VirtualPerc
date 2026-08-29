@@ -33,6 +33,18 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 `GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is on a **sixteenth grid** even though the loud strokes sit on eighths, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting selects how dense the *shaker* is, not the clock.
 
+### The one belongs to the band
+
+No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enforces it as well as every table observing it. The band is already there — kick, bass and the downbeat of whatever the guitarist is playing, together — and a conga on top of that is not heard as a percussionist, it is heard as a thicker attack. A player standing next to a drummer plays *around* the one: the low tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth late, and the one is left alone. Per style: marcha and samba put the heel on the "e" of 1; rock, pop and bossa put the low tone on the "and"; dance and funk on the "e", where those parts already live in sixteenths; reggae is one-drop and never had anything there.
+
+The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
+
+### At most two strokes to a quarter
+
+No written figure puts more than **two conga strokes in a quarter**, and nothing audible does either with the ghost generator wide open. The fill bar is exempt, because that is what a fill is.
+
+The dance part was the reason: it was thirteen strokes a bar, three and four to a quarter, because it was transcribed from a salsa percussion loop — a record where the congas *are* the record. Under a live band they are not. The space between the strokes is where the rest of the band is, and a part that fills it is a wall however good the figure inside it is. Dance is now six a bar and says the same thing: the low drum answering the one from its "e", nothing at all on 2, the slap as the loudest stroke on the "e" of 2, the opens closing the bar.
+
 ### Four styles
 
 A player does not bring a marcha to a rock track, so the styles are four different parts rather than variations on one:
@@ -40,9 +52,12 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | Style | Congas | Shaker | Ghosts |
 |---|---|---|---|
 | **marcha** | the tumbao: slap on 2, bass on 3, the paired open tones closing the bar | eighths, weight on the pulse | busy |
-| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the one and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
-| **dance** | busy sixteenths landing on the "a" of each beat, the sixteenth before the next kick | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
-| **pop** | mostly space: the one, a light lift, the push into the next bar | eighths, level and quiet | almost none |
+| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the "and" of 1 and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
+| **dance** | a tumbao stated rather than filled in: low drum on the "e" of 1 and on 3, slap on the "e" of 2, opens closing the bar | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
+| **pop** | mostly space: a light low tone off the one, a lift, the push into the next bar | eighths, level and quiet | almost none |
+| **due-uno** | not a genre, a shape: two strokes on a quarter and one on the next, all the way round, on two drums and nothing else | eighths, weight on the pulse | none, on purpose |
+
+**DUE-UNO** is the one style written to a brief rather than transcribed, and the only one `AUTO` will never choose — "keep it simple" is a decision about the gig, not about the music, so the automatic chooser (which decides between four genres) does not get a vote on it. Every stroke sits off the beat: the low-high pair answers the beat that has just gone, the single tone leans on the one coming. Six strokes a bar out of two drums, and the ghost notes are switched off for it, because a ghost is a heel or a toe and that would be a third sound.
 
 ### Coming in on the one
 
@@ -248,11 +263,73 @@ Up to 16 overlapping grains. Sample data lives in precomputed buffers generated 
 
 Three things here are what "the shaker and the congas break up" actually was:
 
+### The kick channel
+
+The single most useful thing a digital desk can hand the app, and the one input it has that carries **one instrument**. `SETUP → INGRESSO → CASSA` names the input the kick send arrives on; `NO` is the default and the whole path is switched off until an input is named.
+
+Three things follow from a channel with one drum on it, and they are three of the things the rest of the chain is worst at:
+
+- **Phase, to the sample.** The neural path reports beats on a 20 ms frame grid, so its times carry ±10 ms of quantisation before anything else goes wrong. Measured against material whose kick times are known exactly, `KickOnsetDetector` finds 32 strikes out of 32 with a mean error of **0.56 ms** and a worst of 0.62.
+- **The drummer stopping.** Not an inference any more: the channel is silent for exactly as long as the kit is out — measured, 8.3 s of silence through a four-bar breakdown against 0.00 s with the kit in. `EvidenceTrust` takes that directly instead of trying to read it off the fit, which is what two sections of `docs/STATUS.md` failed to do in time.
+- **The metrical level.** A kick pattern states the beat; an activation curve where the eighths are as tall as the beats does not.
+
+End to end, driving the whole engine over a drifting band with human scatter, against a network that is being handed the *true* beats — so this is what the channel adds on top of the best a network could do:
+
+| | phase rms | worst |
+|---|---|---|
+| mix alone | 17.0–19.4 ms | 27.7–51.4 ms |
+| mix + kick channel | **11.8–15.3 ms** | 27.4–49.4 ms |
+
+The rms improves every run, by 15–40 %. The **worst** excursion does not reliably improve and the test deliberately does not claim it does: it is dominated by single events — the re-lock coming out of a breakdown, a fill — and one event is not something a stiller phase loop prevents.
+
+It carries its own guard against being pointed at the wrong thing. Nothing stops somebody routing the app the full mix on the channel they called the kick, and a detector aimed at a full mix fires on everything. So the tracker keeps a decayed share of how many strikes landed near a beat of its own clock, and stops believing the channel when that share falls — a channel that is not a kick fails it immediately, one that is passes it inside a bar. The `CASSA` button only lights when the strikes are actually landing.
+
+The detector runs on the **raw** channel, before the leak subtraction, the rumble high-pass and the make-up gain. Those exist to protect a microphone hearing the app's own output in a room; a desk send of the kick has neither problem, and putting a canceller in front of the one clean transient on the stage would give away exactly what makes it worth having.
+
+### The round trip, measured
+
+What the clock has to run ahead by is the time between the app deciding to play a stroke and that stroke being heard next to the band. That used to come from two places, and neither is a measurement of *this* rig: the latency the operating system reports for the device, and a 20 ms constant in `BeatTracker` calibrated once against a notated click. Both are reasonable and both are guesses — on a stage the path is an iPad, a USB interface, a desk, its own buffering and whatever the desk does to the return.
+
+`SETUP → PROVE → LATENZA` plays a 30 ms sweep, captures what comes back and correlates the two. It takes three quarters of a second. The result is kept per install and is what the clock runs on from then on; pressing the button again clears it.
+
+| true round trip | measured |
+|---|---|
+| 6 ms | 6.00 |
+| 12 ms | 12.00 |
+| 24 ms | 24.00 |
+| 48 ms | 48.00 |
+| 96 ms | 96.00 |
+
+Sample-exact across the range a rig uses, and it still lands within 2 ms with a band playing over the top — which is the case that matters, because nobody gets a silent room at soundcheck. When the sweep does not come back clearly it **refuses**: the button reads NIENTE RITORNO rather than a number, because the commonest cause on a stage is the send not being routed back, and a figure invented there would be worse than none.
+
+The correlation is normalised by the energy under the window at each lag, or a kick drum landing during the capture out-scores the sweep by being loud. The peak also has to stand clear of the best rival elsewhere in the capture before it is believed.
+
+### Listening to it
+
+Some of this is a musical decision, and the only review a musical decision can have is somebody hearing it. `VPRender` writes a few bars of any style to a WAV, driving the real `PercussionEngine` from a real `TempoFollower` at a fixed tempo — no analysis, no microphone, no network:
+
+```bash
+cmake --build build --target VPRender
+./build/VPRender_artefacts/Release/VPRender --style dance --bpm 124 --bars 8 --click --out dance.wav
+```
+
+`--click` lays a quiet woodblock on each quarter, loud on the one, so "the congas never play the first quarter's down-stroke" can be checked by ear rather than by reading the tables. `--no-shaker` / `--no-congas` isolate one instrument; `--swing`, `--humanize`, `--intensity` and `--mix` are the same controls the app has.
+
 ### The sounds are recordings
 
 `Assets/Percussion/*.wav` are conga, tumba, quinto and shaker recordings from the **Versilian Community Sample Library (CC0)** — see `Assets/Percussion/ATTRIBUTION.md`.
 
 They are embedded by CMake the same way `beatnet.onnx` is. If the folder is empty the build says so and the whole percussion bank falls back to synthesis, so the tree always builds and always plays; `recordedStrokeCount()` is asserted in the tests so a missing or unreadable asset fails loudly instead of degrading quietly.
+
+They are tuned up by a **minor seventh** (`kDrumTune`, 2^(10/12)) — one number, driving the synthesised bank and the playback rate of the recordings together so the two halves cannot end up tuned against each other. The VCSL takes are the large drums of the library and they are recorded slack: at concert pitch the part reads as a floor tom under a band, and the tumbao's low tone disappears into the bass guitar instead of answering it. A perfect fourth was the first correction and was not enough; a minor seventh is five semitones above that. Measured on the bundled takes, by the strongest partial — which is what a listener hears as the pitch of the drum:
+
+| | recorded | played, old fourth | played, now |
+|---|---|---|---|
+| tumba | 138 Hz | 184 Hz | **246 Hz** |
+| open tone | 163 Hz | 218 Hz | **290 Hz** |
+| slap | 216 Hz | 288 Hz | **385 Hz** |
+
+A conga and a quinto, not two toms. The nominal frequencies in `specFor` are a different thing and are not these numbers: they describe the **synthesis fallback**, which only sounds when `Assets/Percussion` is missing.
 
 `scripts/prepare_vcsl_samples.py` trims pre-roll, high-passes hall rumble, truncates before any second hit, normalises and fades. Loud and medium takes are separate recordings; the soft layer is still derived by taking the top off. heel/toe/muff are the open tone damped. Round-robin is a second take on every articulation, not only the low drum.
 

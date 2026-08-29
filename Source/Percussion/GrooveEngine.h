@@ -49,6 +49,14 @@ struct GrooveEvent
     eighths, because the quiet half of a marcha - the heel and toe that fill the
     gaps - is what a listener hears as a player rather than as a pattern.
 
+    One rule holds across every style: **no conga on the first quarter's
+    down-stroke**. The band is already there - kick, bass and downbeat together
+    - and a conga on top of that is not heard as a percussionist, it is heard as
+    a thicker attack. So the low tone lands on the "e" or the "and" of one
+    instead, and the one is left to the band. `eventsAt` enforces it as well as
+    the tables observing it. The shaker is deliberately not covered: a shaker on
+    the pulse *is* the pulse.
+
     No allocation, no locks: this runs from the audio thread.
 */
 class GrooveEngine

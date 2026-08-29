@@ -15,9 +15,32 @@ namespace vp
 namespace
 {
     constexpr float kPi = 3.14159265358979323846f;
-    // A fourth above recorded pitch. The VCSL takes are large drums; salsa
-    // dance loops sit higher, and at concert pitch the part reads as too low.
-    constexpr float kDrumTune = 1.334840f; // 2^(5/12)
+    // How far above the recorded pitch the drums are read, as a frequency
+    // ratio. The VCSL takes are the large drums of the library and they are
+    // recorded slack: at concert pitch the whole kit reads as a floor tom under
+    // a band, and the tumbao's low tone in particular disappears into the bass
+    // guitar instead of answering it.
+    //
+    // A perfect fourth (2^(5/12)) was the first correction and it was not
+    // enough - the part was still the bottom of the mix rather than sitting on
+    // top of it. A minor seventh is five semitones above that. Measured on the
+    // bundled takes, whose strongest partial is what a listener hears as the
+    // pitch of the drum:
+    //
+    //     tumba  138 Hz recorded ->  246 Hz   (184 at the old fourth)
+    //     open   163 Hz recorded ->  290 Hz   (218)
+    //     slap   216 Hz recorded ->  385 Hz   (288)
+    //
+    // which is a conga and a quinto rather than two toms, and is where a
+    // percussionist tunes a set that has to cut through a live band. The
+    // nominal figures in `specFor` below are a different thing and are not
+    // those numbers: they describe the synthesis fallback, which only sounds
+    // when Assets/Percussion is missing.
+    //
+    // It is one number on purpose: it drives the synthesised bank and the
+    // playback rate of the recordings together, so the two halves of the bank
+    // cannot end up tuned against each other.
+    constexpr float kDrumTune = 1.781797f; // 2^(10/12)
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
@@ -92,8 +115,7 @@ namespace
 
     DrumSpec specFor (Stroke s) noexcept
     {
-        // A fourth above the concert-pitch figures: the VCSL membranophones
-        // are the large drums, and under a dance kick they read as too low.
+        // Concert-pitch figures for the recorded drums, raised by kDrumTune.
         // Shakers are unpitched and stay where they were.
         constexpr float kTune = kDrumTune;
         switch (s)
@@ -107,6 +129,11 @@ namespace
             default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
+}
+
+float PercussionEngine::drumTuneRatio() noexcept
+{
+    return kDrumTune;
 }
 
 void PercussionEngine::setReverbAmount (float amount) noexcept
@@ -319,7 +346,7 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
 
     const int nSrc = static_cast<int> (src.size());
     const float sr = static_cast<float> (sampleRate);
-    // Same fourth as the synthetic bank. Reading the take faster raises the
+    // Same interval as the synthetic bank. Reading the take faster raises the
     // membrane and shortens the ring, which is what a smaller drum does.
     const float pitch = shaker ? 1.0f : kDrumTune;
     const int n = std::max (16, static_cast<int> (static_cast<float> (nSrc) / pitch));

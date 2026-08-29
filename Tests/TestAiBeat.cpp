@@ -10,16 +10,20 @@
 #include "AI/OnnxBeatModel.h"
 #include "AI/OnnxSession.h"
 #include "AI/StubBeatModel.h"
+#include "Audio/LatencyProbe.h"
 #include "Audio/VirtualPercussionEngine.h"
 #include "Percussion/GrooveEngine.h"
 #include "Percussion/PercussionEngine.h"
 #include "Platform/NativeAudioBridge.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
+#include "Tracking/KickOnsetDetector.h"
+#include "Tracking/PhaseTrust.h"
 
 #include "../scripts/probe_song_render.h"
 
 #include <algorithm>
+#include <set>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1132,9 +1136,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (shBeat2 > shBeat1 * 1.05f,
                 "the rock shaker puts its weight on the backbeat");
 
-        // Dance: a salsa tumbao made busy for four-on-the-floor. Tumba on 1
-        // and 3, the slap on the "e" of 2 (not on 2 itself), opens closing
-        // the bar, and the shaker still leaning on the off-eighth.
+        // Dance: a salsa tumbao *stated*, not filled in. The low drum answers
+        // the one from its "e" and lands on 3, the slap is the loudest stroke
+        // and sits on the "e" of 2 (never on 2 itself), the opens close the
+        // bar, and the shaker still leans on the off-eighth.
+        //
+        // Two of the four "a"s carry a stroke, not three: the part used to be
+        // thirteen strokes a bar and is now six, so the lean onto the sixteenth
+        // before the beat is stated twice in the bar instead of being played
+        // through it. Anything that asks for more than two here is asking for
+        // the wall back.
         int danceOnTheA = 0;
         for (int step : { 3, 7, 11, 15 })
             if (congaVelocityAt (dance, step) > 0.4f)
@@ -1142,19 +1153,23 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const float danceShakerPulse = shakerVelocityAt (dance, 0);
         const float danceShakerOff = shakerVelocityAt (dance, 2);
         const float danceOn1 = congaVelocityAt (dance, 0);
+        const float danceOnE1 = congaVelocityAt (dance, 1);
         const float danceOn2 = congaVelocityAt (dance, 4);
         const float danceSlap = congaVelocityAt (dance, 5);
         const float danceOn3 = congaVelocityAt (dance, 8);
-        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
+        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f e-di-1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
                      danceOnTheA,
-                     static_cast<double> (danceOn1), static_cast<double> (danceOn2),
+                     static_cast<double> (danceOn1), static_cast<double> (danceOnE1),
+                     static_cast<double> (danceOn2),
                      static_cast<double> (danceSlap), static_cast<double> (danceOn3),
                      static_cast<double> (danceShakerPulse),
                      static_cast<double> (danceShakerOff));
-        expect (danceOnTheA >= 3 && danceShakerOff > danceShakerPulse,
+        expect (danceOnTheA >= 2 && danceOnTheA <= 2 && danceShakerOff > danceShakerPulse,
                 "dance leans on the sixteenth before the beat and accents the offbeat");
-        expect (danceOn1 > 0.4f && danceOn3 > 0.4f && danceOn2 < 0.01f && danceSlap > 0.4f,
-                "dance tumbao: tumba on 1 and 3, slap on the e of 2, nothing on 2");
+        expect (danceOn1 < 0.01f && danceOnE1 > 0.4f && danceOn3 > 0.4f
+                    && danceOn2 < 0.01f && danceSlap > 0.4f,
+                "dance tumbao: the one left to the band, tumba on its e and on 3, "
+                "slap on the e of 2, nothing on 2");
 
         // Pop: the job is to be felt and not noticed, so it has to be the
         // sparsest of the four by a clear margin.
@@ -1200,6 +1215,168 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 if (sameShape (all[i], all[j]))
                     allDistinct = false;
         expect (allDistinct, "every style is a different part");
+
+        // The one belongs to the band.
+        //
+        // Every style, every bar of the eight-bar sentence including the fill,
+        // with the ghost notes turned all the way up so the random half of the
+        // part is exercised too: nothing that is not a shaker may be scheduled
+        // on the first quarter's down-stroke. The tables are written that way
+        // and `eventsAt` enforces it, so this fails if either is edited apart
+        // from the other.
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0xC04A5u);
+            gr.setHumanize (1.0f);
+            gr.setIntensity (1.0f);
+            int congasOnTheOne = 0, shakersOnTheOne = 0;
+            for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            {
+                gr.setStyle (static_cast<vp::GrooveStyle> (st));
+                for (int bar = 0; bar < 64; ++bar)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (bar, 0, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        if (ev[i].stroke == vp::Stroke::shakerDown
+                            || ev[i].stroke == vp::Stroke::shakerUp)
+                            ++shakersOnTheOne;
+                        else
+                            ++congasOnTheOne;
+                    }
+                }
+            }
+            std::printf ("groove-uno     congas sull'uno=%d  shaker sull'uno=%d "
+                         "(8 stili x 64 battute)\n",
+                         congasOnTheOne, shakersOnTheOne);
+            expect (congasOnTheOne == 0,
+                    "no style ever puts a conga on the first quarter's down-stroke");
+            expect (shakersOnTheOne > 0,
+                    "and the shaker still marks it, because a shaker on the pulse is the pulse");
+        }
+
+        // And at most two conga strokes to a quarter.
+        //
+        // The dance part used to be thirteen a bar - three and four to a
+        // quarter - because it was transcribed from a percussion loop, where
+        // the congas are the record. Under a live band they are not: the space
+        // between the strokes is where the rest of the band is, and a part that
+        // fills it is a wall however good the figure inside it is.
+        //
+        // The fill bar is exempt, because that is what a fill is. The ghost
+        // notes are counted here at full intensity and full humanisation, which
+        // is the busiest the part can ever be - the rule is about what is heard,
+        // so a stroke has to clear a velocity that would be audible under a
+        // band before it counts against it. The written figures are checked
+        // separately with the ghosts off, so the tables themselves keep the
+        // rule whatever the ghost generator is doing.
+        {
+            auto worstQuarter = [] (float humanize, float intensity, float floorVel,
+                                    int& atStyle, int& atBar)
+            {
+                vp::GrooveEngine gr;
+                gr.prepare (0xB1A5u);
+                gr.setHumanize (humanize);
+                gr.setIntensity (intensity);
+                int worst = 0;
+                for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+                {
+                    gr.setStyle (static_cast<vp::GrooveStyle> (st));
+                    for (int bar = 0; bar < 64; ++bar)
+                    {
+                        if (gr.isFillBar (bar))
+                            continue;
+                        for (int q = 0; q < 4; ++q)
+                        {
+                            int n = 0;
+                            for (int s = q * 4; s < q * 4 + 4; ++s)
+                            {
+                                vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                                const int got = gr.eventsAt (bar, s, ev,
+                                                             vp::GrooveEngine::kMaxEvents);
+                                for (int i = 0; i < got; ++i)
+                                    if (ev[i].stroke != vp::Stroke::shakerDown
+                                        && ev[i].stroke != vp::Stroke::shakerUp
+                                        && ev[i].velocity >= floorVel)
+                                        ++n;
+                            }
+                            if (n > worst)
+                            {
+                                worst = n;
+                                atStyle = st;
+                                atBar = bar;
+                            }
+                        }
+                    }
+                }
+                return worst;
+            };
+
+            int s1 = 0, b1 = 0, s2 = 0, b2 = 0;
+            // The figures alone: ghosts off.
+            const int written = worstQuarter (0.35f, 0.0f, 0.0f, s1, b1);
+            // And everything that would be heard, with the ghost generator at
+            // the top of its range.
+            const int played = worstQuarter (1.0f, 1.0f, 0.25f, s2, b2);
+            std::printf ("groove-densita  figure=%d/quarto (%s bar %d)   "
+                         "suonati=%d/quarto (%s bar %d)\n",
+                         written, vp::toString (static_cast<vp::GrooveStyle> (s1)), b1,
+                         played, vp::toString (static_cast<vp::GrooveStyle> (s2)), b2);
+            expect (written <= 2,
+                    "no written figure puts more than two conga strokes in a quarter");
+            expect (played <= 2,
+                    "and nothing audible does either, with the ghosts wide open");
+        }
+
+        // DUE-UNO is a brief rather than a transcription, so it is the one
+        // style whose shape can be asserted exactly: two strokes on a quarter,
+        // one on the next, all the way round, on two drums and nothing else.
+        // The ghost generator is wide open here on purpose - it is off for this
+        // style, and a ghost is a heel or a toe, which would be a third sound.
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0x2101u);
+            gr.setStyle (vp::GrooveStyle::twoOne);
+            gr.setHumanize (1.0f);
+            gr.setIntensity (1.0f);
+            bool shapeHolds = true;
+            std::set<int> sounds;
+            int fills = 0;
+            for (int bar = 0; bar < 64; ++bar)
+            {
+                const bool fill = gr.isFillBar (bar);
+                if (fill)
+                    ++fills;
+                int perQuarter[4] = { 0, 0, 0, 0 };
+                for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (bar, s, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        if (ev[i].stroke == vp::Stroke::shakerDown
+                            || ev[i].stroke == vp::Stroke::shakerUp)
+                            continue;
+                        sounds.insert (static_cast<int> (ev[i].stroke));
+                        ++perQuarter[s / 4];
+                    }
+                }
+                if (fill)
+                    continue;
+                if (perQuarter[0] != 2 || perQuarter[1] != 1
+                    || perQuarter[2] != 2 || perQuarter[3] != 1)
+                    shapeHolds = false;
+            }
+            std::printf ("groove-dueuno  forma 2-1-2-1 su %d battute: %s   "
+                         "suoni usati=%d   fill=%d\n",
+                         64 - fills, shapeHolds ? "si" : "NO",
+                         static_cast<int> (sounds.size()), fills);
+            expect (shapeHolds,
+                    "DUE-UNO plays two strokes on a quarter and one on the next, every bar");
+            expect (sounds.size() == 2,
+                    "and uses two conga sounds and no others, ghosts included");
+        }
     }
 
     {
@@ -2379,7 +2556,14 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // which is what the VCSL takes did when they were trimmed to the body
         // peak instead of the hand. Hold (the compensator) is skipped: this is
         // the asset, not the scheduling.
+        //
+        // The window is a window on the *recording*, so it scales with the
+        // tuning: the drums are read faster than they were recorded, and a
+        // fixed twelve milliseconds of output covers more and more of the take
+        // as the bank is tuned up until it reaches the body swell - which then
+        // fails the check for a reason that has nothing to do with the strike.
         {
+            const double tune = static_cast<double> (vp::PercussionEngine::drumTuneRatio());
             const vp::Stroke drums[] = { vp::Stroke::tumba, vp::Stroke::open, vp::Stroke::slap };
             bool allTight = true;
             for (auto s : drums)
@@ -2403,7 +2587,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 int audible = 0;
                 while (audible < win && std::fabs (l[static_cast<size_t> (audible)]) < 0.05f * peak)
                     ++audible;
-                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012));
+                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012 / tune));
                 int peakAt = audible;
                 float p = 0.0f;
                 for (int i = audible; i < strikeWin; ++i)
@@ -2416,8 +2600,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     }
                 }
                 const double ms = (peakAt - audible) / sr * 1000.0;
-                std::printf ("drum-strike  stroke=%d delta=%.2f ms\n",
-                             static_cast<int> (s), ms);
+                std::printf ("drum-strike  stroke=%d delta=%.2f ms  (finestra %.1f ms, accordatura x%.3f)\n",
+                             static_cast<int> (s), ms, 12.0 / tune, tune);
                 if (ms > 4.0)
                     allTight = false;
             }
@@ -2852,6 +3036,609 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // in either of them.
         expect (starved || (free_.span < 1.0f && held.span < 1.0f),
                 "moving the bar costs the tempo nothing, and holding it costs nothing either");
+    }
+
+    {
+        // Moving the bar must not cost the phase.
+        //
+        // `alignBarFromVotes` holds the count still for 9.6 seconds after it
+        // rotates the bar, so that two disagreeing votes cannot trade the one
+        // back and forth inside a phrase. That hold used to gate the phase
+        // steering as well, which rotating an index has nothing to do with.
+        //
+        // This is a guard on the whole area rather than a demonstration of that
+        // one gate, and the difference is worth stating: `observeOnsetPhase` is
+        // outside the gate and kept steering the loop on every beat throughout,
+        // so the gate cost the averaged target and not the correction, and this
+        // test passes with it and without it. What it does catch is the change
+        // that takes the phase away *altogether* while the count is held - the
+        // thing that gate looked like it was already doing.
+        //
+        // The network moves its bar by two quarters half way through, which is
+        // what a section change looks like to the vote; when the rotation lands
+        // the test moves the song half a beat underneath it and asks whether
+        // the clock comes with it inside five seconds.
+        class RotateThenSpliceModel final : public vp::IBeatModel
+        {
+        public:
+            RotateThenSpliceModel (double framesPerBeat, double switchAtSec,
+                                   std::atomic<bool>& arm)
+                : fpb (framesPerBeat),
+                  switchFrame (switchAtSec * (vp::kBeatModelSampleRate / vp::kBeatModelHop)),
+                  armed (arm) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                if (armed.load (std::memory_order_relaxed) && offset == 0.0)
+                    offset = fpb * 0.5;   // half a beat, once
+                const double f = static_cast<double> (frame++);
+                const double beats = (f - offset) / fpb;
+                const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+                const float pulse = 0.03f + 0.95f * static_cast<float> (
+                                        std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+                const int beatNo = static_cast<int> (std::llround (beats));
+                const int inBar = (((beatNo + 2) % 4) + 4) % 4;
+                // The bar the network is calling moves half way through, by two
+                // quarters, which is what a section change looks like to the
+                // vote. The rotation that follows is the one under test: it
+                // happens while the part is playing, and that is the only kind
+                // that holds the count still afterwards.
+                const int called = f < switchFrame ? 0 : 2;
+                activations3[0] = pulse;
+                activations3[1] = inBar == called ? pulse * 0.95f : 0.05f;
+                activations3[2] = 1.0f - activations3[0];
+                return true;
+            }
+        private:
+            double fpb;
+            double switchFrame;
+            std::atomic<bool>& armed;
+            double offset = 0.0;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float trackBpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        const int n = static_cast<int> (sr * 90.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+
+        std::atomic<bool> arm { false };
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::make_unique<RotateThenSpliceModel> (framesPerBeat, 25.0, arm));
+        eng.prepare (sr, block, 1);
+        eng.start();
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        // The clock leads the song by the pipeline and the output path, so the
+        // absolute phase error is not zero by design. What is measured is the
+        // *change*: the phase held just before the splice against the phase
+        // held five seconds after it. A constant lead cancels out of that.
+        float beforeSplice = -1.0f, afterSplice = -1.0f;
+        double armedAt = -1.0;
+        int rotatedFor = 0;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            const auto snap = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+
+            if (armedAt < 0.0)
+            {
+                // The moment a rotation lands is the moment the count is held
+                // still for 9.6 seconds, and that hold is what is under test.
+                // Splice into the middle of it.
+                if (snap.barRotations > 0 && snap.state == vp::TrackingState::following
+                    && snap.bpm > 40.0f)
+                {
+                    if (++rotatedFor > 4)
+                    {
+                        beforeSplice = snap.beatPhase;
+                        arm.store (true, std::memory_order_relaxed);
+                        armedAt = t;
+                    }
+                }
+            }
+            else if (t > armedAt + 5.0 && afterSplice < 0.0f)
+            {
+                afterSplice = snap.beatPhase;
+            }
+            if ((pos / block % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        }
+
+        // Half a beat moved under it. A clock that was steered follows and the
+        // difference is about half a beat; one that was blinded stays where it
+        // was and the difference is nothing.
+        const float moved = std::fabs (vp::wrapCentered (afterSplice - beforeSplice));
+        std::printf ("bar-hold       rotazioni=%d  splice a %.1f s   "
+                     "fase mossa di %.3f di battito\n",
+                     eng.snapshot().barRotations, armedAt,
+                     static_cast<double> (moved));
+        const bool starved = eng.snapshot().analysisGaps > 0;
+        expect (starved || (armedAt > 0.0 && moved > 0.30f),
+                "a bar rotated while the part is playing does not cost the phase");
+    }
+
+    {
+        // How well the analysis is fitting, against how well it has been
+        // fitting this song. This is what opens the clock's phase constant and
+        // floors its rate glide through a passage with the drummer out, and the
+        // whole of its value is that it separates that passage from a band
+        // speeding up - which is what the five attempts recorded in
+        // docs/STATUS.md could not do. The residuals below are the ones
+        // `VPAlign` measures on the two.
+        vp::EvidenceTrust ev;
+        auto feed = [&ev] (float residual, double seconds)
+        {
+            for (int i = 0; i < static_cast<int> (seconds * 50.0); ++i)
+                ev.observe (residual, 1.0f, 0.020);
+        };
+
+        feed (0.045f, 40.0);
+        const float settled = ev.trust();
+
+        // A band speeding up keeps its drummer, so its fit does not go wide.
+        vp::EvidenceTrust accel = ev;
+        feed (0.040f, 10.0);
+        const float onAccel = ev.trust();
+
+        // The drummer stops. Same song, same tempo, beats a third worse placed.
+        vp::EvidenceTrust hole = accel;
+        for (int i = 0; i < 500; ++i)
+            hole.observe (0.063f, 1.0f, 0.020);
+        const float inHole = hole.trust();
+
+        // And comes back. The constant has to come back with it, on its own,
+        // with nothing to release: a hold that has to be let go of is what the
+        // rejected attempts all were.
+        for (int i = 0; i < 150; ++i)
+            hole.observe (0.045f, 1.0f, 0.020);
+        const float after = hole.trust();
+
+        std::printf ("prove-fit      fermo=%.2f  accelerando=%.2f  buco=%.2f  "
+                     "dopo=%.2f  (base %.4f)\n",
+                     static_cast<double> (settled), static_cast<double> (onAccel),
+                     static_cast<double> (inHole), static_cast<double> (after),
+                     static_cast<double> (hole.baseline()));
+        expect (settled > 0.99f && onAccel > 0.99f,
+                "a fit as good as this song has been giving is believed whole, "
+                "and one that tightens is too");
+        expect (inHole < 0.60f,
+                "a passage whose beats are a third worse placed is not");
+        expect (after > 0.99f,
+                "and the moment they are well placed again it is believed whole again");
+
+        // A new song is not this song fitting badly. The baseline goes with the
+        // grid, or a track that fits worse than the last would read as poor
+        // evidence for its whole length - and the clock would be slowest to
+        // move exactly where it has furthest to go.
+        hole.restart();
+        for (int i = 0; i < 50; ++i)
+            hole.observe (0.090f, 1.0f, 0.020);
+        expect (hole.trust() > 0.99f, "a new grid starts from its own baseline");
+
+        // The constant the clock is handed: unchanged at full trust, opened up
+        // below it, capped, and short while still acquiring.
+        const float full = vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f);
+        const float poor = vp::gridPhaseTau (vp::kGridTauHolding, true, 0.30f);
+        const float acquiring = vp::gridPhaseTau (vp::kGridTauHolding, false, 0.30f);
+        std::printf ("prove-tau      pieno=%.2f s  scarso=%.2f s  in acquisizione=%.2f s\n",
+                     static_cast<double> (full), static_cast<double> (poor),
+                     static_cast<double> (acquiring));
+        expect (std::fabs (full - vp::kGridTauHolding) < 1.0e-4f
+                    && poor > full && poor <= vp::kGridTauMax + 1.0e-4f
+                    && acquiring < full,
+                "the phase constant opens with the evidence, is capped, "
+                "and is short while still acquiring");
+    }
+
+    {
+        // The kick channel, timed on the audio instead of on the frame grid.
+        //
+        // The neural path reports beats on a 20 ms grid, so its times carry
+        // +/-10 ms of quantisation before anything else goes wrong. A desk
+        // hands the app the kick on its own channel, and a kick strike on a
+        // channel with nothing else on it can be timed to the sample. This
+        // scores that against material whose kick times are known exactly.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 122.0f;
+        opt.breakdown = true;      // bars 8-11 of every 16 have the drums out
+        opt.fills = true;
+        const int n = static_cast<int> (sr * 40.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::SongStems stems;
+        vp::probe::renderSong (mix, opt, sr, 991u, &truePhase, &stems);
+
+        // The stems have to add up to the mix, or everything below is measuring
+        // a different song from the one the rest of the suite uses.
+        double worstSum = 0.0;
+        for (int i = 0; i < n; ++i)
+            worstSum = std::max (worstSum, std::fabs (
+                static_cast<double> (mix[static_cast<size_t> (i)])
+                - (stems.kick[static_cast<size_t> (i)] + stems.snare[static_cast<size_t> (i)]
+                   + stems.hats[static_cast<size_t> (i)] + stems.music[static_cast<size_t> (i)])));
+        expect (worstSum < 1.0e-6,
+                "the stems are the mix, split - not a second rendering of it");
+
+        vp::KickOnsetDetector det;
+        det.prepare (sr);
+        std::vector<int> found;
+        float quietInBreak = 0.0f, quietWithKit = 1.0e9f;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            vp::KickOnsetDetector::Onset on[vp::KickOnsetDetector::kMaxOnsets];
+            const int got = det.process (stems.kick.data() + pos, block, on,
+                                         vp::KickOnsetDetector::kMaxOnsets);
+            for (int i = 0; i < got; ++i)
+                found.push_back (pos + on[i].offset);
+
+            const double bar = truePhase[static_cast<size_t> (pos)] / 4.0;
+            const bool drumsOut = (static_cast<int> (bar) % 16) >= 8
+                                  && (static_cast<int> (bar) % 16) < 12;
+            const double t = static_cast<double> (pos) / sr;
+            if (t > 6.0)
+            {
+                if (drumsOut)
+                    quietInBreak = std::max (quietInBreak, det.quietSeconds());
+                else if (t > 8.0)
+                    quietWithKit = std::min (quietWithKit, det.quietSeconds());
+            }
+        }
+
+        // Where the kicks truly are: beats 1 and 3 of every bar, from the
+        // notated grid the renderer reports per sample.
+        std::vector<int> truth;
+        for (int i = 1; i < n; ++i)
+        {
+            const double a = truePhase[static_cast<size_t> (i - 1)];
+            const double b = truePhase[static_cast<size_t> (i)];
+            if (std::floor (a) == std::floor (b))
+                continue;
+            const int beat = static_cast<int> (std::floor (b));
+            const int bar = beat / 4;
+            if ((bar % 16) >= 8 && (bar % 16) < 12)
+                continue;                       // drums out
+            if ((beat % 4) == 0 || (beat % 4) == 2)
+                truth.push_back (i);
+        }
+
+        int matched = 0;
+        double sumAbsMs = 0.0, worstMs = 0.0;
+        for (int t : truth)
+        {
+            int best = -1;
+            double bestD = 1.0e9;
+            for (int f : found)
+            {
+                const double dms = std::fabs (f - t) / sr * 1000.0;
+                if (dms < bestD) { bestD = dms; best = f; }
+            }
+            if (best >= 0 && bestD < 45.0)
+            {
+                ++matched;
+                sumAbsMs += bestD;
+                worstMs = std::max (worstMs, bestD);
+            }
+        }
+        const double meanMs = matched > 0 ? sumAbsMs / matched : 999.0;
+        std::printf ("kick-onset  veri=%d  trovati=%d  agganciati=%d  "
+                     "errore medio %.2f ms  peggio %.2f ms\n",
+                     static_cast<int> (truth.size()), static_cast<int> (found.size()),
+                     matched, meanMs, worstMs);
+        expect (matched >= static_cast<int> (truth.size()) * 95 / 100,
+                "the kick channel gives up nearly every strike the drummer played");
+        // The frame grid the neural path reports on is 20 ms, so anything under
+        // half of that is already better than the best the rest of the chain
+        // can do; this is the number that makes the channel worth having.
+        expect (meanMs < 6.0 && worstMs < 20.0,
+                "and times them far closer than the analysis frame grid can");
+        // Spurious detections: the channel carries one instrument, so anything
+        // much past the number of strikes is the detector inventing beats.
+        expect (static_cast<int> (found.size()) < truth.size() * 6 / 5,
+                "without inventing strikes that were not played");
+
+        std::printf ("kick-onset  silenzio: con il kit %.2f s, nello stacco %.2f s\n",
+                     static_cast<double> (quietWithKit), static_cast<double> (quietInBreak));
+        expect (quietWithKit < 0.6f && quietInBreak > 1.5f,
+                "and the channel says plainly when the drummer has stopped");
+    }
+
+    {
+        // What the kick channel is worth, end to end.
+        //
+        // The engine is driven twice over the same song: once with the mix
+        // alone, as it has always been, and once with the mix on one channel
+        // and the desk's kick send on another. The network is the same in both
+        // runs and is deliberately a good one - it is handed the true beats,
+        // quantised to its own 20 ms frame grid, which is the best any network
+        // could possibly do on this material. So what separates the two runs is
+        // only what the kick channel adds on top of a perfect network: the
+        // sub-frame timing, and knowing when the kit has stopped.
+        //
+        // Scored on the *spread* of the phase error and not on its mean. The
+        // clock leads the song on purpose, by the pipeline and the output path,
+        // and neither run changes that calibration - see
+        // BeatTracker::notifyKickOnset. What precision means here is how still
+        // it holds around wherever it is aimed.
+        class TruthBeatModel final : public vp::IBeatModel
+        {
+        public:
+            TruthBeatModel (const std::vector<double>& phase, double sr)
+                : truePhase (phase), songSr (sr) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double t = static_cast<double> (frame++)
+                                 * vp::kBeatModelHop / vp::kBeatModelSampleRate;
+                const size_t s = static_cast<size_t> (t * songSr);
+                float pulse = 0.03f;
+                float down = 0.03f;
+                if (s < truePhase.size())
+                {
+                    const double beats = truePhase[s];
+                    const double toBeat = std::fabs (beats - std::round (beats));
+                    // The bump the network would emit, in beats rather than in
+                    // frames, so it is the same shape at every tempo.
+                    pulse = 0.03f + 0.95f * static_cast<float> (
+                                std::exp (-0.5 * (toBeat / 0.055) * (toBeat / 0.055)));
+                    const int beatNo = static_cast<int> (std::llround (beats));
+                    if ((((beatNo % 4) + 4) % 4) == 0)
+                        down = pulse * 0.9f;
+                }
+                activations3[0] = pulse;
+                activations3[1] = down;
+                activations3[2] = 1.0f - pulse;
+                return true;
+            }
+        private:
+            const std::vector<double>& truePhase;
+            double songSr;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 118.0f;
+        opt.driftBpm = 2.5f;      // a band that has rehearsed, not a sequencer
+        opt.jitterMs = 9.0f;      // and is made of people
+        opt.breakdown = true;
+        const int n = static_cast<int> (sr * 36.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::SongStems stems;
+        vp::probe::renderSong (mix, opt, sr, 2024u, &truePhase, &stems);
+
+        struct Run { double spreadMs, worstMs; int onsets; bool trusted; };
+        auto drive = [&] (bool useKick) -> Run
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::make_unique<TruthBeatModel> (truePhase, sr));
+            eng.prepare (sr, block, 2);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().analysisChannel.store (0);
+            eng.settings().kickChannel.store (useKick ? 1 : -1);
+            eng.start();
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            std::vector<double> errs;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[2] = { mix.data() + pos, stems.kick.data() + pos };
+                eng.process (ins, 2, outs, 2, block);
+                const auto snap = eng.snapshot();
+                const double t = static_cast<double> (pos) / sr;
+                if (t > 15.0 && snap.bpm > 40.0f
+                    && (snap.state == vp::TrackingState::following
+                        || snap.state == vp::TrackingState::lowConfidence))
+                {
+                    const double truth = truePhase[static_cast<size_t> (pos)];
+                    errs.push_back (vp::wrapCentered (
+                        static_cast<float> (snap.beatPhase
+                                            - (truth - std::floor (truth)))));
+                }
+                // Wait for the worker rather than sleeping at it.
+                //
+                // How far behind the analysis happens to be is decided by the
+                // host's scheduler, and this measurement is a comparison of two
+                // runs - so a run that got more CPU would look like a better
+                // design. `analysisBacklog` is there for exactly this: draining
+                // it every block makes the run repeatable, which is the whole
+                // requirement for a number two runs are compared on.
+                for (int spin = 0; spin < 20000; ++spin)
+                {
+                    if (eng.snapshot().analysisBacklog <= block)
+                        break;
+                    std::this_thread::yield();
+                }
+            }
+
+            Run r { 999.0, 999.0, 0, false };
+            if (errs.size() > 50)
+            {
+                double mean = 0.0;
+                for (double e : errs) mean += e;
+                mean /= static_cast<double> (errs.size());
+                double sq = 0.0, worst = 0.0;
+                for (double e : errs)
+                {
+                    const double d = e - mean;
+                    sq += d * d;
+                    worst = std::max (worst, std::fabs (d));
+                }
+                const double beatMs = 60.0 / opt.bpm * 1000.0;
+                r.spreadMs = std::sqrt (sq / static_cast<double> (errs.size())) * beatMs;
+                r.worstMs = worst * beatMs;
+            }
+            const auto snap = eng.snapshot();
+            r.onsets = snap.kickOnsets;
+            r.trusted = snap.kickTrusted;
+            return r;
+        };
+
+        const Run without = drive (false);
+        const Run with = drive (true);
+        std::printf ("kick-chain  senza canale cassa: rms %.2f ms  peggio %.2f ms\n",
+                     without.spreadMs, without.worstMs);
+        std::printf ("kick-chain  con canale cassa:   rms %.2f ms  peggio %.2f ms   "
+                     "(%d colpi, creduto=%d)\n",
+                     with.spreadMs, with.worstMs, with.onsets, with.trusted ? 1 : 0);
+
+        expect (with.onsets > 25 && with.trusted,
+                "the kick channel is recognised as a kick and its strikes are counted");
+        expect (without.onsets == 0,
+                "and none of it runs when no kick channel is assigned");
+        // Measured across runs: 19.4 -> 11.8, 18.3 -> 15.3 and 18.3 -> 13.3 ms
+        // rms, against a network that is being handed the true beats. So this
+        // is not the kick channel making up for a bad network - it is what a
+        // channel carrying one drum adds on top of the best a network could do.
+        //
+        // The assertion is looser than any single one of those because the
+        // figure moves by about a fifth from run to run: the analysis is a
+        // thread, and how much of the machine it gets is not this test's to
+        // decide. Draining its backlog every block takes most of that out but
+        // not all of it. The direction is what is being guarded here; the
+        // number belongs in a probe, and docs/AUDIO_ENGINE.md quotes the median.
+        expect (with.spreadMs < without.spreadMs * 0.92,
+                "sample-timed strikes hold the clock stiller than the frame grid can");
+        // The *worst* excursion is deliberately not asserted on, and that is a
+        // finding rather than a gap in the test. Across runs it went 48.6 -> 27.4,
+        // 51.4 -> 49.4, 47.9 -> 34.7 and 27.7 -> 35.9: sometimes much better,
+        // once worse. It is dominated by single events - the re-lock at the end
+        // of the breakdown, a fill - and one event is not something a stiller
+        // phase loop can be relied on to prevent. What the kick channel
+        // reliably improves is the ordinary error, not the worst moment.
+        std::printf ("kick-chain  (il peggio non e' garantito migliore: e' un evento singolo)\n");
+    }
+
+    {
+        // The rig's round trip, measured instead of asked for.
+        //
+        // A sweep goes out, whatever comes back is captured, the two are
+        // correlated. Here the "rig" is a delay line with a room's worth of
+        // noise and a band playing over it, which is the case that matters: the
+        // measurement has to survive being taken while somebody is soundchecking
+        // rather than only in a silent room.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+
+        auto measure = [&] (double trueMs, float noise, bool withMusic) -> float
+        {
+            vp::LatencyProbe probe;
+            probe.prepare (sr);
+            probe.start();
+
+            const int delay = static_cast<int> (trueMs * 0.001 * sr);
+            const int n = static_cast<int> (sr * (vp::LatencyProbe::kCaptureSeconds + 0.4));
+            std::vector<float> loop (static_cast<size_t> (n + block * 4), 0.0f);
+            std::vector<float> music;
+            if (withMusic)
+            {
+                vp::probe::SongOptions opt;
+                opt.bpm = 128.0f;
+                music.assign (static_cast<size_t> (n + block * 4), 0.0f);
+                vp::probe::renderSong (music, opt, sr, 7u);
+            }
+
+            std::mt19937 rng (4242u);
+            std::uniform_real_distribution<float> hiss (-1.0f, 1.0f);
+            std::vector<float> in (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const int src = pos + i - delay;
+                    // The return: the app's own output, delayed, plus whatever
+                    // else is in the room.
+                    in[static_cast<size_t> (i)] =
+                        (src >= 0 ? loop[static_cast<size_t> (src)] * 0.55f : 0.0f)
+                        + noise * hiss (rng)
+                        + (withMusic ? music[static_cast<size_t> (pos + i)] * 0.8f : 0.0f);
+                }
+                std::fill (oL.begin(), oL.end(), 0.0f);
+                std::fill (oR.begin(), oR.end(), 0.0f);
+                probe.process (in.data(), oL.data(), oR.data(), block);
+                for (int i = 0; i < block; ++i)
+                    loop[static_cast<size_t> (pos + i)] = oL[static_cast<size_t> (i)];
+                if (probe.ready())
+                    break;
+            }
+            return probe.analyse();
+        };
+
+        double worstErr = 0.0;
+        bool allFound = true;
+        for (double ms : { 6.0, 12.0, 24.0, 48.0, 96.0 })
+        {
+            const float got = measure (ms, 0.004f, false);
+            if (got <= 0.0f)
+            {
+                allFound = false;
+                std::printf ("lat-probe   vera %.1f ms -> NON TROVATA\n", ms);
+                continue;
+            }
+            worstErr = std::max (worstErr, std::fabs (got - ms));
+            std::printf ("lat-probe   vera %.1f ms -> misurata %.2f ms  (scarto %.2f ms)\n",
+                         ms, static_cast<double> (got), std::fabs (got - ms));
+        }
+        expect (allFound && worstErr < 1.0,
+                "the round trip is measured to within a millisecond over the range a rig uses");
+
+        // The case it has to survive: measured on a stage with the band playing.
+        const float overBand = measure (24.0, 0.004f, true);
+        std::printf ("lat-probe   con la band che suona: %.2f ms\n",
+                     static_cast<double> (overBand));
+        expect (overBand > 0.0f && std::fabs (overBand - 24.0) < 2.0,
+                "and it survives being measured while the band is playing");
+
+        // And the case it has to refuse: nothing comes back at all, because the
+        // return is not routed. A number invented here would be worse than none.
+        const float unrouted = measure (24.0, 0.02f, false) * 0.0f
+                               + [&]
+                               {
+                                   vp::LatencyProbe p;
+                                   p.prepare (sr);
+                                   p.start();
+                                   const int n = static_cast<int> (
+                                       sr * (vp::LatencyProbe::kCaptureSeconds + 0.2));
+                                   std::mt19937 rng (9u);
+                                   std::uniform_real_distribution<float> hiss (-0.02f, 0.02f);
+                                   std::vector<float> in (static_cast<size_t> (block), 0.0f);
+                                   std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+                                   for (int pos = 0; pos + block <= n; pos += block)
+                                   {
+                                       for (auto& v : in) v = hiss (rng);
+                                       std::fill (oL.begin(), oL.end(), 0.0f);
+                                       p.process (in.data(), oL.data(), nullptr, block);
+                                       if (p.ready()) break;
+                                   }
+                                   return p.analyse();
+                               }();
+        std::printf ("lat-probe   mandata non instradata: %.2f (negativo = rifiutata)\n",
+                     static_cast<double> (unrouted));
+        expect (unrouted < 0.0f,
+                "and refuses to answer when the sweep never came back");
     }
 
     {

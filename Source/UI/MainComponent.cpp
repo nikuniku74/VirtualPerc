@@ -338,6 +338,7 @@ MainComponent::MainComponent()
     setupBtn (styleFunk, ink());
     setupBtn (styleReggae, ink());
     setupBtn (styleBossa, ink());
+    setupBtn (styleTwoOne, ink());
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
@@ -429,6 +430,43 @@ MainComponent::MainComponent()
         clickButton.setToggleState (click, juce::dontSendNotification);
     };
     themeButton.onClick = [this] { applyTheme (! darkMode, true); savePrefs(); };
+    // A second of sweep and the rig has told the app what it actually does.
+    // Pressing it again clears a measurement, so a figure taken on last week's
+    // rig can be got rid of without hunting for a reset.
+    latencyButton.onClick = [this]
+    {
+        if (engine.measuredLatency() > 0.0f)
+        {
+            engine.setMeasuredLatency (0.0f);
+            savePrefs (true);
+            refreshSourceButton();
+            return;
+        }
+        engine.startLatencyMeasurement();
+        latencyButton.setButtonText ("MISURO...");
+    };
+
+    // Which input the kick is on, cycled rather than typed: on a stage this is
+    // set once with the desk in front of you, and a spinner is one more thing
+    // to get wrong in the dark. NO is the default and costs nothing - the whole
+    // kick path is switched off until an input is named.
+    kickButton.onClick = [this]
+    {
+        const int shown = engine.settings().kickChannel.load() + 1;   // 0 = none
+        const int most = juce::jmax (2, inputChannels);
+        int next = shown + 1;
+        if (next < 2)
+            next = 2;                       // channel 1 is the mix; the kick is never there
+        if (next > most)
+            next = 0;
+        engine.settings().kickChannel.store (next - 1);
+        // Opening more inputs is what makes a channel past the second reachable
+        // at all, so the device has to be told.
+        applyAudioSetup (true);
+        savePrefs (true);
+        refreshSourceButton();
+    };
+
     sourceButton.onClick = [this]
     {
         const bool speaker = engine.settings().followSource.load()
@@ -456,6 +494,7 @@ MainComponent::MainComponent()
     styleFunk.onClick   = [this] { applyStyle (vp::GrooveStyle::funk); };
     styleReggae.onClick = [this] { applyStyle (vp::GrooveStyle::reggae); };
     styleBossa.onClick  = [this] { applyStyle (vp::GrooveStyle::bossa); };
+    styleTwoOne.onClick = [this] { applyStyle (vp::GrooveStyle::twoOne); };
 
     subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
@@ -567,6 +606,8 @@ MainComponent::MainComponent()
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
     setupPageBtn (sourceButton, ink());
+    setupPageBtn (kickButton, ink());
+    setupPageBtn (latencyButton, ink());
     setupPageBtn (procButton, ink());
     for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
                      &bufAuto, &buf64, &buf128, &buf256, &buf512 })
@@ -673,10 +714,11 @@ void MainComponent::refreshThemeColours()
     juce::TextButton* buttons[] = {
         &startButton, &stopButton, &followButton, &fixedButton,
         &bpmNudgeDown, &bpmNudgeUp, &shakerButton, &debugButton,
-        &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
+        &clickButton, &themeButton, &sourceButton, &kickButton, &latencyButton,
+        &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &halveButton, &doubleButton, &barButton,
+        &styleBossa, &styleTwoOne, &halveButton, &doubleButton, &barButton,
         &settingsButton, &settingsClose, &procButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -895,8 +937,14 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
     // useDefaultInputChannels and reopens the device for nothing.
     if (claimInputChannels)
     {
+        // Two is what the app has always asked for and is all a microphone or a
+        // stereo line feed needs. A kick send lives on a channel of its own, so
+        // when the listener names one the device has to be opened wide enough
+        // to reach it - asking for channels a desk does not have costs nothing,
+        // JUCE gives back what exists.
+        const int wantKick = engine.settings().kickChannel.load() + 1;
         setup.inputChannels.clear();
-        setup.inputChannels.setRange (0, 2, true);
+        setup.inputChannels.setRange (0, juce::jmax (2, wantKick), true);
         setup.useDefaultInputChannels = false;
     }
 
@@ -1096,6 +1144,29 @@ void MainComponent::refreshSourceButton()
                              == static_cast<int> (vp::FollowSource::speaker);
     sourceButton.setButtonText (speaker ? "IPAD" : "MIXER");
     paintChoice (sourceButton, speaker);
+
+    // The kick channel is lit only once the strikes are actually landing on the
+    // beat: a channel that is named but is not a kick is worse than no channel
+    // at all, and the tracker works that out for itself - see
+    // BeatTracker::kickIsTrusted.
+    const int kickCh = engine.settings().kickChannel.load();
+    kickButton.setButtonText (kickCh < 0 ? "CASSA NO"
+                                         : "CASSA " + juce::String (kickCh + 1));
+    paintChoice (kickButton, kickCh >= 0 && snap.kickTrusted);
+
+    // And the round trip shows the number when there is one, so a listener can
+    // see at a glance whether the clock is running on a measurement of this rig
+    // or on what the operating system believes about the interface.
+    if (! engine.latencyMeasurementRunning())
+    {
+        const float measured = engine.measuredLatency();
+        if (measured > 0.0f)
+            latencyButton.setButtonText ("RT " + juce::String (measured, 1) + " ms");
+        else if (latencyButton.getButtonText().startsWith ("RT ")
+                 || latencyButton.getButtonText() == "MISURO...")
+            latencyButton.setButtonText ("LATENZA");
+        paintChoice (latencyButton, measured > 0.0f);
+    }
 }
 
 void MainComponent::refreshMixLabels()
@@ -1158,6 +1229,16 @@ void MainComponent::loadPrefs()
     bufferChoice = (buf == 64 || buf == 128 || buf == 256 || buf == 512) ? buf : 0;
 
     inputProcessing = prefs->getBoolValue ("inputProcessing", false);
+
+    // Clamped low deliberately: a remembered channel from a rig that is not
+    // plugged in today would open inputs that do not exist.
+    engine.settings().kickChannel.store (
+        juce::jlimit (-1, 31, prefs->getIntValue ("kickChannel", -1)));
+    // A round trip measured on this rig, if one was. Kept per install rather
+    // than per session: the rig does not usually change between soundcheck and
+    // the first song, and re-measuring is one press.
+    engine.setMeasuredLatency (static_cast<float> (
+        prefs->getDoubleValue ("measuredLatencyMs", 0.0)));
 
     const int src = prefs->getIntValue ("followSource",
                                         engine.settings().followSource.load());
@@ -1244,6 +1325,8 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("bufferFrames", bufferChoice);
     prefs->setValue ("inputProcessing", inputProcessing);
     prefs->setValue ("followSource", engine.settings().followSource.load());
+    prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
+    prefs->setValue ("measuredLatencyMs", static_cast<double> (engine.measuredLatency()));
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
     prefs->setValue ("subdivision", engine.settings().subdivision.load());
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
@@ -1387,6 +1470,9 @@ void MainComponent::refreshStyleButtons()
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::reggae));
     paint (styleBossa, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::bossa),
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::bossa));
+    // Never lit by AUTO: the chooser decides between four genres and this one
+    // is not a genre. See the note on GrooveStyle::twoOne.
+    paint (styleTwoOne, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::twoOne), false);
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -1469,6 +1555,25 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
     applyLatencyFromDevice();
+
+    // The correlation is tens of millions of multiplies and has no business on
+    // the audio thread, so it is done here, once, when the capture is complete.
+    if (engine.latencyMeasurementReady())
+    {
+        const float ms = engine.finishLatencyMeasurement();
+        if (ms > 0.0f)
+        {
+            savePrefs (true);
+            latencyButton.setButtonText ("RT " + juce::String (ms, 1) + " ms");
+        }
+        else
+        {
+            // Refused rather than guessed. The commonest cause on a stage is
+            // the send not being routed back, so say that rather than a number.
+            latencyButton.setButtonText ("NIENTE RITORNO");
+        }
+        refreshSourceButton();
+    }
 
     // A tap can lock the bar without this button being touched, so the button
     // follows the engine rather than its own last press.
@@ -1723,7 +1828,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     {
         auto body = card (area.removeFromTop (hPart), "PARTE");
         placeSquareRow (body, { &styleAuto, &styleMarcha, &styleRock, &styleDance, &stylePop,
-                                &styleSamba, &styleFunk, &styleReggae, &styleBossa });
+                                &styleSamba, &styleFunk, &styleReggae, &styleBossa,
+                                &styleTwoOne });
         area.removeFromTop (gap);
     }
 
@@ -2199,12 +2305,12 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     {
         auto body = card (take (h[kInput]), "INGRESSO");
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &sourceButton, &procButton });
+                   { &sourceButton, &procButton, &kickButton });
         settingsRows.inputNote = body.withTrimmedTop (noteGap);
     }
 
     buttonRow (card (take (h[kTests]), "PROVE"),
-               { &themeButton, &clickButton, &debugButton });
+               { &themeButton, &clickButton, &latencyButton, &debugButton });
 
     // The numbers are the point of the page: a clock the listener chose and a
     // clock the hardware gave are not the same thing, and only one of them is
@@ -2336,7 +2442,29 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  ottava " + juce::String (snap.tempoOctave));
         lines.add ("pBeat " + juce::String (snap.pBeat, 3) + "  valid " + juce::String (snap.hypValid ? 1 : 0)
                    + "  conf " + juce::String (snap.confidence, 3));
-        lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3));
+        lines.add ("beat " + juce::String (snap.beatPhase, 3) + "  bar " + juce::String (snap.barPhase, 3)
+                   + "  rot " + juce::String (snap.barRotations));
+        // How well the analysis is fitting against how well it has been fitting
+        // this song, and the constant the clock is therefore averaging its
+        // phase over. Below one is a passage the fit is finding hard - the
+        // drummer out, usually - and the two numbers together say whether the
+        // app has noticed something the listener can hear.
+        lines.add ("latenza  dispositivo " + juce::String (snap.latencyMs, 1)
+                   + " ms   misurata " + (engine.measuredLatency() > 0.0f
+                                              ? juce::String (engine.measuredLatency(), 1) + " ms"
+                                              : juce::String ("--")));
+        lines.add ("cassa " + (snap.kickChannel < 0
+                                  ? juce::String ("--")
+                                  : juce::String (snap.kickChannel + 1))
+                   + "  liv " + juce::String (snap.kickLevel, 4)
+                   + "  muto " + juce::String (snap.kickQuietSec, 2) + " s"
+                   + "  colpi " + juce::String (snap.kickOnsets)
+                   + (snap.kickTrusted ? "  CREDUTO" : "")
+                   + (snap.drumsOut ? "  KIT FUORI" : ""));
+        lines.add ("prove " + juce::String (snap.evidenceTrust, 2)
+                   + "  tau " + juce::String (snap.gridTauSec, 2) + " s"
+                   + "  fit " + juce::String (snap.fitResidual, 3)
+                   + "/" + juce::String (snap.fitCoverage, 2));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
                    + juce::String (snap.leadMs, 1) + " ms");

@@ -25,6 +25,7 @@ set (VP_CORE_SOURCES
     Source/Percussion/GrooveEngine.cpp
     Source/Percussion/StyleDetector.cpp
     Source/Audio/VirtualPercussionEngine.cpp
+    Source/Audio/LatencyProbe.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp
     Source/AI/OnnxBeatModel.cpp
@@ -297,6 +298,28 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    # Not a measurement: a few bars of the part as a WAV, so a musical decision
+    # can be reviewed by ear. See scripts/render_groove.cpp.
+    juce_add_console_app (VPRender
+        PRODUCT_NAME "VPRender"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPRender PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPRender PRIVATE ${VP_CORE_SOURCES} scripts/render_groove.cpp)
+    target_include_directories (VPRender PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPRender PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPRender PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPBar
         PRODUCT_NAME "VPBar"
         NEEDS_WEB_BROWSER FALSE
@@ -513,6 +536,9 @@ endif()
 
 if (TARGET VPAlign)
     vp_apply_ai_options (VPAlign)
+endif()
+if (TARGET VPRender)
+    vp_apply_ai_options (VPRender)
 endif()
 
 if (TARGET VPBar)

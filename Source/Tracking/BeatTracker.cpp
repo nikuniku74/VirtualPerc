@@ -102,6 +102,14 @@ void BeatTracker::prepare (double sr) noexcept
 void BeatTracker::reset() noexcept
 {
     follower.reset();
+    evidence.reset();
+    kickAssigned = false;
+    kickQuietSec = 0.0f;
+    kickOnsetCount = 0;
+    kickTrusted = false;
+    kickOnGrid = 0.0f;
+    kickSeen = 0.0f;
+    pendingKicks = 0;
     currentState = TrackingState::listening;
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
@@ -138,6 +146,7 @@ void BeatTracker::reset() noexcept
     barLocked = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
+    barRotations = 0;
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     barDeclaredSamples = 0;
@@ -604,6 +613,7 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     }
 
     follower.rotateBarIndex (-best);
+    ++barRotations;
 
     // Rotating renumbers the beats, so the tally rotates with them rather than
     // being thrown away: the evidence is still good, it is just about different
@@ -614,6 +624,65 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
         rotated[i] = downbeatVotes[(i + best) & 3];
     for (int i = 0; i < 4; ++i)
         downbeatVotes[i] = rotated[i];
+}
+
+void BeatTracker::notifyKickOnset (int sampleOffset, float strength) noexcept
+{
+    if (pendingKicks >= kMaxPendingKicks || ! std::isfinite (strength))
+        return;
+    pendingKickOffset[pendingKicks] = sampleOffset;
+    pendingKickStrength[pendingKicks] = std::clamp (strength, 0.0f, 1.0f);
+    ++pendingKicks;
+}
+
+void BeatTracker::setKickChannelState (bool assigned, float quietSeconds) noexcept
+{
+    if (! assigned && kickAssigned)
+    {
+        // The channel has been taken away. Everything the kick path decided
+        // goes with it, including the verdict on whether it was a kick at all:
+        // the next channel assigned has to earn that again from nothing.
+        kickTrusted = false;
+        kickOnGrid = 0.0f;
+        kickSeen = 0.0f;
+        pendingKicks = 0;
+    }
+    kickAssigned = assigned;
+    kickQuietSec = std::isfinite (quietSeconds) ? quietSeconds : 0.0f;
+}
+
+void BeatTracker::updateKickTrust (float phaseErr) noexcept
+{
+    // Is this channel actually a kick?
+    //
+    // Nothing stops somebody routing the app the full mix, or the vocal, on the
+    // channel they told it was the kick - and a detector pointed at a full mix
+    // fires on everything, which would hand the clock a stream of confident and
+    // meaningless beat times. The test is the one thing that separates them
+    // without knowing anything about the sound: a kick lands on the beat, and
+    // whatever else is on that channel does not.
+    //
+    // Decayed rather than counted, so a channel that stops being a kick - a
+    // desk re-patched between songs - stops being believed inside a phrase
+    // rather than on the strength of what it did five minutes ago.
+    constexpr float kDecay = 0.94f;
+    constexpr float kNearBeat = 0.15f;      // beats
+    constexpr float kSeenEnough = 6.0f;     // strikes before an opinion
+    constexpr float kTrustAbove = 0.55f;    // and the share that has to land
+    constexpr float kDropBelow = 0.40f;     // with hysteresis on the way out
+
+    kickOnGrid *= kDecay;
+    kickSeen = kickSeen * kDecay + 1.0f;
+    if (std::fabs (phaseErr) < kNearBeat)
+        kickOnGrid += 1.0f;
+
+    if (kickSeen < kSeenEnough)
+        return;
+    const float share = kickOnGrid / kickSeen;
+    if (! kickTrusted && share > kTrustAbove)
+        kickTrusted = true;
+    else if (kickTrusted && share < kDropBelow)
+        kickTrusted = false;
 }
 
 BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noexcept
@@ -648,6 +717,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
     const bool periodic = haveHyp && hyp.valid && nnBpm > 50.0f;
+
+    // How well the analysis is fitting, against how well it has been fitting on
+    // this song. Nothing downstream of this touches the tempo - see the note on
+    // EvidenceTrust for why that is the whole point - it only decides how long
+    // the clock averages the phase before steering on it.
+    if (haveHyp && hyp.valid)
+        evidence.observe (hyp.fitResidual, hyp.fitCoverage,
+                          static_cast<double> (numSamples) / sampleRate);
 
     // The worker publishes one hypothesis per 20 ms analysis frame into a
     // single slot, while this runs once per audio block. Reading `peak` would
@@ -711,6 +788,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // be handed a latency figure of its own as well, which it stored and never
     // used: two names for one correction, one of them doing nothing.
     follower.setLocked (holding && currentState != TrackingState::listening);
+
+    // And how fast it should adopt the tempo it is handed. Full trust - which
+    // is everything the analysis fits as well as it has been fitting this song,
+    // an accelerando included - is the glide the clock has always had; a
+    // passage whose beats are worse placed than the song's own is averaged
+    // instead of followed. A tempo the listener owns is not the analysis's to
+    // slow down.
+    follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has
@@ -844,6 +929,51 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         quietSamples += numSamples;
     }
 
+    // ---------------------------------------------------------------- kick
+    //
+    // Strikes on a channel that carries one drum, timed on the audio. Two
+    // separate things come out of it, and neither replaces what the neural path
+    // is doing - see notifyKickOnset and Tracking/KickOnsetDetector.h.
+    {
+        const float bpmNow = std::max (50.0f, heldBpm > 50.0f ? heldBpm : 120.0f);
+        const double barSec = 4.0 * 60.0 / static_cast<double> (bpmNow);
+
+        for (int k = 0; k < pendingKicks; ++k)
+        {
+            // Where the song's pulse is *now* if a beat physically arrived at
+            // the input `numSamples - offset` samples ago. This is the same
+            // projection the neural path makes a few lines above, with the same
+            // output-side term and without the network's own response trim,
+            // which is a property of the network and not of a drum.
+            const float kickLeadSec = static_cast<float> (numSamples - pendingKickOffset[k])
+                                          / static_cast<float> (sampleRate)
+                                      + reportedLatencyMs * 0.001f;
+            const float kickPhase = wrap01 (kickLeadSec / beatSeconds);
+            const float err = wrapCentered (follower.beatPhase() - kickPhase);
+
+            ++kickOnsetCount;
+            updateKickTrust (err);
+
+            // A strike is worth more than a frame-quantised beat, so it is
+            // handed over at a strength the neural path never reaches - but
+            // only once the channel has shown it really is a kick, and never
+            // while somebody is tapping or holding the tempo by hand.
+            if (kickTrusted && ! tapHold && tempoFollow && ! tempoOwned)
+                follower.observeOnsetPhase (wrap01 (follower.beatPhase() - kickPhase),
+                                            std::max (0.75f, pendingKickStrength[k]), 1);
+        }
+        pendingKicks = 0;
+
+        // And the passage with the drummer out, which on this channel is not an
+        // inference. Long enough not to fire on the ordinary gap between two
+        // kicks: a pattern with a kick only on the one leaves a whole bar of
+        // silence, so the line is a bar and a quarter. The mix still has to be
+        // loud, or this is the song ending rather than the kit dropping out.
+        const bool quietLongEnough = kickQuietSec
+                                     > static_cast<float> (std::max (1.2, barSec * 1.25));
+        evidence.setDrumsOut (kickAssigned && kickTrusted && quietLongEnough && loudEnough);
+    }
+
     if (needsResync && armed && waitForQuantize && ! tapEstablished
         && tempoFollow && periodic)
     {
@@ -877,6 +1007,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (haveHyp && seenSerials && hyp.gridSerial != lastGridSerial)
     {
         lastGridSerial = hyp.gridSerial;
+        // What this song was giving belonged to the grid that has just gone.
+        // Carried across, a song that fits worse than the last one would read
+        // as poor evidence on every hypothesis, and the clock would be at its
+        // slowest exactly where it has the furthest to go.
+        evidence.restart();
         // Not over a bar the listener placed by hand, and not over one that was
         // moved a moment ago: those are the two cases where somebody already
         // answered this question.
@@ -892,8 +1027,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     else if (! tapHold && tempoFollow && periodic && loudEnough && nnConf > 0.28f
              && currentState != TrackingState::listening
              && currentState != TrackingState::idle
-             && ! tapEstablished
-             && downbeatHoldSamples <= 0)
+             && ! tapEstablished)
     {
         // With nothing on the grid, put the grid where the song is.
         //
@@ -906,8 +1040,28 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // This is also the whole of the time the part spends waiting to come
         // in, which used to be excluded here altogether: through the entire
         // wait the phase was never corrected at all.
+        // The bar hold used to gate this whole block, and it is a hold on the
+        // *count*: `alignBarFromVotes` sets it after rotating the bar so that
+        // two disagreeing votes cannot trade the one back and forth inside a
+        // phrase. Rotating the index moves no phase - the comment where it
+        // happens says so - so there was nothing here for it to protect, and
+        // for 9.6 seconds after every automatic bar move the better of the two
+        // phase sources was switched off for no reason. Only on a line feed:
+        // through a speaker the downbeat vote is near chance and the bar is
+        // never rotated automatically, so it never fired there at all.
+        //
+        // Not an outage, and worth being exact about it: `observeOnsetPhase`
+        // above is outside the gate and keeps steering the loop on every beat
+        // throughout, so what those 9.6 seconds cost was the averaged target
+        // and not the correction. It is the quieter of the two - it is what the
+        // whole of setGridPhase's time constant exists to produce - and having
+        // it switched off by a decision about the count is still wrong.
+        //
+        // The hold stays on the snap below, which is a different thing: that
+        // one carries the count over the beat boundary it crosses, so it can
+        // move the bar the vote has just placed.
         const float gridErr = wrapCentered (follower.beatPhase() - songPhase);
-        if (! sounding && std::fabs (gridErr) > 0.04f)
+        if (! sounding && downbeatHoldSamples <= 0 && std::fabs (gridErr) > 0.04f)
         {
             // Nothing is playing, so the count goes over the boundary with the
             // grid: the bar the part will come in on has to be the song's bar,
@@ -921,7 +1075,15 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // times a second and each one carries its own phase error - so the
             // clock follows the band and not the decoder. While still acquiring
             // it is worth being wrong quickly.
-            follower.setGridPhase (songPhase, holding ? 0.90f : 0.25f);
+            //
+            // How long is not one number any more: it opens up while the
+            // beats being fitted are worse placed than this song's own, which
+            // is what a passage without a drummer looks like from inside the
+            // fit. See Tracking/PhaseTrust.h - including the shorter constant
+            // for a line feed that was tried there and measured as noise.
+            follower.setGridPhase (songPhase,
+                                   gridPhaseTau (kGridTauHolding, holding,
+                                                 evidence.trust()));
         }
     }
 
@@ -1019,6 +1181,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisWakeups = neural.wakeups();
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
+    out.barRotations = barRotations;
+    out.kickOnsets = kickOnsetCount;
+    out.kickTrusted = kickTrusted;
+    out.drumsOut = evidence.drumsAreOut();
+    out.evidenceTrust = evidence.trust();
+    out.gridTauSec = gridPhaseTau (kGridTauHolding, holding, evidence.trust());
 
     // Whether what the clock is following is known to be somebody playing.
     //

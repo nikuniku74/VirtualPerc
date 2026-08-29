@@ -158,6 +158,195 @@ cambiare, è il segnale.
 Host `VPTests`: **159 passed, 1 failed** — l'attacco percepito, rosso da prima.
 `VPDecoderProbe`: 5 fallimenti, gli stessi di prima.
 
+## Prendere piu' di un canale dal banco (29 agosto)
+
+La cosa piu' grande che mancava, e adesso c'e'. Un mixer digitale ha la cassa
+su un canale suo, e quel canale e' un segnale diverso dal mix in tutto quello
+che conta: uno strumento, un attacco per evento, nessun basso che tiene sotto,
+e muto per esattamente il tempo in cui il batterista non suona.
+
+`SETUP -> INGRESSO -> CASSA` dice su quale ingresso arriva. `NO` e' il default e
+tutta la via e' spenta finche' non se ne nomina uno.
+
+### Quello che si e' misurato
+
+| | |
+|---|---|
+| attacchi di cassa datati, contro tempi noti al campione | **0,56 ms** medi, 0,62 al peggio |
+| silenzio del canale in uno stacco di quattro battute | **8,3 s** contro 0,00 con il kit dentro |
+| fase dell'orologio, solo mix | rms 17,0-19,4 ms |
+| fase dell'orologio, mix + cassa | **rms 11,8-15,3 ms** |
+
+L'ultima riga e' contro una rete a cui vengono *dati* i battiti veri, quindi non
+e' il canale che rimedia a una rete scarsa: e' quello che aggiunge sopra il
+meglio che una rete potrebbe fare. L'rms migliora a ogni corsa, del 15-40%.
+
+**Il peggio no.** Fra le corse: 48,6 -> 27,4, poi 51,4 -> 49,4, poi 47,9 -> 34,7,
+poi 27,7 -> 35,9. A volte molto meglio, una volta peggio. E' dominato da eventi
+singoli - il riaggancio in uscita da uno stacco, un fill - e un evento singolo
+non e' una cosa che un anello di fase piu' fermo previene. Il test non lo
+pretende.
+
+### La latenza, misurata
+
+`SETUP -> PROVE -> LATENZA`: sweep da 30 ms, cattura, correlazione. Esatta al
+campione da 6 a 96 ms, entro 2 ms **con la band che suona sopra**, e si rifiuta
+di rispondere quando lo sweep non torna invece di inventare un numero. Prima
+l'orologio girava sulla latenza dichiarata dal sistema piu' una costante di
+20 ms tarata una volta su un click: due numeri ragionevoli, nessuno dei due una
+misura di *questo* rig.
+
+### Provato e non spedito: la battuta dalla cassa
+
+Un pattern di cassa *dichiara* la battuta - quasi ogni band suona il primo
+quarto piu' forte del terzo - dove la rete deve dedurla da una curva di
+attivazione, e attraverso la cassa dell'iPad quella deduzione e' misurata come
+una monetina. Sembra il posto ovvio dove il canale dovrebbe vincere.
+
+Implementato in due forme e nessuna delle due dimostrata:
+
+1. **Somma delle forze per quarto.** Troppo smussata: la cassa su 1 e 3 divide
+   55 a 45 fra due quarti, e il margine che la battuta deve superare per essere
+   spostata sotto un ascoltatore e' 0,20.
+2. **Un voto per battuta, al quarto che porta il colpo piu' forte.** E' la
+   forma giusta - non e' che l'uno porta piu' cassa di tutto il resto, e' che
+   porta *il colpo piu' forte della battuta* - ma non sono riuscito a
+   dimostrarla.
+
+Il motivo e' il banco, non l'idea. Per misurarla serve che l'orologio parta
+sulla battuta **sbagliata** (partendo giusto, un codice che non fa niente
+segna uguale a uno che la trova), e in quella configurazione la corsa deve
+essere abbastanza lunga da far agganciare l'orologio, poi da far guadagnare
+fiducia al canale, poi da accumulare otto battute di voti - e a quel punto una
+sola misura dura minuti e non sta in una suite che qualcuno aspetta.
+
+**Non spedita.** La battuta e' udibile e questo file e' pieno di avvisi su cosa
+succede a toccarla senza misurare. Il posto giusto per riprenderla e' una sonda
+sul motore, non un test, con un brano da un paio di minuti - e la prima cosa da
+fare e' quella, non riscrivere la regola una terza volta.
+
+### E cosa resta
+
+- **Un corpus vero.** Tutto qui e' misurato su materiale sintetico, con la
+  griglia nota al campione. La forma dei guasti regge; i millisecondi vanno
+  riverificati su registrazioni vere dal vivo. `probe_song_render.h` adesso da'
+  anche gli stem separati, quindi il banco per riceverle c'e'.
+- **Il livello metrico** resta il guasto peggiore quando capita: un'ottava
+  sbagliata e' un fallimento totale. Il canale cassa e' il posto da cui
+  risolverlo, per la stessa ragione per cui e' il posto giusto per la battuta.
+- **Anticipare invece di seguire.** Un percussionista sa che un fill vuol dire
+  uno stacco. Il contatore di battute c'e'; il modello di forma sopra no. E'
+  l'ultimo da fare, non il primo: e' il piu' affascinante ed e' quello che
+  sbaglia peggio se la base sotto non e' solida.
+
+## Il buco senza batteria: il meccanismo non era quello (28 agosto)
+
+Seguito della sezione qui sotto, che chiudeva con «serve un discriminante che
+non venga dal fit — `TempoEstimator` ne ha uno, la salience, e la prima cosa da
+fare è misurare quei due valori, non scrivere un'altra regola». Fatto. La
+salience non separa niente, e il meccanismo del guasto non è quello che quella
+sezione dava per scontato.
+
+### Il banco
+
+`VPAlign` ha due sezioni nuove e la seconda è quella che conta: monta
+attivazioni della forma che BeatNet produce, le fa passare per `BeatDecoder`
+**e per `TempoFollower` guidato come lo guida `BeatTracker`**, e misura la fase
+dell'**orologio** contro la griglia scritta. Tutte le altre sonde qui misurano
+il decoder; quello che si sente è l'orologio. Deterministica, senza rete e senza
+audio.
+
+```bash
+cmake --build build --target VPAlign && ./build/VPAlign_artefacts/Release/VPAlign
+```
+
+### La salience non separa. Il residuo, relativo, sì
+
+| | buco | accelerando | separa? |
+|---|---|---|---|
+| salience del pettine, nel passaggio | 0,992 | 1,000 (saturata) | **no** |
+| confidenza del decoder | 0,83 | 0,86 | **no** |
+| residuo fuori dal passaggio | 0,048 | 0,044 | — |
+| residuo **dentro** il passaggio | **0,063** (+31%) | 0,040 (−9%) | **sì** |
+
+La salience è `clamp(best / 0.5)` e su materiale periodico sta contro il
+fondoscala: non è una grandezza continua lassù, ed è per questo che non decide
+niente. Il residuo **contro quello che questo brano stava già dando** decide —
+che è esattamente la forma che la sezione sotto aveva indovinato («la soglia
+dev'essere relativa») e non aveva provato.
+
+### Il meccanismo: non è il tempo che scivola, è l'analisi che arriva tardi
+
+Questa è la parte che cambia la cura. Nel banco, lo stesso passaggio con il
+ritardo sistematico tolto costa **29,5 ms** al peggio — quanto un accelerando —
+e con 44 ms di ritardo dentro costa **79,5 ms**. Un passaggio senza batteria non
+rende l'analisi *rumorosa*, la rende **in ritardo**: un pad e una nota di basso
+salgono dentro il battito dove una bacchetta ci atterra sopra, l'attivazione
+culmina un paio di frame dopo, e il fit ci va dietro fedelmente per tutta la
+durata del passaggio.
+
+È un **offset tenuto per dieci secondi**, e un offset è l'unica cosa che nessuna
+media può togliere: a lisciatura piena l'orologio lo seguiva lo stesso a un
+millisecondo. Quello che gli si può dare è un **limite**.
+
+### Cosa è stato spedito
+
+`Tracking/PhaseTrust.h`: quanto bene l'analisi sta agganciando i battiti contro
+quanto bene stava agganciandoli *su questo brano*. Guida tre cose, e nessuna
+delle tre è il tempo:
+
+- la costante su cui la fase viene mediata prima che l'anello la veda;
+- un **pavimento** sotto la planata di velocità dell'orologio, così un bersaglio
+  costruito su battiti mal piazzati viene mediato invece che preso;
+- un **tetto** su quanto l'orologio si sposta dalla propria griglia.
+
+Tutte e tre sono limitate e si sciolgono da sole: niente si aggancia, niente va
+rilasciato, e appena il fit si stringe le costanti sono quelle di prima. Il
+tetto non vale sopra 0,15 di battito, dove l'analisi non sta pendendo ma è
+*altrove* — una canzone nuova, uno stacco, una griglia ri-ancorata — e va
+seguita subito. La linea di base riparte con `gridSerial`: quello che dava
+questo brano era di questo brano.
+
+L'orologio contro la griglia scritta, media su otto brani:
+
+| | buco media | buco peggio | accel media | accel peggio |
+|---|---|---|---|---|
+| prima | 23,2 | 52,4 | 20,5 | 44,5 |
+| solo la costante di fase | 21,9 | 49,9 | 19,5 | 43,0 |
+| solo l'orologio | 19,8 | 46,3 | 18,2 | 38,5 |
+| **tutte e due (spedito)** | **19,4** | **46,0** | **18,9** | **38,1** |
+
+**L'accelerando migliora anche lui**, ed è la cosa che nessuno dei cinque
+tentativi qui sotto era riuscito a fare: tutti costavano mezza battuta lì per
+salvare il buco. Il motivo è che nessuno di questi tre limiti tocca il tempo, e
+una band che accelera con il batterista dentro non lascia mai la fiducia sotto
+uno — quindi non viene rallentata da niente.
+
+### Cosa è stato provato e non spedito
+
+Una costante di fase più corta su una mandata di linea (0,35 s contro 0,90).
+`docs/CORE_TIMING_AUDIT.md` quasi la propone — gli 0,9 s c'erano per ingoiare
+scatti di fase che non esistono più — e sul percorso di linea il rumore
+dell'analisi è davvero più basso. Misurata da un capo all'altro non è un
+miglioramento: **23,2 → 23,8 ms medi e 52,4 → 54,1 al peggio** attraverso un
+passaggio, e dentro un millisecondo di niente su un accelerando. La fase del
+decoder è già in ritardo su un tempo che si muove, quindi mediarla di meno
+insegue il ritardo più da vicino, non la band. Il numero sta in `VPAlign`
+(`tau linea, senza prove`) e la nota sta in `PhaseTrust.h`, così non viene
+riproposta dalla sola teoria.
+
+### E una tenuta che non c'entrava niente
+
+`alignBarFromVotes` tiene fermo il **conto** per 9,6 s dopo aver ruotato la
+battuta, così due voti in disaccordo non se la passano avanti e indietro dentro
+una frase. Quella tenuta chiudeva anche lo **sterzo di fase**, che con la
+rotazione di un indice non ha niente a che vedere. Da essere precisi:
+`observeOnsetPhase` sta fuori dal cancello e continuava a guidare l'anello a
+ogni battito, quindi quei 9,6 s costavano il bersaglio *mediato* e non la
+correzione — ma è il più quieto dei due, ed è tutto quello per cui la costante
+di `setGridPhase` esiste. Toglieva solo in MIXER: in IPAD il voto sulla battuta
+è vicino al caso e la battuta non viene mai ruotata da sola.
+
 ## Il buco senza batteria: cinque tentativi, nessuno spedito (25 agosto)
 
 Seguito della sezione sotto, che aveva lasciato la diagnosi e non la cura. La

@@ -3,6 +3,7 @@
 #include "AI/BeatHypothesis.h"
 #include "AI/NeuralBeatTracker.h"
 #include "AI/IBeatModel.h"
+#include "Tracking/PhaseTrust.h"
 #include "Tracking/TempoFollower.h"
 
 #include <cstdint>
@@ -74,6 +75,31 @@ public:
 
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
+    /** A kick strike, timed on the audio of a channel that carries only the
+        kick drum. `sampleOffset` is relative to the start of the block about to
+        be processed and may be negative; `strength` is 0..1.
+
+        Call before `process` for the block the onset was found in. What it buys
+        is precision, not a new reference: the absolute calibration of the clock
+        - the pipeline delay, the device round trip, the network's own response
+        offset - is measured on the neural path and is left exactly as it is.
+        This removes the +/-10 ms of frame quantisation on top of it, which is
+        the largest single term left in the phase once everything else is right.
+        See Tracking/KickOnsetDetector.h. */
+    void notifyKickOnset (int sampleOffset, float strength) noexcept;
+
+    /** How long the kick channel has been silent, and whether one is assigned
+        at all. A negative value means none is, and everything the kick path
+        does is then switched off. */
+    void setKickChannelState (bool assigned, float quietSeconds) noexcept;
+
+    /** Whether the kick onsets are landing where the clock says beats are, and
+        are therefore worth believing. False when no channel is assigned, and
+        also when one is assigned but is not a kick - somebody routing the app
+        the full mix by mistake is the case this catches, and it costs nothing
+        to catch it. */
+    bool kickIsTrusted() const noexcept { return kickTrusted; }
+
     /** The analysis input has changed character - an empty room becoming a band
         playing. Counted rather than flagged; see
         BeatDecoder::notifyInputRestart.
@@ -138,6 +164,25 @@ public:
             picked it. Reported rather than assumed, so the screen can say what
             the part is being played at rather than what was asked for. */
         int           tempoOctave = 0;
+        /** How well the analysis is fitting compared with how well it has been
+            fitting on this song, 1 down to 0.3, and the constant the clock is
+            therefore averaging its phase over. Diagnostics: together they say
+            whether a passage the listener can hear going soft is one the clock
+            has noticed. */
+        float         evidenceTrust = 1.0f;
+        float         gridTauSec = 0.0f;
+        /** The kick channel: strikes counted since the tracker was reset,
+            whether they are being believed, and whether the channel says the
+            drummer has stopped. */
+        int           kickOnsets = 0;
+        bool          kickTrusted = false;
+        bool          drumsOut = false;
+        /** How many times the automatic alignment has rotated the bar since the
+            tracker was reset. Diagnostic, and the only way from outside to know
+            that a rotation has just happened - which is the moment the count is
+            held still, and therefore the moment worth asking what else that
+            hold is stopping. */
+        int           barRotations = 0;
     };
 
     void start() noexcept;
@@ -163,8 +208,27 @@ private:
     void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
+    void updateKickTrust (float phaseErr) noexcept;
+
     NeuralBeatTracker neural;
     TempoFollower     follower;
+    EvidenceTrust     evidence;
+
+    /** The kick channel's state, as the audio thread last reported it. */
+    bool  kickAssigned = false;
+    float kickQuietSec = 0.0f;
+    int   kickOnsetCount = 0;
+    bool  kickTrusted = false;
+    /** A running share of kick strikes that landed near a beat of the clock.
+        A channel that is not a kick fails this immediately and permanently;
+        one that is passes it inside a bar. */
+    float kickOnGrid = 0.0f;
+    float kickSeen = 0.0f;
+    /** Pending onsets for the block about to be processed. */
+    static constexpr int kMaxPendingKicks = 8;
+    int   pendingKicks = 0;
+    int   pendingKickOffset[kMaxPendingKicks] {};
+    float pendingKickStrength[kMaxPendingKicks] {};
 
     TrackingState currentState = TrackingState::idle;
     Subdivision userSubdivision = Subdivision::autoDetect;
@@ -226,6 +290,7 @@ private:
         quantities - a network that is loud about every beat has said nothing. */
     float downbeatVotes[4] {};
     float voteBeats = 0.0f;
+    int   barRotations = 0;
     int   barDeclaredSamples = 0;
 
     int quantizeWaitSamples = 0;
