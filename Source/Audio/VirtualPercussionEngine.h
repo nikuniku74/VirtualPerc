@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Types.h"
+#include "Percussion/BandDynamics.h"
 #include "Percussion/PercussionEngine.h"
 #include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
@@ -195,6 +196,13 @@ private:
         conditioned bus would be listening for something already subtracted. */
     std::vector<float> rawIn;
     std::atomic<float> measuredLatencyMs { 0.0f };
+    /** How much the band is giving, and whether the part has stood down. The
+        stand-down is taken at a bar line, never in the middle of a figure. */
+    BandDynamics       bandDynamics;
+    bool               standingDown = false;
+    bool               wantStandDown = false;
+    std::atomic<float> lastDynamics { 1.0f };
+    std::atomic<bool>  lastStandingDown { false };
     std::atomic<float> lastEvidenceTrust { 1.0f };
     std::atomic<float> lastGridTauSec { 0.0f };
     std::atomic<int>   lastBacklog { 0 };

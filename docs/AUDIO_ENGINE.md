@@ -39,6 +39,31 @@ No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enf
 
 The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
 
+### Quanto, non solo quando
+
+Everything else in this engine answers **when**: the tracker finds the pulse, the clock places it, the tables say which stroke falls on which sixteenth. Nothing answered **how much**, and that is most of the difference between a part that is correct and a player who is listening.
+
+`BandDynamics` is the missing input, and it is deliberately the simplest one that carries most of the answer: **level**. It is read after the leak subtraction and before the analysis make-up gain — our own part has been removed, so the dynamics cannot follow themselves, and the make-up, which exists to hold the network's operating point and therefore flattens exactly this, has not been applied yet. And it is measured against **the loudest this song has been**, not against an absolute line: a quiet band and a loud one differ by more than a verse and a chorus do. Same lesson as the fit residual in `docs/STATUS.md`, learned once and applied here without having to learn it again.
+
+What the part does about it is the half that matters. Below full it plays **quieter**, which any fader could do; and it plays **less**, which none could. The figure thins from the bottom — the heel and toe that fill the gaps go first, then the ghosts, then the answering tones — until what is left is the skeleton: the slap, the low tone, the pair that closes the bar. Measured on the marcha: 8 conga strokes a bar at full, 4 at half, 4 at the floor, with the loudest surviving stroke still at 0.29 (a ghost is written at 0.16, so what is left is being played, not brushed). The step from 8 to 4 is not a fault and smoothing it would be one: the figures are written bimodally on purpose, and thinning finds the seam, which is the line a player drops to.
+
+And in the passage that really does not want it, it **stops** — at a bar line, never mid-figure, and it takes two seconds of quiet to leave and half a second of band to come back. The button reads IN ASCOLTO while it is standing down, because "the part went quiet" is the kind of thing a player wants confirmed rather than wondered about.
+
+End to end, over a song whose verse sits 14 dB under its chorus:
+
+| | verse against chorus |
+|---|---|
+| part with DINAMICA off | −0.1 dB |
+| part with DINAMICA on | **−3.5 dB** |
+
+Three decibels is the *smaller* half of it: half the strokes have gone as well, and an RMS taken over the section counts only the level. A player does not come down by 14 dB when the band does — they come down a few and play less, which is what this is.
+
+`VPRender --arc` sweeps the dynamics over a take so it can be heard in one file. Measured on that render: −32.7 → −24.4 → −33.6 dBFS with the stroke count going 7 → 13 → 6.
+
+**On by default, and switchable.** A fixed part is what some jobs want, and the DINAMICA button is next to the styles rather than in SETUP because it is a musical choice and belongs where it can be reached mid-song.
+
+**Density is the obvious next input and is not in yet.** `StyleDetector` already folds the bar into occupied sixteenths, which would separate "quiet but full" from "sparse and exposed". Level alone was shipped first because it is measurable, robust at any gain, and does not need the bar to have been found.
+
 ### At most two strokes to a quarter
 
 No written figure puts more than **two conga strokes in a quarter**, and nothing audible does either with the ghost generator wide open. The fill bar is exempt, because that is what a fill is.

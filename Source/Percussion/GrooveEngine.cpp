@@ -664,9 +664,41 @@ void GrooveEngine::setIntensity (float amount) noexcept
     intensity = clamp01 (amount);
 }
 
+void GrooveEngine::setDynamics (float amount) noexcept
+{
+    dynamics = clamp01 (amount);
+}
+
 void GrooveEngine::setShakerSubdivision (Subdivision s) noexcept
 {
     shakerGrid = s == Subdivision::autoDetect ? Subdivision::eighth : s;
+}
+
+float GrooveEngine::dynamicGain() const noexcept
+{
+    // Never all the way to nothing: a stroke that is played at all is played
+    // hard enough to be a stroke. Below this the engine stops instead - see
+    // BandDynamics::wantsSilence - which is what a player does.
+    //
+    // Ten decibels of range, which is about what a player gives between a
+    // chorus and a verse. It is also only half of what actually happens: at the
+    // bottom of that range the figure has lost the strokes that fill its gaps,
+    // so the part is quieter *and* sparser, and an RMS of the output
+    // understates it by counting only the first.
+    return 0.32f + 0.68f * dynamics;
+}
+
+bool GrooveEngine::v_survives (float writtenVelocity) const noexcept
+{
+    // Which strokes are still in the part at this dynamic.
+    //
+    // The bar rises as the band comes down, so the figure thins from the
+    // bottom: at full dynamics nothing is dropped; half way down the heel and
+    // toe that fill the gaps have gone; near the floor what is left is the
+    // slap, the low tone and the pair that closes the bar - which is the
+    // skeleton a percussionist plays under a voice.
+    const float bar = (1.0f - dynamics) * kThinCeiling;
+    return writtenVelocity >= bar;
 }
 
 float GrooveEngine::humanVelocity (float base) noexcept
@@ -730,7 +762,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         else if (shakerGrid == Subdivision::eighth)
             allowed = (step % 2) == 0;
 
-        const float v = allowed ? spec.shaker[step] : 0.0f;
+        const float v = allowed && v_survives (spec.shaker[step]) ? spec.shaker[step] : 0.0f;
         if (v > 0.0f)
         {
             // Down on the pulse, up on the return. They are different strokes
@@ -738,7 +770,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
             // same one is what makes a shaker part sound like a click track
             // with noise on it.
             out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
-            out[n].velocity = humanVelocity (v * accent);
+            out[n].velocity = humanVelocity (v * accent * dynamicGain());
             out[n].delayBeats = humanDelay (step);
             ++n;
         }
@@ -794,8 +826,11 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         {
             if (bar[i].step != step)
                 continue;
+            // The quiet half of the figure goes first as the band comes down.
+            if (! v_survives (bar[i].velocity))
+                continue;
             out[n].stroke = bar[i].stroke;
-            out[n].velocity = humanVelocity (bar[i].velocity * accent);
+            out[n].velocity = humanVelocity (bar[i].velocity * accent * dynamicGain());
             out[n].delayBeats = humanDelay (step);
             ++n;
         }
@@ -808,11 +843,14 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         // none, a marcha is built out of them.
         if (n < maxOut && ! fill && (step % 2) == 1)
         {
-            const float chance = spec.ghostChance * intensity * (0.4f + 0.6f * humanize);
+            // Ghosts are the first thing to go: they are the part of the
+            // playing that exists only because there was room for it.
+            const float chance = spec.ghostChance * intensity * (0.4f + 0.6f * humanize)
+                                 * dynamics * dynamics;
             if (rng.nextFloat() < chance)
             {
                 out[n].stroke = rng.nextFloat() < 0.5f ? Stroke::toe : Stroke::heel;
-                out[n].velocity = humanVelocity (0.16f * accent);
+                out[n].velocity = humanVelocity (0.16f * accent * dynamicGain());
                 out[n].delayBeats = humanDelay (step);
                 ++n;
             }

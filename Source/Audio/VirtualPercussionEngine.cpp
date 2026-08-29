@@ -99,6 +99,9 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     kickDetector.prepare (sampleRate);
     rawIn.assign (static_cast<size_t> (maxBlock), 0.0f);
     latencyProbe.prepare (sampleRate);
+    bandDynamics.prepare (sampleRate);
+    standingDown = false;
+    wantStandDown = false;
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -975,6 +978,12 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
     lastLeakRemain.store (postPeak, std::memory_order_relaxed);
+    // How much the band is giving. Taken here on purpose: our own part has
+    // just been subtracted, so the dynamics cannot follow themselves, and the
+    // make-up gain below - which exists to hold the network's operating point
+    // and therefore flattens exactly this - has not been applied yet.
+    bandDynamics.observe (postPeak, numSamples);
+
     const bool levelJumped = updateAnalysisEpoch (numSamples, postPeak);
     applyAnalysisMakeup (numSamples, postPeak, levelJumped);
     float analysisPeak = 0.0f;
@@ -1020,6 +1029,27 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                    : static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed));
     percussion.setGrooveStyle (chosen);
 
+    // What the band is giving, and whether the passage wants anything at all.
+    //
+    // The stand-down is deferred to a bar line. A player who stops in the
+    // middle of a figure has not made a musical decision, they have dropped
+    // something - and the same going the other way: coming back in on the "a"
+    // of three is not an entrance. `wrappedBar` is the clock saying the count
+    // has just come round, which is the only moment either is worth doing.
+    const bool followDynamics = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    percussion.setDynamics (followDynamics ? bandDynamics.level() : 1.0f);
+    if (! followDynamics)
+    {
+        standingDown = false;
+        wantStandDown = false;
+    }
+    else
+    {
+        wantStandDown = bandDynamics.wantsSilence();
+        if (tr.clock.wrappedBar || ! tr.percussionShouldPlay)
+            standingDown = wantStandDown;
+    }
+
     if (stretcher.hasLoop())
     {
         stretch.setLiveClock (tr.bpm, tr.beatPhase, tr.confidence);
@@ -1033,7 +1063,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     }
     else
     {
-        percussion.render (outL.data(), outR.data(), numSamples, tr.clock, tr.percussionShouldPlay);
+        percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
+                           tr.percussionShouldPlay && ! standingDown);
     }
 
     const bool monitorClick = clickEnabled.load (std::memory_order_relaxed);
@@ -1079,6 +1110,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
     lastKickTrusted.store (tr.kickTrusted, std::memory_order_relaxed);
     lastDrumsOut.store (tr.drumsOut, std::memory_order_relaxed);
+    lastDynamics.store (followDynamics ? bandDynamics.level() : 1.0f,
+                        std::memory_order_relaxed);
+    lastStandingDown.store (standingDown, std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
@@ -1179,6 +1213,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.kickOnsets = lastKickOnsets.load (std::memory_order_relaxed);
     s.kickTrusted = lastKickTrusted.load (std::memory_order_relaxed);
     s.drumsOut = lastDrumsOut.load (std::memory_order_relaxed);
+    s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
+    s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    s.standingDown = lastStandingDown.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));

@@ -88,6 +88,19 @@ public:
         fill on its way out. */
     void setIntensity (float amount) noexcept;
 
+    /** How much the band is giving, 0..1 - see Percussion/BandDynamics.h. One
+        is the part as written and is what everything that does not set this
+        gets.
+
+        Below one it does two things, and the second is the one that matters. It
+        plays quieter, which any volume control could do; and it plays **less**,
+        which none could. A percussionist under an exposed vocal does not play
+        the same figure softer - the heel-toe fill-in goes first, then the
+        ghosts, then the answering tones, until what is left is the skeleton of
+        the figure: the slap, the low tone, the push into the next bar. That is
+        what makes six strokes read as a decision rather than as a fader. */
+    void setDynamics (float amount) noexcept;
+
     void setShakerEnabled (bool on) noexcept { shakerOn = on; }
     void setCongasEnabled (bool on) noexcept { congasOn = on; }
 
@@ -103,12 +116,23 @@ public:
 private:
     float humanVelocity (float base) noexcept;
     float humanDelay (int step) noexcept;
+    /** Level applied to every stroke that survives, 0.4 at the floor to 1. */
+    float dynamicGain() const noexcept;
+    /** Whether a stroke written at this velocity is still in the part. */
+    bool  v_survives (float writtenVelocity) const noexcept;
+
+    /** The loudest written stroke that can be thinned away at the floor. Above
+        this nothing is ever dropped, so the skeleton of every figure survives
+        at any dynamic: the slaps sit at 0.88-0.96, the low tones and the
+        closing opens at 0.74-0.90, and the heel/toe fill-in at 0.20-0.36. */
+    static constexpr float kThinCeiling = 0.72f;
 
     DeterministicRng rng { 0x9E3779B9u };
     GrooveStyle style = GrooveStyle::marcha;
     float humanize = 0.35f;
     float swing = 0.0f;
     float intensity = 0.5f;
+    float dynamics = 1.0f;
     bool  shakerOn = true;
     bool  congasOn = true;
     Subdivision shakerGrid = Subdivision::eighth;
