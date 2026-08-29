@@ -46,6 +46,22 @@ public:
     void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
     /** How much the band is giving, 0..1. See Percussion/BandDynamics.h. */
     void setDynamics (float amount) noexcept { groove.setDynamics (amount); }
+
+    /** The song has started a new section, so start the phrase again.
+
+        The eight-bar sentence - state it, answer it, state it, go somewhere,
+        and a fill on the way out - is counted from wherever the part happened
+        to come in, which is to say from nowhere. A band's fills land on the bar
+        before a section changes; the app's landed every eighth bar counted from
+        an arbitrary start, so on average they missed by four bars and sounded
+        like a fill in the middle of a verse.
+
+        Called at a bar line only, by whatever noticed the section - see
+        VirtualPercussionEngine. Sets the count so that the *next* bar is the
+        first of the sentence. */
+    void alignPhrase() noexcept { barCounter = -1; lastBarBeat = -1; }
+    /** Where the sentence has got to, for the probes and the debug panel. */
+    int  phraseBar() const noexcept { return barCounter; }
     void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
     void silence() noexcept;

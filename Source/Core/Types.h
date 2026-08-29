@@ -232,6 +232,10 @@ struct EngineSnapshot
     float bandDynamics         = 1.0f;
     bool  dynamicsFollow       = true;
     bool  standingDown         = false;
+    /** Section boundaries the band's dynamics have marked, and where the
+        eight-bar sentence has got to since the last one. */
+    int   sectionChanges       = 0;
+    int   phraseBar            = 0;
     /** True when the kick channel says the drummer has stopped while the rest
         of the band is still playing. Not an inference: the channel is silent. */
     bool  drumsOut             = false;

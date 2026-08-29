@@ -59,6 +59,9 @@ public:
         loudFor = 0.0f;
         silent = false;
         heardAnything = false;
+        lastBarLevel = 0.0f;
+        haveBarLevel = false;
+        barsSinceSection = 1000;
     }
 
     /** One block. `level` is the band's own peak with the app's part already
@@ -140,6 +143,36 @@ public:
     /** The reference the level is measured against, for the debug panel. */
     float reference() const noexcept { return loudest; }
 
+    /** Whether the band has just changed section.
+
+        A section boundary is the one piece of musical form that can be read off
+        a level meter: a verse does not become a chorus quietly. Sampled once a
+        bar by the caller - a step measured inside a bar is a fill or a stab -
+        and reported once, so the caller can start the phrase again on it.
+
+        `barLevel` is `level()` taken at the last bar line. Held for four bars
+        afterwards: a band that lifts over two bars is one section change, not
+        two, and an eight-bar sentence restarted twice inside itself is worse
+        than one never restarted at all. */
+    bool sectionChangedAtBar() noexcept
+    {
+        const float now = level();
+        if (! haveBarLevel)
+        {
+            haveBarLevel = true;
+            lastBarLevel = now;
+            return false;
+        }
+        const float step = std::fabs (now - lastBarLevel);
+        lastBarLevel = now;
+        if (barsSinceSection < 1000)
+            ++barsSinceSection;
+        if (step < kSectionStep || barsSinceSection < kBarsBetweenSections)
+            return false;
+        barsSinceSection = 0;
+        return true;
+    }
+
 private:
     static constexpr float kAttackSec = 0.08f;
     static constexpr float kReleaseSec = 0.50f;
@@ -165,6 +198,14 @@ private:
     /** Under this the input is not a quiet passage, it is nothing at all, and
         nothing at all must not read as a decision to stop playing. */
     static constexpr float kHeardAtAll = 0.010f;
+    /** How much the band's level has to move across a bar line to be a section
+        rather than a phrase. A fifth of the range is about four decibels, which
+        is more than a band does inside a section and less than one does going
+        into a chorus. */
+    static constexpr float kSectionStep = 0.20f;
+    /** And how far apart two of them have to be. Four bars: a band that lifts
+        over two of them is one section change, not two. */
+    static constexpr int kBarsBetweenSections = 4;
 
     double sampleRate = 48000.0;
     float env = 0.0f;
@@ -174,6 +215,9 @@ private:
     float loudFor = 0.0f;
     bool  silent = false;
     bool  heardAnything = false;
+    float lastBarLevel = 0.0f;
+    bool  haveBarLevel = false;
+    int   barsSinceSection = 1000;
 };
 
 } // namespace vp

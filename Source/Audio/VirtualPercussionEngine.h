@@ -210,6 +210,10 @@ private:
     bool               wantStandDown = false;
     std::atomic<float> lastDynamics { 1.0f };
     std::atomic<bool>  lastStandingDown { false };
+    /** Section boundaries found, and where the eight-bar sentence has got to. */
+    int                sectionCount = 0;
+    std::atomic<int>   lastSections { 0 };
+    std::atomic<int>   lastPhraseBar { 0 };
     std::atomic<float> lastEvidenceTrust { 1.0f };
     std::atomic<float> lastGridTauSec { 0.0f };
     std::atomic<int>   lastBacklog { 0 };

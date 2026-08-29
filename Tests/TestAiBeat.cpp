@@ -3832,6 +3832,72 @@ void vpRunAiBeatTests (int& passed, int& failed)
             return l > 1.0e-9 ? 20.0 * std::log10 (std::max (1.0e-9, q) / l) : 0.0;
         };
 
+        // Where the fill lands.
+        //
+        // The eight-bar sentence - state it, answer it, state it, go somewhere,
+        // and a fill on the way out - was counted from wherever the part
+        // happened to come in, which is to say from nowhere. The band's fills
+        // land on the bar before the section changes. This measures how often
+        // the app's fill bar is one of those, which for an unaligned phrase is
+        // one time in eight by construction.
+        // Started three bars into the song, so the sentence the part counts is
+        // three bars out of step with the one the band is playing. Started
+        // together, a phrase that is never re-aligned scores exactly the same
+        // as one that is, and this would pass on code that does nothing.
+        int fillStart = 0;
+        while (fillStart < n && truePhase[static_cast<size_t> (fillStart)] < 12.0)
+            ++fillStart;
+
+        auto fillAlignment = [&] (bool follow)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 1);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().dynamicsFollow.store (follow);
+            eng.settings().reverbAmount.store (0.0f);
+            eng.start();
+            eng.tapAt (0.0); eng.tapAt (0.5); eng.tapAt (1.0); eng.tapAt (1.5);
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            int agreed = 0, seenBars = 0, lastSongBar = -1, sections = 0;
+            for (int pos = 0; fillStart + pos + block <= n; pos += block)
+            {
+                const float* ins[1] = { mix.data() + fillStart + pos };
+                eng.process (ins, 1, outs, 2, block);
+                if (static_cast<double> (pos) / sr < 14.0)
+                    continue;
+                const int songBar = static_cast<int> (
+                    truePhase[static_cast<size_t> (fillStart + pos)] / 4.0);
+                if (songBar == lastSongBar)
+                    continue;
+                lastSongBar = songBar;
+                const auto s = eng.snapshot();
+                sections = s.sectionChanges;
+                // The band's own fill is the bar before its section turns over.
+                const bool bandFills = (songBar % 8) == 7;
+                const bool appFills = (((s.phraseBar % 8) + 8) % 8) == 7;
+                ++seenBars;
+                if (bandFills == appFills)
+                    ++agreed;
+            }
+            struct R { double agree; int sections; };
+            return R { seenBars > 0 ? static_cast<double> (agreed) / seenBars : 0.0,
+                       sections };
+        };
+
+        const auto loose = fillAlignment (false);
+        const auto aligned = fillAlignment (true);
+        std::printf ("forma       il fill cade dove cade quello della band: "
+                     "senza sezioni %.0f%%   con %.0f%%  (%d sezioni trovate)\n",
+                     loose.agree * 100.0, aligned.agree * 100.0, aligned.sections);
+        expect (aligned.sections >= 1,
+                "the band changing section is something the app can now notice");
+        expect (aligned.agree > loose.agree,
+                "and starting the sentence there puts the fill nearer the band's");
+
         const double fixedPart = drive (false);
         const double listening = drive (true);
         std::printf ("dinamica    parte in strofa contro ritornello: "

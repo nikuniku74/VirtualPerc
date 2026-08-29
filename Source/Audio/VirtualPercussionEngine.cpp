@@ -1061,6 +1061,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         wantStandDown = bandDynamics.wantsSilence();
         if (tr.clock.wrappedBar || ! tr.percussionShouldPlay)
             standingDown = wantStandDown;
+
+        // And the form. A band's fills land on the bar before the section
+        // changes; the app's eight-bar sentence was counted from wherever the
+        // part happened to come in, so on average its fill missed the band's by
+        // four bars. Sampling the level once a bar is enough to find a section
+        // boundary - a verse does not become a chorus quietly - and starting
+        // the sentence there puts the fill where the band puts theirs.
+        if (tr.clock.wrappedBar && bandDynamics.sectionChangedAtBar())
+        {
+            percussion.alignPhrase();
+            ++sectionCount;
+        }
     }
 
     if (stretcher.hasLoop())
@@ -1129,6 +1141,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastDynamics.store (followDynamics ? bandDynamics.level() : 1.0f,
                         std::memory_order_relaxed);
     lastStandingDown.store (standingDown, std::memory_order_relaxed);
+    lastSections.store (sectionCount, std::memory_order_relaxed);
+    lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
@@ -1235,6 +1249,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
     s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
     s.standingDown = lastStandingDown.load (std::memory_order_relaxed);
+    s.sectionChanges = lastSections.load (std::memory_order_relaxed);
+    s.phraseBar = lastPhraseBar.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));
