@@ -90,9 +90,13 @@ One case it cannot tell apart: a track that was already playing when the app was
 
 **SPOSTA L'1** moves the bar on by one quarter, and the app then leaves it alone. Which of the four quarters is the one is the part of this the analysis is worst at — through the iPad's own speaker it is no better than a coin, measured — so once you have said where the one is, nothing moves it again: not the analysis, not a section change, not a new song. The button lights to say the count is yours. A **TAP** that declares the one lights it too. Four presses take the one all the way round the bar and back to where it started; the fifth hands the count back to the app and the light goes out.
 
-**SETUP** (top right) is everything you set once and never touch mid-song: the **clock** (AUTO, or 44.1 / 48 / 88.2 / 96 kHz), the buffer, MIXER vs IPAD, the theme, **CLICK TEST** and the debug panel — plus a read-out of the rate, buffer, latency and route the hardware actually gave.
+**SETUP** (top right) is everything you set once and never touch mid-song: the **clock** (AUTO, or 44.1 / 48 / 88.2 / 96 kHz), the buffer, MIXER vs IPAD, **CASSA**, **LATENZA**, the theme, **CLICK TEST** and the debug panel — plus a read-out of the rate, buffer, latency and route the hardware actually gave.
 
 Leave the clock on **AUTO** with a USB interface. AUTO means the interface holds the clock and the app opens at whatever it is already running at, so plugging into an X-Air at 48 kHz costs nothing: no click, and a track already playing through the same route keeps playing.
+
+**CASSA** is the one worth setting up if you have a desk. Tell it which input carries the kick drum on its own and the app gets the most useful signal a stage can give it: a channel with one instrument on it, which dates the beat to the sample instead of to a 20 ms analysis frame, and which is silent for exactly as long as the drummer is not playing. Measured, that takes the clock's phase error from about 17 ms rms to about 13. The button lights only once the strikes are actually landing on the beat, so naming the wrong input tells you by not lighting.
+
+**LATENZA** plays a short sweep and listens for it coming back, which measures what *this* rig really does rather than what the operating system believes about the interface. A second, it works with the band playing over it, and if the send is not routed back it says NIENTE RITORNO rather than inventing a number. Do it once at soundcheck; it is remembered.
 
 **CLICK TEST** (debug) injects an internal 120 BPM kit so you can verify the engine without drums.
 
