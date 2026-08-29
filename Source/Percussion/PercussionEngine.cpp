@@ -23,9 +23,19 @@ namespace
     //
     // A perfect fourth (2^(5/12)) was the first correction and it was not
     // enough - the part was still the bottom of the mix rather than sitting on
-    // top of it. A minor seventh puts the tumba's fundamental at 146 Hz and the
-    // open tone at 317, which is a conga and a quinto rather than two toms, and
-    // is where a percussionist tunes a set that has to cut through a live band.
+    // top of it. A minor seventh is five semitones above that. Measured on the
+    // bundled takes, whose strongest partial is what a listener hears as the
+    // pitch of the drum:
+    //
+    //     tumba  138 Hz recorded ->  246 Hz   (184 at the old fourth)
+    //     open   163 Hz recorded ->  290 Hz   (218)
+    //     slap   216 Hz recorded ->  385 Hz   (288)
+    //
+    // which is a conga and a quinto rather than two toms, and is where a
+    // percussionist tunes a set that has to cut through a live band. The
+    // nominal figures in `specFor` below are a different thing and are not
+    // those numbers: they describe the synthesis fallback, which only sounds
+    // when Assets/Percussion is missing.
     //
     // It is one number on purpose: it drives the synthesised bank and the
     // playback rate of the recordings together, so the two halves of the bank

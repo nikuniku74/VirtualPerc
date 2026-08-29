@@ -254,13 +254,32 @@ Up to 16 overlapping grains. Sample data lives in precomputed buffers generated 
 
 Three things here are what "the shaker and the congas break up" actually was:
 
+### Listening to it
+
+Some of this is a musical decision, and the only review a musical decision can have is somebody hearing it. `VPRender` writes a few bars of any style to a WAV, driving the real `PercussionEngine` from a real `TempoFollower` at a fixed tempo — no analysis, no microphone, no network:
+
+```bash
+cmake --build build --target VPRender
+./build/VPRender_artefacts/Release/VPRender --style dance --bpm 124 --bars 8 --click --out dance.wav
+```
+
+`--click` lays a quiet woodblock on each quarter, loud on the one, so "the congas never play the first quarter's down-stroke" can be checked by ear rather than by reading the tables. `--no-shaker` / `--no-congas` isolate one instrument; `--swing`, `--humanize`, `--intensity` and `--mix` are the same controls the app has.
+
 ### The sounds are recordings
 
 `Assets/Percussion/*.wav` are conga, tumba, quinto and shaker recordings from the **Versilian Community Sample Library (CC0)** — see `Assets/Percussion/ATTRIBUTION.md`.
 
 They are embedded by CMake the same way `beatnet.onnx` is. If the folder is empty the build says so and the whole percussion bank falls back to synthesis, so the tree always builds and always plays; `recordedStrokeCount()` is asserted in the tests so a missing or unreadable asset fails loudly instead of degrading quietly.
 
-They are tuned up by a **minor seventh** (`kDrumTune`, 2^(10/12)) — one number, driving the synthesised bank and the playback rate of the recordings together so the two halves cannot end up tuned against each other. The VCSL takes are the large drums of the library and they are recorded slack: at concert pitch the part reads as a floor tom under a band, and the tumbao's low tone disappears into the bass guitar instead of answering it. A perfect fourth was the first correction and was not enough. At a minor seventh the tumba's fundamental is 146 Hz and the open tone 317 — a conga and a quinto, not two toms.
+They are tuned up by a **minor seventh** (`kDrumTune`, 2^(10/12)) — one number, driving the synthesised bank and the playback rate of the recordings together so the two halves cannot end up tuned against each other. The VCSL takes are the large drums of the library and they are recorded slack: at concert pitch the part reads as a floor tom under a band, and the tumbao's low tone disappears into the bass guitar instead of answering it. A perfect fourth was the first correction and was not enough; a minor seventh is five semitones above that. Measured on the bundled takes, by the strongest partial — which is what a listener hears as the pitch of the drum:
+
+| | recorded | played, old fourth | played, now |
+|---|---|---|---|
+| tumba | 138 Hz | 184 Hz | **246 Hz** |
+| open tone | 163 Hz | 218 Hz | **290 Hz** |
+| slap | 216 Hz | 288 Hz | **385 Hz** |
+
+A conga and a quinto, not two toms. The nominal frequencies in `specFor` are a different thing and are not these numbers: they describe the **synthesis fallback**, which only sounds when `Assets/Percussion` is missing.
 
 `scripts/prepare_vcsl_samples.py` trims pre-roll, high-passes hall rumble, truncates before any second hit, normalises and fades. Loud and medium takes are separate recordings; the soft layer is still derived by taking the top off. heel/toe/muff are the open tone damped. Round-robin is a second take on every articulation, not only the low drum.
 
