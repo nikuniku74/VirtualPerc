@@ -1030,12 +1030,19 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // Fold the analysis signal onto the bar to see which part the music is
     // asking for. Only while the clock is actually on the song: folding audio
     // onto a bar the tracker has not found yet just smears every bin.
+    // Folded whenever anything is going to read it: the automatic style
+    // chooser wants it, and so do the dynamics - how *full* the bar is separates
+    // a quiet band from an exposed voice, and level alone cannot. It is three
+    // one-pole filters and an accumulate per sample either way.
     const bool autoStyle = cfg.grooveAuto.load (std::memory_order_relaxed);
-    if (autoStyle)
+    const bool wantDynamics = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    if (autoStyle || wantDynamics)
     {
         const bool clockStable = tr.state == TrackingState::following
                                  && tr.clock.tempoBpm > 40.0f;
         styleDetector.process (mono.data(), numSamples, tr.barPhase, clockStable);
+        bandDynamics.setDensity (styleDetector.features().occupancy,
+                                 styleDetector.barsObserved() > 4.0f);
     }
     const GrooveStyle chosen = autoStyle
                                    ? styleDetector.style()
@@ -1049,7 +1056,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // something - and the same going the other way: coming back in on the "a"
     // of three is not an entrance. `wrappedBar` is the clock saying the count
     // has just come round, which is the only moment either is worth doing.
-    const bool followDynamics = cfg.dynamicsFollow.load (std::memory_order_relaxed);
+    const bool followDynamics = wantDynamics;
     percussion.setDynamics (followDynamics ? bandDynamics.level() : 1.0f);
     if (! followDynamics)
     {

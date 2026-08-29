@@ -3699,6 +3699,45 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (backIn,
                     "and they come back when the band does");
 
+            // Density, the second input. Level alone cannot tell a quiet full
+            // band from an exposed voice, and those two want opposite things: a
+            // band turned down wants the part turned down, a voice on its own
+            // wants most of the part gone. The two reasons are combined by
+            // taking the smaller, so a bar that is loud and nearly empty is
+            // still played sparsely.
+            {
+                vp::BandDynamics dense, sparse;
+                dense.prepare (sr);
+                sparse.prepare (sr);
+                for (int i = 0; i < static_cast<int> (12.0 * sr) / block; ++i)
+                {
+                    dense.observe (0.30f, block);
+                    sparse.observe (0.30f, block);
+                    dense.setDensity (13.0f, true);    // a band going
+                    sparse.setDensity (3.0f, true);    // a voice and a chord
+                }
+                std::printf ("dinamica    stessa forza, battuta piena=%.2f  "
+                             "battuta vuota=%.2f\n",
+                             static_cast<double> (dense.level()),
+                             static_cast<double> (sparse.level()));
+                expect (dense.level() > 0.95f,
+                        "a bar that is full is played as written, however loud it is");
+                expect (sparse.level() < 0.25f,
+                        "and one that is nearly empty is not, at exactly the same level");
+
+                // And it has no vote until the fold has seen enough bars to be
+                // describing the music rather than the clock finding the bar.
+                vp::BandDynamics unsettled;
+                unsettled.prepare (sr);
+                for (int i = 0; i < 400; ++i)
+                {
+                    unsettled.observe (0.30f, block);
+                    unsettled.setDensity (1.0f, false);
+                }
+                expect (unsettled.level() > 0.95f,
+                        "density that has not settled does not get a vote");
+            }
+
             // Nothing at all is not a musical decision. An engine that has been
             // handed silence has not heard a quiet passage, it has heard
             // nothing, and it must behave exactly as it did before.
