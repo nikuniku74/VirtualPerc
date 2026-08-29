@@ -95,6 +95,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     preparedInputs = std::max (1, numInputChannels);
 
     mono.assign (static_cast<size_t> (maxBlock), 0.0f);
+    kickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
+    kickDetector.prepare (sampleRate);
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -220,7 +222,42 @@ void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInpu
 {
     std::fill (mono.begin(), mono.begin() + numSamples, 0.0f);
     if (inputs == nullptr || numInputs <= 0)
+    {
+        tracker.setKickChannelState (false, 0.0f);
+        lastKickChannel.store (-1, std::memory_order_relaxed);
         return;
+    }
+
+    // The kick channel first, and off the *raw* input.
+    //
+    // Everything the analysis bus does below - the leak subtraction, the
+    // rumble high-pass, the make-up gain - exists to protect a microphone that
+    // is hearing the app's own output in a room. A desk send of the kick has
+    // neither problem, and putting a canceller and a gain rider in front of the
+    // one clean transient on the stage would be giving away exactly what makes
+    // it worth having.
+    {
+        const int kick = cfg.kickChannel.load (std::memory_order_relaxed);
+        const bool assigned = kick >= 0 && kick < numInputs && inputs[kick] != nullptr;
+        if (assigned)
+        {
+            KickOnsetDetector::Onset on[KickOnsetDetector::kMaxOnsets];
+            const int got = kickDetector.process (inputs[kick], numSamples, on,
+                                                  KickOnsetDetector::kMaxOnsets);
+            for (int i = 0; i < got; ++i)
+                tracker.notifyKickOnset (on[i].offset, on[i].strength);
+            lastKickLevel.store (kickDetector.level(), std::memory_order_relaxed);
+            lastKickQuiet.store (kickDetector.quietSeconds(), std::memory_order_relaxed);
+        }
+        else
+        {
+            kickDetector.reset();
+            lastKickLevel.store (0.0f, std::memory_order_relaxed);
+            lastKickQuiet.store (0.0f, std::memory_order_relaxed);
+        }
+        tracker.setKickChannelState (assigned, kickDetector.quietSeconds());
+        lastKickChannel.store (assigned ? kick : -1, std::memory_order_relaxed);
+    }
 
     const int assigned = cfg.analysisChannel.load (std::memory_order_relaxed);
     int used = 0;
@@ -1021,6 +1058,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     cfg.barLocked.store (tr.barLocked, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
     lastBarRotations.store (tr.barRotations, std::memory_order_relaxed);
+    lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
+    lastKickTrusted.store (tr.kickTrusted, std::memory_order_relaxed);
+    lastDrumsOut.store (tr.drumsOut, std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
@@ -1107,6 +1147,12 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
     s.barRotations = lastBarRotations.load (std::memory_order_relaxed);
+    s.kickChannel = lastKickChannel.load (std::memory_order_relaxed);
+    s.kickLevel = lastKickLevel.load (std::memory_order_relaxed);
+    s.kickQuietSec = lastKickQuiet.load (std::memory_order_relaxed);
+    s.kickOnsets = lastKickOnsets.load (std::memory_order_relaxed);
+    s.kickTrusted = lastKickTrusted.load (std::memory_order_relaxed);
+    s.drumsOut = lastDrumsOut.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));

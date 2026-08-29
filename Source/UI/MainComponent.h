@@ -231,6 +231,8 @@ private:
     juce::TextButton styleSamba { "SAMBA" }, styleFunk { "FUNK" };
     juce::TextButton styleReggae { "REGGAE" }, styleBossa { "BOSSA" };
     juce::TextButton styleTwoOne { "DUE-UNO" };
+    /** Which input the kick drum arrives on, or none. See applyKickChannel. */
+    juce::TextButton kickButton { "CASSA NO" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Label  reverbValue { {}, "30%" };

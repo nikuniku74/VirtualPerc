@@ -263,6 +263,29 @@ Up to 16 overlapping grains. Sample data lives in precomputed buffers generated 
 
 Three things here are what "the shaker and the congas break up" actually was:
 
+### The kick channel
+
+The single most useful thing a digital desk can hand the app, and the one input it has that carries **one instrument**. `SETUP → INGRESSO → CASSA` names the input the kick send arrives on; `NO` is the default and the whole path is switched off until an input is named.
+
+Three things follow from a channel with one drum on it, and they are three of the things the rest of the chain is worst at:
+
+- **Phase, to the sample.** The neural path reports beats on a 20 ms frame grid, so its times carry ±10 ms of quantisation before anything else goes wrong. Measured against material whose kick times are known exactly, `KickOnsetDetector` finds 32 strikes out of 32 with a mean error of **0.56 ms** and a worst of 0.62.
+- **The drummer stopping.** Not an inference any more: the channel is silent for exactly as long as the kit is out — measured, 8.3 s of silence through a four-bar breakdown against 0.00 s with the kit in. `EvidenceTrust` takes that directly instead of trying to read it off the fit, which is what two sections of `docs/STATUS.md` failed to do in time.
+- **The metrical level.** A kick pattern states the beat; an activation curve where the eighths are as tall as the beats does not.
+
+End to end, driving the whole engine over a drifting band with human scatter, against a network that is being handed the *true* beats — so this is what the channel adds on top of the best a network could do:
+
+| | phase rms | worst |
+|---|---|---|
+| mix alone | 17.0–19.4 ms | 27.7–51.4 ms |
+| mix + kick channel | **11.8–15.3 ms** | 27.4–49.4 ms |
+
+The rms improves every run, by 15–40 %. The **worst** excursion does not reliably improve and the test deliberately does not claim it does: it is dominated by single events — the re-lock coming out of a breakdown, a fill — and one event is not something a stiller phase loop prevents.
+
+It carries its own guard against being pointed at the wrong thing. Nothing stops somebody routing the app the full mix on the channel they called the kick, and a detector aimed at a full mix fires on everything. So the tracker keeps a decayed share of how many strikes landed near a beat of its own clock, and stops believing the channel when that share falls — a channel that is not a kick fails it immediately, one that is passes it inside a bar. The `CASSA` button only lights when the strikes are actually landing.
+
+The detector runs on the **raw** channel, before the leak subtraction, the rumble high-pass and the make-up gain. Those exist to protect a microphone hearing the app's own output in a room; a desk send of the kick has neither problem, and putting a canceller in front of the one clean transient on the stage would give away exactly what makes it worth having.
+
 ### Listening to it
 
 Some of this is a musical decision, and the only review a musical decision can have is somebody hearing it. `VPRender` writes a few bars of any style to a WAV, driving the real `PercussionEngine` from a real `TempoFollower` at a fixed tempo — no analysis, no microphone, no network:

@@ -84,6 +84,7 @@ public:
         baselineResidual = 0.0f;
         haveBaseline = false;
         current = 1.0f;
+        drumsOut = false;
     }
 
     /** One hypothesis' fit residual and coverage, and how much time has passed
@@ -133,9 +134,19 @@ public:
         it has the furthest to go. */
     void restart() noexcept { reset(); }
 
+    /** The kick channel says the drummer has stopped.
+
+        This is the same conclusion the residual above is groping for, arrived
+        at by looking instead of by inferring: a channel carrying one drum is
+        silent for exactly as long as that drum is not being played. When it is
+        available it is not evidence to be weighed against the fit, it is the
+        answer, so it takes the trust straight to the floor. */
+    void setDrumsOut (bool on) noexcept { drumsOut = on; }
+    bool drumsAreOut() const noexcept { return drumsOut; }
+
     /** 1 when the analysis is fitting as well as it has been, down to
         `kMinTrust` when it is fitting much worse. */
-    float trust() const noexcept { return current; }
+    float trust() const noexcept { return drumsOut ? kMinTrust : current; }
 
     /** What the song has been giving, for the debug panel and the probes. */
     float baseline() const noexcept { return haveBaseline ? baselineResidual : 0.0f; }
@@ -151,6 +162,7 @@ private:
     float baselineResidual = 0.0f;
     float current = 1.0f;
     bool  haveBaseline = false;
+    bool  drumsOut = false;
 };
 
 /** The constant `BeatTracker` hands to `TempoFollower::setGridPhase`. Kept here

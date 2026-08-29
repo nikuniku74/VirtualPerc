@@ -4,6 +4,7 @@
 #include "Percussion/PercussionEngine.h"
 #include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
+#include "Tracking/KickOnsetDetector.h"
 #include "Stretch/StretchFactor.h"
 #include "Stretch/TimeStretchEngine.h"
 
@@ -146,6 +147,18 @@ private:
     /** The bar rotations the automatic alignment has made, and how much the
         analysis is being believed. Diagnostics; see BeatTracker::Output. */
     std::atomic<int>   lastBarRotations { 0 };
+    /** The kick channel, when the listener has assigned one. The detector runs
+        on the raw channel before any of the analysis conditioning: the leak
+        canceller and the high-pass exist to protect a *microphone* from the
+        app's own output, and a desk send of the kick has neither problem. */
+    KickOnsetDetector  kickDetector;
+    std::vector<float> kickScratch;
+    std::atomic<int>   lastKickChannel { -1 };
+    std::atomic<float> lastKickLevel { 0.0f };
+    std::atomic<float> lastKickQuiet { 0.0f };
+    std::atomic<int>   lastKickOnsets { 0 };
+    std::atomic<bool>  lastKickTrusted { false };
+    std::atomic<bool>  lastDrumsOut { false };
     std::atomic<float> lastEvidenceTrust { 1.0f };
     std::atomic<float> lastGridTauSec { 0.0f };
     std::atomic<int>   lastBacklog { 0 };

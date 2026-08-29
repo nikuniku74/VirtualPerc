@@ -213,6 +213,18 @@ struct EngineSnapshot
     int   barRotations         = 0;
     float evidenceTrust        = 1.0f;
     float gridTauSec           = 0.0f;
+    /** The kick channel, when one is assigned: which channel, its envelope, how
+        long it has been silent, how many strikes have been counted, and whether
+        the tracker is currently believing them. Negative `kickChannel` means
+        none is assigned and the rest are meaningless. */
+    int   kickChannel          = -1;
+    float kickLevel            = 0.0f;
+    float kickQuietSec         = 0.0f;
+    int   kickOnsets           = 0;
+    bool  kickTrusted          = false;
+    /** True when the kick channel says the drummer has stopped while the rest
+        of the band is still playing. Not an inference: the channel is silent. */
+    bool  drumsOut             = false;
     /** Measured analysis-plus-output delay the clock runs ahead by, so that what
         is played lands on the pulse the listener hears. */
     float leadMs               = 0.0f;
@@ -308,6 +320,13 @@ struct EngineSettings
     std::atomic<float>    userBpm      { 120.0f };
     std::atomic<uint32_t> userBpmGen   { 0 };
     std::atomic<int>   analysisChannel { -1 }; // -1 = mix all
+    /** Which input channel carries the kick drum on its own, or -1 for none.
+        This is the single most useful thing a digital desk can hand the app
+        and the only input it has that is one instrument: it dates the beat to
+        the sample instead of to a 20 ms analysis frame, and it says when the
+        drummer has stopped instead of leaving that to be inferred from a fit.
+        See Tracking/KickOnsetDetector.h. */
+    std::atomic<int>   kickChannel     { -1 };
     std::atomic<int>   followSource    { static_cast<int> (FollowSource::kitMic) };
 };
 

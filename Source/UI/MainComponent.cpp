@@ -430,6 +430,27 @@ MainComponent::MainComponent()
         clickButton.setToggleState (click, juce::dontSendNotification);
     };
     themeButton.onClick = [this] { applyTheme (! darkMode, true); savePrefs(); };
+    // Which input the kick is on, cycled rather than typed: on a stage this is
+    // set once with the desk in front of you, and a spinner is one more thing
+    // to get wrong in the dark. NO is the default and costs nothing - the whole
+    // kick path is switched off until an input is named.
+    kickButton.onClick = [this]
+    {
+        const int shown = engine.settings().kickChannel.load() + 1;   // 0 = none
+        const int most = juce::jmax (2, inputChannels);
+        int next = shown + 1;
+        if (next < 2)
+            next = 2;                       // channel 1 is the mix; the kick is never there
+        if (next > most)
+            next = 0;
+        engine.settings().kickChannel.store (next - 1);
+        // Opening more inputs is what makes a channel past the second reachable
+        // at all, so the device has to be told.
+        applyAudioSetup (true);
+        savePrefs (true);
+        refreshChoiceButtons (engine.snapshot());
+    };
+
     sourceButton.onClick = [this]
     {
         const bool speaker = engine.settings().followSource.load()
@@ -569,6 +590,7 @@ MainComponent::MainComponent()
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
     setupPageBtn (sourceButton, ink());
+    setupPageBtn (kickButton, ink());
     setupPageBtn (procButton, ink());
     for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
                      &bufAuto, &buf64, &buf128, &buf256, &buf512 })
@@ -675,7 +697,7 @@ void MainComponent::refreshThemeColours()
     juce::TextButton* buttons[] = {
         &startButton, &stopButton, &followButton, &fixedButton,
         &bpmNudgeDown, &bpmNudgeUp, &shakerButton, &debugButton,
-        &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
+        &clickButton, &themeButton, &sourceButton, &kickButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
         &styleBossa, &styleTwoOne, &halveButton, &doubleButton, &barButton,
@@ -897,8 +919,14 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
     // useDefaultInputChannels and reopens the device for nothing.
     if (claimInputChannels)
     {
+        // Two is what the app has always asked for and is all a microphone or a
+        // stereo line feed needs. A kick send lives on a channel of its own, so
+        // when the listener names one the device has to be opened wide enough
+        // to reach it - asking for channels a desk does not have costs nothing,
+        // JUCE gives back what exists.
+        const int wantKick = engine.settings().kickChannel.load() + 1;
         setup.inputChannels.clear();
-        setup.inputChannels.setRange (0, 2, true);
+        setup.inputChannels.setRange (0, juce::jmax (2, wantKick), true);
         setup.useDefaultInputChannels = false;
     }
 
@@ -1098,6 +1126,14 @@ void MainComponent::refreshSourceButton()
                              == static_cast<int> (vp::FollowSource::speaker);
     sourceButton.setButtonText (speaker ? "IPAD" : "MIXER");
     paintChoice (sourceButton, speaker);
+
+    // Lit only once the strikes are actually landing on the beat: a channel
+    // that is named but is not a kick is worse than no channel at all, and the
+    // tracker works that out for itself - see BeatTracker::kickIsTrusted.
+    const int kickCh = engine.settings().kickChannel.load();
+    kickButton.setButtonText (kickCh < 0 ? "CASSA NO"
+                                         : "CASSA " + juce::String (kickCh + 1));
+    paintChoice (kickButton, kickCh >= 0 && snap.kickTrusted);
 }
 
 void MainComponent::refreshMixLabels()
@@ -1160,6 +1196,11 @@ void MainComponent::loadPrefs()
     bufferChoice = (buf == 64 || buf == 128 || buf == 256 || buf == 512) ? buf : 0;
 
     inputProcessing = prefs->getBoolValue ("inputProcessing", false);
+
+    // Clamped low deliberately: a remembered channel from a rig that is not
+    // plugged in today would open inputs that do not exist.
+    engine.settings().kickChannel.store (
+        juce::jlimit (-1, 31, prefs->getIntValue ("kickChannel", -1)));
 
     const int src = prefs->getIntValue ("followSource",
                                         engine.settings().followSource.load());
@@ -1246,6 +1287,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("bufferFrames", bufferChoice);
     prefs->setValue ("inputProcessing", inputProcessing);
     prefs->setValue ("followSource", engine.settings().followSource.load());
+    prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
     prefs->setValue ("subdivision", engine.settings().subdivision.load());
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
@@ -2205,7 +2247,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     {
         auto body = card (take (h[kInput]), "INGRESSO");
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &sourceButton, &procButton });
+                   { &sourceButton, &procButton, &kickButton });
         settingsRows.inputNote = body.withTrimmedTop (noteGap);
     }
 
@@ -2349,6 +2391,14 @@ void MainComponent::paint (juce::Graphics& g)
         // phase over. Below one is a passage the fit is finding hard - the
         // drummer out, usually - and the two numbers together say whether the
         // app has noticed something the listener can hear.
+        lines.add ("cassa " + (snap.kickChannel < 0
+                                  ? juce::String ("--")
+                                  : juce::String (snap.kickChannel + 1))
+                   + "  liv " + juce::String (snap.kickLevel, 4)
+                   + "  muto " + juce::String (snap.kickQuietSec, 2) + " s"
+                   + "  colpi " + juce::String (snap.kickOnsets)
+                   + (snap.kickTrusted ? "  CREDUTO" : "")
+                   + (snap.drumsOut ? "  KIT FUORI" : ""));
         lines.add ("prove " + juce::String (snap.evidenceTrust, 2)
                    + "  tau " + juce::String (snap.gridTauSec, 2) + " s"
                    + "  fit " + juce::String (snap.fitResidual, 3)

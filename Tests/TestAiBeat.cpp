@@ -3356,6 +3356,179 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
+        // What the kick channel is worth, end to end.
+        //
+        // The engine is driven twice over the same song: once with the mix
+        // alone, as it has always been, and once with the mix on one channel
+        // and the desk's kick send on another. The network is the same in both
+        // runs and is deliberately a good one - it is handed the true beats,
+        // quantised to its own 20 ms frame grid, which is the best any network
+        // could possibly do on this material. So what separates the two runs is
+        // only what the kick channel adds on top of a perfect network: the
+        // sub-frame timing, and knowing when the kit has stopped.
+        //
+        // Scored on the *spread* of the phase error and not on its mean. The
+        // clock leads the song on purpose, by the pipeline and the output path,
+        // and neither run changes that calibration - see
+        // BeatTracker::notifyKickOnset. What precision means here is how still
+        // it holds around wherever it is aimed.
+        class TruthBeatModel final : public vp::IBeatModel
+        {
+        public:
+            TruthBeatModel (const std::vector<double>& phase, double sr)
+                : truePhase (phase), songSr (sr) {}
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float activations3[3]) override
+            {
+                const double t = static_cast<double> (frame++)
+                                 * vp::kBeatModelHop / vp::kBeatModelSampleRate;
+                const size_t s = static_cast<size_t> (t * songSr);
+                float pulse = 0.03f;
+                float down = 0.03f;
+                if (s < truePhase.size())
+                {
+                    const double beats = truePhase[s];
+                    const double toBeat = std::fabs (beats - std::round (beats));
+                    // The bump the network would emit, in beats rather than in
+                    // frames, so it is the same shape at every tempo.
+                    pulse = 0.03f + 0.95f * static_cast<float> (
+                                std::exp (-0.5 * (toBeat / 0.055) * (toBeat / 0.055)));
+                    const int beatNo = static_cast<int> (std::llround (beats));
+                    if ((((beatNo % 4) + 4) % 4) == 0)
+                        down = pulse * 0.9f;
+                }
+                activations3[0] = pulse;
+                activations3[1] = down;
+                activations3[2] = 1.0f - pulse;
+                return true;
+            }
+        private:
+            const std::vector<double>& truePhase;
+            double songSr;
+            long long frame = 0;
+        };
+
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::probe::SongOptions opt;
+        opt.bpm = 118.0f;
+        opt.driftBpm = 2.5f;      // a band that has rehearsed, not a sequencer
+        opt.jitterMs = 9.0f;      // and is made of people
+        opt.breakdown = true;
+        const int n = static_cast<int> (sr * 36.0);
+
+        std::vector<float> mix (static_cast<size_t> (n), 0.0f);
+        std::vector<double> truePhase;
+        vp::probe::SongStems stems;
+        vp::probe::renderSong (mix, opt, sr, 2024u, &truePhase, &stems);
+
+        struct Run { double spreadMs, worstMs; int onsets; bool trusted; };
+        auto drive = [&] (bool useKick) -> Run
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::make_unique<TruthBeatModel> (truePhase, sr));
+            eng.prepare (sr, block, 2);
+            eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+            eng.settings().analysisChannel.store (0);
+            eng.settings().kickChannel.store (useKick ? 1 : -1);
+            eng.start();
+
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+            float* outs[2] = { oL.data(), oR.data() };
+
+            std::vector<double> errs;
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                const float* ins[2] = { mix.data() + pos, stems.kick.data() + pos };
+                eng.process (ins, 2, outs, 2, block);
+                const auto snap = eng.snapshot();
+                const double t = static_cast<double> (pos) / sr;
+                if (t > 15.0 && snap.bpm > 40.0f
+                    && (snap.state == vp::TrackingState::following
+                        || snap.state == vp::TrackingState::lowConfidence))
+                {
+                    const double truth = truePhase[static_cast<size_t> (pos)];
+                    errs.push_back (vp::wrapCentered (
+                        static_cast<float> (snap.beatPhase
+                                            - (truth - std::floor (truth)))));
+                }
+                // Wait for the worker rather than sleeping at it.
+                //
+                // How far behind the analysis happens to be is decided by the
+                // host's scheduler, and this measurement is a comparison of two
+                // runs - so a run that got more CPU would look like a better
+                // design. `analysisBacklog` is there for exactly this: draining
+                // it every block makes the run repeatable, which is the whole
+                // requirement for a number two runs are compared on.
+                for (int spin = 0; spin < 20000; ++spin)
+                {
+                    if (eng.snapshot().analysisBacklog <= block)
+                        break;
+                    std::this_thread::yield();
+                }
+            }
+
+            Run r { 999.0, 999.0, 0, false };
+            if (errs.size() > 50)
+            {
+                double mean = 0.0;
+                for (double e : errs) mean += e;
+                mean /= static_cast<double> (errs.size());
+                double sq = 0.0, worst = 0.0;
+                for (double e : errs)
+                {
+                    const double d = e - mean;
+                    sq += d * d;
+                    worst = std::max (worst, std::fabs (d));
+                }
+                const double beatMs = 60.0 / opt.bpm * 1000.0;
+                r.spreadMs = std::sqrt (sq / static_cast<double> (errs.size())) * beatMs;
+                r.worstMs = worst * beatMs;
+            }
+            const auto snap = eng.snapshot();
+            r.onsets = snap.kickOnsets;
+            r.trusted = snap.kickTrusted;
+            return r;
+        };
+
+        const Run without = drive (false);
+        const Run with = drive (true);
+        std::printf ("kick-chain  senza canale cassa: rms %.2f ms  peggio %.2f ms\n",
+                     without.spreadMs, without.worstMs);
+        std::printf ("kick-chain  con canale cassa:   rms %.2f ms  peggio %.2f ms   "
+                     "(%d colpi, creduto=%d)\n",
+                     with.spreadMs, with.worstMs, with.onsets, with.trusted ? 1 : 0);
+
+        expect (with.onsets > 25 && with.trusted,
+                "the kick channel is recognised as a kick and its strikes are counted");
+        expect (without.onsets == 0,
+                "and none of it runs when no kick channel is assigned");
+        // Measured across runs: 19.4 -> 11.8, 18.3 -> 15.3 and 18.3 -> 13.3 ms
+        // rms, against a network that is being handed the true beats. So this
+        // is not the kick channel making up for a bad network - it is what a
+        // channel carrying one drum adds on top of the best a network could do.
+        //
+        // The assertion is looser than any single one of those because the
+        // figure moves by about a fifth from run to run: the analysis is a
+        // thread, and how much of the machine it gets is not this test's to
+        // decide. Draining its backlog every block takes most of that out but
+        // not all of it. The direction is what is being guarded here; the
+        // number belongs in a probe, and docs/AUDIO_ENGINE.md quotes the median.
+        expect (with.spreadMs < without.spreadMs * 0.92,
+                "sample-timed strikes hold the clock stiller than the frame grid can");
+        // The *worst* excursion is deliberately not asserted on, and that is a
+        // finding rather than a gap in the test. Across runs it went 48.6 -> 27.4,
+        // 51.4 -> 49.4, 47.9 -> 34.7 and 27.7 -> 35.9: sometimes much better,
+        // once worse. It is dominated by single events - the re-lock at the end
+        // of the breakdown, a fill - and one event is not something a stiller
+        // phase loop can be relied on to prevent. What the kick channel
+        // reliably improves is the ordinary error, not the worst moment.
+        std::printf ("kick-chain  (il peggio non e' garantito migliore: e' un evento singolo)\n");
+    }
+
+    {
         vp::VirtualPercussionEngine eng;
         eng.prepare (48000.0, 128, 1);
         vp::NativeAudioBridge bridge;

@@ -103,6 +103,13 @@ void BeatTracker::reset() noexcept
 {
     follower.reset();
     evidence.reset();
+    kickAssigned = false;
+    kickQuietSec = 0.0f;
+    kickOnsetCount = 0;
+    kickTrusted = false;
+    kickOnGrid = 0.0f;
+    kickSeen = 0.0f;
+    pendingKicks = 0;
     currentState = TrackingState::listening;
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
@@ -619,6 +626,65 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
         downbeatVotes[i] = rotated[i];
 }
 
+void BeatTracker::notifyKickOnset (int sampleOffset, float strength) noexcept
+{
+    if (pendingKicks >= kMaxPendingKicks || ! std::isfinite (strength))
+        return;
+    pendingKickOffset[pendingKicks] = sampleOffset;
+    pendingKickStrength[pendingKicks] = std::clamp (strength, 0.0f, 1.0f);
+    ++pendingKicks;
+}
+
+void BeatTracker::setKickChannelState (bool assigned, float quietSeconds) noexcept
+{
+    if (! assigned && kickAssigned)
+    {
+        // The channel has been taken away. Everything the kick path decided
+        // goes with it, including the verdict on whether it was a kick at all:
+        // the next channel assigned has to earn that again from nothing.
+        kickTrusted = false;
+        kickOnGrid = 0.0f;
+        kickSeen = 0.0f;
+        pendingKicks = 0;
+    }
+    kickAssigned = assigned;
+    kickQuietSec = std::isfinite (quietSeconds) ? quietSeconds : 0.0f;
+}
+
+void BeatTracker::updateKickTrust (float phaseErr) noexcept
+{
+    // Is this channel actually a kick?
+    //
+    // Nothing stops somebody routing the app the full mix, or the vocal, on the
+    // channel they told it was the kick - and a detector pointed at a full mix
+    // fires on everything, which would hand the clock a stream of confident and
+    // meaningless beat times. The test is the one thing that separates them
+    // without knowing anything about the sound: a kick lands on the beat, and
+    // whatever else is on that channel does not.
+    //
+    // Decayed rather than counted, so a channel that stops being a kick - a
+    // desk re-patched between songs - stops being believed inside a phrase
+    // rather than on the strength of what it did five minutes ago.
+    constexpr float kDecay = 0.94f;
+    constexpr float kNearBeat = 0.15f;      // beats
+    constexpr float kSeenEnough = 6.0f;     // strikes before an opinion
+    constexpr float kTrustAbove = 0.55f;    // and the share that has to land
+    constexpr float kDropBelow = 0.40f;     // with hysteresis on the way out
+
+    kickOnGrid *= kDecay;
+    kickSeen = kickSeen * kDecay + 1.0f;
+    if (std::fabs (phaseErr) < kNearBeat)
+        kickOnGrid += 1.0f;
+
+    if (kickSeen < kSeenEnough)
+        return;
+    const float share = kickOnGrid / kickSeen;
+    if (! kickTrusted && share > kTrustAbove)
+        kickTrusted = true;
+    else if (kickTrusted && share < kDropBelow)
+        kickTrusted = false;
+}
+
 BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noexcept
 {
     Output out;
@@ -863,6 +929,51 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         quietSamples += numSamples;
     }
 
+    // ---------------------------------------------------------------- kick
+    //
+    // Strikes on a channel that carries one drum, timed on the audio. Two
+    // separate things come out of it, and neither replaces what the neural path
+    // is doing - see notifyKickOnset and Tracking/KickOnsetDetector.h.
+    {
+        const float bpmNow = std::max (50.0f, heldBpm > 50.0f ? heldBpm : 120.0f);
+        const double barSec = 4.0 * 60.0 / static_cast<double> (bpmNow);
+
+        for (int k = 0; k < pendingKicks; ++k)
+        {
+            // Where the song's pulse is *now* if a beat physically arrived at
+            // the input `numSamples - offset` samples ago. This is the same
+            // projection the neural path makes a few lines above, with the same
+            // output-side term and without the network's own response trim,
+            // which is a property of the network and not of a drum.
+            const float kickLeadSec = static_cast<float> (numSamples - pendingKickOffset[k])
+                                          / static_cast<float> (sampleRate)
+                                      + reportedLatencyMs * 0.001f;
+            const float kickPhase = wrap01 (kickLeadSec / beatSeconds);
+            const float err = wrapCentered (follower.beatPhase() - kickPhase);
+
+            ++kickOnsetCount;
+            updateKickTrust (err);
+
+            // A strike is worth more than a frame-quantised beat, so it is
+            // handed over at a strength the neural path never reaches - but
+            // only once the channel has shown it really is a kick, and never
+            // while somebody is tapping or holding the tempo by hand.
+            if (kickTrusted && ! tapHold && tempoFollow && ! tempoOwned)
+                follower.observeOnsetPhase (wrap01 (follower.beatPhase() - kickPhase),
+                                            std::max (0.75f, pendingKickStrength[k]), 1);
+        }
+        pendingKicks = 0;
+
+        // And the passage with the drummer out, which on this channel is not an
+        // inference. Long enough not to fire on the ordinary gap between two
+        // kicks: a pattern with a kick only on the one leaves a whole bar of
+        // silence, so the line is a bar and a quarter. The mix still has to be
+        // loud, or this is the song ending rather than the kit dropping out.
+        const bool quietLongEnough = kickQuietSec
+                                     > static_cast<float> (std::max (1.2, barSec * 1.25));
+        evidence.setDrumsOut (kickAssigned && kickTrusted && quietLongEnough && loudEnough);
+    }
+
     if (needsResync && armed && waitForQuantize && ! tapEstablished
         && tempoFollow && periodic)
     {
@@ -1071,6 +1182,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
     out.barRotations = barRotations;
+    out.kickOnsets = kickOnsetCount;
+    out.kickTrusted = kickTrusted;
+    out.drumsOut = evidence.drumsAreOut();
     out.evidenceTrust = evidence.trust();
     out.gridTauSec = gridPhaseTau (kGridTauHolding, holding, evidence.trust());
 
