@@ -286,6 +286,24 @@ It carries its own guard against being pointed at the wrong thing. Nothing stops
 
 The detector runs on the **raw** channel, before the leak subtraction, the rumble high-pass and the make-up gain. Those exist to protect a microphone hearing the app's own output in a room; a desk send of the kick has neither problem, and putting a canceller in front of the one clean transient on the stage would give away exactly what makes it worth having.
 
+### The round trip, measured
+
+What the clock has to run ahead by is the time between the app deciding to play a stroke and that stroke being heard next to the band. That used to come from two places, and neither is a measurement of *this* rig: the latency the operating system reports for the device, and a 20 ms constant in `BeatTracker` calibrated once against a notated click. Both are reasonable and both are guesses — on a stage the path is an iPad, a USB interface, a desk, its own buffering and whatever the desk does to the return.
+
+`SETUP → PROVE → LATENZA` plays a 30 ms sweep, captures what comes back and correlates the two. It takes three quarters of a second. The result is kept per install and is what the clock runs on from then on; pressing the button again clears it.
+
+| true round trip | measured |
+|---|---|
+| 6 ms | 6.00 |
+| 12 ms | 12.00 |
+| 24 ms | 24.00 |
+| 48 ms | 48.00 |
+| 96 ms | 96.00 |
+
+Sample-exact across the range a rig uses, and it still lands within 2 ms with a band playing over the top — which is the case that matters, because nobody gets a silent room at soundcheck. When the sweep does not come back clearly it **refuses**: the button reads NIENTE RITORNO rather than a number, because the commonest cause on a stage is the send not being routed back, and a figure invented there would be worse than none.
+
+The correlation is normalised by the energy under the window at each lag, or a kick drum landing during the capture out-scores the sweep by being loud. The peak also has to stand clear of the best rival elsewhere in the capture before it is believed.
+
 ### Listening to it
 
 Some of this is a musical decision, and the only review a musical decision can have is somebody hearing it. `VPRender` writes a few bars of any style to a WAV, driving the real `PercussionEngine` from a real `TempoFollower` at a fixed tempo — no analysis, no microphone, no network:

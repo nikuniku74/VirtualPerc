@@ -25,6 +25,7 @@ set (VP_CORE_SOURCES
     Source/Percussion/GrooveEngine.cpp
     Source/Percussion/StyleDetector.cpp
     Source/Audio/VirtualPercussionEngine.cpp
+    Source/Audio/LatencyProbe.cpp
     Source/AI/LogSpectFeatures.cpp
     Source/AI/OnnxSession.cpp
     Source/AI/OnnxBeatModel.cpp

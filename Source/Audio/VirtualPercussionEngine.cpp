@@ -97,6 +97,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     mono.assign (static_cast<size_t> (maxBlock), 0.0f);
     kickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     kickDetector.prepare (sampleRate);
+    rawIn.assign (static_cast<size_t> (maxBlock), 0.0f);
+    latencyProbe.prepare (sampleRate);
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -283,6 +285,10 @@ void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInpu
                 mono[static_cast<size_t> (i)] *= g;
         }
     }
+
+    // Kept before anything is done to it - see the note on `rawIn`.
+    std::memcpy (rawIn.data(), mono.data(),
+                 static_cast<size_t> (numSamples) * sizeof (float));
 
     const float trim = std::clamp (cfg.inputGain.load (std::memory_order_relaxed), 0.0f, 4.0f);
     if (std::fabs (trim - 1.0f) > 1.0e-6f)
@@ -890,8 +896,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // percussion bank. The second term is not a device property but it is the
     // same kind of delay - time between the decision and the sound - and this
     // is the one place that knows both.
-    tracker.setReportedLatencyMs (latencyMs.load (std::memory_order_relaxed)
-                                  + percussion.attackLeadMs());
+    // A measured round trip beats a reported one. The device's figure is what
+    // the operating system believes about the interface; the measurement is
+    // what this rig actually did, desk and all. See Audio/LatencyProbe.h.
+    const float measured = measuredLatencyMs.load (std::memory_order_relaxed);
+    const float roundTrip = measured > 0.0f ? measured
+                                            : latencyMs.load (std::memory_order_relaxed);
+    tracker.setReportedLatencyMs (roundTrip + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
     percussion.setInstrumentMix (cfg.instrumentMix.load (std::memory_order_relaxed));
@@ -1044,6 +1055,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         }
     }
 
+    // The sweep goes out after the master gain and is deliberately not pushed
+    // to the leak reference below: it is not part of the part, and the
+    // canceller has no business trying to remove it from anything.
+    if (outputs != nullptr && numOutputs > 0)
+        latencyProbe.process (rawIn.data(), outputs[0],
+                              numOutputs > 1 ? outputs[1] : nullptr, numSamples);
+
     pushOutputToRing (numSamples, master);
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
@@ -1107,6 +1125,14 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     const auto t1 = std::chrono::steady_clock::now();
     const float ms = std::chrono::duration<float, std::milli> (t1 - t0).count();
     lastCallbackMs.store (ms, std::memory_order_relaxed);
+}
+
+float VirtualPercussionEngine::finishLatencyMeasurement() noexcept
+{
+    const float ms = latencyProbe.analyse();
+    if (ms > 0.0f)
+        measuredLatencyMs.store (ms, std::memory_order_relaxed);
+    return ms;
 }
 
 EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept

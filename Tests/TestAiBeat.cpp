@@ -10,6 +10,7 @@
 #include "AI/OnnxBeatModel.h"
 #include "AI/OnnxSession.h"
 #include "AI/StubBeatModel.h"
+#include "Audio/LatencyProbe.h"
 #include "Audio/VirtualPercussionEngine.h"
 #include "Percussion/GrooveEngine.h"
 #include "Percussion/PercussionEngine.h"
@@ -3526,6 +3527,118 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // phase loop can be relied on to prevent. What the kick channel
         // reliably improves is the ordinary error, not the worst moment.
         std::printf ("kick-chain  (il peggio non e' garantito migliore: e' un evento singolo)\n");
+    }
+
+    {
+        // The rig's round trip, measured instead of asked for.
+        //
+        // A sweep goes out, whatever comes back is captured, the two are
+        // correlated. Here the "rig" is a delay line with a room's worth of
+        // noise and a band playing over it, which is the case that matters: the
+        // measurement has to survive being taken while somebody is soundchecking
+        // rather than only in a silent room.
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+
+        auto measure = [&] (double trueMs, float noise, bool withMusic) -> float
+        {
+            vp::LatencyProbe probe;
+            probe.prepare (sr);
+            probe.start();
+
+            const int delay = static_cast<int> (trueMs * 0.001 * sr);
+            const int n = static_cast<int> (sr * (vp::LatencyProbe::kCaptureSeconds + 0.4));
+            std::vector<float> loop (static_cast<size_t> (n + block * 4), 0.0f);
+            std::vector<float> music;
+            if (withMusic)
+            {
+                vp::probe::SongOptions opt;
+                opt.bpm = 128.0f;
+                music.assign (static_cast<size_t> (n + block * 4), 0.0f);
+                vp::probe::renderSong (music, opt, sr, 7u);
+            }
+
+            std::mt19937 rng (4242u);
+            std::uniform_real_distribution<float> hiss (-1.0f, 1.0f);
+            std::vector<float> in (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+            std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+            for (int pos = 0; pos + block <= n; pos += block)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const int src = pos + i - delay;
+                    // The return: the app's own output, delayed, plus whatever
+                    // else is in the room.
+                    in[static_cast<size_t> (i)] =
+                        (src >= 0 ? loop[static_cast<size_t> (src)] * 0.55f : 0.0f)
+                        + noise * hiss (rng)
+                        + (withMusic ? music[static_cast<size_t> (pos + i)] * 0.8f : 0.0f);
+                }
+                std::fill (oL.begin(), oL.end(), 0.0f);
+                std::fill (oR.begin(), oR.end(), 0.0f);
+                probe.process (in.data(), oL.data(), oR.data(), block);
+                for (int i = 0; i < block; ++i)
+                    loop[static_cast<size_t> (pos + i)] = oL[static_cast<size_t> (i)];
+                if (probe.ready())
+                    break;
+            }
+            return probe.analyse();
+        };
+
+        double worstErr = 0.0;
+        bool allFound = true;
+        for (double ms : { 6.0, 12.0, 24.0, 48.0, 96.0 })
+        {
+            const float got = measure (ms, 0.004f, false);
+            if (got <= 0.0f)
+            {
+                allFound = false;
+                std::printf ("lat-probe   vera %.1f ms -> NON TROVATA\n", ms);
+                continue;
+            }
+            worstErr = std::max (worstErr, std::fabs (got - ms));
+            std::printf ("lat-probe   vera %.1f ms -> misurata %.2f ms  (scarto %.2f ms)\n",
+                         ms, static_cast<double> (got), std::fabs (got - ms));
+        }
+        expect (allFound && worstErr < 1.0,
+                "the round trip is measured to within a millisecond over the range a rig uses");
+
+        // The case it has to survive: measured on a stage with the band playing.
+        const float overBand = measure (24.0, 0.004f, true);
+        std::printf ("lat-probe   con la band che suona: %.2f ms\n",
+                     static_cast<double> (overBand));
+        expect (overBand > 0.0f && std::fabs (overBand - 24.0) < 2.0,
+                "and it survives being measured while the band is playing");
+
+        // And the case it has to refuse: nothing comes back at all, because the
+        // return is not routed. A number invented here would be worse than none.
+        const float unrouted = measure (24.0, 0.02f, false) * 0.0f
+                               + [&]
+                               {
+                                   vp::LatencyProbe p;
+                                   p.prepare (sr);
+                                   p.start();
+                                   const int n = static_cast<int> (
+                                       sr * (vp::LatencyProbe::kCaptureSeconds + 0.2));
+                                   std::mt19937 rng (9u);
+                                   std::uniform_real_distribution<float> hiss (-0.02f, 0.02f);
+                                   std::vector<float> in (static_cast<size_t> (block), 0.0f);
+                                   std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+                                   for (int pos = 0; pos + block <= n; pos += block)
+                                   {
+                                       for (auto& v : in) v = hiss (rng);
+                                       std::fill (oL.begin(), oL.end(), 0.0f);
+                                       p.process (in.data(), oL.data(), nullptr, block);
+                                       if (p.ready()) break;
+                                   }
+                                   return p.analyse();
+                               }();
+        std::printf ("lat-probe   mandata non instradata: %.2f (negativo = rifiutata)\n",
+                     static_cast<double> (unrouted));
+        expect (unrouted < 0.0f,
+                "and refuses to answer when the sweep never came back");
     }
 
     {
