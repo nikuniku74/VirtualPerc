@@ -230,6 +230,7 @@ private:
     juce::TextButton styleDance { "DANCE" }, stylePop { "POP" };
     juce::TextButton styleSamba { "SAMBA" }, styleFunk { "FUNK" };
     juce::TextButton styleReggae { "REGGAE" }, styleBossa { "BOSSA" };
+    juce::TextButton styleTwoOne { "DUE-UNO" };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Label  reverbValue { {}, "30%" };

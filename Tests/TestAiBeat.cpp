@@ -21,6 +21,7 @@
 #include "../scripts/probe_song_render.h"
 
 #include <algorithm>
+#include <set>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1324,6 +1325,55 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     "no written figure puts more than two conga strokes in a quarter");
             expect (played <= 2,
                     "and nothing audible does either, with the ghosts wide open");
+        }
+
+        // DUE-UNO is a brief rather than a transcription, so it is the one
+        // style whose shape can be asserted exactly: two strokes on a quarter,
+        // one on the next, all the way round, on two drums and nothing else.
+        // The ghost generator is wide open here on purpose - it is off for this
+        // style, and a ghost is a heel or a toe, which would be a third sound.
+        {
+            vp::GrooveEngine gr;
+            gr.prepare (0x2101u);
+            gr.setStyle (vp::GrooveStyle::twoOne);
+            gr.setHumanize (1.0f);
+            gr.setIntensity (1.0f);
+            bool shapeHolds = true;
+            std::set<int> sounds;
+            int fills = 0;
+            for (int bar = 0; bar < 64; ++bar)
+            {
+                const bool fill = gr.isFillBar (bar);
+                if (fill)
+                    ++fills;
+                int perQuarter[4] = { 0, 0, 0, 0 };
+                for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = gr.eventsAt (bar, s, ev, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        if (ev[i].stroke == vp::Stroke::shakerDown
+                            || ev[i].stroke == vp::Stroke::shakerUp)
+                            continue;
+                        sounds.insert (static_cast<int> (ev[i].stroke));
+                        ++perQuarter[s / 4];
+                    }
+                }
+                if (fill)
+                    continue;
+                if (perQuarter[0] != 2 || perQuarter[1] != 1
+                    || perQuarter[2] != 2 || perQuarter[3] != 1)
+                    shapeHolds = false;
+            }
+            std::printf ("groove-dueuno  forma 2-1-2-1 su %d battute: %s   "
+                         "suoni usati=%d   fill=%d\n",
+                         64 - fills, shapeHolds ? "si" : "NO",
+                         static_cast<int> (sounds.size()), fills);
+            expect (shapeHolds,
+                    "DUE-UNO plays two strokes on a quarter and one on the next, every bar");
+            expect (sounds.size() == 2,
+                    "and uses two conga sounds and no others, ghosts included");
         }
     }
 

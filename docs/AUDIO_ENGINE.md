@@ -55,6 +55,9 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the "and" of 1 and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
 | **dance** | a tumbao stated rather than filled in: low drum on the "e" of 1 and on 3, slap on the "e" of 2, opens closing the bar | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
 | **pop** | mostly space: a light low tone off the one, a lift, the push into the next bar | eighths, level and quiet | almost none |
+| **due-uno** | not a genre, a shape: two strokes on a quarter and one on the next, all the way round, on two drums and nothing else | eighths, weight on the pulse | none, on purpose |
+
+**DUE-UNO** is the one style written to a brief rather than transcribed, and the only one `AUTO` will never choose — "keep it simple" is a decision about the gig, not about the music, so the automatic chooser (which decides between four genres) does not get a vote on it. Every stroke sits off the beat: the low-high pair answers the beat that has just gone, the single tone leans on the one coming. Six strokes a bar out of two drums, and the ghost notes are switched off for it, because a ghost is a heel or a toe and that would be a third sound.
 
 ### Coming in on the one
 

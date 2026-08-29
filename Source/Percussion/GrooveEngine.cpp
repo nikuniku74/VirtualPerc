@@ -419,6 +419,65 @@ namespace
         { 15, Stroke::slap,  0.66f },
     };
 
+    // --------------------------------------------------------------- due-uno
+    //
+    // Not a genre, a shape, and the only one in here written to a brief rather
+    // than transcribed: two strokes on one quarter, one on the next, all the
+    // way round the bar, on two drums and nothing else.
+    //
+    // Everything sits off the beat. That is not a decoration - it is what makes
+    // six strokes a bar read as a percussionist instead of as a metronome with
+    // a drum on it: the low-high pair answers the beat that has just gone, the
+    // single tone leans on the one coming. The band has the beats; this has the
+    // gaps between them, which is the whole job.
+    //
+    // Two sounds means two: the ghost notes are off for this style, because a
+    // ghost is a heel or a toe and that would be a third and a fourth.
+    constexpr Hit kTwoOneA[] = {
+        {  2, Stroke::tumba, 0.80f },   // the pair: low, then high
+        {  3, Stroke::open,  0.86f },
+        {  6, Stroke::open,  0.78f },   // and the single answering it
+        { 10, Stroke::tumba, 0.80f },
+        { 11, Stroke::open,  0.88f },
+        { 14, Stroke::open,  0.84f },
+    };
+    constexpr Hit kTwoOneB[] = {
+        {  2, Stroke::tumba, 0.78f },
+        {  3, Stroke::open,  0.84f },
+        {  7, Stroke::open,  0.80f },   // the single moves to the "a" of 2
+        { 10, Stroke::tumba, 0.78f },
+        { 11, Stroke::open,  0.86f },
+        { 14, Stroke::open,  0.82f },
+    };
+    // The bar that goes somewhere: the pair turns over - high then low - and
+    // the bar leaves on the last sixteenth instead of the "and" of 4.
+    constexpr Hit kTwoOneC[] = {
+        {  2, Stroke::open,  0.82f },
+        {  3, Stroke::tumba, 0.76f },
+        {  6, Stroke::open,  0.80f },
+        { 10, Stroke::open,  0.84f },
+        { 11, Stroke::tumba, 0.78f },
+        { 15, Stroke::open,  0.90f },
+    };
+    // And the fourth riff pulls the pairs a sixteenth earlier, onto the "e",
+    // so the second half of the phrase is not the first half again.
+    constexpr Hit kTwoOneD[] = {
+        {  1, Stroke::tumba, 0.78f },
+        {  2, Stroke::open,  0.84f },
+        {  6, Stroke::open,  0.78f },
+        {  9, Stroke::tumba, 0.78f },
+        { 10, Stroke::open,  0.86f },
+        { 14, Stroke::open,  0.84f },
+    };
+    constexpr Hit kTwoOneFill[] = {
+        {  8, Stroke::tumba, 0.74f },
+        { 10, Stroke::open,  0.80f },
+        { 11, Stroke::tumba, 0.72f },
+        { 13, Stroke::open,  0.84f },
+        { 14, Stroke::tumba, 0.80f },
+        { 15, Stroke::open,  0.94f },
+    };
+
     // The shaker, as a velocity per sixteenth. Zero is silence. The subdivision
     // setting thins this down; it never adds to it.
     //
@@ -542,6 +601,18 @@ namespace
             0.66f, 0.24f, 0.54f, 0.32f,  0.56f, 0.28f, 0.64f, 0.40f },
           { 1.00f, 0.88f, 0.92f, 0.90f },
           0.12f, 8 },
+
+        // due-uno - eighths, weight on the pulse, and no ghosts at all: this
+        // style is two sounds, and a ghost is a third one.
+        { kTwoOneA, static_cast<int> (std::size (kTwoOneA)),
+          kTwoOneB, static_cast<int> (std::size (kTwoOneB)),
+          kTwoOneC, static_cast<int> (std::size (kTwoOneC)),
+          kTwoOneD, static_cast<int> (std::size (kTwoOneD)),
+          kTwoOneFill, static_cast<int> (std::size (kTwoOneFill)),
+          { 0.80f, 0.28f, 0.52f, 0.28f,  0.66f, 0.30f, 0.56f, 0.32f,
+            0.76f, 0.28f, 0.52f, 0.28f,  0.62f, 0.32f, 0.60f, 0.36f },
+          { 1.00f, 0.90f, 0.95f, 0.92f },
+          0.00f, 8 },
     };
 
     // A triplet-feel off-eighth sits two thirds of the way through the beat

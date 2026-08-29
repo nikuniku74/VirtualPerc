@@ -45,6 +45,12 @@ enum class GrooveStyle : int
     funk,         // sixteenth ghosts, snare-side slaps off the beat
     reggae,       // one-drop: space on 1, the three, offbeat skank
     bossa,        // clave-shaped, mostly space, pulling on the ands
+    // Not a genre: a shape. Two strokes on one quarter, one on the next, all
+    // the way round the bar, on two drums and nothing else. It is what a
+    // player reaches for when the song does not want a part so much as a
+    // pulse, and it is the only style the automatic chooser will never pick -
+    // "keep it simple" is a decision about the gig, not about the music.
+    twoOne,
     count
 };
 
@@ -60,6 +66,7 @@ inline const char* toString (GrooveStyle s) noexcept
         case GrooveStyle::funk:   return "FUNK";
         case GrooveStyle::reggae: return "REGGAE";
         case GrooveStyle::bossa:  return "BOSSA";
+        case GrooveStyle::twoOne: return "DUE-UNO";
         case GrooveStyle::count:  break;
     }
     return "?";

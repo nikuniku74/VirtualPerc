@@ -338,6 +338,7 @@ MainComponent::MainComponent()
     setupBtn (styleFunk, ink());
     setupBtn (styleReggae, ink());
     setupBtn (styleBossa, ink());
+    setupBtn (styleTwoOne, ink());
     setupBtn (subAuto, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
@@ -456,6 +457,7 @@ MainComponent::MainComponent()
     styleFunk.onClick   = [this] { applyStyle (vp::GrooveStyle::funk); };
     styleReggae.onClick = [this] { applyStyle (vp::GrooveStyle::reggae); };
     styleBossa.onClick  = [this] { applyStyle (vp::GrooveStyle::bossa); };
+    styleTwoOne.onClick = [this] { applyStyle (vp::GrooveStyle::twoOne); };
 
     subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
@@ -676,7 +678,7 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &halveButton, &doubleButton, &barButton,
+        &styleBossa, &styleTwoOne, &halveButton, &doubleButton, &barButton,
         &settingsButton, &settingsClose, &procButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -1387,6 +1389,9 @@ void MainComponent::refreshStyleButtons()
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::reggae));
     paint (styleBossa, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::bossa),
            autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::bossa));
+    // Never lit by AUTO: the chooser decides between four genres and this one
+    // is not a genre. See the note on GrooveStyle::twoOne.
+    paint (styleTwoOne, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::twoOne), false);
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -1723,7 +1728,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     {
         auto body = card (area.removeFromTop (hPart), "PARTE");
         placeSquareRow (body, { &styleAuto, &styleMarcha, &styleRock, &styleDance, &stylePop,
-                                &styleSamba, &styleFunk, &styleReggae, &styleBossa });
+                                &styleSamba, &styleFunk, &styleReggae, &styleBossa,
+                                &styleTwoOne });
         area.removeFromTop (gap);
     }
 
