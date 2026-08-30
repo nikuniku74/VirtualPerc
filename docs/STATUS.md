@@ -26,6 +26,165 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## La band accelera piano e l'app resta indietro (30 agosto)
+
+Segnalazione dal campo, due pezzi:
+
+1. se la band sale gradualmente, per esempio da 100 a 110 BPM, il software
+   «va fuori e si perde per un bel po'»;
+2. il tempo sembra riallinearsi meglio alla band quando si preme **stop**
+   che mentre suona.
+
+Vere tutte e due, e la seconda spiega la prima.
+
+### Il banco misurava la grandezza sbagliata
+
+`VPAlign` misurava l'errore di *tempo* in percentuale. Su una rampa quel
+numero resta piccolo per costruzione: 10 BPM in mezzo minuto sono 0,33 BPM
+al secondo, quindi un orologio indietro di **un secondo intero** legge
+dentro lo 0,3% e passa ogni soglia della tabella. Quello che si sente non è
+il tempo, è la **fase accumulata**.
+
+Misurata contro la griglia scritta, la firma è inequivocabile:
+
+| rampa | fase media | a fine rampa |
+|---|---|---|
+| 100 → 110 in 30 s | 30,6 ms | **−20,3 ms** |
+| 120 → 132 in 20 s | 31,4 ms | **−20,9 ms** |
+| 128 → 120 in 20 s | 26,0 ms | **+11,8 ms** |
+
+Il segno segue la direzione della rampa. È l'errore di regime di un anello
+proporzionale contro una rampa — chiude l'errore *pendendo*, quindi gli
+serve un errore per pendere — e non è una costante da ritarare.
+
+E a **stop** è davvero meglio: a parte ferma il tracker *posa* la griglia
+(`snapPhase`), mentre suonando può solo pendere.
+
+### Il termine che serviva era spento proprio dove serve
+
+L'unico termine che può cancellare un errore di regime è il trim, ed era
+disabilitato **esattamente nel regime VIVO**, cioè l'unico che una rampa
+produce. La motivazione scritta era che lì il decoder sta già inseguendo e
+un secondo controllore lo combatterebbe. È il contrario: il decoder insegue
+e resta indietro, e l'anello ci aggiunge il suo.
+
+Acceso da solo però non reggeva — costava il passaggio senza batteria e
+perfino l'accelerando lento, dove non c'è ritardo da correggere e quindi
+integrava solo rumore. La misura confronta la fase di due battiti a mezzo
+secondo di distanza, e con un frame di jitter porta ~28 ms di incertezza,
+cioè una pendenza apparente di quasi 7 BPM mai suonata.
+
+Due guardie, nessuna delle due una soglia sul valore dell'errore:
+
+- **la fiducia**, che lo spegne dove l'analisi è in ritardo per motivi
+  acustici invece che musicali (`Tracking/PhaseTrust.h`);
+- **la persistenza del segno**, tre battiti concordi prima del guadagno
+  pieno. Una band che cambia velocità spinge sempre nello stesso verso, il
+  jitter no. È lo stesso discriminante che `HarmonicChange` usa per
+  distinguere un accordo da un rullante.
+
+| rampa | prima | dopo | ritardo di regime |
+|---|---|---|---|
+| 100 → 110 in 30 s | 30,6 ms | **22,9** | −20,3 → **−0,7** |
+| 120 → 132 in 20 s | 31,4 ms | **23,1** | −20,9 → **−1,2** |
+| 128 → 120 in 20 s | 26,0 ms | **21,9** | +11,8 → −8,0 |
+| 100 → 110 in 12 s | 58,9 ms | **47,7** | −74,2 → −49,5 |
+
+Costo: passaggio senza batteria 19,4 → 22,1 ms, accelerando lento
+18,9 → 20,0. A tempo fermo niente, perché lì il trim era già acceso.
+
+### Due correzioni costruite, misurate e **scartate**
+
+- **Posare la griglia anche mentre suona**, limitando lo spostamento perché
+  non attraversi mai un impulso. Misurava 21/38/22/18 ms contro 31/59/31/26
+  — e faceva fallire **dieci test**. Uno spostamento che non può raddoppiare
+  né saltare un colpo può ancora *stirarlo*, e applicare tutta la correzione
+  nel blocco in cui arriva rende il comportamento funzione della dimensione
+  del buffer. I test avevano ragione.
+- **Banda morta cedevole**: far dissolvere `kPhaseFloor` quando l'errore sta
+  da una parte per più di quattro secondi. Passa la suite, ma sui banchi
+  guadagna ~1 ms di media e *peggiora* il ritardo di regime sulla rampa
+  graduale (−0,7 → −3,9) costando altri 1,2 ms nel buco.
+
+### Di chi è il ritardo
+
+Il banco ha ora due colonne per la fase del **decoder**, senza le quali non
+può dire di chi sia il ritardo che misura:
+
+| rampa | orologio | di cui decoder |
+|---|---|---|
+| 100 → 110 in 30 s | −20,3 ms | **−10,7** |
+| 100 → 110 in 12 s | −74,2 ms | **−17,1** |
+
+Sulla rampa graduale metà è a monte dell'anello; su quella veloce no. Sono
+due problemi diversi e vanno attaccati separatamente.
+
+## Il tempo quando non c'è niente da colpire (30 agosto)
+
+Tutto quello che questo motore cronometra è percussivo. `HarmonicChange`
+leggeva già l'unica cosa che sopravvive senza batteria — l'armonia che si
+muove — ma solo per la **battuta**: quale dei quattro quarti è l'uno. La
+domanda che nessun pezzo dell'app sapeva rispondere era l'altra: **quanto
+dura un battito**.
+
+Gli accordi cambiano sulla stanghetta, quindi ogni intervallo fra due cambi
+è un numero intero di battute, e il periodo che li fa venire interi tutti è
+quello che la band sta suonando (`Tracking/HarmonicTempo.h`, banco `VPSing`).
+
+| materiale | vero | trovato | errore |
+|---|---|---|---|
+| voce e chitarra | 92 | 91,6 | 0,43% |
+| voce e chitarra | 100 | 99,3 | 0,74% |
+| voce e chitarra | 118 | 117,3 | 0,59% |
+| voce e chitarra | 132 | 131,1 | 0,65% |
+| voce e chitarra | 152 | 151,3 | 0,44% |
+| band che vaga di 3 BPM | 118 | 117,3 | 0,56% |
+| tempo umano (9 ms) | 118 | 117,2 | 0,64% |
+| **pad tenuti** | 118 | **MAI** | — |
+| **con la batteria** | 118 | **MAI** | — |
+
+Gli ultimi due sono dove si rompe e stanno nella tabella invece che fuori.
+Un accompagnamento tenuto sfuma il cambio finché il rilevatore non riesce a
+collocarlo: la dispersione passa da 34 ms a 552. Con la batteria è
+altrettanto sparso, e lì non importa: è il caso che la rete e il canale kick
+hanno già.
+
+**Non gli intervalli fra cambi consecutivi.** È stata la prima versione e
+misurava 1 caso su 7: il rilevatore trova 74 cambi dove l'arrangiamento ne
+ha 28, quindi la maggior parte degli intervalli sta fra due cose che non
+sono cambi d'accordo. Quello che sopravvive a un tasso alto di falsi è la
+**fase**: sommare vettori unitari somma i cambi veri e media via gli spuri,
+senza dover mai decidere quali siano veri — cosa che qui niente può fare.
+
+**Il collegamento è timido di proposito.** L'armonia parla solo quando la
+rete non ha nessun tempo, mai attraverso lo speaker, con confidenza 0,30. È
+l'unica sorgente di tempo dell'app che può sbagliare di un *fattore* invece
+che di una percentuale: assume 4/4 e un accordo non più lungo di una
+battuta.
+
+E non nell'istante in cui la rete tace. «La rete non ha un tempo» è vero in
+due situazioni opposte, e a distinguerle è **quanto dura**: un fill è una
+battuta o due, una voce con una chitarra è tutto il brano.
+
+| | fase attraverso le battute di fill |
+|---|---|
+| prima del collegamento | 2,32 ms |
+| collegamento immediato | **44,10 ms** (il test ammette 30) |
+| collegamento dopo sei secondi | 2,37 ms |
+
+### Cosa resta del «capire il tempo dal contesto»
+
+- **Il metro è fisso a 4/4.** Dieci punti fra `TempoFollower` e
+  `BeatTracker` contano con `& 3`. Un 3/4 o un 6/8 non è rappresentabile:
+  non è questione di taratura.
+- **Nessuna memoria della forma.** C'è il cambio di sezione letto dal
+  livello e la frase di quattro battute, ma niente che sappia che quel
+  ritornello è già passato due volte.
+- **L'anticipazione dei fill**, misurata e mai dimostrata.
+- **La rete vera non è misurabile sull'host**: `VP_USE_ONNX` è ON solo per
+  iOS, quindi tutto ciò che riguarda il comportamento di BeatNet su
+  materiale non percussivo va verificato sul device.
+
 ## Quanto è stabile una volta agganciato (25 agosto)
 
 Domanda successiva a quella sotto: preso il tempo, si può tenerlo più fermo?
