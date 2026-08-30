@@ -53,6 +53,7 @@ struct Found
         on them can be. */
     double scatterMs = 0.0;
     double onBarShare = 0.0;
+    float  typical = 0.0f;
 };
 
 Found tempoFromHarmony (float bpm, unsigned seed, bool withDrums, float driftBpm,
@@ -102,6 +103,7 @@ Found tempoFromHarmony (float bpm, unsigned seed, bool withDrums, float driftBpm
     }
 
     Found f;
+    f.typical = harm.typicalMovement();
     f.changes = static_cast<int> (at.size());
     f.bpm = static_cast<double> (tempo.bpm());
     f.coherence = static_cast<double> (tempo.coherence());
@@ -143,9 +145,9 @@ int main()
                  "battute, e il periodo che li fa venire interi tutti e' quello\n"
                  "che la band sta suonando.\n\n");
 
-    std::printf ("%-18s %-9s %-10s %-9s %-7s %-9s %-10s %-9s\n",
+    std::printf ("%-18s %-9s %-10s %-9s %-7s %-9s %-10s %-9s %-8s\n",
                  "materiale", "vero BPM", "trovato", "errore %", "cambi", "coerenza",
-                 "sparsi ms", "su stang.");
+                 "sparsi ms", "su stang.", "tipico");
 
     struct Case { const char* what; float bpm; bool drums; float drift; bool sus; float jit; };
     const Case cases[] = {
@@ -169,7 +171,7 @@ int main()
         double errSum = 0.0;
         int seen = 0;
         int changes = 0, runs = 0;
-        double coh = 0.0, scat = 0.0, onbar = 0.0;
+        double coh = 0.0, scat = 0.0, onbar = 0.0, typ = 0.0;
         double got = 0.0;
         for (int s = 0; s < 3; ++s)
         {
@@ -177,6 +179,7 @@ int main()
                                               c.drums, c.drift, c.sus, c.jit);
             scat += f.scatterMs;
             onbar += f.onBarShare;
+            typ += f.typical;
             changes += f.changes;
             ++seen;
             if (f.bpm <= 0.0)
@@ -189,9 +192,9 @@ int main()
         const int sn = std::max (1, seen);
         if (runs == 0)
         {
-            std::printf ("%-18s %-9.0f %-10s %-9s %-7d %-9s %-10.0f %-8.0f%%\n",
+            std::printf ("%-18s %-9.0f %-10s %-9s %-7d %-9s %-10.0f %-7.0f%% %-8.3f\n",
                          c.what, static_cast<double> (c.bpm),
-                         "MAI", "-", changes / sn, "-", scat / sn, onbar / sn * 100.0);
+                         "MAI", "-", changes / sn, "-", scat / sn, onbar / sn * 100.0, typ / sn);
             ++total;
             continue;
         }
@@ -203,10 +206,10 @@ int main()
         const bool ok = err < 3.0;
         if (ok) ++good;
         ++total;
-        std::printf ("%-18s %-9.0f %-10.1f %-9.2f %-7d %-9.2f %-10.0f %-8.0f%% %s\n",
+        std::printf ("%-18s %-9.0f %-10.1f %-9.2f %-7d %-9.2f %-10.0f %-7.0f%% %-8.3f %s\n",
                      c.what, static_cast<double> (c.bpm),
                      got / runs, err, changes / sn, coh / runs,
-                     scat / sn, onbar / sn * 100.0, ok ? "" : "  NO");
+                     scat / sn, onbar / sn * 100.0, typ / sn, ok ? "" : "  NO");
     }
 
     std::printf ("\ndentro il 3%%: %d su %d\n", good, total);

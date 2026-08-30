@@ -104,6 +104,7 @@ public:
         heldHops = 0;
         haveReference = false;
         lastChange = 0.0f;
+        typicalMove = 0.0f;
         peakHeld = 0.0f;
         changeStartedAt = 0;
         usable = false;
@@ -175,7 +176,29 @@ public:
             // was. So a change has to hold for several hops before it counts,
             // and it is timed from where it started rather than from where it
             // was confirmed.
-            if (moved > kEnter)
+            // Relative to what this material has been giving, not to a fixed
+            // line.
+            //
+            // `kEnter` alone is an absolute threshold on a quantity whose floor
+            // depends on the arrangement, and this repository has learned that
+            // lesson three times now - see PhaseTrust.h, and STATUS.md on the
+            // fit residual. On a sustained accompaniment - strings, an organ, a
+            // pad holding through the bar line - the chroma is more tonal and
+            // its ordinary hop-to-hop movement sits higher, so 0.10 lands
+            // inside the noise: measured, 74 changes reported where the
+            // arrangement has 28. Each false one lands on any phase at all,
+            // which is exactly what makes the tempo unreadable from them
+            // (Tracking/HarmonicTempo.h).
+            //
+            // So the floor is lifted by what the change function has typically
+            // been doing when nothing was happening. Learned only below the
+            // gate, so a run of real chord movement cannot raise the bar
+            // against itself, and slowly, so one loud bar cannot either.
+            const float enterNow = std::max (kEnter, typicalMove * kOverTypical);
+            if (moved <= enterNow)
+                typicalMove += (moved - typicalMove) * kTypicalRise;
+
+            if (moved > enterNow)
             {
                 if (heldHops == 0)
                     changeStartedAt = absPos;
@@ -225,6 +248,10 @@ public:
     /** How far the harmony has moved from its own recent average, 0..1. */
     float changeNow() const noexcept { return lastChange; }
 
+    /** What the change function has typically been doing below the gate, for
+        the probes. */
+    float typicalMovement() const noexcept { return typicalMove; }
+
     /** What share of recent windows carried a chord at all, 0..1.
 
         This is a property of the **material**, and that is why it exists. The
@@ -252,6 +279,26 @@ private:
     static constexpr double kLowestMidi = 48.0;   // C3
     /** How far the harmony has to move before it is worth watching. */
     static constexpr float kEnter = 0.10f;
+    /** How far above what this material ordinarily moves a window has to go to
+        count as a chord change rather than the arrangement breathing.
+
+        Four, and it is set by making the two cases equivalent rather than by
+        taste. Measured, the change function's floor is 0.012 to 0.024 on
+        material the detector reads well and 0.041 on a sustained
+        accompaniment - so the fixed 0.10 stands at seven times the floor in the
+        first case and only 2.4 times it in the second, which is why the
+        sustained case drowned. At four the gate is unchanged wherever the floor
+        is low (four times 0.024 is still under 0.10, so `kEnter` wins and
+        nothing moves) and lifts only where the material is genuinely noisier.
+
+        Higher was measured and is worse in a way worth recording: at seven the
+        detector starts answering on material *with* drums, and at nine it
+        answers 132.8 BPM on a song playing 118. That case must stay silent -
+        the network and the kick channel own it - and a gate that lets it speak
+        has stopped measuring the harmony. */
+    static constexpr float kOverTypical = 4.00f;
+    /** And how slowly that reference is learned. */
+    static constexpr float kTypicalRise = 0.02f;
     /** And for how many hops it has to stay moved before it is a chord change
         rather than a drum. Three hops is 130 ms: longer than any transient,
         far shorter than any chord. */
@@ -408,6 +455,7 @@ private:
     float reference[12] {};
     int write = 0, filled = 0, accN = 0, sinceHop = 0, refractory = 0, heldHops = 0;
     float acc = 0.0f, lastChange = 0.0f, peakHeld = 0.0f;
+    float typicalMove = 0.0f;
     bool  haveReference = false, usable = false;
     float loudestWindow = 0.0f;
     float usableShare = 0.0f;
