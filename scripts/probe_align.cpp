@@ -865,7 +865,7 @@ void measureTempoChange()
 // that the tempo lines up with the band better after STOP than while playing.
 // Both are true, and section 6 could not see either.
 //
-// So: phase, in milliseconds, against the notated grid, three ways.
+// So: phase, in milliseconds, against the notated grid, three ways -
 //
 //   LEANA    the loop as the app runs it while the part is sounding: the grid
 //            is never moved, only the rate is bent towards it
@@ -875,24 +875,53 @@ void measureTempoChange()
 //   POSA     what the app does while nothing is playing: the grid is *placed*
 //            on the song. This is what a listener gets after pressing STOP.
 //
-// The two things the numbers say:
+// - and two more columns for the phase the *decoder* is reporting, because
+// without them the table cannot say whose lag it is measuring. That turned out
+// to matter more than any of the three modes. Measured:
+//
+//     rampa              LEANA          TRIM           POSA           decoder
+//     100 -> 110 / 30 s  30.6 / -20.3   27.3 / -16.3   20.4 / -11.9   17.6 / -10.7
+//     100 -> 110 / 12 s  58.9 / -74.2   50.4 / -45.7   30.3 / -22.4   24.9 / -17.1
+//     120 -> 132 / 20 s  31.4 / -20.9   24.3 /  +9.0   19.2 / -10.3   18.7 / -10.4
+//     128 -> 120 / 20 s  26.0 / +11.8   24.6 / -21.0   18.0 /  -0.4   16.1 /  -2.0
+//
+// (mean of the absolute phase, and the signed phase over the last third)
 //
 // **A proportional loop cannot be inside a ramp.** It closes an error by
 // leaning, so it needs a standing error to lean at all, and the faster the band
-// moves the further out it has to sit to keep up. The `coda` column - the
-// signed phase over the last third of the ramp - shows it directly: behind on
-// every ramp that speeds up, ahead on the one that slows down, in proportion to
-// how fast. That is not a threshold to tune, it is what the loop is, and the
-// only cure is a term that remembers.
+// moves the further out it has to sit to keep up. The signed column shows it:
+// behind on every ramp that speeds up, ahead on the one that slows down. That
+// is not a threshold to tune, it is what the loop is.
 //
-// **Placing beats leaning**, which is why STOP sounds better aligned. Placing
-// while sounding is not available: it was tried, bounded so that no jump could
-// cross a pulse, and it measured 21/38/22/18 ms against LEANA's 31/59/31/26 -
-// and broke four of the invariants the lean exists to protect. A move that
-// cannot double or drop a stroke can still *stretch* one, and applying the
-// whole correction on the block it arrives makes the loop's behaviour a
-// function of the buffer size. Both are tested for, both failed, and the tests
-// are right. What is left for the sounding path is the rate.
+// **The decoder is the floor, and on a slow ramp it is most of the answer.**
+// 10.7 ms of the clock's 20.3 is already in the phase it is being handed. On
+// the twelve-second ramp it is the other way round - 17.1 of 74.2 - so there
+// the loop is the problem and on a gentle rise it mostly is not. Any further
+// work has to say which of the two it is attacking.
+//
+// **Placing beats leaning**, which is why STOP sounds better aligned: POSA sits
+// within a millisecond or two of the decoder's own lag on three ramps of four.
+//
+// Two fixes were built and measured and neither ships.
+//
+// Placing the grid while sounding, bounded so no jump can cross a pulse,
+// measured 21/38/22/18 ms against LEANA's 31/59/31/26 - and broke four of the
+// invariants the lean exists to protect. A move that cannot double or drop a
+// stroke can still *stretch* one, and applying the whole correction on the
+// block it arrives makes the loop's behaviour a function of the buffer size.
+// Both are tested for, both failed, and the tests are right.
+//
+// The rate integrator, driven by the averaged phase error rather than by
+// differencing two beats half a second apart, is the TRIM column above. It
+// takes the mean down on every ramp and it overshoots: the signed column goes
+// from -20.9 to +9.0 on one ramp and from +11.8 to -21.0 on another, which is
+// the part running away and catching up rather than following. It also costs
+// the passage without a drummer 19.4 -> 27.4 ms and the accelerando
+// 18.9 -> 26.8. Lowering the gain trades the ramp back for the passage one for
+// one, and no setting of it was better than not having it.
+//
+// What this section is for, then, is that the next attempt starts from the
+// right number instead of from the percentage in section 6.
 
 enum class RampMode { lean, trim, place };
 
@@ -902,6 +931,12 @@ struct RampPhase
     double worstMs = 0.0;   // and the worst of it
     double tailMs = 0.0;    // signed, over the last third of the ramp: the lag
     double afterMs = 0.0;   // mean |phase| over the eight seconds after it ends
+    /** The same two numbers for the phase the *decoder* is reporting, which is
+        what the clock is aiming at and therefore the floor under everything
+        above. Without them the table cannot say whose lag it is measuring, and
+        the answer turns out not to be the clock's. */
+    double decMeanMs = 0.0;
+    double decTailMs = 0.0;
 };
 
 /** The same chain as `tempoChange` - real decoder, real clock - scored on
@@ -969,7 +1004,10 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     uint32_t lastSerial = 0;
     bool seenSerial = false;
     double sum = 0.0, tailSum = 0.0, afterSum = 0.0;
+    double decSum = 0.0, decTailSum = 0.0;
     int n = 0, tailN = 0, afterN = 0;
+    float lastHypPhase = 0.0f;
+    bool haveHypPhase = false;
     int lastPrinted = -1;
 
     for (int i = 0; i < total; ++i)
@@ -996,6 +1034,8 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                 clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - hy.beatPhase),
                                          hy.confidence, 1);
             }
+            lastHypPhase = hy.beatPhase;
+            haveHypPhase = true;
             const float gridErr = vp::wrapCentered (clock.beatPhase() - hy.beatPhase);
             if (mode == RampMode::place && std::fabs (gridErr) > 0.04f)
                 clock.snapPhase (hy.beatPhase, true);
@@ -1010,16 +1050,24 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
         const double errBeats = vp::wrapCentered (
             static_cast<float> (clock.beatPhase() - bp));
         const double ms = errBeats * 60.0 / bpmAt (t) * 1000.0;
+        // And the same thing for what the clock is being told, so the two can
+        // be told apart.
+        const double decMs = haveHypPhase
+            ? vp::wrapCentered (static_cast<float> (lastHypPhase - bp))
+                  * 60.0 / bpmAt (t) * 1000.0
+            : 0.0;
         clock.advance (blockPerFrame);
 
         if (t > atSec && t <= atSec + std::max (0.001, rampSec))
         {
             sum += std::fabs (ms);
+            decSum += std::fabs (decMs);
             r.worstMs = std::max (r.worstMs, std::fabs (ms));
             ++n;
             if (t > atSec + rampSec * 2.0 / 3.0)
             {
                 tailSum += ms;
+                decTailSum += decMs;
                 ++tailN;
             }
         }
@@ -1035,13 +1083,17 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             if (sec != lastPrinted && sec % 4 == 0)
             {
                 lastPrinted = sec;
-                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f  fase %+7.1f ms\n",
-                             sec, bpmAt (t), static_cast<double> (clock.currentTempo()), ms);
+                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f trim=%+6.3f  "
+                             "fase %+7.1f ms (decoder %+7.1f)\n",
+                             sec, bpmAt (t), static_cast<double> (clock.currentTempo()),
+                             static_cast<double> (clock.tempoTrimBpm()), ms, decMs);
             }
         }
     }
 
     r.meanMs = n > 0 ? sum / n : 0.0;
+    r.decMeanMs = n > 0 ? decSum / n : 0.0;
+    r.decTailMs = tailN > 0 ? decTailSum / tailN : 0.0;
     r.tailMs = tailN > 0 ? tailSum / tailN : 0.0;
     r.afterMs = afterN > 0 ? afterSum / afterN : 0.0;
     return r;
@@ -1056,9 +1108,12 @@ void measureRampPhase()
                  "millisecondi contro la griglia vera, nei tre modi che l'app ha:\n"
                  "LEANA (come suona), TRIM (con l'integratore che in regime VIVO\n"
                  "e' spento) e POSA (griglia posata, cioe' quello che si sente a\n"
-                 "STOP).\n\n");
-    std::printf ("%-24s %-9s %-11s %-11s %-11s %-11s\n",
-                 "rampa", "modo", "media ms", "peggio ms", "coda ms", "dopo ms");
+                 "STOP). Le ultime due colonne sono la fase del *decoder* contro\n"
+                 "la stessa griglia: e' il pavimento, nessun anello puo' fare\n"
+                 "meglio del bersaglio che gli viene dato.\n\n");
+    std::printf ("%-24s %-9s %-11s %-11s %-11s %-11s %-11s %-11s\n",
+                 "rampa", "modo", "media ms", "peggio ms", "coda ms", "dopo ms",
+                 "dec media", "dec coda");
 
     struct Case { const char* name; float from, to; double ramp; };
     const Case cases[] = {
@@ -1078,6 +1133,7 @@ void measureRampPhase()
         for (const auto& md : modes)
         {
             double mean = 0.0, worst = 0.0, tail = 0.0, after = 0.0;
+            double decMean = 0.0, decTail = 0.0;
             constexpr int kSeeds = 4;
             for (int s = 0; s < kSeeds; ++s)
             {
@@ -1089,10 +1145,13 @@ void measureRampPhase()
                 worst = std::max (worst, r.worstMs);
                 tail += r.tailMs;
                 after += r.afterMs;
+                decMean += r.decMeanMs;
+                decTail += r.decTailMs;
             }
-            std::printf ("%-24s %-9s %-11.1f %-11.1f %-+11.1f %-11.1f\n",
+            std::printf ("%-24s %-9s %-11.1f %-11.1f %-+11.1f %-11.1f %-11.1f %-+11.1f\n",
                          md.m == RampMode::lean ? c.name : "", md.label,
-                         mean / kSeeds, worst, tail / kSeeds, after / kSeeds);
+                         mean / kSeeds, worst, tail / kSeeds, after / kSeeds,
+                         decMean / kSeeds, decTail / kSeeds);
         }
     }
     std::printf ("\n");
