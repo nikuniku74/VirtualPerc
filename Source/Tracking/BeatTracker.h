@@ -3,6 +3,7 @@
 #include "AI/BeatHypothesis.h"
 #include "AI/NeuralBeatTracker.h"
 #include "AI/IBeatModel.h"
+#include "Tracking/HarmonicTempo.h"
 #include "Tracking/PhaseTrust.h"
 #include "Tracking/TempoFollower.h"
 
@@ -246,6 +247,8 @@ private:
     NeuralBeatTracker neural;
     TempoFollower     follower;
     EvidenceTrust     evidence;
+    HarmonicTempo     harmonicTempo;
+    int               noNetworkTempoSamples = 0;
 
     /** The kick channel's state, as the audio thread last reported it. */
     bool  kickAssigned = false;

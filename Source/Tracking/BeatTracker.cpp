@@ -78,6 +78,22 @@ namespace
         maxima over their runs and the gate reads the instantaneous value. */
     constexpr float kHarmonicShareToTrust = 0.42f;
 
+/** How much the clock should believe a tempo that came from the harmony.
+
+    Low, and it is not a hedge: this is the only tempo source in the app that
+    can be wrong by a *factor* rather than by a percentage. It assumes four four
+    and a chord that lasts no longer than a bar, and a song that changes chord
+    every two bars reads as half the tempo - which is not an error the clock can
+    steer out of. Handed over gently, the glide takes a couple of seconds to
+    adopt it and the decoder takes it straight back the moment it has anything
+    of its own. */
+constexpr float kHarmonicTempoConfidence = 0.30f;
+
+/** How long the network has to have had no tempo before the harmony is asked
+    for one. See where it is used: a fill is a second of silence and a voice
+    with a guitar is a song of it. */
+constexpr float kNoNetworkTempoSec = 6.0f;
+
     // How far the winner has to stand clear of the runner-up before the bar is
     // moved at all - and how much further while the part is playing. Shares of
     // the histogram, so four quarters the network cannot separate sit at 0.25
@@ -734,7 +750,16 @@ void BeatTracker::notifyKickOnset (int sampleOffset, float strength) noexcept
 
 void BeatTracker::notifyHarmonicChange (int sampleOffset, float strength) noexcept
 {
-    if (pendingHarmony >= kMaxPendingHarmony || ! std::isfinite (strength))
+    if (! std::isfinite (strength))
+        return;
+    // Two things read a chord change, and they ask it different questions. The
+    // histogram below asks *which quarter*, and needs the change placed against
+    // the clock's own count. This one asks *how long a beat is*, needs nothing
+    // but the times, and is fed here rather than from the queue so that a run
+    // of changes arriving in one block is not truncated by the queue's depth.
+    harmonicTempo.addChange (sampleOffset, std::clamp (strength, 0.0f, 1.0f));
+
+    if (pendingHarmony >= kMaxPendingHarmony)
         return;
     pendingHarmonyOffset[pendingHarmony] = sampleOffset;
     pendingHarmonyStrength[pendingHarmony] = std::clamp (strength, 0.0f, 1.0f);
@@ -881,6 +906,33 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // flow was designed around - so on a mixer feed four taps set the tempo and
     // the network took it straight back. Measured on a 100 BPM track tapped at
     // 132: held 100% of the time in IPAD, 0% in MIXER.
+    // A slice of the harmonic tempo sweep, and what it currently believes. Run
+    // every block: the cost is bounded per callback by design, and the answer
+    // has to be there before the tempo is chosen a few lines down.
+    harmonicTempo.process (numSamples);
+    const float harmonicBpm = harmonicTempo.bpm();
+
+    // How long the network has had nothing to say about the tempo.
+    //
+    // "The network has no tempo" is true in two situations that want opposite
+    // things, and telling them apart is a matter of *how long*, not of anything
+    // measurable in the instant. A band playing a fill drops the pulse for a
+    // bar or two and comes back; a voice with a guitar behind it never had one.
+    // Letting the harmony speak the moment the network went quiet moved the
+    // clock during every fill - measured at 44.1 ms of phase scatter through
+    // the fill bars against 30 allowed - because a fill is exactly where the
+    // harmony is least placeable and the network's silence shortest.
+    //
+    // Six seconds. Longer than any fill, and short enough that material which
+    // genuinely has no percussion is not left waiting through a whole verse.
+    if (nnBpm > 50.0f)
+        noNetworkTempoSamples = 0;
+    else
+        noNetworkTempoSamples = std::min (noNetworkTempoSamples + numSamples,
+                                          static_cast<int> (sampleRate * 30.0));
+    const bool networkHasGivenUp = noNetworkTempoSamples
+                                   > static_cast<int> (sampleRate * kNoNetworkTempoSec);
+
     const bool tapOwnsTempo = tapEstablished && heldBpm > 50.0f;
     const bool userOwnsTempo = ! tempoFollow && heldBpm > 50.0f;
     const bool tempoOwned = tapOwnsTempo || userOwnsTempo;
@@ -958,6 +1010,27 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // arrive, because the clock refused every estimate that differed from
         // the one it was already wrong about.
         follower.setTargetTempo (nnBpm, nnConf);
+    }
+    else if (harmonicBpm > 50.0f && networkHasGivenUp && ! speakerFollow && tempoFollow)
+    {
+        // Nothing percussive to time, and the harmony can still say how long a
+        // beat is. See Tracking/HarmonicTempo.h: chords change on bar lines, so
+        // a period that makes every interval between changes come out a whole
+        // number of bars is the period the band is playing - measured inside
+        // 0.75% over five tempos on material with every drum taken out.
+        //
+        // Only where the network has no tempo at all. Where it has one it is
+        // the better source by a wide margin, and this is not asked; where it
+        // has none the app used to hold whatever it last believed, which on a
+        // voice and a guitar is nothing at all. Deliberately not a vote against
+        // the network, because the two are not comparable: this one assumes
+        // four four and a chord no longer than a bar, and when a song breaks
+        // either assumption it is wrong by a factor, not by a percent.
+        //
+        // Not through a speaker. The chroma is read off the same bus that
+        // carries the room and our own returned part, and a mic in a room is
+        // where every other harmonic measurement in this app has been worst.
+        follower.setTargetTempo (harmonicBpm, kHarmonicTempoConfidence);
     }
 
     // The clock always runs on sixteenths, whatever the part is playing. The
