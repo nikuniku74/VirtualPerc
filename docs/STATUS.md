@@ -165,14 +165,36 @@ quello che la band sta suonando (`Tracking/HarmonicTempo.h`, banco `VPSing`).
 | voce e chitarra | 152 | 151,3 | 0,44% |
 | band che vaga di 3 BPM | 118 | 117,3 | 0,56% |
 | tempo umano (9 ms) | 118 | 117,2 | 0,64% |
-| **pad tenuti** | 118 | **MAI** | — |
+| pad tenuti | 118 | 117,1 | 0,79% |
 | **con la batteria** | 118 | **MAI** | — |
 
-Gli ultimi due sono dove si rompe e stanno nella tabella invece che fuori.
-Un accompagnamento tenuto sfuma il cambio finché il rilevatore non riesce a
-collocarlo: la dispersione passa da 34 ms a 552. Con la batteria è
-altrettanto sparso, e lì non importa: è il caso che la rete e il canale kick
-hanno già.
+Con la batteria resta muto, ed è giusto così: è il caso che la rete e il
+canale kick hanno già.
+
+I pad tenuti erano rotti anche loro, e sono la quarta occorrenza dello
+stesso errore in questo repository. `kEnter` era una soglia **assoluta** su
+una grandezza il cui fondo dipende dall'arrangiamento:
+
+| materiale | fondo della funzione di cambio |
+|---|---|
+| che il rilevatore legge bene | 0,012 – 0,024 |
+| **accompagnamento tenuto** | **0,041** |
+| con la batteria | 0,033 |
+
+Quindi 0,10 stava a sette volte il fondo nel primo caso e a sole 2,4 volte
+nel secondo — dentro il rumore. Da lì i 74 cambi riportati dove
+l'arrangiamento ne ha 28, ognuno su una fase qualsiasi.
+
+Il gate ora è `max(kEnter, tipico × 4)`, dove «tipico» è quanto la funzione
+di cambio si muove ordinariamente **sotto** il gate — imparato solo sotto il
+gate, così una serie di cambi veri non può alzare l'asticella contro sé
+stessa. Quattro rende equivalenti i due casi: dove il fondo è basso, quattro
+volte 0,024 sta ancora sotto 0,10, quindi vince `kEnter` e i sette casi che
+funzionavano restano identici al centesimo.
+
+Più in alto è peggio: a sette il rilevatore comincia a rispondere su
+materiale **con** la batteria, a nove risponde 132,8 BPM su un brano che ne
+suona 118.
 
 **Non gli intervalli fra cambi consecutivi.** È stata la prima versione e
 misurava 1 caso su 7: il rilevatore trova 74 cambi dove l'arrangiamento ne
