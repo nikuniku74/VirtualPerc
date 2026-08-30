@@ -279,6 +279,25 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPSing
+        PRODUCT_NAME "VPSing"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPSing PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPSing PRIVATE ${VP_CORE_SOURCES} scripts/probe_sing.cpp)
+    target_include_directories (VPSing PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPSing PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPSing PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPAlign
         PRODUCT_NAME "VPAlign"
         NEEDS_WEB_BROWSER FALSE
