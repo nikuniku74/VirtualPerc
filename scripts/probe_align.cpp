@@ -1117,6 +1117,11 @@ void measureRampPhase()
 
     struct Case { const char* name; float from, to; double ramp; };
     const Case cases[] = {
+        // Flat first, and it is not a control: if the decoder's phase is not
+        // zero against the notated grid on a tempo that never moves, that is an
+        // offset every song carries and no ramp is responsible for it.
+        { "100 fisso",          100.0f, 100.0f, 30.0 },
+        { "130 fisso",          130.0f, 130.0f, 30.0 },
         { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0 },
         { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0 },
         { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0 },
