@@ -106,6 +106,45 @@ Costo: passaggio senza batteria 19,4 → 22,1 ms, accelerando lento
   guadagna ~1 ms di media e *peggiora* il ritardo di regime sulla rampa
   graduale (−0,7 → −3,9) costando altri 1,2 ms nel buco.
 
+### Il gradino da cinque secondi, e perché resta
+
+Un cambio di tempo **brusco** costa ancora 4,6-5,5 secondi (e 15 su un salto
+come 100 → 140). Le colonne «prima» e «adesso» della sezione 6 sono
+identiche perché tutto il lavoro sulla fase non poteva toccarlo, e la
+traccia dice perché:
+
+| t | orologio | decoder | fit corto |
+|---|---|---|---|
+| 18 (il salto) | 117,9 | 117,9 | 117,9 |
+| 20 | 120,0 | 120,0 | **122,5** |
+| 22 | 124,1 | 124,1 | **127,3** |
+| 24 | 126,3 | 126,3 | 128,3 |
+
+**L'orologio non c'entra**: le sue colonne sono identiche a quelle del
+decoder a ogni riga, cioè adotta all'istante ciò che gli viene detto. I
+cinque secondi sono tutti dentro il decoder, che *conosce già la risposta e
+la trattiene*: a t=22 il fit corto è a 127,3 e il decoder ne dichiara 124,1.
+
+La manopola è `kRateLive`, misurata:
+
+| kRateLive | gradini (s) | fermo 100/130 | buco / accel (col trim) |
+|---|---|---|---|
+| **0,22** | 4,64 / 5,46 / 5,35 | 3,0 / 5,0 | **22,1 / 20,0** |
+| 0,35 | 4,14 / 4,81 / 4,40 | 3,1 / 5,0 | 24,5 / **25,8** |
+| 0,50 | 3,79 / 4,29 / 3,97 | 3,1 / 5,0 | 25,9 / 29,4 |
+
+La fermezza sul tempo fisso **non si paga** (3,0 → 3,1 ms), il che non era
+scontato. Ma con il trim acceso l'accelerando esplode: +5,8 ms a 0,35. È la
+stessa legge della sezione qui sotto, incontrata per la terza volta - il
+trim e il tasso di adozione fanno entrambi «inseguire più in fretta», e
+sommati sovracompensano.
+
+Si guadagnerebbe circa un secondo su un gradino, che dal vivo è raro,
+pagando 5,8 ms su un accelerando, che è comune. Non ship.
+
+Chi ci riprova deve prima decidere **quale dei due termini possiede il
+ritardo**, e misurarli insieme nella stessa sessione.
+
 ### L'anticipo del decoder e il trim fanno lo stesso lavoro
 
 Sistemato l'anello, il decoder è diventato il termine dominante: sulla rampa
