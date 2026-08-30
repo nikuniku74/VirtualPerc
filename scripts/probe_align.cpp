@@ -645,6 +645,209 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
     return h;
 }
 
+// --- 6. how fast the clock takes a tempo change ---------------------------
+//
+// The one thing a live percussionist is judged on. A band picks up out of a
+// chorus, drags into a ballad, or the drummer simply pushes - and the whole
+// question is how many bars the app spends being wrong about it.
+//
+// Measured through the real chain, decoder and clock, against activations from
+// a song whose tempo genuinely moves. The clock's own tempo is compared with
+// the song's at every block, and the answer is the time from the change until
+// it is inside one percent and stays there.
+
+/** How close counts as "taken the change".
+
+    One percent was the first choice and it turned out to be a measurement of
+    the decoder's own noise rather than of its speed: on this material the
+    eight-beat fit wobbles +/-1.5 BPM, which at 128 is 1.2%, so a clock sitting
+    exactly on the answer fails a 1% test at random. Two percent is 2.5 BPM at
+    128 - still well inside what a listener hears as the same tempo - and is
+    above the floor, so what the column measures is adaptation. */
+constexpr double kInsideEnough = 2.0;
+
+struct TempoStep
+{
+    double secondsToLock = -1.0;   // to within 1% and stay
+    double worstErrPct = 0.0;      // how far off it got on the way
+    double settledErrPct = 0.0;    // and where it ended up
+};
+
+/** `rampSec` of zero is a step; anything else is a ramp taking that long. */
+TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
+                       double seconds, unsigned seed, bool print = false,
+                       bool quickStep = true)
+{
+    vp::BeatDecoder dec;
+    dec.prepare (kFps);
+    dec.setLineFeed (true);
+    dec.setQuickStep (quickStep);
+
+    vp::TempoFollower clock;
+    clock.prepare (kSr);
+    clock.setPulsesPerBeat (4);
+    clock.forceTempo (fromBpm);
+    clock.setTargetTempo (fromBpm, 1.0f);
+    clock.setFollowStrength (vp::FollowStrength::high);
+    clock.setLocked (true);
+    clock.resetClock();
+
+    std::mt19937 rng (seed);
+    std::uniform_real_distribution<float> floorNoise (0.0f, 0.10f);
+    std::normal_distribution<double> jitter (0.0, 1.1);
+
+    auto bpmAt = [&] (double t)
+    {
+        if (t <= atSec)
+            return static_cast<double> (fromBpm);
+        if (rampSec <= 0.0)
+            return static_cast<double> (toBpm);
+        const double u = std::min (1.0, (t - atSec) / rampSec);
+        return fromBpm + (toBpm - fromBpm) * u;
+    };
+
+    // Beat times from the tempo curve, so a ramp is a real one.
+    std::vector<double> beatAt;
+    {
+        double t = 0.0;
+        while (t < seconds + 2.0)
+        {
+            beatAt.push_back (t * kFps + jitter (rng));
+            t += 60.0 / bpmAt (t);
+        }
+    }
+
+    TempoStep r;
+    const int blockPerFrame = static_cast<int> (kSr / kFps);
+    const int total = static_cast<int> (kFps * seconds);
+    uint32_t lastSerial = 0;
+    bool seenSerial = false;
+    double lockedAt = -1.0;
+    int lastPrinted = -1;
+
+    for (int i = 0; i < total; ++i)
+    {
+        float act = floorNoise (rng);
+        for (size_t k = 0; k < beatAt.size(); ++k)
+        {
+            const double dd = (static_cast<double> (i) - beatAt[k]) / 1.6;
+            if (std::fabs (dd) < 5.0)
+                act = std::max (act, 0.94f * static_cast<float> (std::exp (-0.5 * dd * dd)));
+        }
+
+        const auto hy = dec.observe (act, 0.03f, 1.0f - act);
+        const double t = static_cast<double> (i) / kFps;
+
+        if (hy.valid)
+        {
+            if (! seenSerial) { lastSerial = hy.beatSerial; seenSerial = true; }
+            if (hy.bpm > 50.0f)
+                clock.setTargetTempo (hy.bpm, hy.confidence);
+            if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
+            {
+                lastSerial = hy.beatSerial;
+                clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - hy.beatPhase),
+                                         hy.confidence, 1);
+            }
+            clock.setGridPhase (hy.beatPhase,
+                                vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f));
+        }
+        clock.advance (blockPerFrame);
+
+        if (t <= atSec)
+            continue;
+
+        const double want = bpmAt (t);
+        const double errPct = std::fabs (clock.currentTempo() - want) / want * 100.0;
+        r.worstErrPct = std::max (r.worstErrPct, errPct);
+        r.settledErrPct = errPct;
+        if (errPct < kInsideEnough)
+        {
+            if (lockedAt < 0.0)
+                lockedAt = t;
+        }
+        else
+        {
+            lockedAt = -1.0;
+        }
+        if (lockedAt >= 0.0 && r.secondsToLock < 0.0 && t - lockedAt > 1.0)
+            r.secondsToLock = lockedAt - atSec;
+
+        if (print)
+        {
+            const int sec = static_cast<int> (t);
+            if (sec != lastPrinted && sec % 2 == 0)
+            {
+                lastPrinted = sec;
+                const auto dg = dec.diagnostics();
+                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f decoder=%-7.2f "
+                             "corto=%-7.2f lungo=%-7.2f rate=%-5.2f  scarto %.2f%%  %s\n",
+                             sec, want, static_cast<double> (clock.currentTempo()),
+                             static_cast<double> (hy.bpm),
+                             static_cast<double> (dg.shortFit),
+                             static_cast<double> (dg.longFit),
+                             static_cast<double> (dg.shortFitRate),
+                             errPct, vp::regimeLabel (static_cast<int> (hy.regime)));
+            }
+        }
+    }
+    return r;
+}
+
+void measureTempoChange()
+{
+    std::printf ("--- quanto ci mette a prendere un cambio di tempo ---\n");
+    std::printf ("La cosa su cui un percussionista dal vivo viene giudicato. Il\n"
+                 "tempo cambia a 20 s; la colonna e' i secondi da li' a stare\n"
+                 "dentro il 2%% e restarci - vedi kInsideEnough per perche' non\n"
+                 "l'1%%.\n\n");
+    std::printf ("%-26s %-11s %-11s %-11s %-11s\n",
+                 "cambio", "prima s", "adesso s", "peggio %", "residuo %");
+
+    struct Case { const char* name; float from, to; double ramp; };
+    const Case cases[] = {
+        { "118 -> 124, gradino",     118.0f, 124.0f, 0.0 },
+        { "118 -> 128, gradino",     118.0f, 128.0f, 0.0 },
+        { "100 -> 140, gradino",     100.0f, 140.0f, 0.0 },
+        { "128 -> 120, gradino",     128.0f, 120.0f, 0.0 },
+        { "118 -> 126 in 4 s",       118.0f, 126.0f, 4.0 },
+        { "118 -> 126 in 12 s",      118.0f, 126.0f, 12.0 },
+    };
+    // One case traced, so where the seconds actually go is visible rather than
+    // guessed at.
+    std::printf ("\n  Il gradino 118 -> 128, battuta per battuta:\n");
+    tempoChange (118.0f, 128.0f, 18.0, 0.0, 40.0, 101u, true);
+    std::printf ("\n");
+
+    for (const Case& c : cases)
+    {
+        double t[2] = { 0.0, 0.0 };
+        int found[2] = { 0, 0 };
+        double worst = 0.0, resid = 0.0;
+        for (int q = 0; q < 2; ++q)
+            for (int s = 0; s < 4; ++s)
+            {
+                const TempoStep r = tempoChange (c.from, c.to, 20.0, c.ramp, 70.0,
+                                                 101u + static_cast<unsigned> (s) * 977u,
+                                                 false, q == 1);
+                if (r.secondsToLock >= 0.0) { t[q] += r.secondsToLock; ++found[q]; }
+                if (q == 1)
+                {
+                    worst = std::max (worst, r.worstErrPct);
+                    resid += r.settledErrPct;
+                }
+            }
+        char before[16], after[16];
+        std::snprintf (before, sizeof before, found[0] > 0 ? "%.2f" : "MAI",
+                       t[0] / std::max (1, found[0]));
+        std::snprintf (after, sizeof after, found[1] > 0 ? "%.2f" : "MAI",
+                       t[1] / std::max (1, found[1]));
+        std::printf ("%-26s %-11s %-11s %-11.2f %-11.3f\n",
+                     c.name, before, after, worst, resid / 4.0);
+    }
+    std::printf ("\n");
+}
+
 void measureDrumHole (double kHoleLate)
 {
     std::printf ("=== ritardo sistematico del passaggio: %.1f frame (%.0f ms) ===\n",
@@ -784,6 +987,7 @@ int main()
     measureFollowDrift();
     measureDrumHole (0.0);
     measureDrumHole (2.2);
+    measureTempoChange();
     measureResync();
     return 0;
 }

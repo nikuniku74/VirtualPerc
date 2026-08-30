@@ -28,7 +28,7 @@ namespace
         {  2, Stroke::toe,   0.30f },
         {  4, Stroke::slap,  0.94f },   // the crack on 2
         {  6, Stroke::toe,   0.28f },
-        {  8, Stroke::tumba, 0.82f },   // the bass on 3
+        {  8, Stroke::tapado, 0.72f },  // the bass on 3, stopped: weight, no note
         { 10, Stroke::toe,   0.28f },
         { 12, Stroke::open,  0.86f },   // and the pair
         { 14, Stroke::open,  0.92f },
@@ -36,10 +36,10 @@ namespace
     constexpr Hit kMarchaB[] = {
         {  1, Stroke::heel,  0.32f },
         {  2, Stroke::toe,   0.29f },
-        {  4, Stroke::slap,  0.92f },
+        {  4, Stroke::slapClosed, 0.90f },   // the same crack, choked
         {  6, Stroke::heel,  0.26f },
         {  8, Stroke::tumba, 0.80f },
-        { 10, Stroke::tumba, 0.52f },
+        { 10, Stroke::tapado, 0.50f },
         { 12, Stroke::open,  0.84f },
         { 14, Stroke::open,  0.94f },
     };
@@ -89,7 +89,8 @@ namespace
     // of 4, the second of which is what pushes into the next bar. Doubling the
     // backbeat is the commonest way to make a rock track sound crowded.
     constexpr Hit kRockA[] = {
-        {  2, Stroke::tumba, 0.84f },   // the "and" of 1, never the one itself
+        {  2, Stroke::tapado, 0.84f },  // the "and" of 1, stopped: a rock mix
+                                        // has a bass guitar there already
         {  3, Stroke::heel,  0.24f },
         {  6, Stroke::open,  0.74f },   // and of 2
         {  8, Stroke::tumba, 0.60f },
@@ -108,7 +109,7 @@ namespace
     // Still nothing on 2 and 4 - that is the drummer's - but the bar leaves with
     // a pickup on the last sixteenth.
     constexpr Hit kRockC[] = {
-        {  2, Stroke::tumba, 0.86f },
+        {  2, Stroke::tapado, 0.86f },
         {  3, Stroke::heel,  0.22f },
         {  6, Stroke::open,  0.76f },
         {  8, Stroke::tumba, 0.62f },
@@ -147,7 +148,9 @@ namespace
     // rest of the band is. Six a bar says the same figure and leaves the room.
     constexpr Hit kDanceA[] = {
         {  1, Stroke::tumba, 0.90f },   // the one answered, not doubled
-        {  5, Stroke::slap,  0.94f },   // the "e" of 2 - the loudest stroke
+        {  5, Stroke::slapClosed, 0.96f },  // the "e" of 2 - the loudest stroke,
+                                            // and closed so it cracks instead
+                                            // of ringing into the next one
         {  8, Stroke::tumba, 0.88f },   // the three
         { 11, Stroke::open,  0.80f },
         { 14, Stroke::open,  0.78f },   // and the pair into the next bar
@@ -162,7 +165,7 @@ namespace
     };
     constexpr Hit kDanceC[] = {
         {  1, Stroke::tumba, 0.88f },
-        {  5, Stroke::slap,  0.96f },
+        {  5, Stroke::slapClosed, 0.96f },
         {  6, Stroke::open,  0.70f },
         { 10, Stroke::open,  0.74f },   // the bar that goes somewhere: the
         { 14, Stroke::open,  0.76f },   // opens walk up instead of repeating
@@ -220,7 +223,7 @@ namespace
     constexpr Hit kPopD[] = {
         {  2, Stroke::tumba, 0.72f },
         {  4, Stroke::heel,  0.22f },
-        {  8, Stroke::muff,  0.36f },
+        {  8, Stroke::tapado, 0.40f },
         { 14, Stroke::open,  0.82f },
         { 15, Stroke::toe,   0.30f },
     };
@@ -233,7 +236,7 @@ namespace
     constexpr Hit kSambaA[] = {
         {  1, Stroke::heel,  0.28f },
         {  2, Stroke::toe,   0.32f },
-        {  4, Stroke::tumba, 0.90f },   // samba 2
+        {  4, Stroke::tapado, 0.90f },  // samba 2, stopped like a surdo
         {  7, Stroke::slap,  0.52f },
         { 10, Stroke::toe,   0.28f },
         { 12, Stroke::tumba, 0.86f },   // samba 4
@@ -242,7 +245,7 @@ namespace
     constexpr Hit kSambaB[] = {
         {  1, Stroke::heel,  0.26f },
         {  3, Stroke::open,  0.52f },
-        {  4, Stroke::tumba, 0.88f },
+        {  4, Stroke::tapado, 0.88f },
         {  6, Stroke::open,  0.66f },
         {  8, Stroke::heel,  0.24f },
         { 11, Stroke::slap,  0.50f },
@@ -284,16 +287,16 @@ namespace
     // the open that lands on the "a" of 4 - the one a horn section would hit.
     constexpr Hit kFunkA[] = {
         {  1, Stroke::tumba, 0.78f },
-        {  3, Stroke::slap,  0.50f },   // the "a" of 1
+        {  3, Stroke::slapClosed, 0.54f },  // the "a" of 1, choked
         {  6, Stroke::open,  0.62f },
         { 10, Stroke::toe,   0.26f },
-        { 11, Stroke::slap,  0.46f },
+        { 11, Stroke::slapClosed, 0.48f },
         { 14, Stroke::muff,  0.38f },
         { 15, Stroke::open,  0.88f },   // a of 4
     };
     constexpr Hit kFunkB[] = {
-        {  1, Stroke::tumba, 0.74f },
-        {  3, Stroke::slap,  0.48f },
+        {  1, Stroke::tapado, 0.74f },
+        {  3, Stroke::slapClosed, 0.52f },
         {  6, Stroke::open,  0.58f },
         {  7, Stroke::toe,   0.24f },
         { 11, Stroke::slap,  0.52f },
@@ -337,7 +340,7 @@ namespace
     constexpr Hit kReggaeA[] = {
         {  2, Stroke::open,  0.58f },
         {  6, Stroke::toe,   0.28f },
-        {  8, Stroke::tumba, 0.90f },   // the three
+        {  8, Stroke::tapado, 0.90f },  // the three: a one-drop thuds
         { 10, Stroke::open,  0.64f },
         { 14, Stroke::slap,  0.50f },
     };
@@ -345,7 +348,7 @@ namespace
         {  2, Stroke::open,  0.54f },
         {  4, Stroke::heel,  0.22f },
         {  6, Stroke::toe,   0.26f },
-        {  8, Stroke::tumba, 0.86f },
+        {  8, Stroke::tapado, 0.86f },
         { 10, Stroke::open,  0.68f },
         { 14, Stroke::open,  0.56f },
     };
@@ -398,7 +401,7 @@ namespace
     constexpr Hit kBossaC[] = {
         {  2, Stroke::tumba, 0.72f },
         {  3, Stroke::open,  0.64f },
-        {  7, Stroke::slap,  0.36f },
+        {  7, Stroke::slapClosed, 0.40f },
         { 10, Stroke::open,  0.66f },
         { 14, Stroke::open,  0.82f },
         { 15, Stroke::toe,   0.28f },
@@ -433,19 +436,25 @@ namespace
     //
     // Two sounds means two: the ghost notes are off for this style, because a
     // ghost is a heel or a toe and that would be a third and a fourth.
+    //
+    // And the low half of the pair is the *stopped* drum rather than the open
+    // one. That keeps the style at two sounds, which is its whole definition,
+    // and still gives it one that does not ring - a thud answered by a tone is
+    // the oldest pairing on the instrument, and it leaves the bar emptier than
+    // two ringing drums would.
     constexpr Hit kTwoOneA[] = {
-        {  2, Stroke::tumba, 0.80f },   // the pair: low, then high
+        {  2, Stroke::tapado, 0.80f },  // the pair: stopped low, then open high
         {  3, Stroke::open,  0.86f },
         {  6, Stroke::open,  0.78f },   // and the single answering it
-        { 10, Stroke::tumba, 0.80f },
+        { 10, Stroke::tapado, 0.80f },
         { 11, Stroke::open,  0.88f },
         { 14, Stroke::open,  0.84f },
     };
     constexpr Hit kTwoOneB[] = {
-        {  2, Stroke::tumba, 0.78f },
+        {  2, Stroke::tapado, 0.78f },
         {  3, Stroke::open,  0.84f },
         {  7, Stroke::open,  0.80f },   // the single moves to the "a" of 2
-        { 10, Stroke::tumba, 0.78f },
+        { 10, Stroke::tapado, 0.78f },
         { 11, Stroke::open,  0.86f },
         { 14, Stroke::open,  0.82f },
     };
@@ -453,28 +462,28 @@ namespace
     // the bar leaves on the last sixteenth instead of the "and" of 4.
     constexpr Hit kTwoOneC[] = {
         {  2, Stroke::open,  0.82f },
-        {  3, Stroke::tumba, 0.76f },
+        {  3, Stroke::tapado, 0.76f },
         {  6, Stroke::open,  0.80f },
         { 10, Stroke::open,  0.84f },
-        { 11, Stroke::tumba, 0.78f },
+        { 11, Stroke::tapado, 0.78f },
         { 15, Stroke::open,  0.90f },
     };
     // And the fourth riff pulls the pairs a sixteenth earlier, onto the "e",
     // so the second half of the phrase is not the first half again.
     constexpr Hit kTwoOneD[] = {
-        {  1, Stroke::tumba, 0.78f },
+        {  1, Stroke::tapado, 0.78f },
         {  2, Stroke::open,  0.84f },
         {  6, Stroke::open,  0.78f },
-        {  9, Stroke::tumba, 0.78f },
+        {  9, Stroke::tapado, 0.78f },
         { 10, Stroke::open,  0.86f },
         { 14, Stroke::open,  0.84f },
     };
     constexpr Hit kTwoOneFill[] = {
-        {  8, Stroke::tumba, 0.74f },
+        {  8, Stroke::tapado, 0.74f },
         { 10, Stroke::open,  0.80f },
-        { 11, Stroke::tumba, 0.72f },
+        { 11, Stroke::tapado, 0.72f },
         { 13, Stroke::open,  0.84f },
-        { 14, Stroke::tumba, 0.80f },
+        { 14, Stroke::tapado, 0.80f },
         { 15, Stroke::open,  0.94f },
     };
 

@@ -126,6 +126,13 @@ namespace
             case Stroke::heel:  return { 120.0f * kTune, 0.42f, 46.0f, 0.07f, -0.10f };
             case Stroke::toe:   return { 240.0f * kTune, 0.50f, 60.0f, 0.05f,  0.22f };
             case Stroke::muff:  return { 190.0f * kTune, 0.30f, 34.0f, 0.09f,  0.12f };
+            // The stopped pair. Both are the open stroke with the hand left on
+            // the head: brighter at the strike because the skin is tighter
+            // under a held hand, and then nothing - the ring is not shortened,
+            // it is absent. The slap keeps its crack; the tapado keeps the
+            // weight of the low drum and loses its note.
+            case Stroke::slapClosed: return { 360.0f * kTune, 0.60f, 90.0f, 0.05f,  0.30f };
+            case Stroke::tapado:     return {  95.0f * kTune, 0.34f, 70.0f, 0.05f, -0.26f };
             default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
@@ -341,6 +348,11 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
         case Stroke::heel: extraDecay = 34.0f; break;
         case Stroke::toe:  extraDecay = 46.0f; break;
         case Stroke::muff: extraDecay = 22.0f; break;
+        // Far harder than the muffled strokes: those are a tone with the ring
+        // taken off, these are a stroke with the ring taken *out*. A conga
+        // stopped by the hand that struck it is over in fifty milliseconds.
+        case Stroke::slapClosed: extraDecay = 78.0f; break;
+        case Stroke::tapado:     extraDecay = 62.0f; break;
         default: break;
     }
 
@@ -455,26 +467,40 @@ void PercussionEngine::buildBank() noexcept
     // Recordings are the Versilian Community Sample Library (CC0). Anything
     // they do not cover falls back to synthesis, so the app builds and plays
     // with or without Assets/Percussion.
-    std::vector<float> openTone;
+    std::vector<float> openTone, slapTone;
     loadNamedWav ("open_wav", openTone);
+    loadNamedWav ("slap_wav", slapTone);
 
     static_assert (static_cast<int> (Stroke::shakerDown) == 0
                    && static_cast<int> (Stroke::muff) == 7
-                   && kStrokes == 8);
+                   && static_cast<int> (Stroke::tapado) == 9
+                   && kStrokes == 10);
+    // Which articulations have a recording of their own. The rest are derived
+    // from one of those - see `fromOpen` and `fromSlap` below.
     static const char* kStem[kStrokes] = {
         "shaker_down", "shaker_up", "tumba", "open", "slap",
-        nullptr, nullptr, nullptr
+        nullptr, nullptr, nullptr, nullptr, nullptr
     };
 
     for (int st = 0; st < kStrokes; ++st)
     {
         const Stroke stroke = static_cast<Stroke> (st);
-        const bool derived = stroke == Stroke::heel || stroke == Stroke::toe || stroke == Stroke::muff;
+        // The muffled three are the open tone with the hand left on the head,
+        // which is what they physically are. The stopped pair comes from the
+        // *slap* instead: what makes a closed slap a slap is the crack, and
+        // that lives in the slap's recording and not in the open one.
+        const bool fromOpen = stroke == Stroke::heel || stroke == Stroke::toe
+                              || stroke == Stroke::muff;
+        const bool fromSlap = stroke == Stroke::slapClosed || stroke == Stroke::tapado;
 
         std::vector<float> hard, hardB, med, soft;
-        if (derived)
+        if (fromOpen)
         {
             hard = openTone;
+        }
+        else if (fromSlap)
+        {
+            hard = slapTone;
         }
         else if (kStem[st] != nullptr)
         {

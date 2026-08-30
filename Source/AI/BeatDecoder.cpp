@@ -76,6 +76,7 @@ namespace
     constexpr int   kFastBeatsToLeaveFixed = 3;
     constexpr int   kFastBeatsAlone = 5;
 
+
     // How fast the committed tempo moves per beat in each regime.
     //
     // The live rate used to be 0.35 and that was a third too fast for what it
@@ -116,6 +117,11 @@ namespace
     // back, so their difference spans 8 beats of tempo change. Leading the short
     // fit by its own 3.5 beats therefore needs 3.5/8 of that difference.
     constexpr float kLiveLead = 3.5f / 8.0f;
+
+    /** Smoothing on the short fit's own movement, per beat. Diagnostic only -
+        see the live branch for why it cannot be used to tell a ramp from a
+        step. */
+    constexpr float kShortRateSmoothing = 0.35f;
 
     // Disagreement with the comb beyond a quarter octave means a different
     // metrical level, but the comb glitches for a frame now and then and
@@ -388,6 +394,7 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     Diagnostics d;
     d.combBpm = tempo.bpm();
     d.combSalience = tempo.salience();
+    d.shortFitRate = shortFitRate;
     d.longFit = longFitBpm;
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
@@ -863,7 +870,26 @@ void BeatDecoder::updateTempo() noexcept
     float shortPeriod = 0.0f, shortResidual = 0.0f, shortCoverage = 0.0f;
     double longAnchor = -1.0, shortAnchor = -1.0;
     const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage, longAnchor);
-    const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual, shortCoverage, shortAnchor);
+    // How many beats the responsive fit looks back over.
+    //
+    // This is what actually decides how fast a tempo change is taken, and
+    // nothing else came close. Leaving the fixed regime sooner and throwing the
+    // poisoned beat history away both looked obviously right and both measured
+    // as noise - 5.46 to 5.30 seconds on an 8% step, and one case worse. The
+    // reason is arithmetic: a fit over eight beats cannot describe a new tempo
+    // until most of those eight beats are at it, and at 120 BPM eight beats is
+    // four seconds. The regime and the smoothing are rounding on top of that.
+    //
+    // And shortening it is a bad trade, measured rather than assumed. Five
+    // beats instead of eight: 4.64 -> 4.38, 5.30 -> 4.97 and 16.11 -> 15.09
+    // seconds on three steps, 5.25 -> 5.70 on the fourth, and the settled error
+    // roughly doubles on every one of them (0.073 -> 0.114, 0.067 -> 0.168,
+    // 0.032 -> 0.130). A quarter of a second sooner for twice the wobble
+    // afterwards is the wrong way round for an app that is judged on staying in
+    // time. Eight stays; the seam and the bench stay with it, so the next
+    // person can see the trade instead of re-deriving it.
+    const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual,
+                                      shortCoverage, shortAnchor);
 
     // Where the grid is, from the same two fits and for the same reason the
     // tempo comes from them: the phase used to be `lastBeatSec`, one accepted
@@ -881,6 +907,13 @@ void BeatDecoder::updateTempo() noexcept
 
     longFitBpm = haveLong ? 60.0f / longPeriod : 0.0f;
     shortFitBpm = haveShort ? 60.0f / shortPeriod : 0.0f;
+    if (haveShort)
+    {
+        if (prevShortFitBpm > kMinBpm)
+            shortFitRate += (std::fabs (shortFitBpm - prevShortFitBpm) - shortFitRate)
+                            * kShortRateSmoothing;
+        prevShortFitBpm = shortFitBpm;
+    }
     if (haveLong)
     {
         lastFitResidual = longResidual;
@@ -921,6 +954,7 @@ void BeatDecoder::updateTempo() noexcept
     if (recentPeriod (recent))
     {
         const float fastDeviation = (60.0f / recent - bpm) / std::max (kMinBpm, bpm);
+        lastFastDeviation = fastDeviation;
         if (std::fabs (fastDeviation) > kFastDriftTolerance)
         {
             const int fastSign = fastDeviation > 0.0f ? 1 : -1;
@@ -1004,6 +1038,30 @@ void BeatDecoder::updateTempo() noexcept
                                       && (lineFeed || (moving
                                                        && std::fabs (trend) > spread * 0.85f));
 
+            // Three things were tried here to make a tempo change land sooner
+            // and none of them shipped. `VPAlign`'s tempo bench measures all of
+            // them, so the trade is on record rather than in somebody's memory:
+            //
+            //   - **Leaving sooner on a line feed** (three beats of a large
+            //     deviation instead of five). Measured 5.46 -> 5.30 seconds on
+            //     an 8% step, which is noise, and 15.33 -> 16.11 on a 40% one,
+            //     which is worse.
+            //   - **Dropping the beat history across the step**, on the same
+            //     argument the dropout path uses - every interval measured
+            //     across it is wrong. Helps the very large step and costs the
+            //     small ones eight times the settled error, because the fits
+            //     then re-form from too few beats to be precise.
+            //   - **A shorter responsive fit**, five beats instead of eight.
+            //     A quarter of a second sooner on three cases, slower on a
+            //     fourth, and roughly double the settled error on every one.
+            //
+            // What they have in common is that the cost is not where it looks.
+            // A fit over eight beats cannot describe a new tempo until most of
+            // those eight beats are at it, and at 120 BPM that is four seconds
+            // - everything else is rounding on top. The honest answer is that a
+            // *step* costs about five seconds and a band that actually drifts
+            // or ramps costs nothing measurable: the same bench has the clock
+            // never leaving 2% of an accelerando at all.
             if (beatsInRegime >= kRegimeMinBeats
                 && (fixedErrorBeats >= kBeatsToLeaveFixed
                     || (fastDriftBeats >= kFastBeatsToLeaveFixed && windowAgrees)
@@ -1064,6 +1122,16 @@ void BeatDecoder::updateTempo() noexcept
             float target = shortFitBpm;
             if (haveLong)
             {
+                // Scaling this by how fast the short fit is itself moving -
+                // to tell a ramp, where the gap between the fits is a rate,
+                // from a step, where it is only the long fit lagging - was
+                // tried and cannot work. Measured on this path the short fit's
+                // own beat-to-beat movement is 0.5 to 1.15 BPM when the tempo
+                // is perfectly still, and a band accelerating from 118 to 126
+                // over twelve seconds moves 0.33. The signal is under the
+                // noise, by a factor of two, so no threshold on it separates
+                // anything. `shortFitRate` is kept because the diagnostic is
+                // what showed that, and is not used here.
                 const float lead = kLiveLead * (shortFitBpm - longFitBpm);
                 target += std::clamp (lead, -0.04f * shortFitBpm, 0.04f * shortFitBpm);
             }

@@ -75,6 +75,8 @@ public:
         float coverage = 0.0f;
         int   octaveMismatch = 0;
         int   beatsHeld = 0;
+        /** How fast the short fit is itself moving, BPM per beat. */
+        float shortFitRate = 0.0f;
         bool  levelSettled = false;
         int   userOctave = 0;
     };
@@ -120,6 +122,13 @@ public:
         room. The two are not the same signal and the acquisition threshold is
         not the same number; see kAnchorAcquireMarginLine. */
     void setLineFeed (bool on) noexcept { lineFeed = on; }
+
+    /** Kept as a seam for `VPAlign`'s tempo bench, which measures alternatives
+        to how a tempo change is taken against each other on the same run. It
+        currently selects nothing: the three alternatives that were measured are
+        recorded at the exit from the fixed regime and none of them shipped.
+        Nothing in the app calls it. */
+    void setQuickStep (bool on) noexcept { quickStep = on; }
 
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
@@ -222,6 +231,7 @@ private:
     int   octaveShift = 0;
     bool  useAnchor = false;
     bool  lineFeed = false;
+    bool  quickStep = true;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear
@@ -233,6 +243,15 @@ private:
     float lastFitCoverage = 0.0f;
     float longFitBpm = 0.0f;
     float shortFitBpm = 0.0f;
+    /** How fast the short fit is itself moving, in BPM per beat, smoothed.
+        The gap between the two fits means one thing on a ramp and another on a
+        step, and this is what separates them - see the live branch. */
+    float shortFitRate = 0.0f;
+    float prevShortFitBpm = 0.0f;
+    /** The last recent-interval deviation measured, as a fraction of the
+        committed tempo. How big a step is decides whether the beat history is
+        worth keeping across it - see the exit from the fixed regime. */
+    float lastFastDeviation = 0.0f;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

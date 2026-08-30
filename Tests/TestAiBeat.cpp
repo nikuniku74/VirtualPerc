@@ -1014,7 +1014,11 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // conga hits, which is exactly what the previous fixed array was.
         expect (has (at12, vp::Stroke::open) && has (at14, vp::Stroke::open),
                 "the marcha closes the bar with the paired open tones");
-        expect (has (at4, vp::Stroke::slap) && has (at8, vp::Stroke::tumba),
+        // The bass on 3 is now the *stopped* low drum rather than the open
+        // one - same drum, same weight, no note left ringing under the band.
+        // Either is the bass; what the marcha requires is that it is there.
+        expect (has (at4, vp::Stroke::slap)
+                    && (has (at8, vp::Stroke::tumba) || has (at8, vp::Stroke::tapado)),
                 "the marcha puts the slap on 2 and the bass on 3");
 
         // Shaker: down on the pulse, up on the return, and the down has to be
@@ -1378,6 +1382,57 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     "DUE-UNO plays two strokes on a quarter and one on the next, every bar");
             expect (sounds.size() == 2,
                     "and uses two conga sounds and no others, ghosts included");
+        }
+
+        // The stopped strokes are in the parts, not just in the bank.
+        //
+        // A conga is played as much with the hand that stays on the head as
+        // with the one that leaves it, and until these went in every loud
+        // articulation in the bank rang. Two sounds that nothing plays are two
+        // sounds the app does not have, so this asserts that the figures
+        // actually reach for them - and that the ringing ones are still the
+        // majority, because a part made only of stopped strokes is a part with
+        // no sustain in it at all.
+        {
+            int stopped = 0, ringing = 0, stylesUsingStopped = 0;
+            for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            {
+                vp::GrooveEngine gr;
+                gr.prepare (0x570Fu);
+                gr.setStyle (static_cast<vp::GrooveStyle> (st));
+                gr.setHumanize (0.0f);
+                gr.setIntensity (0.0f);
+                bool here = false;
+                for (int bar = 0; bar < 8; ++bar)
+                    for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
+                    {
+                        vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                        const int n = gr.eventsAt (bar, s, ev, vp::GrooveEngine::kMaxEvents);
+                        for (int i = 0; i < n; ++i)
+                        {
+                            if (ev[i].stroke == vp::Stroke::slapClosed
+                                || ev[i].stroke == vp::Stroke::tapado)
+                            {
+                                ++stopped;
+                                here = true;
+                            }
+                            else if (ev[i].stroke == vp::Stroke::tumba
+                                     || ev[i].stroke == vp::Stroke::open
+                                     || ev[i].stroke == vp::Stroke::slap)
+                                ++ringing;
+                        }
+                    }
+                if (here)
+                    ++stylesUsingStopped;
+            }
+            std::printf ("groove-stopped  colpi stoppati=%d  che risuonano=%d   "
+                         "stili che li usano=%d/%d\n",
+                         stopped, ringing, stylesUsingStopped,
+                         static_cast<int> (vp::GrooveStyle::count));
+            expect (stylesUsingStopped >= 7,
+                    "nearly every style reaches for a stopped stroke");
+            expect (stopped > 20 && ringing > stopped * 2,
+                    "and the ringing strokes are still what the part is mostly made of");
         }
     }
 

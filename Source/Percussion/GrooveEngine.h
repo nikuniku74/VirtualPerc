@@ -22,6 +22,13 @@ enum class Stroke : int
     heel,             // palm down, muffled - the quiet half of the marcha
     toe,              // fingertips, muffled
     muff,             // muted tone, no ring
+    // The stopped strokes. A conga is played as much with the hand that stays
+    // on the head as with the one that leaves it, and until now the bank had
+    // only the leaving kind: every loud articulation rang. These are the two
+    // that do not, and they are what a part sounds like when it has to sit
+    // inside a band rather than over one.
+    slapClosed,       // the crack with the hand left on the head - no ring at all
+    tapado,           // the low drum stopped: a thud with the pitch taken out
     count
 };
 

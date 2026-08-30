@@ -33,6 +33,19 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 `GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is on a **sixteenth grid** even though the loud strokes sit on eighths, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting selects how dense the *shaker* is, not the clock.
 
+### The stopped strokes
+
+A conga is played as much with the hand that stays on the head as with the one that leaves it, and until now the bank had only the leaving kind: every loud articulation rang. Two sounds that nothing plays are two sounds the app does not have, so these went into the **figures** and not only into the bank.
+
+- **`slapClosed`** — the crack with the hand left on the head. Brighter at the strike, because the skin is tighter under a held hand, and then nothing.
+- **`tapado`** — the low drum stopped: the weight of the bass tone with the note taken out.
+
+Both are derived from the **slap** recording rather than the open one: what makes a closed slap a slap is the crack, and that lives in the slap's take. Their damping is far harder than the muffled three — heel, toe and muff are a tone with the ring taken *off*, these are a stroke with the ring taken *out*, and a conga stopped by the hand that struck it is over in fifty milliseconds.
+
+All nine styles reach for them, and where they go is a decision per style: the marcha's bass on 3 and its answering crack, the rock anchor (a rock mix has a bass guitar on the "and" of 1 already), the dance slap that has to cut without ringing into the next stroke, funk's whole vocabulary, samba's surdo-like 2, reggae's one-drop three, and DUE-UNO's low half — which keeps that style at exactly two sounds while making one of them a stopped one, a thud answered by a tone.
+
+Measured across the eight-bar phrase of every style: **54 stopped strokes against 294 that ring.** The proportion is the point — a part made only of stopped strokes has no sustain in it at all, and the test asserts both that nearly every style uses them and that the ringing ones are still most of what the part is made of. Rendered, the bar is empty 26–41 % of the time depending on the style, which is the space those strokes buy.
+
 ### The one belongs to the band
 
 No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enforces it as well as every table observing it. The band is already there — kick, bass and the downbeat of whatever the guitarist is playing, together — and a conga on top of that is not heard as a percussionist, it is heard as a thicker attack. A player standing next to a drummer plays *around* the one: the low tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth late, and the one is left alone. Per style: marcha and samba put the heel on the "e" of 1; rock, pop and bossa put the low tone on the "and"; dance and funk on the "e", where those parts already live in sixteenths; reggae is one-drop and never had anything there.
@@ -353,6 +366,33 @@ The rms improves every run, by 15–40 %. The **worst** excursion does not relia
 It carries its own guard against being pointed at the wrong thing. Nothing stops somebody routing the app the full mix on the channel they called the kick, and a detector aimed at a full mix fires on everything. So the tracker keeps a decayed share of how many strikes landed near a beat of its own clock, and stops believing the channel when that share falls — a channel that is not a kick fails it immediately, one that is passes it inside a bar. The `CASSA` button only lights when the strikes are actually landing.
 
 The detector runs on the **raw** channel, before the leak subtraction, the rumble high-pass and the make-up gain. Those exist to protect a microphone hearing the app's own output in a room; a desk send of the kick has neither problem, and putting a canceller in front of the one clean transient on the stage would give away exactly what makes it worth having.
+
+### How fast a tempo change is taken
+
+The thing a live percussionist is judged on, and until now it had never been measured. `VPAlign`'s tempo bench drives the decoder and the clock together against a song whose tempo genuinely moves, and reports the time from the change until the clock is inside 2 % and stays.
+
+| change | seconds |
+|---|---|
+| 118 → 124, step | 4.6 |
+| 118 → 128, step | 5.3 |
+| 100 → 140, step | 16.1 |
+| 128 → 120, step | 5.3 |
+| **118 → 126 over 4 s (a band picking up)** | **0.02** |
+| **118 → 126 over 12 s (a band drifting)** | **0.02** |
+
+The last two rows are the answer to the question people actually ask. A band that *drifts or ramps* — which is what a band does — is followed with no measurable lag at all: the clock never leaves 2 % of the true tempo for the whole change. What costs about five seconds is a **step**, and a step is not a band getting faster, it is a different song.
+
+Two percent, not one: at one percent the column was measuring the decoder's own noise rather than its speed. On this material the eight-beat fit wobbles ±1.5 BPM, which at 128 is 1.2 %, so a clock sitting exactly on the answer fails a 1 % test at random.
+
+**Three ways to make the step faster were tried and none shipped**, and the bench has the numbers for all of them:
+
+| | 8 % step | 40 % step | settled error |
+|---|---|---|---|
+| leave the fixed regime after 3 beats instead of 5 | 5.46 → 5.30 | 15.33 → **16.11** | — |
+| drop the beat history across the step | helps the 40 % | — | ×8 worse on small steps |
+| a five-beat responsive fit instead of eight | 5.30 → 4.97 | 16.11 → 15.09 | roughly **doubles** |
+
+What they have in common is that the cost is not where it looks. A fit over eight beats cannot describe a new tempo until most of those eight beats are at it, and at 120 BPM that is four seconds — the regime and the smoothing are rounding on top. Buying a quarter of a second for twice the wobble afterwards is the wrong way round for an app judged on staying in time.
 
 ### The round trip, measured
 
