@@ -279,6 +279,26 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPLive
+        PRODUCT_NAME "VPLive"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPLive PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPLive PRIVATE ${VP_CORE_SOURCES} scripts/probe_live.cpp)
+    target_include_directories (VPLive PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPLive PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPLive PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPSing
         PRODUCT_NAME "VPSing"
         NEEDS_WEB_BROWSER FALSE
