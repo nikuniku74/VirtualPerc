@@ -443,7 +443,8 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
                double seconds, unsigned seed, bool print,
                double scoreFrom = -1.0, double scoreTo = -1.0,
                bool lineFeed = true, bool trustGrid = true,
-               double holeLateFrames = 2.2, bool trustClock = true)
+               double holeLateFrames = 2.2, bool trustClock = true,
+               bool trimClock = false)
 {
     vp::BeatDecoder dec;
     dec.prepare (kFps);
@@ -501,6 +502,7 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
     clock.setTargetTempo (bpm, 1.0f);
     clock.setFollowStrength (vp::FollowStrength::high);
     clock.setLocked (true);
+    clock.setTempoTrimEnabled (trimClock);
     clock.resetClock();
     vp::EvidenceTrust trust;
     const int blockPerFrame = static_cast<int> (kSr / kFps);
@@ -848,6 +850,254 @@ void measureTempoChange()
     std::printf ("\n");
 }
 
+// --- 6b. the phase a ramp leaves behind ----------------------------------
+//
+// Section 6 above measures the tempo, in percent, and that is the wrong
+// quantity for a ramp - which is what a band actually does. A rise of 10 BPM
+// spread over half a minute is 0.33 BPM a second: a clock that is a full second
+// behind the band all the way through it never reads worse than 0.3% and passes
+// every threshold in that table with room to spare. What a listener hears is
+// not the tempo, it is the *phase* - and a clock running 0.3% slow for ten
+// seconds is a twentieth of a beat out and still going.
+//
+// This exists because a user said so before any bench did: that on a band going
+// gradually from 100 to 110 the app "goes out and stays lost for a while", and
+// that the tempo lines up with the band better after STOP than while playing.
+// Both are true, and section 6 could not see either.
+//
+// So: phase, in milliseconds, against the notated grid, three ways.
+//
+//   LEANA    the loop as the app runs it while the part is sounding: the grid
+//            is never moved, only the rate is bent towards it
+//   TRIM     the same, plus the rate integrator - which the app switches off in
+//            the live regime, which is to say switches off exactly when the
+//            band is speeding up
+//   POSA     what the app does while nothing is playing: the grid is *placed*
+//            on the song. This is what a listener gets after pressing STOP.
+//
+// The two things the numbers say:
+//
+// **A proportional loop cannot be inside a ramp.** It closes an error by
+// leaning, so it needs a standing error to lean at all, and the faster the band
+// moves the further out it has to sit to keep up. The `coda` column - the
+// signed phase over the last third of the ramp - shows it directly: behind on
+// every ramp that speeds up, ahead on the one that slows down, in proportion to
+// how fast. That is not a threshold to tune, it is what the loop is, and the
+// only cure is a term that remembers.
+//
+// **Placing beats leaning**, which is why STOP sounds better aligned. Placing
+// while sounding is not available: it was tried, bounded so that no jump could
+// cross a pulse, and it measured 21/38/22/18 ms against LEANA's 31/59/31/26 -
+// and broke four of the invariants the lean exists to protect. A move that
+// cannot double or drop a stroke can still *stretch* one, and applying the
+// whole correction on the block it arrives makes the loop's behaviour a
+// function of the buffer size. Both are tested for, both failed, and the tests
+// are right. What is left for the sounding path is the rate.
+
+enum class RampMode { lean, trim, place };
+
+struct RampPhase
+{
+    double meanMs = 0.0;    // mean |phase| through the ramp
+    double worstMs = 0.0;   // and the worst of it
+    double tailMs = 0.0;    // signed, over the last third of the ramp: the lag
+    double afterMs = 0.0;   // mean |phase| over the eight seconds after it ends
+};
+
+/** The same chain as `tempoChange` - real decoder, real clock - scored on
+    phase instead of on tempo. The truth is the un-jittered beat grid: the
+    jitter is the analysis's noise, not the band moving. */
+RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
+                     double seconds, unsigned seed, RampMode mode, bool print = false)
+{
+    vp::BeatDecoder dec;
+    dec.prepare (kFps);
+    dec.setLineFeed (true);
+
+    vp::TempoFollower clock;
+    clock.prepare (kSr);
+    clock.setPulsesPerBeat (4);
+    clock.forceTempo (fromBpm);
+    clock.setTargetTempo (fromBpm, 1.0f);
+    clock.setFollowStrength (vp::FollowStrength::high);
+    clock.setLocked (true);
+    clock.setTempoTrimEnabled (mode == RampMode::trim);
+    clock.resetClock();
+
+    std::mt19937 rng (seed);
+    std::uniform_real_distribution<float> floorNoise (0.0f, 0.10f);
+    std::normal_distribution<double> jitter (0.0, 1.1);
+
+    auto bpmAt = [&] (double t)
+    {
+        if (t <= atSec)
+            return static_cast<double> (fromBpm);
+        if (rampSec <= 0.0)
+            return static_cast<double> (toBpm);
+        const double u = std::min (1.0, (t - atSec) / rampSec);
+        return fromBpm + (toBpm - fromBpm) * u;
+    };
+
+    // Two grids from one tempo curve: the one the band plays, and the one the
+    // activations land on. They differ only by the jitter.
+    std::vector<double> trueAt, beatAt;
+    {
+        double t = 0.0;
+        while (t < seconds + 2.0)
+        {
+            trueAt.push_back (t * kFps);
+            beatAt.push_back (t * kFps + jitter (rng));
+            t += 60.0 / bpmAt (t);
+        }
+    }
+
+    // Where the song is, as a phase, at this frame.
+    size_t cursor = 0;
+    auto truePhaseAt = [&] (double frame) -> double
+    {
+        while (cursor + 1 < trueAt.size() && trueAt[cursor + 1] <= frame)
+            ++cursor;
+        if (cursor + 1 >= trueAt.size())
+            return 0.0;
+        const double span = trueAt[cursor + 1] - trueAt[cursor];
+        return span > 1.0e-9 ? (frame - trueAt[cursor]) / span : 0.0;
+    };
+
+    RampPhase r;
+    const int blockPerFrame = static_cast<int> (kSr / kFps);
+    const int total = static_cast<int> (kFps * seconds);
+    uint32_t lastSerial = 0;
+    bool seenSerial = false;
+    double sum = 0.0, tailSum = 0.0, afterSum = 0.0;
+    int n = 0, tailN = 0, afterN = 0;
+    int lastPrinted = -1;
+
+    for (int i = 0; i < total; ++i)
+    {
+        float act = floorNoise (rng);
+        for (size_t k = 0; k < beatAt.size(); ++k)
+        {
+            const double dd = (static_cast<double> (i) - beatAt[k]) / 1.6;
+            if (std::fabs (dd) < 5.0)
+                act = std::max (act, 0.94f * static_cast<float> (std::exp (-0.5 * dd * dd)));
+        }
+
+        const auto hy = dec.observe (act, 0.03f, 1.0f - act);
+        const double t = static_cast<double> (i) / kFps;
+
+        if (hy.valid)
+        {
+            if (! seenSerial) { lastSerial = hy.beatSerial; seenSerial = true; }
+            if (hy.bpm > 50.0f)
+                clock.setTargetTempo (hy.bpm, hy.confidence);
+            if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
+            {
+                lastSerial = hy.beatSerial;
+                clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - hy.beatPhase),
+                                         hy.confidence, 1);
+            }
+            const float gridErr = vp::wrapCentered (clock.beatPhase() - hy.beatPhase);
+            if (mode == RampMode::place && std::fabs (gridErr) > 0.04f)
+                clock.snapPhase (hy.beatPhase, true);
+            else
+                clock.setGridPhase (hy.beatPhase,
+                                    vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f));
+        }
+
+        // Read before the block advances, so a block's own travel is not
+        // counted as an error.
+        const double bp = truePhaseAt (static_cast<double> (i));
+        const double errBeats = vp::wrapCentered (
+            static_cast<float> (clock.beatPhase() - bp));
+        const double ms = errBeats * 60.0 / bpmAt (t) * 1000.0;
+        clock.advance (blockPerFrame);
+
+        if (t > atSec && t <= atSec + std::max (0.001, rampSec))
+        {
+            sum += std::fabs (ms);
+            r.worstMs = std::max (r.worstMs, std::fabs (ms));
+            ++n;
+            if (t > atSec + rampSec * 2.0 / 3.0)
+            {
+                tailSum += ms;
+                ++tailN;
+            }
+        }
+        else if (t > atSec + rampSec && t <= atSec + rampSec + 8.0)
+        {
+            afterSum += std::fabs (ms);
+            ++afterN;
+        }
+
+        if (print)
+        {
+            const int sec = static_cast<int> (t);
+            if (sec != lastPrinted && sec % 4 == 0)
+            {
+                lastPrinted = sec;
+                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f  fase %+7.1f ms\n",
+                             sec, bpmAt (t), static_cast<double> (clock.currentTempo()), ms);
+            }
+        }
+    }
+
+    r.meanMs = n > 0 ? sum / n : 0.0;
+    r.tailMs = tailN > 0 ? tailSum / tailN : 0.0;
+    r.afterMs = afterN > 0 ? afterSum / afterN : 0.0;
+    return r;
+}
+
+void measureRampPhase()
+{
+    std::printf ("--- la fase che una rampa lascia indietro ---\n");
+    std::printf ("Il tempo in percentuale non misura una rampa: 10 BPM in 30 s\n"
+                 "sono 0.33 BPM al secondo, e un orologio indietro di un secondo\n"
+                 "sta dentro lo 0.3%%. Quello che si sente e' la fase. Qui e' in\n"
+                 "millisecondi contro la griglia vera, nei tre modi che l'app ha:\n"
+                 "LEANA (come suona), TRIM (con l'integratore che in regime VIVO\n"
+                 "e' spento) e POSA (griglia posata, cioe' quello che si sente a\n"
+                 "STOP).\n\n");
+    std::printf ("%-24s %-9s %-11s %-11s %-11s %-11s\n",
+                 "rampa", "modo", "media ms", "peggio ms", "coda ms", "dopo ms");
+
+    struct Case { const char* name; float from, to; double ramp; };
+    const Case cases[] = {
+        { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0 },
+        { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0 },
+        { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0 },
+        { "128 -> 120 in 20 s", 128.0f, 120.0f, 20.0 },
+    };
+    const struct { RampMode m; const char* label; } modes[] = {
+        { RampMode::lean,  "LEANA" },
+        { RampMode::trim,  "TRIM" },
+        { RampMode::place, "POSA" },
+    };
+
+    for (const Case& c : cases)
+    {
+        for (const auto& md : modes)
+        {
+            double mean = 0.0, worst = 0.0, tail = 0.0, after = 0.0;
+            constexpr int kSeeds = 4;
+            for (int s = 0; s < kSeeds; ++s)
+            {
+                const RampPhase r = rampPhase (c.from, c.to, 20.0, c.ramp,
+                                               20.0 + c.ramp + 10.0,
+                                               101u + static_cast<unsigned> (s) * 977u,
+                                               md.m);
+                mean += r.meanMs;
+                worst = std::max (worst, r.worstMs);
+                tail += r.tailMs;
+                after += r.afterMs;
+            }
+            std::printf ("%-24s %-9s %-11.1f %-11.1f %-+11.1f %-11.1f\n",
+                         md.m == RampMode::lean ? c.name : "", md.label,
+                         mean / kSeeds, worst, tail / kSeeds, after / kSeeds);
+        }
+    }
+    std::printf ("\n");
+}
+
 void measureDrumHole (double kHoleLate)
 {
     std::printf ("=== ritardo sistematico del passaggio: %.1f frame (%.0f ms) ===\n",
@@ -905,14 +1155,20 @@ void measureDrumHole (double kHoleLate)
                  "  media su otto brani.\n");
     std::printf ("  %-26s %-12s %-12s %-12s %-12s\n",
                  "", "buco media", "buco peggio", "accel media", "accel peggio");
-    struct Variant { const char* name; bool line; bool grid; bool clock; };
+    struct Variant { const char* name; bool line; bool grid; bool clock; bool trim; };
     const Variant variants[] = {
-        { "prima",                   false, false, false },
-        { "prove: solo tau griglia", false, true,  false },
-        { "prove: solo orologio",    false, false, true  },
-        { "prove: tutte e due",      false, true,  true  },
-        { "tau linea, senza prove",  true,  false, false },
-        { "tau linea + prove",       true,  true,  true  },
+        { "prima",                   false, false, false, false },
+        { "prove: solo tau griglia", false, true,  false, false },
+        { "prove: solo orologio",    false, false, true,  false },
+        { "prove: tutte e due",      false, true,  true,  false },
+        { "tau linea, senza prove",  true,  false, false, false },
+        { "tau linea + prove",       true,  true,  true,  false },
+        // And the one this table is here to guard. The trim integrates a phase
+        // slope into a rate, and the passage without a drummer is exactly where
+        // a slope appears that the band did not play: the activation slides
+        // late as the kit goes out and slides back as it returns. If that costs
+        // the hole more than the ramp gains, it does not ship.
+        { "prove + trim",            false, true,  true,  true  },
     };
     constexpr int kSeeds = 8;
     for (const Variant& v : variants)
@@ -922,9 +1178,9 @@ void measureDrumHole (double kHoleLate)
         {
             const unsigned sd = 4242u + static_cast<unsigned> (k) * 7919u;
             const Hole b = drumHole (118.0f, 0.0, 20.0, 30.0, 50.0, sd, false,
-                                     -1.0, -1.0, v.line, v.grid, kHoleLate, v.clock);
+                                     -1.0, -1.0, v.line, v.grid, kHoleLate, v.clock, v.trim);
             const Hole a = drumHole (118.0f, 0.0015, 1000.0, 1000.0, 50.0, sd, false,
-                                     20.0, 30.0, v.line, v.grid, kHoleLate, v.clock);
+                                     20.0, 30.0, v.line, v.grid, kHoleLate, v.clock, v.trim);
             bm += b.clockMeanMs; bw += b.clockWorstMs;
             am += a.clockMeanMs; aw += a.clockWorstMs;
             tl = std::min (tl, b.trustLow);
@@ -988,6 +1244,7 @@ int main()
     measureDrumHole (0.0);
     measureDrumHole (2.2);
     measureTempoChange();
+    measureRampPhase();
     measureResync();
     return 0;
 }
