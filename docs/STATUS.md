@@ -106,6 +106,31 @@ Costo: passaggio senza batteria 19,4 → 22,1 ms, accelerando lento
   guadagna ~1 ms di media e *peggiora* il ritardo di regime sulla rampa
   graduale (−0,7 → −3,9) costando altri 1,2 ms nel buco.
 
+### L'anticipo del decoder e il trim fanno lo stesso lavoro
+
+Sistemato l'anello, il decoder è diventato il termine dominante: sulla rampa
+graduale l'orologio è a −0,7 ms e il decoder a −10,7. Il decoder ha già un
+termine di anticipo in regime vivo (`kLiveLead`, `BeatDecoder.cpp`), mai
+tarato sulla fase — solo sul tempo, che su una rampa non dice niente. Tarato
+sulla fase, però, **non rende**:
+
+| lead | decoder (rampa 30 s) | orologio | buco / accel |
+|---|---|---|---|
+| **0,4375** (attuale) | −10,7 | **−0,7** | 22,1 / 20,0 |
+| 0,75 | −6,6 | **+7,1** | 22,7 / 22,8 |
+| 1,10 | −6,1 | +8,3 | 23,3 / 24,9 |
+| 1,50 | −6,0 | +7,0 | 23,7 / 27,6 |
+
+Alzarlo migliora davvero il decoder — da −10,7 a −6,6 — e fa **sorpassare**
+l'orologio, da −0,7 a +7,1. I due termini fanno lo stesso lavoro: il trim
+compensa già il ritardo del decoder, quindi toglierlo alla fonte lascia il
+trim a spingere a vuoto e i due si sommano. E il costo sale su entrambe le
+colonne del buco.
+
+Vale come regola generale su questa catena: **un solo termine per volta può
+possedere un ritardo**. Se un giorno il lead del decoder venisse alzato, il
+trim andrebbe rimisurato nella stessa sessione, non dopo.
+
 ### Di chi è il ritardo
 
 Il banco ha ora due colonne per la fase del **decoder**, senza le quali non
