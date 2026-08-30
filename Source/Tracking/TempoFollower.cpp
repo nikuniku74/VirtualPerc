@@ -55,6 +55,40 @@ namespace
         floor, so an ordinary correction is not touched by it. */
     constexpr float kPoorLeanBeats = 0.020f;
 
+    /** Below this the analysis is not trusted to write a *rate* at all.
+
+        Everything else `tempoTrust` scales - the glide, the lean cap - is still
+        wanted when the evidence is at its worst, only slower and smaller, which
+        is why that trust bottoms out at kMinTempoTrust instead of at zero. The
+        trim is not like that. It is the one term here that turns a phase slope
+        into a tempo and *keeps* it, and a passage whose beats are badly placed
+        is a phase slope the band never played: the activation slides late as the
+        kit goes out and slides back as it returns. Integrating that leaves a
+        rate error standing after the passage has ended, which is the one failure
+        an integrator has that a proportional loop does not.
+
+        So here the scale runs to zero, and it runs to zero early. Trust is a
+        ratio against what this song has been fitting, so it slides rather than
+        switches: through a passage without a drummer it touches the floor at its
+        worst and spends most of its length somewhere above it, and a term scaled
+        from the floor upwards would still be half on throughout. Measured with
+        `VPAlign` over eight songs, the trim switched on everywhere costs that
+        passage 19.4 -> 24.0 ms and an accelerando 18.9 -> 28.6; scaled from a
+        half it costs neither and keeps what it is for. */
+    constexpr float kTrustToSetRate = 0.50f;
+
+    /** How many beats have to push the phase the same way before the trim is
+        allowed to believe them whole. Three: at 120 BPM that is a second and a
+        half, which no ramp finishes inside and no run of noise reaches often. */
+    constexpr int kDriftAgreeing = 3;
+
+    /** 0 below that line, 1 where the analysis is fitting as well as this song
+        has been fitting all along. */
+    inline float rateTrustScale (float trust) noexcept
+    {
+        return std::clamp ((trust - kTrustToSetRate) / (1.0f - kTrustToSetRate), 0.0f, 1.0f);
+    }
+
     /** Above which the analysis is not leaning, it is somewhere else.
 
         The cap above must never be able to strand the clock. A lean is small by
@@ -90,6 +124,8 @@ void TempoFollower::reset() noexcept
     farTargetSamples = 0;
     farTargetSign = 0;
     tempoTrim = 0.0f;
+    lastDrift = 0.0f;
+    driftSameWay = 0;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     // Nothing has played, so nothing can be flammed against: a clock starting
@@ -114,6 +150,8 @@ void TempoFollower::resetClock() noexcept
     farTargetSamples = 0;
     farTargetSign = 0;
     tempoTrim = 0.0f;
+    lastDrift = 0.0f;
+    driftSameWay = 0;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     samplesSincePulse = static_cast<int> (sampleRate * 30.0);
@@ -131,6 +169,8 @@ void TempoFollower::setTempoTrimEnabled (bool on) noexcept
     if (tempoTrimEnabled && ! on)
     {
         tempoTrim = 0.0f;
+        lastDrift = 0.0f;
+        driftSameWay = 0;
         phaseCorrectionSinceObservation = 0.0f;
         samplesSinceObservation = 0;
         havePhaseObservation = false;
@@ -142,8 +182,15 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
 {
     if (bpm > 40.0f && bpm < 220.0f)
     {
+        // A step of more than a few BPM is a different tempo, not a drift, so
+        // the trim's whole state goes with it - the correction it had built and
+        // the run of agreeing beats that earned it.
         if (std::fabs (bpm - target) > 3.0f)
+        {
             tempoTrim = 0.0f;
+            lastDrift = 0.0f;
+            driftSameWay = 0;
+        }
 
         // Half or double is not a change of tempo, it is the same pulse counted
         // at another metrical level: every stroke the part is already playing
@@ -171,6 +218,8 @@ void TempoFollower::forceTempo (float bpm) noexcept
     tempo = bpm;
     target = bpm;
     tempoTrim = 0.0f;
+    lastDrift = 0.0f;
+    driftSameWay = 0;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
@@ -299,8 +348,41 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
             // stayed there for as long as the run went on, whatever the tempo
             // and whatever the strength. Half of every standing rate error was
             // permanently left for the phase loop to carry as a standing lean.
+            //
+            // Scaled twice: by how hard the beat was, which is how sure this
+            // one observation is, and by how well the analysis is fitting this
+            // song at all, which is what stops a passage without a drummer
+            // writing its own lateness into the tempo. See kTrustToSetRate -
+            // that second factor is why the trim can now be left on while the
+            // band is actually moving, which is the only time it is any use.
+            //
+            // And by whether the drift is going anywhere. A band that is
+            // changing speed pushes the phase the same way beat after beat; the
+            // analysis's own jitter does not, and this measurement cannot tell
+            // them apart from one beat alone. A frame of jitter is 20 ms, so the
+            // difference between two consecutive beats carries ~28 ms of noise
+            // over an interval of half a second - a slope of nearly 7 BPM the
+            // band never played, and the trim integrates whatever it is handed.
+            //
+            // Agreement in *sign* is what separates them, and it costs nothing
+            // on a real ramp: two or three beats all pushing the same way and
+            // the gain is whole, which at 120 BPM is a second and a half. It is
+            // the same discriminator Tracking/HarmonicChange.h uses to tell a
+            // chord from a snare - a step holds, an impulse does not - and it is
+            // here for the same reason. Measured on the gentle accelerando,
+            // where there is barely any lag to correct and so nothing but noise
+            // to integrate, this is what takes the cost back off.
+            if (drift * lastDrift > 0.0f)
+                driftSameWay = std::min (driftSameWay + 1, kDriftAgreeing);
+            else
+                driftSameWay = 0;
+            lastDrift = drift;
+
             const float measuredErrorBpm = drift * 60.0f / elapsed;
-            const float trust = std::clamp (strength * 0.08f, 0.10f, 0.28f);
+            const float trust = std::clamp (strength * 0.08f, 0.10f, 0.28f)
+                                * rateTrustScale (tempoTrust)
+                                * (static_cast<float> (driftSameWay)
+                                   / static_cast<float> (kDriftAgreeing));
             tempoTrim = std::clamp (tempoTrim - measuredErrorBpm * trust, -3.5f, 3.5f);
         }
     }

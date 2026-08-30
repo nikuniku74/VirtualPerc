@@ -116,6 +116,8 @@ private:
     int   farTargetSign = 0;
     float lastObservedPhaseErr = 0.0f;
     float tempoTrim = 0.0f;
+    float lastDrift = 0.0f;
+    int   driftSameWay = 0;
     float phaseCorrectionSinceObservation = 0.0f;
     int samplesSinceObservation = 0;
     // Time since a pulse was last emitted, so that a re-anchor can tell whether

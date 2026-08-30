@@ -905,9 +905,36 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has
-    // stopped moving, so any residual drift is ours to correct. While the tempo
-    // is genuinely live the decoder is already chasing it and a second
-    // controller would only fight the first.
+    // stopped moving, so any residual drift is ours to correct.
+    //
+    // It used to stop there - `regime == fixed` was a condition here - on the
+    // reasoning that while the tempo is genuinely live the decoder is already
+    // chasing it and a second controller would only fight the first. That is
+    // exactly backwards, and measuring the right quantity is what showed it. A
+    // proportional loop cannot be inside a ramp: it corrects by leaning, so it
+    // needs a standing error to lean at all, and it settles at whatever lag
+    // produces the lean the ramp needs. Measured with `VPAlign` against the
+    // notated grid, a band going 100 -> 110 over half a minute left the clock
+    // 20 ms behind at the end of it and a band slowing down left it 12 ms
+    // ahead - the sign following the direction of the ramp, which is what a
+    // steady-state error to a ramp looks like. The trim is the only term that
+    // can cancel it, and it was switched off in precisely the regime that has
+    // one. Turning it on there: 30.6 -> 22.9 ms mean and the standing lag
+    // -20.3 -> -0.7.
+    //
+    // None of that showed in section 6 of that bench, which measures tempo in
+    // percent: 10 BPM in 30 s is 0.33 BPM a second, so a clock a whole second
+    // behind still reads inside 0.3%.
+    //
+    // Two guards make it safe to leave on, and both live in TempoFollower: the
+    // trim is scaled by how well the analysis is fitting this song, so a
+    // passage without a drummer - which is *late* rather than noisy, and whose
+    // lateness is acoustic and not musical - cannot write itself into the rate;
+    // and by whether the drift is going anywhere at all, so the jitter of one
+    // beat against the next is not integrated as a ramp. Measured cost, over
+    // eight songs: the passage 19.4 -> 22.1 ms, a gentle accelerando
+    // 18.9 -> 20.0.
+    //
     // A line feed has one stable propagation path, so a sustained phase slope
     // is useful evidence that the band is moving. Through the iPad speaker and
     // microphone it is not: room reflections, auto gain and our own returned
@@ -917,7 +944,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // rate correction from it only on MIXER.
     const bool trimTempo = tapOwnsTempo
                            || (! speakerFollow && periodic
-                               && hyp.regime == TempoRegime::fixed
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
 
