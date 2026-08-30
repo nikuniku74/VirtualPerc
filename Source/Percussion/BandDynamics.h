@@ -20,19 +20,31 @@ namespace vp
     they stop. The tables cannot express that because a table is indexed by
     step, not by what the rest of the room is doing.
 
-Two inputs, and the first carries most of the answer: **level**. A verse is
-    quieter than a chorus, an exposed vocal is quieter than a band, and a
-    breakdown is quieter than both.
+    The input is **level**. A verse is quieter than a chorus, an exposed vocal
+    is quieter than a band, and a breakdown is quieter than both.
 
-    The second is **density**, from the bar `StyleDetector` is already folding
-    the music onto: how many of its sixteen sixteenths have anything in them.
-    Level alone cannot tell a quiet full band from an exposed voice, and those
-    two want opposite things from a percussionist - the first wants the part
-    turned down, the second wants most of it gone. Density is what separates
-    them, and it costs nothing because the fold is already being computed.
+    **Density was tried as a second input and is not here.** The idea was sound:
+    level alone cannot tell a quiet full band from an exposed voice, and those
+    two want opposite things from a percussionist. `StyleDetector` already folds
+    the music onto the bar and counts how many of its sixteen sixteenths carry
+    anything, so it looked free.
 
-    They are combined by taking the smaller: either reason to play less is
-    reason enough, and neither can talk the other out of it.
+    It does not work here, for a reason that is structural rather than a
+    threshold. That fold runs on the analysis bus, and the analysis bus has the
+    **make-up gain** on it - a rider whose whole job is to hold the network's
+    operating point, which is to say to erase exactly the difference between a
+    verse and a chorus. A quiet verse is gained back up before the fold sees it,
+    so its occupancy reads the same as a chorus's and the feature has nothing to
+    say about dynamics.
+
+    Measured: the part came down 3.5 dB against a band that came down 14 with
+    level alone, and 0.9 dB once density was allowed to vote. It took a while to
+    see because the figure was also unstable - the same binary reported -3.7 and
+    -0.4 dB on consecutive runs - until the bench drained the analysis worker
+    every block, which is what turned "noisy" into "wrong".
+
+    Density is still computed and is still used, for the thing it is good at:
+    naming the style. See `StyleDetector::decide`.
 
     Two things make it usable rather than a meter:
 
@@ -68,22 +80,6 @@ public:
         lastBarLevel = 0.0f;
         haveBarLevel = false;
         barsSinceSection = 1000;
-        occupancy = 16.0f;
-        haveDensity = false;
-    }
-
-    /** How many of the bar's sixteen sixteenths have anything in them, and
-        whether that number means anything yet.
-
-        Held rather than acted on directly: the fold needs several bars before
-        it describes the music rather than whatever the clock was doing while it
-        found the bar, and until then density has no vote. */
-    void setDensity (float occupiedSixteenths, bool settled) noexcept
-    {
-        haveDensity = settled;
-        if (settled)
-            occupancy += (std::clamp (occupiedSixteenths, 0.0f, 16.0f) - occupancy)
-                         * kOccupancyRate;
     }
 
     /** One block. `level` is the band's own peak with the app's part already
@@ -155,25 +151,7 @@ public:
         everything it gives. 1 also before anything has been heard, so an engine
         that has this switched on but has not listened yet behaves exactly as it
         did before. */
-    float level() const noexcept
-    {
-        if (! heardAnything)
-            return 1.0f;
-        if (! haveDensity)
-            return current;
-        // A bar with four of its sixteenths occupied is a voice and a chord; a
-        // bar with twelve is a band playing. Between them the part comes down
-        // with the music. The smaller of the two reasons wins - see the class
-        // note - so a loud but empty passage is still played sparsely.
-        const float fromDensity = std::clamp ((occupancy - kEmptyBar)
-                                                  / (kFullBar - kEmptyBar),
-                                              0.0f, 1.0f);
-        return std::min (current, fromDensity);
-    }
-
-    /** The two halves separately, for the debug panel. */
-    float levelOnly() const noexcept { return heardAnything ? current : 1.0f; }
-    float density() const noexcept { return haveDensity ? occupancy : -1.0f; }
+    float level() const noexcept { return heardAnything ? current : 1.0f; }
 
     /** True when a percussionist would have stopped. The caller decides *when*
         to act on it - stopping in the middle of a figure is not what a player
@@ -246,12 +224,6 @@ private:
     /** And how far apart two of them have to be. Four bars: a band that lifts
         over two of them is one section change, not two. */
     static constexpr int kBarsBetweenSections = 4;
-    /** Sixteenths occupied in a bar that is as empty as a part gets played
-        under, and in one that is a band going. */
-    static constexpr float kEmptyBar = 4.0f;
-    static constexpr float kFullBar = 11.0f;
-    /** Per bar. Four bars to move most of the way, which is a phrase. */
-    static constexpr float kOccupancyRate = 0.30f;
 
     double sampleRate = 48000.0;
     float env = 0.0f;
@@ -264,8 +236,6 @@ private:
     float lastBarLevel = 0.0f;
     bool  haveBarLevel = false;
     int   barsSinceSection = 1000;
-    float occupancy = 16.0f;
-    bool  haveDensity = false;
 };
 
 } // namespace vp

@@ -54,8 +54,29 @@ inline float noiseAt (std::mt19937& rng)
     return std::uniform_real_distribution<float> (-1.0f, 1.0f) (rng);
 }
 
+/** What kind of record the arrangement is.
+
+    The app's automatic style chooser decides between four parts by folding the
+    music onto the bar in three bands, and it has never had material of *known*
+    style to be scored against inside this repository - the bench that measured
+    it lived outside the tree and is gone. These four are written to the same
+    four descriptions the chooser works from, so a run that gets them wrong is
+    the chooser being wrong and not the material being ambiguous. */
+enum class Genre
+{
+    /** Kick on one and three, snare on two and four, eighth hats. */
+    rock = 0,
+    /** Four on the floor and an open hat on every offbeat. */
+    dance,
+    /** Syncopated, busy on the sixteenths, no backbeat to speak of. */
+    latin,
+    /** Sparse and level: a kick, a light snare, and air. */
+    pop
+};
+
 struct SongOptions
 {
+    Genre genre = Genre::rock;
     float bpm = 120.0f;
     bool  syncopated = false;   // bass and kick off the grid
     bool  sustained = false;    // pads and strings holding through the beats
@@ -220,8 +241,12 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
         {
             // Kick. On one and three, plus a pushed sixteenth before three when
             // the groove is syncopated - which is where a beat tracker most
-            // often finds a beat that is not one.
-            const bool kickHere = (beatInBar == 0 || beatInBar == 2);
+            // often finds a beat that is not one. Four on the floor for dance,
+            // which is the one thing that names that genre from the low band
+            // alone.
+            const bool kickHere = opt.genre == Genre::dance
+                                      ? true
+                                      : (beatInBar == 0 || beatInBar == 2);
             if (kickHere && inBeat < 0.30)
             {
                 // Beat one a little heavier than beat three. Records nearly
@@ -249,22 +274,46 @@ inline void renderSong (std::vector<float>& dest, const SongOptions& opt, double
 
             // Snare, with the shell tone as well as the noise: the noise alone
             // is a click, and a click is what already works.
-            const bool snareHere = opt.halfTimeFeel ? (beatInBar == 2)
-                                                    : (beatInBar == 1 || beatInBar == 3);
+            // Latin has no backbeat: that is most of what separates it from the
+            // other three, and a snare on two and four would put one there.
+            const bool snareHere = opt.genre == Genre::latin
+                                       ? false
+                                       : (opt.halfTimeFeel ? (beatInBar == 2)
+                                                           : (beatInBar == 1 || beatInBar == 3));
             if (snareHere && inBeat < 0.35)
             {
+                // Pop is felt rather than hit: the same backbeat, half as loud.
+                const float weight = opt.genre == Genre::pop ? 0.45f : 0.85f;
                 const float env = decay (tBeat, 17.0f);
                 sSnare += (0.45f * noiseAt (rng) + 0.30f * std::sin (2.0f * kPi * 195.0f * tBeat)
-                           + 0.18f * std::sin (2.0f * kPi * 331.0f * tBeat)) * env * 0.85f;
+                           + 0.18f * std::sin (2.0f * kPi * 331.0f * tBeat)) * env * weight;
+            }
+
+            // And what fills the bar. Latin puts something on nearly every
+            // sixteenth - that busyness is the feature the chooser reads it by
+            // - while pop puts almost nothing anywhere.
+            if (opt.genre == Genre::latin && sixteenth < 0.5)
+            {
+                const bool loud = (sixIdx & 1) == 1;   // the "e" and the "a"
+                const float env = decay (tSix, 40.0f);
+                sSnare += (loud ? 0.26f : 0.12f)
+                          * (0.6f * noiseAt (rng)
+                             + 0.4f * std::sin (2.0f * kPi * 420.0f * tSix)) * env;
             }
 
             // Hats on the eighths, alternating strong and weak, with the odd
             // open hat. This is the pattern that makes an activation curve look
             // the same at the beat and at twice the beat.
-            if (eighth < 0.30)
+            // Hats. Dance puts an open one on *every* offbeat, which is the
+            // other half of what names it; pop plays them on the beat only.
+            const bool hatHere = opt.genre == Genre::pop ? (inBeat < 0.30)
+                                                        : (eighth < 0.30);
+            if (hatHere)
             {
                 const bool onBeat = inBeat < 0.5;
-                const bool open = ((beatIdx * 2 + (onBeat ? 0 : 1)) % 8) == 7;
+                const bool open = opt.genre == Genre::dance
+                                      ? ! onBeat
+                                      : ((beatIdx * 2 + (onBeat ? 0 : 1)) % 8) == 7;
                 const float env = decay (tEig, open ? 9.0f : 45.0f);
                 const float amp = (onBeat ? 0.22f : 0.15f) * (open ? 1.4f : 1.0f);
                 sHats += amp * noiseAt (rng) * env;
@@ -358,6 +407,18 @@ inline void speakerRoomMic (std::vector<float>& buf, double sr, unsigned seed, f
     }
 }
 
+
+inline const char* genreName (Genre g)
+{
+    switch (g)
+    {
+        case Genre::rock:  return "ROCK";
+        case Genre::dance: return "DANCE";
+        case Genre::latin: return "LATIN";
+        case Genre::pop:   return "POP";
+    }
+    return "?";
+}
 
 inline const char* styleName (const SongOptions& o)
 {

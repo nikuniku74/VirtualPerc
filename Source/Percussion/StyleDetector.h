@@ -62,8 +62,8 @@ private:
 
     // Band splitters. One pole each: the ear reads which band an onset is in,
     // not the slope of the filter that found it.
-    float lpLowLo = 0.0f, lpLowHi = 0.0f, lpMidHi = 0.0f, lpHigh = 0.0f;
-    float aLowLo = 0.0f, aLowHi = 0.0f, aMidHi = 0.0f, aHigh = 0.0f;
+    float lpLowLo = 0.0f, lpLowHi = 0.0f, lpMidLo = 0.0f, lpMidHi = 0.0f, lpHigh = 0.0f;
+    float aLowLo = 0.0f, aLowHi = 0.0f, aMidLo = 0.0f, aMidHi = 0.0f, aHigh = 0.0f;
 
     // Envelope followers, and their previous values, because what identifies a
     // drum is the attack: a bass line sustains, a kick strikes.

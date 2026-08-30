@@ -20,10 +20,24 @@ namespace
     // So "low" is the part of a kick that survives the speaker, "mid" is the
     // snare's body (a hi-hat has almost nothing under 3 kHz, so this separates
     // them), and "high" is hats and shakers.
-    constexpr float kLowLoHz = 160.0f;
-    constexpr float kLowHiHz = 500.0f;
-    constexpr float kMidHiHz = 2500.0f;
-    constexpr float kHighHz  = 6000.0f;
+    // Where the three drums actually are.
+    //
+    // These were 160-500, 500-2500 and above 6000, and the first of those does
+    // not contain a kick drum: a kick's fundamental is 40 to 90 Hz, so the band
+    // called "kick" held the bass guitar's harmonics, the snare's shell and the
+    // low end of a guitar - everything except the thing it was named after. The
+    // band called "snare" started at 500, above the shell tone that makes a
+    // backbeat sound like a backbeat.
+    //
+    // Measured on material of known style, with the old bands: the four-on-the
+    // -floor test read 0.68 on a dance track and 0.64 on a rock one, and the
+    // backbeat test read 0.02 on rock - a feature that is supposed to name rock
+    // reading as zero on rock. Both were describing the bass line.
+    constexpr float kLowLoHz = 35.0f;     // under a kick's fundamental
+    constexpr float kLowHiHz = 110.0f;    // and over it
+    constexpr float kMidLoHz = 150.0f;    // the snare's shell tone starts here
+    constexpr float kMidHiHz = 600.0f;
+    constexpr float kHighHz  = 5000.0f;
 
     // The bins forget over about this many bars, so a song that changes section
     // is followed rather than averaged away.
@@ -42,19 +56,20 @@ namespace
     // is known - they are not guesses, and the first set of guesses got one
     // case in nine right.
 
-    // Four-on-the-floor: the quietest quarter still carries this much of the
-    // loudest, or the kick is not on every beat.
-    constexpr float kEvenKick = 0.60f;
+    // Under this much offbeat hat, relative to the hats on the beat, the record
+    // is not putting anything between the beats. Measured: pop 0.13-0.16, and
+    // 0.43 at the lowest for anything else.
+    constexpr float kSparseHats = 0.28f;
 
-    // Depth of the two-beat alternation in the snare band.
-    constexpr float kAlternation = 0.22f;
+    // And over this much, there is an open hat on every offbeat. Measured:
+    // dance 0.90-0.95, rock 0.43-0.45.
+    constexpr float kOpenHatEveryOffbeat = 0.70f;
 
-    // Offbeat hats, relative to the hats on the beat.
-    constexpr float kOffbeatHigh = 0.34f;
-
-    // Energy on the odd sixteenths relative to the beats. Latin measured 2.9
-    // to 4.3 here; everything else stayed under 0.9.
-    constexpr float kSyncopated = 1.60f;
+    // Energy on the odd sixteenths relative to the beats. Measured: latin
+    // 1.23-1.70 against 0.80-1.26 for the rest, so the line is towards the top
+    // of that overlap - a latin record that reads low is played as rock, which
+    // is a smaller mistake than a rock record played as a marcha.
+    constexpr float kSyncopated = 1.30f;
 
     // A sixteenth counts as occupied at this fraction of the busiest one.
     constexpr float kOccupied = 0.22f;
@@ -81,6 +96,7 @@ void StyleDetector::prepare (double sr) noexcept
     sampleRate = sr > 1.0 ? sr : 48000.0;
     aLowLo = onePoleCoeff (kLowLoHz, sampleRate);
     aLowHi = onePoleCoeff (kLowHiHz, sampleRate);
+    aMidLo = onePoleCoeff (kMidLoHz, sampleRate);
     aMidHi = onePoleCoeff (kMidHiHz, sampleRate);
     aHigh = onePoleCoeff (kHighHz, sampleRate);
     // ~30 ms: long enough to ride a drum's body, short enough that two
@@ -91,7 +107,7 @@ void StyleDetector::prepare (double sr) noexcept
 
 void StyleDetector::reset() noexcept
 {
-    lpLowLo = lpLowHi = lpMidHi = lpHigh = 0.0f;
+    lpLowLo = lpLowHi = lpMidLo = lpMidHi = lpHigh = 0.0f;
     envKick = envBody = envHigh = 0.0f;
     std::fill (binKick, binKick + kBins, 0.0f);
     std::fill (binBody, binBody + kBins, 0.0f);
@@ -146,12 +162,13 @@ void StyleDetector::process (const float* mono, int numSamples, float barPhase, 
         const float x = mono[i];
         lpLowLo += aLowLo * (x - lpLowLo);
         lpLowHi += aLowHi * (x - lpLowHi);
+        lpMidLo += aMidLo * (x - lpMidLo);
         lpMidHi += aMidHi * (x - lpMidHi);
         lpHigh  += aHigh  * (x - lpHigh);
 
-        const float kick = std::fabs (lpLowHi - lpLowLo);   // 160 - 500 Hz
-        const float body = std::fabs (lpMidHi - lpLowHi);   // 500 - 2500 Hz
-        const float high = std::fabs (x - lpHigh);          // above 6 kHz
+        const float kick = std::fabs (lpLowHi - lpLowLo);   // 35 - 110 Hz
+        const float body = std::fabs (lpMidHi - lpMidLo);   // 150 - 600 Hz
+        const float high = std::fabs (x - lpHigh);          // above 5 kHz
 
         // Half-wave rectified rise, not level: a bass line sustains, a kick
         // strikes, and only one of the two is a drum.
@@ -237,30 +254,64 @@ void StyleDetector::decide() noexcept
     lastFeatures = { evenKick, alternation, offHigh, syncopation,
                      static_cast<float> (occupancy) };
 
-    // Ordered by how unambiguous each test is, most first.
-    GrooveStyle want = GrooveStyle::pop;
+    // Ordered by how unambiguous each test is, most first - and rebuilt around
+    // the two measurements that survived being scored.
+    //
+    // The bench in VPTests puts twelve records of known style through this, at
+    // three tempi each and with the syncopation and the pad varying, and the
+    // four features do not do equally well:
+    //
+    //   offHigh       pop 0.13-0.16 against 0.43-0.95 for everything else.
+    //                 A clean gap, and the only one there is.
+    //   syncopation   latin 1.23-1.70 against 0.80-1.26. Mostly a gap.
+    //   evenKick      rock 0.34-0.59, dance 0.45-0.56, latin 0.32-0.61,
+    //                 pop 0.33-0.60. **Complete overlap.**
+    //   alternation   0.09-0.22 for all four. **Complete overlap.**
+    //
+    // The last two are the ones that were supposed to name four-on-the-floor
+    // and a backbeat, and they name nothing. The reason is the same for both
+    // and it is not a threshold: a bass guitar's fundamental sits at 55-110 Hz
+    // and its second harmonic at 150-250, which is exactly where a kick and a
+    // snare's shell are, so the two bands hold a bass line as much as they hold
+    // drums. Half-wave rectifying the rise takes out the sustain and not the
+    // articulation - a bass is plucked, and a pluck is an attack.
+    //
+    // Separating them needs the bass taken out of the drums, which is either
+    // source separation or the desk's own kick channel - the app has the second
+    // when the listener gives it one (see Tracking/KickOnsetDetector.h) and this
+    // does not use it yet. Until then the honest thing is to decide on the two
+    // features that work and to leave the two that do not out of the decision
+    // rather than let them vote.
+    GrooveStyle want = GrooveStyle::rock;
     float margin = 0.0f;
 
-    if (syncopation > kSyncopated)
+    if (offHigh < kSparseHats)
     {
-        // Something on the sixteenths between the beats, and a lot of it.
+        // Almost nothing between the beats: a record that wants to be left
+        // alone.
+        want = GrooveStyle::pop;
+        margin = (kSparseHats - offHigh) / kSparseHats;
+    }
+    else if (syncopation > kSyncopated)
+    {
+        // Energy on the odd sixteenths, and a lot of it.
         want = GrooveStyle::marcha;
         margin = (syncopation - kSyncopated) / kSyncopated;
     }
-    else if (evenKick > kEvenKick && offHigh > kOffbeatHigh)
+    else if (offHigh > kOpenHatEveryOffbeat)
     {
+        // An open hat on every offbeat is what names four-on-the-floor here,
+        // since the kick band cannot.
         want = GrooveStyle::dance;
-        margin = std::min ((evenKick - kEvenKick) / 0.30f, (offHigh - kOffbeatHigh) / 0.30f);
-    }
-    else if (alternation > kAlternation && occupancy >= kBusyBins)
-    {
-        want = GrooveStyle::rock;
-        margin = (alternation - kAlternation) / 0.30f;
+        margin = (offHigh - kOpenHatEveryOffbeat) / 0.20f;
     }
     else
     {
-        want = GrooveStyle::pop;
-        margin = static_cast<float> (kBusyBins - occupancy) / static_cast<float> (kBusyBins);
+        // Everything else. Not a guess of last resort: a record with ordinary
+        // eighth hats, no latin sixteenths and no open hat on the offbeat is a
+        // rock record, and that is three positive statements.
+        want = GrooveStyle::rock;
+        margin = (kOpenHatEveryOffbeat - offHigh) / kOpenHatEveryOffbeat;
     }
 
     score = std::clamp (margin, 0.0f, 1.0f) * std::clamp (observed / 8.0f, 0.0f, 1.0f);

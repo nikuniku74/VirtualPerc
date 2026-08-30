@@ -52,6 +52,31 @@ No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enf
 
 The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
 
+### Knowing what kind of record it is
+
+`AUTO` is the app's one attempt at understanding the song rather than its pulse, and it has always shipped **off**: it got three cases in nine against material whose style was known, which is no better than always guessing the same style. The bench that measured that lived outside the tree — the CMake target still takes its source from an environment variable — so the number had not been reproducible since.
+
+That bench is now in the repository, and it is harder than the old one: four arrangements written to the same four descriptions the chooser works from, each heard as **three different records** (108 / 122 / 138 BPM, with the syncopation and the pad varying), so thresholds cannot be fitted to one take wearing twelve hats.
+
+**The bands were in the wrong place.** The band called "kick" was 160–500 Hz, and a kick's fundamental is 40–90 — it held the bass guitar's harmonics, the snare's shell and the low end of a guitar, everything except the thing it was named after. The band called "snare" started at 500, above the shell tone that makes a backbeat sound like a backbeat. They are now 35–110 and 150–600.
+
+**And two of the four features still do not work, which is worth saying plainly.** Scored across the twelve:
+
+| feature | what it separates |
+|---|---|
+| `offHigh` | pop 0.13–0.16 against 0.43–0.95. A clean gap — the only one. |
+| `syncopation` | latin 1.23–1.70 against 0.80–1.26. Mostly a gap. |
+| `evenKick` | rock 0.34–0.59, dance 0.45–0.56, latin 0.32–0.61, pop 0.33–0.60. **Nothing.** |
+| `alternation` | 0.09–0.22 for all four. **Nothing.** |
+
+The two that fail are the ones meant to name four-on-the-floor and a backbeat, and the reason is the same for both: a bass guitar's fundamental sits at 55–110 Hz and its second harmonic at 150–250, which is exactly where a kick and a snare shell are. Half-wave rectifying the rise removes the sustain and not the articulation — a bass is plucked, and a pluck is an attack. Separating them needs the bass taken out of the drums, which is source separation or the desk's own kick channel; the app has the second when the listener gives it one, and this does not use it yet.
+
+So the decision was rebuilt on the two that work, and the two that do not were taken **out of the vote** rather than left to dilute it: sparse offbeat hats → pop, energy on the odd sixteenths → latin, an open hat on every offbeat → dance, and everything else → rock, which is three positive statements rather than a shrug.
+
+**11 of 12, against 3 of 12 for chance** — up from 4 of 12 with the old tree. `AUTO` still ships off: the thresholds come from synthetic material, and turning it on by default wants real records first.
+
+**Density was tried in the dynamics and taken out.** Level cannot tell a quiet full band from an exposed voice, and the occupancy count looked free. It is not usable there: the fold runs on the analysis bus, and the make-up gain on that bus exists to erase exactly the verse-to-chorus difference the dynamics follow. Measured, the part came down 3.5 dB with level alone and 0.9 dB once density could vote. It stays where it works — naming the style.
+
 ### The harmony, and the bar
 
 The first thing in the app that looks at **pitch**. Everything else it listens to is percussive: the network is trained on beat activations, the kick channel is one drum, the level meter does not care what note it is — and that left the strongest cue about where a bar begins on the table.
