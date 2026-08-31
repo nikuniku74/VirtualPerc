@@ -559,6 +559,43 @@ int main (int argc, char** argv)
                 sq += (bpmTrack[i + k].second - mean) * (bpmTrack[i + k].second - mean);
             wob.push_back (std::sqrt (sq / win) / mean * 100.0);
         }
+        // And how long it took to get there.
+        //
+        // This is the difference between two readings of the same audio that
+        // looked like a property of the material and is not: the seven-minute
+        // take wobbles 0.49%, and its own first thirty-one seconds wobble
+        // 2.04%. Nothing about the music changed - the app was still settling.
+        // So the wobble figure below describes a settled tracker, and this one
+        // says when it became one.
+        //
+        // Measured as the first reading after which the tempo stays inside 1%
+        // of where it finally sits, which is about a beat at 110 and under what
+        // a listener picks out.
+        if (bpmTrack.size() >= 4)
+        {
+            double settled = 0.0;
+            const double endBpm = bpmTrack.back().second;
+            for (size_t i = 0; i < bpmTrack.size(); ++i)
+            {
+                bool holds = true;
+                for (size_t k = i; k < bpmTrack.size(); ++k)
+                {
+                    // A later song in the set is not this take failing to settle.
+                    if (std::fabs (bpmTrack[k].second - endBpm) / endBpm > 0.06)
+                        break;
+                    if (std::fabs (bpmTrack[k].second - endBpm) / endBpm > 0.01)
+                    {
+                        holds = false;
+                        break;
+                    }
+                }
+                if (holds) { settled = bpmTrack[i].first; break; }
+            }
+            if (settled > 0.0)
+                std::printf ("assestato dopo  %.0f s   (prima di allora la stima si muove ancora)\n",
+                             settled);
+        }
+
         if (! wob.empty())
         {
             std::sort (wob.begin(), wob.end());
