@@ -310,6 +310,8 @@ int main (int argc, char** argv)
     int bpmN = 0;
     size_t onsetCursor = 0;
     double lastTrace = -10.0;
+    std::vector<std::pair<double,double>> errAt;
+    double settledAt = -1.0;
     bool everPlayed = false;
     double playedAt = -1.0;
     std::vector<std::pair<double,float>> bpmTrack;
@@ -430,6 +432,11 @@ int main (int argc, char** argv)
                     continue;
                 const double ms = off * beatSec * 1000.0;
                 errs.push_back (ms);
+                // Kept with its time, so the take can be scored before and
+                // after the tempo estimate stops moving. A tempo that wobbles
+                // only matters if the phase wobbles with it - if the grid stays
+                // on the band while the number moves, nobody hears the number.
+                errAt.push_back ({ t, ms });
                 sumAbs += std::fabs (ms);
                 worst = std::max (worst, std::fabs (ms));
                 ++scored;
@@ -582,6 +589,84 @@ int main (int argc, char** argv)
                      100.0 * within20 / static_cast<double> (errs.size()));
         std::printf ("peggiore        %.1f ms\n", worst);
 
+        // And how long it took to get there.
+        //
+        // This is the difference between two readings of the same audio that
+        // looked like a property of the material and is not: the seven-minute
+        // take wobbles 0.49%, and its own first thirty-one seconds wobble
+        // 2.04%. Nothing about the music changed - the app was still settling.
+        // So the wobble figure below describes a settled tracker, and this one
+        // says when it became one.
+        //
+        // The first version of this walked forward from each reading and
+        // stopped at anything past 6%, treating it as the next song - which
+        // meant a reading followed by a change was declared settled, and on a
+        // 31-second take the answer fell on the last sample and was true by
+        // having nowhere left to look. It reported 28 s for two takes with
+        // nothing in common, which is the shape of an artefact rather than a
+        // measurement.
+        //
+        // Settled is now a property of a stretch and not of a point: the first
+        // reading from which the next half minute stays inside 1.5% end to end.
+        // A window that straddles a change of song simply fails the test and
+        // the search moves on, so nothing has to be inferred about what a jump
+        // meant.
+        if (bpmTrack.size() >= 7)
+        {
+            constexpr int hold = 6;         // samples, at one every five seconds
+            constexpr double inside = 0.015;
+            double& settled = settledAt;
+            for (size_t i = 0; i + hold < bpmTrack.size(); ++i)
+            {
+                double lo2 = 1.0e9, hi2 = 0.0;
+                for (int k = 0; k <= hold; ++k)
+                {
+                    lo2 = std::min (lo2, static_cast<double> (bpmTrack[i + k].second));
+                    hi2 = std::max (hi2, static_cast<double> (bpmTrack[i + k].second));
+                }
+                if (lo2 > 0.0 && (hi2 - lo2) / lo2 <= inside)
+                {
+                    settled = bpmTrack[i].first;
+                    break;
+                }
+            }
+            if (settled >= 0.0)
+                std::printf ("assestato dopo  %.0f s   (da li' il tempo sta entro l'1,5%% per mezzo minuto)\n",
+                             settled);
+            else
+                std::printf ("assestato dopo  MAI in questa presa   (non trova mezzo minuto entro l'1,5%%)\n");
+        }
+        else
+        {
+            std::printf ("assestato dopo  presa troppo corta per dirlo (servono ~40 s)\n");
+        }
+
+        // Before and after the estimate settled. This is what decides whether
+        // the settling time is a problem at all: the part is in from about four
+        // seconds and the tempo stops moving around eighteen, so if those
+        // fourteen seconds sound like the rest, nothing needs fixing.
+        if (settledAt > 0.0 && ! errAt.empty())
+        {
+            std::vector<double> before, after;
+            for (const auto& e : errAt)
+                (e.first < settledAt ? before : after).push_back (e.second);
+            auto spreadOf = [] (std::vector<double>& v) -> double
+            {
+                if (v.size() < 8) return -1.0;
+                std::sort (v.begin(), v.end());
+                const double med = v[v.size() / 2];
+                double sq = 0.0;
+                for (double x : v) sq += (x - med) * (x - med);
+                return std::sqrt (sq / static_cast<double> (v.size()));
+            };
+            const double b = spreadOf (before), a = spreadOf (after);
+            if (b > 0.0 && a > 0.0)
+                std::printf ("prima di assestarsi la fase sbanda %.1f ms, dopo %.1f ms%s\n",
+                             b, a,
+                             b > a * 1.25 ? "   <-- i primi secondi si sentono"
+                                          : "   (uguale: l'assestamento non si sente)");
+        }
+
         // When the part actually came in. A tempo that is still moving matters
         // only if anybody is playing on it - a tracker that waits until it is
         // sure is not making the listener pay for the settling time.
@@ -636,57 +721,6 @@ int main (int argc, char** argv)
             for (int k = 0; k < win; ++k)
                 sq += (bpmTrack[i + k].second - mean) * (bpmTrack[i + k].second - mean);
             wob.push_back (std::sqrt (sq / win) / mean * 100.0);
-        }
-        // And how long it took to get there.
-        //
-        // This is the difference between two readings of the same audio that
-        // looked like a property of the material and is not: the seven-minute
-        // take wobbles 0.49%, and its own first thirty-one seconds wobble
-        // 2.04%. Nothing about the music changed - the app was still settling.
-        // So the wobble figure below describes a settled tracker, and this one
-        // says when it became one.
-        //
-        // The first version of this walked forward from each reading and
-        // stopped at anything past 6%, treating it as the next song - which
-        // meant a reading followed by a change was declared settled, and on a
-        // 31-second take the answer fell on the last sample and was true by
-        // having nowhere left to look. It reported 28 s for two takes with
-        // nothing in common, which is the shape of an artefact rather than a
-        // measurement.
-        //
-        // Settled is now a property of a stretch and not of a point: the first
-        // reading from which the next half minute stays inside 1.5% end to end.
-        // A window that straddles a change of song simply fails the test and
-        // the search moves on, so nothing has to be inferred about what a jump
-        // meant.
-        if (bpmTrack.size() >= 7)
-        {
-            constexpr int hold = 6;         // samples, at one every five seconds
-            constexpr double inside = 0.015;
-            double settled = -1.0;
-            for (size_t i = 0; i + hold < bpmTrack.size(); ++i)
-            {
-                double lo2 = 1.0e9, hi2 = 0.0;
-                for (int k = 0; k <= hold; ++k)
-                {
-                    lo2 = std::min (lo2, static_cast<double> (bpmTrack[i + k].second));
-                    hi2 = std::max (hi2, static_cast<double> (bpmTrack[i + k].second));
-                }
-                if (lo2 > 0.0 && (hi2 - lo2) / lo2 <= inside)
-                {
-                    settled = bpmTrack[i].first;
-                    break;
-                }
-            }
-            if (settled >= 0.0)
-                std::printf ("assestato dopo  %.0f s   (da li' il tempo sta entro l'1,5%% per mezzo minuto)\n",
-                             settled);
-            else
-                std::printf ("assestato dopo  MAI in questa presa   (non trova mezzo minuto entro l'1,5%%)\n");
-        }
-        else
-        {
-            std::printf ("assestato dopo  presa troppo corta per dirlo (servono ~40 s)\n");
         }
 
         if (! wob.empty())

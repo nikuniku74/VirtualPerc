@@ -26,6 +26,80 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Le prime misure su registrazioni vere di una band (31 agosto)
+
+Tre registrazioni dal vivo della band - 31 s, 41 s e 7 min 27 s - passate
+per la catena vera con **BeatNet vero**. È la prima volta: fino a qui tutto
+era misurato su materiale generato da `probe_song_render.h` e, sull'host,
+con lo stub al posto della rete.
+
+ONNX Runtime si scarica anche per Linux, quindi la rete si accende anche
+qui e non serve un Mac. Lo strumento è `VPLive`.
+
+### Il risultato
+
+| presa | scarto dai colpi della band | entrano | assestato | oscillazione |
+|---|---|---|---|---|
+| 7 min 27 s | **+1,8 ms** | 4 s | 18 s | **0,38%** (0,4 BPM) |
+| 31 s | **−0,1 ms** | 4 s | — | — |
+| 41 s | **+1,9 ms** | 2 s | — (cambio di brano) | — |
+
+L'app sta con la band **entro due millisecondi**, entra dopo **2-4
+secondi** — una o due battute — e una volta assestata tiene **0,4 BPM**.
+Un percussionista in prova sta nei 10-15 ms.
+
+### L'assestamento non si sente, ed è la ragione per non toccarlo
+
+La stima del tempo continua a muoversi fino a 18 s mentre la parte è già
+dentro da 4: una finestra di quattordici secondi in cui l'app suona su un
+numero che si aggiusta ancora. Sembrava il difetto principale rimasto.
+
+Non lo è. Misurata la **fase** - che è ciò che l'orecchio giudica - prima e
+dopo l'assestamento sulla stessa presa: **39,1 ms contro 38,6**. Il numero
+si muove dentro l'algoritmo e la griglia resta dov'era. Nessun intervento,
+perché ogni modo di renderla più cauta all'avvio costa qualcosa altrove e
+non comprerebbe niente.
+
+### Quattro difetti trovati, tutti nel banco
+
+Vale la pena elencarli perché ognuno faceva sembrare l'app peggiore di
+com'è:
+
+1. `VPLive` e `VPSing` non erano nell'elenco di `vp_apply_ai_options`:
+   giravano sullo stub anche dove ONNX c'era, senza dirlo. E su Linux
+   mancava l'RPATH.
+2. Il conteggio dei salti confrontava il BPM col blocco precedente. L'orologio
+   glida apposta, quindi diceva **«0 salti»** su una presa che aveva
+   camminato da 129 a 111.
+3. Il tempo di assestamento rispondeva **28 s su due prese senza niente in
+   comune** - la forma di un artefatto. Il criterio si fermava al primo
+   scarto oltre il 6% e su una presa da 31 s cadeva sull'ultimo campione.
+4. Il più grave: il banco apriva il tracker **a metà brano**, che è il punto
+   cieco che `BeatTracker::process` documenta. La percussione resta armata e
+   muta finché l'ingresso non è stato visto *cominciare*, perché una sala
+   vuota porta comunque il tracker a FOLLOWING (99 BPM, confidenza 0,91,
+   davanti a un microfono che non sente nessuno). Il banco riportava «le
+   percussioni non entrano mai» come difetto dell'app.
+
+Corretto il quarto, ogni numero è migliorato: +2,4 → +1,8 ms, 33 → 18 s di
+assestamento, 0,48 → 0,38% di oscillazione.
+
+### Cosa il banco non sa fare
+
+Non sa dire se un tempo che cammina sia stata la band o l'app. Un secondo
+parere ricavato dai colpi con la coerenza di fase è stato costruito e
+**tolto**: rispondeva 173/113/138/163/142 BPM su una presa tenuta a 110 per
+sette minuti. Gli attacchi di una band sono fitti e cadono su ogni
+suddivisione, e un periodo più corto sembra sempre più coerente per caso.
+Correggerlo significa costruire un beat tracker offline.
+
+Nemmeno la dispersione della fase è interpretabile: legge ~39 ms perché su
+musica vera gli attacchi non stanno tutti sulla griglia - il basso anticipa,
+la voce attacca dove vuole, una strimmata è spalmata. Quando il rilevatore
+di riferimento è passato da 1299 attacchi a 359 quel numero **non si è
+mosso**, il che dice che è la musica e non il metro. Il numero che conta è
+la mediana, che è robusta: ed è +1,8 ms.
+
 ## La band accelera piano e l'app resta indietro (30 agosto)
 
 Segnalazione dal campo, due pezzi:
