@@ -189,6 +189,7 @@ int main (int argc, char** argv)
     double fixedBpm = 0.0;
     bool speaker = false;
     bool autoMode = false;
+    bool trace = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -199,6 +200,7 @@ int main (int argc, char** argv)
         else if (a == "--bpm")     fixedBpm = std::atof (next().c_str());
         else if (a == "--speaker") speaker = true;
         else if (a == "--auto")    autoMode = true;
+        else if (a == "--trace")   trace = true;
         else
         {
             std::printf ("uso: VPLive --mix band.wav [--click click.wav | --bpm 118] [--speaker]\n\n"
@@ -307,6 +309,9 @@ int main (int argc, char** argv)
     double bpmSum = 0.0;
     int bpmN = 0;
     size_t onsetCursor = 0;
+    double lastTrace = -10.0;
+    bool everPlayed = false;
+    double playedAt = -1.0;
     std::vector<std::pair<double,float>> bpmTrack;
     double lastTrack = -100.0;
     float lastBpm = 0.0f;
@@ -314,6 +319,40 @@ int main (int argc, char** argv)
     std::vector<std::pair<double,float>> history;
     float was = 0.0f;
     bool inMove = false;
+
+    // Two seconds of silence first, because that is what the app is actually
+    // opened onto.
+    //
+    // The percussion stays armed and silent until the input has been seen to
+    // *change* - an empty room never does that, and without the guard the
+    // tracker locks to a room and plays to nobody (BeatTracker::process has the
+    // measurement: FOLLOWING at 99 BPM with 0.91 confidence in front of a
+    // microphone that hears no one). A recording handed over mid-song is the
+    // blind spot that guard documents, so a bench that starts there measures
+    // the app never coming in - which is what this one did, and reported as a
+    // fault.
+    {
+        // The engine tells the tracker when the input changes character, and
+        // the tracker keeps one bit from it: has this input ever *started*.
+        // Driving the tracker directly, as this bench does, nothing calls it -
+        // so the bit stayed false and the part never came in, which the bench
+        // then reported as the app refusing to play. Silence at epoch 0 and the
+        // music at epoch 1 is exactly the transition the engine reports.
+        tracker.setInputEpoch (0);
+        std::vector<float> quiet (static_cast<size_t> (kBlock), 0.0f);
+        for (int i = 0; i < static_cast<int> (sr * 2.0) / kBlock; ++i)
+        {
+            tracker.process (quiet.data(), kBlock);
+            for (int spin = 0; spin < 20000; ++spin)
+            {
+                if (tracker.analysisBacklog() <= kBlock)
+                    break;
+                std::this_thread::yield();
+            }
+        }
+    }
+
+    tracker.setInputEpoch (1);
 
     const int total = static_cast<int> (mix.size());
     for (int pos = 0; pos + kBlock <= total; pos += kBlock)
@@ -331,6 +370,38 @@ int main (int argc, char** argv)
         }
 
         const double t = static_cast<double> (pos) / sr;
+
+        // What it is doing while it settles. The columns are the ones that
+        // decide the tempo: what the network says beat by beat, what the two
+        // least-squares fits over different baselines say, what the comb's fold
+        // says, and which regime the decoder has committed to. A settling time
+        // has to be attributable to one of them.
+        if (trace && t >= lastTrace + 2.0 && t < 70.0)
+        {
+            lastTrace = t;
+            std::printf ("  t=%-5.0f orologio=%-7.2f decoder=%-7.2f rete=%-7.2f pettine=%-7.2f "
+                         "conf=%-5.2f residuo=%-5.3f %s\n",
+                         t, static_cast<double> (out.bpm),
+                         static_cast<double> (out.targetBpm),
+                         static_cast<double> (out.neuralBpm),
+                         static_cast<double> (out.combBpm),
+                         static_cast<double> (out.confidence),
+                         static_cast<double> (out.fitResidual),
+                         vp::regimeLabel (static_cast<int> (out.regime)));
+            std::printf ("        stato=%s  suona=%s\n",
+                         vp::toString (out.state), out.percussionShouldPlay ? "SI" : "no");
+            if (out.percussionShouldPlay && ! everPlayed)
+            {
+                everPlayed = true;
+                playedAt = t;
+            }
+        }
+
+        if (out.percussionShouldPlay && ! everPlayed)
+        {
+            everPlayed = true;
+            playedAt = t;
+        }
 
         if (autoMode)
         {
@@ -511,6 +582,13 @@ int main (int argc, char** argv)
                      100.0 * within20 / static_cast<double> (errs.size()));
         std::printf ("peggiore        %.1f ms\n", worst);
 
+        // When the part actually came in. A tempo that is still moving matters
+        // only if anybody is playing on it - a tracker that waits until it is
+        // sure is not making the listener pay for the settling time.
+        if (playedAt >= 0.0)
+            std::printf ("le percussioni entrano a  %.0f s\n", playedAt);
+        else
+            std::printf ("le percussioni non entrano mai in questa presa\n");
         std::printf ("\ncambi di tempo netti: %d  (un brano nuovo e' uno di questi)",  jumps);
         if (octaveJumps > 0)
             std::printf (", di cui %d di ottava (meta'/doppio)  <-- questo si sente", octaveJumps);
