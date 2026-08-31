@@ -568,32 +568,47 @@ int main (int argc, char** argv)
         // So the wobble figure below describes a settled tracker, and this one
         // says when it became one.
         //
-        // Measured as the first reading after which the tempo stays inside 1%
-        // of where it finally sits, which is about a beat at 110 and under what
-        // a listener picks out.
-        if (bpmTrack.size() >= 4)
+        // The first version of this walked forward from each reading and
+        // stopped at anything past 6%, treating it as the next song - which
+        // meant a reading followed by a change was declared settled, and on a
+        // 31-second take the answer fell on the last sample and was true by
+        // having nowhere left to look. It reported 28 s for two takes with
+        // nothing in common, which is the shape of an artefact rather than a
+        // measurement.
+        //
+        // Settled is now a property of a stretch and not of a point: the first
+        // reading from which the next half minute stays inside 1.5% end to end.
+        // A window that straddles a change of song simply fails the test and
+        // the search moves on, so nothing has to be inferred about what a jump
+        // meant.
+        if (bpmTrack.size() >= 7)
         {
-            double settled = 0.0;
-            const double endBpm = bpmTrack.back().second;
-            for (size_t i = 0; i < bpmTrack.size(); ++i)
+            constexpr int hold = 6;         // samples, at one every five seconds
+            constexpr double inside = 0.015;
+            double settled = -1.0;
+            for (size_t i = 0; i + hold < bpmTrack.size(); ++i)
             {
-                bool holds = true;
-                for (size_t k = i; k < bpmTrack.size(); ++k)
+                double lo2 = 1.0e9, hi2 = 0.0;
+                for (int k = 0; k <= hold; ++k)
                 {
-                    // A later song in the set is not this take failing to settle.
-                    if (std::fabs (bpmTrack[k].second - endBpm) / endBpm > 0.06)
-                        break;
-                    if (std::fabs (bpmTrack[k].second - endBpm) / endBpm > 0.01)
-                    {
-                        holds = false;
-                        break;
-                    }
+                    lo2 = std::min (lo2, static_cast<double> (bpmTrack[i + k].second));
+                    hi2 = std::max (hi2, static_cast<double> (bpmTrack[i + k].second));
                 }
-                if (holds) { settled = bpmTrack[i].first; break; }
+                if (lo2 > 0.0 && (hi2 - lo2) / lo2 <= inside)
+                {
+                    settled = bpmTrack[i].first;
+                    break;
+                }
             }
-            if (settled > 0.0)
-                std::printf ("assestato dopo  %.0f s   (prima di allora la stima si muove ancora)\n",
+            if (settled >= 0.0)
+                std::printf ("assestato dopo  %.0f s   (da li' il tempo sta entro l'1,5%% per mezzo minuto)\n",
                              settled);
+            else
+                std::printf ("assestato dopo  MAI in questa presa   (non trova mezzo minuto entro l'1,5%%)\n");
+        }
+        else
+        {
+            std::printf ("assestato dopo  presa troppo corta per dirlo (servono ~40 s)\n");
         }
 
         if (! wob.empty())
