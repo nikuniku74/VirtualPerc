@@ -44,6 +44,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <thread>
 #include <vector>
 
@@ -132,9 +133,15 @@ std::vector<double> onsetTimes (const std::vector<float>& x, double sr)
     std::sort (sorted.begin(), sorted.end());
     const float median = sorted[sorted.size() / 2];
     const float top = sorted[static_cast<size_t> (sorted.size() * 0.98)];
-    const float gate = median + (top - median) * 0.22f;
+    const float gate = median + (top - median) * 0.40f;
 
-    const int refractory = 2;   // hops: 11 ms, under any stroke spacing
+    // Nothing in a band repeats an attack inside 50 ms - that is faster than a
+    // drum roll and far faster than any stroke a grid could hold. The first
+    // version used 11 ms and reported 41 attacks a second on a real take, where
+    // even counting sixteenths at 97 BPM there are 6.5: the reference was
+    // mostly noise, and a reference made of noise makes the app look scattered
+    // whatever it does.
+    const int refractory = static_cast<int> (sr * 0.05 / hop);
     int since = refractory;
     for (size_t i = 1; i + 1 < flux.size(); ++i, ++since)
     {
@@ -300,6 +307,13 @@ int main (int argc, char** argv)
     double bpmSum = 0.0;
     int bpmN = 0;
     size_t onsetCursor = 0;
+    std::vector<std::pair<double,float>> bpmTrack;
+    double lastTrack = -100.0;
+    float lastBpm = 0.0f;
+    int jumps = 0, octaveJumps = 0;
+    std::vector<std::pair<double,float>> history;
+    float was = 0.0f;
+    bool inMove = false;
 
     const int total = static_cast<int> (mix.size());
     for (int pos = 0; pos + kBlock <= total; pos += kBlock)
@@ -353,6 +367,35 @@ int main (int argc, char** argv)
             {
                 bpmSum += out.bpm;
                 ++bpmN;
+                // The tempo it was showing, once every ten seconds, and every
+                // time it jumped. A listener does not hear 3 ms of phase; they
+                // hear the part change speed, or halve, or stop being on the
+                // song. That is what this catches and no average can.
+                if (bpmTrack.empty() || t - lastTrack > 5.0)
+                {
+                    bpmTrack.push_back ({ t, out.bpm });
+                    lastTrack = t;
+                }
+                // Against where it was five seconds ago, not against the last
+                // block. The clock glides into a new tempo on purpose, so
+                // block-to-block every step is tiny and a count of those
+                // reports zero however far the tempo has actually travelled -
+                // measured on a real take that walked from 129 to 111, which is
+                // 14%, this said "no jumps".
+                history.push_back ({ t, out.bpm });
+                while (! history.empty() && t - history.front().first > 5.0)
+                {
+                    was = history.front().second;
+                    history.erase (history.begin());
+                }
+                if (was > 40.0f)
+                {
+                    const double moved = std::fabs (out.bpm - was) / was;
+                    if (moved > 0.06 && ! inMove) { ++jumps; inMove = true; }
+                    if (moved < 0.03) inMove = false;
+                    if (moved > 0.35) ++octaveJumps;
+                }
+                lastBpm = out.bpm;
             }
             continue;
         }
@@ -455,14 +498,35 @@ int main (int argc, char** argv)
             if (std::fabs (e - median) < 20.0)
                 ++within20;
 
-        std::printf ("colpi misurati  %d (su %d attacchi trovati)\n",
-                     scored, static_cast<int> (onsets.size()));
+        const double perSec = static_cast<double> (onsets.size())
+                              / (static_cast<double> (total) / sr);
+        std::printf ("colpi misurati  %d (su %d attacchi, %.1f al secondo)%s\n",
+                     scored, static_cast<int> (onsets.size()), perSec,
+                     perSec > 12.0 ? "   <-- TROPPI: il riferimento sta prendendo rumore,\n"
+                                     "                    i numeri qui sotto non valgono" : "");
         std::printf ("scarto medio    %+.1f ms   <-- l'app suona dopo la band se e' positivo\n",
                      median);
         std::printf ("dispersione     %.1f ms   (quanto e' *insieme*, non solo in media)\n", spread);
         std::printf ("entro 20 ms     %.0f%%\n",
                      100.0 * within20 / static_cast<double> (errs.size()));
         std::printf ("peggiore        %.1f ms\n", worst);
+
+        std::printf ("\nha perso il tempo?  %d salti oltre il 6%%",  jumps);
+        if (octaveJumps > 0)
+            std::printf (", di cui %d di ottava (meta'/doppio)  <-- questo si sente", octaveJumps);
+        std::printf ("\n");
+        float lo = 999.0f, hi = 0.0f;
+        for (const auto& b : bpmTrack) { lo = std::min (lo, b.second); hi = std::max (hi, b.second); }
+        if (hi > lo)
+            std::printf ("da %.0f a %.0f BPM nella presa  (%.0f%% di escursione)%s\n",
+                         static_cast<double> (lo), static_cast<double> (hi),
+                         100.0 * (hi - lo) / lo,
+                         (hi - lo) / lo > 0.08 ? "   <-- troppa per una band: uno dei due e' sbagliato" : "");
+        std::printf ("il tempo nel tempo: ");
+        for (size_t i = 0; i < bpmTrack.size(); ++i)
+            std::printf ("%.0f%s", static_cast<double> (bpmTrack[i].second),
+                         i + 1 < bpmTrack.size() ? " -> " : "");
+        std::printf ("\n");
     }
     else if (recentre)
     {

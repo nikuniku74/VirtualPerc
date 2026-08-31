@@ -519,6 +519,13 @@ function (vp_apply_ai_options target)
                 set_target_properties (${target} PROPERTIES
                     BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib"
                     INSTALL_RPATH "@loader_path;${ONNXRUNTIME_ROOT}/lib")
+            elseif (UNIX)
+                # Same thing on a Linux host, which is where the benches run in
+                # CI and in a container: without it the binary links and then
+                # cannot find libonnxruntime.so at startup.
+                set_target_properties (${target} PROPERTIES
+                    BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib"
+                    INSTALL_RPATH "$ORIGIN;${ONNXRUNTIME_ROOT}/lib")
             endif()
         else()
             target_link_libraries (${target} PRIVATE onnxruntime)
@@ -575,6 +582,12 @@ endif()
 
 if (TARGET VPAlign)
     vp_apply_ai_options (VPAlign)
+endif()
+if (TARGET VPLive)
+    vp_apply_ai_options (VPLive)
+endif()
+if (TARGET VPSing)
+    vp_apply_ai_options (VPSing)
 endif()
 if (TARGET VPRender)
     vp_apply_ai_options (VPRender)
