@@ -81,6 +81,73 @@ bool readMono (const juce::File& f, std::vector<float>& out, double& sr)
     return true;
 }
 
+/** Where the band actually played, taken from the recording itself.
+ 
+    This is the mode that matters, and the reason is musical rather than
+    technical. A band without a click breathes: it pushes into a chorus and
+    leans back out of one, and a percussionist follows *that*, not a grid. If
+    the drummer is 15 ms early, the right place to be is 15 ms early with him.
+    So scoring the app against a metronome would be scoring it against something
+    no player in the room is playing - the reference has to be the band.
+
+    Which is already in the recording. And it can be read far better here than
+    on stage, because this is not live: the whole file is available, so an
+    attack can be timed by looking at what comes *after* it, which the tracker
+    can never do.
+
+    Deliberately every attack rather than only the beats. Which of them are
+    beats is the question the app is being scored on, so deciding it here would
+    be marking its own homework. What is measured instead is whether the app's
+    sixteenth grid lands where the band's strokes land - and against a grid
+    every stroke has an opinion, whichever subdivision it falls on. */
+std::vector<double> onsetTimes (const std::vector<float>& x, double sr)
+{
+    std::vector<double> at;
+    if (x.size() < 1024)
+        return at;
+
+    // Envelope, then rise. Crude on purpose: a band's attacks are the loudest
+    // thing in the file and anything cleverer starts deciding what is a beat.
+    const int hop = 256;
+    const int n = static_cast<int> (x.size());
+    std::vector<float> env;
+    env.reserve (static_cast<size_t> (n / hop + 1));
+    for (int i = 0; i + hop <= n; i += hop)
+    {
+        float peak = 0.0f;
+        for (int k = 0; k < hop; ++k)
+            peak = std::max (peak, std::fabs (x[static_cast<size_t> (i + k)]));
+        env.push_back (peak);
+    }
+    if (env.size() < 8)
+        return at;
+
+    // Positive difference, and a floor from the whole file rather than a fixed
+    // number - a quiet take and a loud one are not different music.
+    std::vector<float> flux (env.size(), 0.0f);
+    for (size_t i = 1; i < env.size(); ++i)
+        flux[i] = std::max (0.0f, env[i] - env[i - 1]);
+
+    std::vector<float> sorted = flux;
+    std::sort (sorted.begin(), sorted.end());
+    const float median = sorted[sorted.size() / 2];
+    const float top = sorted[static_cast<size_t> (sorted.size() * 0.98)];
+    const float gate = median + (top - median) * 0.22f;
+
+    const int refractory = 2;   // hops: 11 ms, under any stroke spacing
+    int since = refractory;
+    for (size_t i = 1; i + 1 < flux.size(); ++i, ++since)
+    {
+        if (flux[i] > gate && flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1]
+            && since >= refractory)
+        {
+            at.push_back (static_cast<double> (i * hop) / sr);
+            since = 0;
+        }
+    }
+    return at;
+}
+
 /** Where the click struck. A click track is the easiest signal in audio to
     pick: one transient per beat, nothing else on the channel, no decay worth
     speaking of. Deliberately crude - anything cleverer would be fitting the
@@ -114,6 +181,7 @@ int main (int argc, char** argv)
     std::string mixPath, clickPath;
     double fixedBpm = 0.0;
     bool speaker = false;
+    bool autoMode = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -123,6 +191,7 @@ int main (int argc, char** argv)
         else if (a == "--click")   clickPath = next();
         else if (a == "--bpm")     fixedBpm = std::atof (next().c_str());
         else if (a == "--speaker") speaker = true;
+        else if (a == "--auto")    autoMode = true;
         else
         {
             std::printf ("uso: VPLive --mix band.wav [--click click.wav | --bpm 118] [--speaker]\n\n"
@@ -141,20 +210,25 @@ int main (int argc, char** argv)
         std::printf ("serve --mix\n");
         return 1;
     }
+    // With neither a click nor a stated tempo, score against the band itself.
+    // That is the right default for a live take and the usual case: nobody
+    // records a click they did not play to.
     if (clickPath.empty() && fixedBpm <= 0.0)
-    {
-        std::printf ("serve una verita': --click oppure --bpm\n");
-        return 1;
-    }
+        autoMode = true;
 
     std::vector<float> mix;
     double sr = 48000.0;
     if (! readMono (juce::File::getCurrentWorkingDirectory().getChildFile (mixPath), mix, sr))
         return 1;
 
-    // The truth, as beat times in seconds.
+    // The truth, as beat times in seconds. Not needed in auto mode, where the
+    // reference is the band's own strokes.
     std::vector<double> beats;
-    if (! clickPath.empty())
+    if (autoMode)
+    {
+        // nothing to build
+    }
+    else if (! clickPath.empty())
     {
         std::vector<float> click;
         double csr = sr;
@@ -186,6 +260,18 @@ int main (int argc, char** argv)
             beats.push_back (t);
     }
 
+    std::vector<double> onsets;
+    if (autoMode)
+    {
+        onsets = onsetTimes (mix, sr);
+        if (onsets.size() < 32)
+        {
+            std::printf ("nel mix ho trovato solo %d attacchi: non bastano\n",
+                         static_cast<int> (onsets.size()));
+            return 1;
+        }
+    }
+
     vp::BeatTracker tracker;
     tracker.prepare (sr);
     tracker.setTempoFollow (true);
@@ -213,6 +299,7 @@ int main (int argc, char** argv)
     std::vector<double> errs;
     double bpmSum = 0.0;
     int bpmN = 0;
+    size_t onsetCursor = 0;
 
     const int total = static_cast<int> (mix.size());
     for (int pos = 0; pos + kBlock <= total; pos += kBlock)
@@ -230,6 +317,46 @@ int main (int argc, char** argv)
         }
 
         const double t = static_cast<double> (pos) / sr;
+
+        if (autoMode)
+        {
+            // Every stroke the band played inside this block, against the grid
+            // the app is running right now. The app's sixteenth nearest each
+            // stroke is the one it would have played it on, so the distance to
+            // it is what a listener hears as together or not.
+            while (onsetCursor < onsets.size()
+                   && onsets[onsetCursor] < t + static_cast<double> (kBlock) / sr)
+            {
+                const double ot = onsets[onsetCursor];
+                ++onsetCursor;
+                if (ot < t || out.bpm < 40.0f || t < 8.0)
+                    continue;
+                const double beatSec = 60.0 / static_cast<double> (out.bpm);
+                // The app's phase at the instant of the stroke, not at the top
+                // of the block.
+                const double into = (ot - t) / beatSec;
+                const double ph = static_cast<double> (out.beatPhase) + into;
+                const double six = ph * 4.0;
+                const double off = (six - std::floor (six + 0.5)) / 4.0;
+                // Beyond an eighth of a beat this stroke is not on the grid at
+                // all - a grace note, a flam, a bass note - and it is not
+                // evidence about alignment either way.
+                if (std::fabs (off) > 0.125)
+                    continue;
+                const double ms = off * beatSec * 1000.0;
+                errs.push_back (ms);
+                sumAbs += std::fabs (ms);
+                worst = std::max (worst, std::fabs (ms));
+                ++scored;
+            }
+            if (out.bpm >= 40.0f && t > 8.0)
+            {
+                bpmSum += out.bpm;
+                ++bpmN;
+            }
+            continue;
+        }
+
         const double tp = truePhaseAt (t);
         if (tp < 0.0 || out.bpm < 40.0f)
             continue;
@@ -267,11 +394,11 @@ int main (int argc, char** argv)
     std::printf ("\n=== %s ===\n", mixPath.c_str());
     std::printf ("rete            %s\n", onnx ? "BeatNet ONNX (quella vera)"
                                               : "STUB - i numeri qui sotto NON descrivono l'app sul palco");
-    std::printf ("verita'         %s\n", clickPath.empty()
-                     ? "--bpm costante (conta la deriva, non lo scarto)"
-                     : "click su traccia separata");
-    std::printf ("durata          %.1f s, %d battiti nella verita'\n",
-                 static_cast<double> (total) / sr, static_cast<int> (beats.size()));
+    std::printf ("verita'         %s\n",
+                 autoMode ? "la band stessa: dove sono caduti i suoi colpi"
+                 : clickPath.empty() ? "--bpm costante (conta la deriva, non lo scarto)"
+                                     : "click su traccia separata");
+    std::printf ("durata          %.1f s\n", static_cast<double> (total) / sr);
 
     if (scored == 0)
     {
@@ -294,7 +421,7 @@ int main (int argc, char** argv)
     // Never done with --click: there the offset is the measurement. A part that
     // is reliably 40 ms late is late, and a bench that quietly recentres it has
     // thrown away the only number a listener would have complained about.
-    const bool recentre = clickPath.empty();
+    const bool recentre = clickPath.empty() && ! autoMode;
     double driftSum = 0.0, driftWorst = 0.0;
     for (double e : errs)
     {
@@ -313,7 +440,31 @@ int main (int argc, char** argv)
     }
     std::printf ("\n");
 
-    if (recentre)
+    if (autoMode)
+    {
+        // The median is the whole answer here, and its sign is the half a
+        // listener would have complained about: the app is playing that many
+        // milliseconds after the band, or before it. The spread says whether it
+        // is together or merely on average together.
+        double spread = 0.0;
+        for (double e : errs)
+            spread += (e - median) * (e - median);
+        spread = std::sqrt (spread / static_cast<double> (errs.size()));
+        int within20 = 0;
+        for (double e : errs)
+            if (std::fabs (e - median) < 20.0)
+                ++within20;
+
+        std::printf ("colpi misurati  %d (su %d attacchi trovati)\n",
+                     scored, static_cast<int> (onsets.size()));
+        std::printf ("scarto medio    %+.1f ms   <-- l'app suona dopo la band se e' positivo\n",
+                     median);
+        std::printf ("dispersione     %.1f ms   (quanto e' *insieme*, non solo in media)\n", spread);
+        std::printf ("entro 20 ms     %.0f%%\n",
+                     100.0 * within20 / static_cast<double> (errs.size()));
+        std::printf ("peggiore        %.1f ms\n", worst);
+    }
+    else if (recentre)
     {
         std::printf ("scarto fisso    %+.1f ms   (da dove ho indovinato il primo battito:\n"
                      "                            non e' una misura, e' il modo --bpm)\n", median);
