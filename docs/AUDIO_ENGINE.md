@@ -19,6 +19,36 @@ getNextAudioBlock
 
 No allocations, file I/O, logs, mutexes, or UI in this path. Buffers are reserved in `prepare()`.
 
+## Internal backing track (BRANO)
+
+`SETUP -> INGRESSO -> BRANO` is a third source alongside `MIXER` and `IPAD`.
+`CARICA` opens the iOS document picker; the selected security-scoped URL stays
+alive for as long as its reader, and a read-ahead thread keeps file access out
+of the real-time callback. Core Audio supplies AAC/M4A/MP3 decoding on Apple
+platforms; JUCE also registers WAV and AIFF.
+
+The callback reads the file into `trackScratch`, feeds that exact stereo signal
+to `VirtualPercussionEngine`, then mixes it at 70% into the device output to
+leave headroom for the generated percussion. The track and the percussion
+therefore take the same A2DP path to AirPods and remain aligned despite the
+Bluetooth output latency.
+
+This source deliberately bypasses the microphone-only corrections: it has no
+acoustic round trip, cannot contain a return of the app's own percussion, and
+cannot provide a separate kick channel. The engine consequently applies no
+device round-trip compensation, leak cancellation, microphone high-pass, or
+kick-channel detection in `internalPlayer` mode. `MIXER` and `IPAD` keep their
+existing paths unchanged.
+
+iPadOS does not expose another app's output as an `AVAudioSession` input. In
+particular, A2DP is an output-only route: Spotify can keep playing because the
+session mixes with other apps, but its samples are not delivered to this app.
+The internal player is the supported direct-audio route; Spotify still uses the
+existing `IPAD` acoustic mode only when the music is audible in the room. With
+AirPods there is no acoustic signal for the iPad microphone to hear, so Spotify
+requires a separate physical loopback/interface or playback from another
+speaker; it cannot feed this app directly.
+
 ## Clock
 
 `beatPhase` ∈ [0, 1) is the position inside the current quarter note.

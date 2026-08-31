@@ -63,6 +63,12 @@ private:
     void refreshClockButtons();
     void refreshBufferButtons();
     void refreshSourceButton();
+    void chooseInternalTrack();
+    void loadInternalTrack (juce::URL url);
+    void toggleInternalTrack();
+    void selectFollowSource (vp::FollowSource source);
+    bool internalTrackSelected() const noexcept;
+    void refreshInternalTrackButtons();
     void refreshProcButton();
     void refreshMixLabels();
 
@@ -216,6 +222,8 @@ private:
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
+    juce::TextButton trackLoadButton { "CARICA" };
+    juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };
     juce::TextButton settingsClose { "CHIUDI" };
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
@@ -255,6 +263,17 @@ private:
     juce::Label  inputGainValue { {}, "100%" };
 
     juce::AudioBuffer<float> inputScratch;
+    juce::AudioBuffer<float> trackScratch;
+
+    /** Internal backing-track path. The URL itself stays alive because on iOS
+        it owns the security-scoped bookmark granted by the document picker. */
+    juce::AudioFormatManager trackFormats;
+    juce::TimeSliceThread trackReadThread { "VP track read-ahead" };
+    juce::AudioTransportSource trackTransport;
+    std::unique_ptr<juce::AudioFormatReaderSource> trackReader;
+    std::unique_ptr<juce::FileChooser> trackChooser;
+    juce::URL trackUrl;
+    juce::String trackName;
 
     /** Where the beat dots are drawn, kept so the timer can repaint that strip
         alone rather than the whole console. */

@@ -244,7 +244,10 @@ void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInpu
     // it worth having.
     {
         const int kick = cfg.kickChannel.load (std::memory_order_relaxed);
-        const bool assigned = kick >= 0 && kick < numInputs && inputs[kick] != nullptr;
+        const bool directFile = cfg.followSource.load (std::memory_order_relaxed)
+                                == static_cast<int> (FollowSource::internalPlayer);
+        const bool assigned = ! directFile && kick >= 0 && kick < numInputs
+                              && inputs[kick] != nullptr;
         if (assigned)
         {
             KickOnsetDetector::Onset on[KickOnsetDetector::kMaxOnsets];
@@ -892,8 +895,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         if (wantLocked != tracker.barIsLocked())
             tracker.setBarLocked (wantLocked);
     }
-    const bool speaker = cfg.followSource.load (std::memory_order_relaxed)
-                         == static_cast<int> (FollowSource::speaker);
+    const auto source = static_cast<FollowSource> (
+        cfg.followSource.load (std::memory_order_relaxed));
+    const bool speaker = source == FollowSource::speaker;
+    const bool directFile = source == FollowSource::internalPlayer;
     tracker.setSpeakerFollow (speaker);
     // What the clock has to run ahead of the music by, so that what is *heard*
     // lands on the pulse: the device round trip, plus the slowest attack in the
@@ -904,8 +909,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // the operating system believes about the interface; the measurement is
     // what this rig actually did, desk and all. See Audio/LatencyProbe.h.
     const float measured = measuredLatencyMs.load (std::memory_order_relaxed);
-    const float roundTrip = measured > 0.0f ? measured
-                                            : latencyMs.load (std::memory_order_relaxed);
+    const float roundTrip = directFile ? 0.0f
+                                       : (measured > 0.0f ? measured
+                                                          : latencyMs.load (std::memory_order_relaxed));
     tracker.setReportedLatencyMs (roundTrip + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
@@ -959,7 +965,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // its own shaker. It is adaptive and self-gating - the gain it fits is near
     // zero when there is nothing of ours on the input - so running it on a feed
     // that has no leak costs nothing.
-    subtractSpeakerLeak (numSamples, speaker);
+    if (! directFile)
+        subtractSpeakerLeak (numSamples, speaker);
     maybeInjectClick (numSamples);
     // Mic rumble only. A mixer aux and the click tests carry kick body around
     // 50-60 Hz; an 80 Hz HPF on those feeds thins the very pulse BeatNet

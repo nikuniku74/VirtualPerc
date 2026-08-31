@@ -289,6 +289,9 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
 
 MainComponent::MainComponent()
 {
+    trackFormats.registerBasicFormats();
+    trackReadThread.startThread (juce::Thread::Priority::normal);
+
     darkMode = juce::Desktop::getInstance().isDarkModeActive();
     gDarkMode = darkMode;
     appLaf.refreshColours();
@@ -470,12 +473,14 @@ MainComponent::MainComponent()
 
     sourceButton.onClick = [this]
     {
-        const bool speaker = engine.settings().followSource.load()
-                             != static_cast<int> (vp::FollowSource::speaker);
-        engine.settings().followSource.store (static_cast<int> (
-            speaker ? vp::FollowSource::speaker : vp::FollowSource::kitMic));
-        refreshSourceButton();
-        savePrefs();
+        const auto source = static_cast<vp::FollowSource> (
+            engine.settings().followSource.load());
+        const auto next = source == vp::FollowSource::kitMic
+                              ? vp::FollowSource::speaker
+                              : (source == vp::FollowSource::speaker
+                                     ? vp::FollowSource::internalPlayer
+                                     : vp::FollowSource::kitMic);
+        selectFollowSource (next);
     };
 
     congasButton.onClick = [this]
@@ -616,6 +621,8 @@ MainComponent::MainComponent()
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
     setupPageBtn (sourceButton, ink());
+    setupPageBtn (trackLoadButton, ink());
+    setupPageBtn (trackPlayButton, ink());
     setupPageBtn (kickButton, ink());
     setupPageBtn (latencyButton, ink());
     setupPageBtn (procButton, ink());
@@ -639,6 +646,8 @@ MainComponent::MainComponent()
     buf512.onClick  = [this] { applyBufferChoice (512); };
 
     procButton.onClick = [this] { applyInputProcessingChoice (! inputProcessing); };
+    trackLoadButton.onClick = [this] { chooseInternalTrack(); };
+    trackPlayButton.onClick = [this] { toggleInternalTrack(); };
 
    #if JUCE_IOS
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
@@ -695,6 +704,10 @@ MainComponent::MainComponent()
 MainComponent::~MainComponent()
 {
     savePrefs();
+    trackTransport.stop();
+    trackTransport.setSource (nullptr);
+    trackReader.reset();
+    trackReadThread.stopThread (2000);
     juce::Desktop::getInstance().removeDarkModeSettingListener (this);
     setLookAndFeel (nullptr);
     stopTimer();
@@ -724,7 +737,8 @@ void MainComponent::refreshThemeColours()
     juce::TextButton* buttons[] = {
         &startButton, &stopButton, &followButton, &fixedButton,
         &bpmNudgeDown, &bpmNudgeUp, &shakerButton, &debugButton,
-        &clickButton, &themeButton, &sourceButton, &kickButton, &latencyButton,
+        &clickButton, &themeButton, &sourceButton, &trackLoadButton,
+        &trackPlayButton, &kickButton, &latencyButton,
         &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
@@ -771,7 +785,8 @@ void MainComponent::refreshThemeColours()
 
 void MainComponent::startPressed()
 {
-    ensureMicrophone();
+    if (! internalTrackSelected())
+        ensureMicrophone();
     userWantsArmed = true;
     engine.start();
     refreshStartButton();
@@ -786,7 +801,8 @@ void MainComponent::stopPressed()
 
 void MainComponent::tapPressed()
 {
-    ensureMicrophone();
+    if (! internalTrackSelected())
+        ensureMicrophone();
     engine.tap();
     tapFlash = 2;
 }
@@ -1103,8 +1119,10 @@ namespace
     {
         return juce::String (juce::CharPointer_UTF8 (
             "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
-            "microfono che sente la stanza. In IPAD l'app toglie shaker e congas "
-            "da quello che ascolta. MIC sul mixer regola quanto sente. "
+            "microfono che sente la stanza. BRANO legge un file e lo manda sia "
+            "all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il "
+            "file e PLAY lo mette in pausa. In IPAD l'app toglie shaker e congas "
+            "da quello che ascolta. MIC regola quanto sente l'analisi. "
             "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
             "vuole l'analisi."));
     }
@@ -1151,10 +1169,13 @@ void MainComponent::refreshProcButton()
 
 void MainComponent::refreshSourceButton()
 {
-    const bool speaker = engine.settings().followSource.load()
-                             == static_cast<int> (vp::FollowSource::speaker);
-    sourceButton.setButtonText (speaker ? "IPAD" : "MIXER");
-    paintChoice (sourceButton, speaker);
+    const auto source = static_cast<vp::FollowSource> (
+        engine.settings().followSource.load());
+    const bool speaker = source == vp::FollowSource::speaker;
+    const bool internal = source == vp::FollowSource::internalPlayer;
+    sourceButton.setButtonText (internal ? "BRANO" : (speaker ? "IPAD" : "MIXER"));
+    paintChoice (sourceButton, speaker || internal);
+    refreshInternalTrackButtons();
 
     // The kick channel is lit only once the strikes are actually landing on the
     // beat: a channel that is named but is not a kick is worse than no channel
@@ -1178,6 +1199,103 @@ void MainComponent::refreshSourceButton()
             latencyButton.setButtonText ("LATENZA");
         paintChoice (latencyButton, measured > 0.0f);
     }
+}
+
+bool MainComponent::internalTrackSelected() const noexcept
+{
+    return engine.settings().followSource.load (std::memory_order_relaxed)
+           == static_cast<int> (vp::FollowSource::internalPlayer);
+}
+
+void MainComponent::selectFollowSource (vp::FollowSource source)
+{
+    if (source != vp::FollowSource::internalPlayer && trackTransport.isPlaying())
+        trackTransport.stop();
+
+    engine.settings().followSource.store (static_cast<int> (source),
+                                          std::memory_order_relaxed);
+    refreshSourceButton();
+    savePrefs();
+    repaint();
+}
+
+void MainComponent::chooseInternalTrack()
+{
+    trackChooser = std::make_unique<juce::FileChooser> (
+        "Scegli un brano audio", juce::File(), trackFormats.getWildcardForAllFormats(),
+        true, false, &settingsOverlay);
+
+    juce::Component::SafePointer<MainComponent> safe (this);
+    trackChooser->launchAsync (juce::FileBrowserComponent::openMode
+                                   | juce::FileBrowserComponent::canSelectFiles,
+                               [safe] (const juce::FileChooser& chooser)
+    {
+        if (safe == nullptr)
+            return;
+
+        auto url = chooser.getURLResult();
+        safe->trackChooser.reset();
+        if (! url.isEmpty())
+            safe->loadInternalTrack (std::move (url));
+    });
+}
+
+void MainComponent::loadInternalTrack (juce::URL url)
+{
+    auto stream = url.createInputStream (
+        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
+    auto* reader = stream != nullptr ? trackFormats.createReaderFor (std::move (stream))
+                                     : nullptr;
+    if (reader == nullptr)
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::WarningIcon, "Brano non leggibile",
+            "Il file scelto non e' un formato audio supportato oppure non e' disponibile offline.");
+        return;
+    }
+
+    trackTransport.stop();
+    trackTransport.setSource (nullptr);
+    trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
+    trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
+                              reader->sampleRate, 2);
+    trackUrl = std::move (url); // retains the iOS security-scoped bookmark
+    trackName = trackUrl.getFileName();
+    selectFollowSource (vp::FollowSource::internalPlayer);
+    trackTransport.start();
+    refreshInternalTrackButtons();
+}
+
+void MainComponent::toggleInternalTrack()
+{
+    if (trackReader == nullptr)
+    {
+        chooseInternalTrack();
+        return;
+    }
+
+    if (! internalTrackSelected())
+        selectFollowSource (vp::FollowSource::internalPlayer);
+
+    if (trackTransport.isPlaying())
+        trackTransport.stop();
+    else
+    {
+        if (trackTransport.hasStreamFinished())
+            trackTransport.setPosition (0.0);
+        trackTransport.start();
+    }
+    refreshInternalTrackButtons();
+}
+
+void MainComponent::refreshInternalTrackButtons()
+{
+    const bool loaded = trackReader != nullptr;
+    trackLoadButton.setButtonText (loaded ? trackName.substring (0, 14) : "CARICA");
+    trackPlayButton.setButtonText (trackTransport.isPlaying() ? "PAUSA" : "PLAY");
+    trackPlayButton.setEnabled (loaded);
+    paintChoice (trackLoadButton, loaded && internalTrackSelected());
+    paintChoice (trackPlayButton, trackTransport.isPlaying() && internalTrackSelected());
 }
 
 void MainComponent::refreshMixLabels()
@@ -1525,7 +1643,10 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     if (sr < 24000.0 && hw > 24000.0)
         sr = hw;
 
-    inputScratch.setSize (8, juce::jmax (samplesPerBlockExpected * 4, 8192), false, false, true);
+    const int scratchSize = juce::jmax (samplesPerBlockExpected * 4, 8192);
+    inputScratch.setSize (8, scratchSize, false, false, true);
+    trackScratch.setSize (2, scratchSize, false, false, true);
+    trackTransport.prepareToPlay (samplesPerBlockExpected, sr);
     engine.prepare (sr, juce::jmax (samplesPerBlockExpected * 2, 2048), 2);
     if (userWantsArmed)
         engine.start();
@@ -1536,6 +1657,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
 
 void MainComponent::releaseResources()
 {
+    trackTransport.releaseResources();
     audioReady = false;
 }
 
@@ -1551,20 +1673,39 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     const int count = juce::jmin (nCh, inputScratch.getNumChannels());
     const int nCopy = juce::jmin (n, inputScratch.getNumSamples());
 
-    for (int c = 0; c < count; ++c)
-        inputScratch.copyFrom (c, 0, *buffer, c, start, nCopy);
+    const bool directFile = internalTrackSelected();
+    if (directFile)
+    {
+        trackScratch.clear();
+        trackTransport.getNextAudioBlock ({ &trackScratch, 0, nCopy });
+    }
+    else
+    {
+        for (int c = 0; c < count; ++c)
+            inputScratch.copyFrom (c, 0, *buffer, c, start, nCopy);
+    }
 
     const float* inPtrs[8] {};
     float* outPtrs[8] {};
-    const int used = juce::jmin (count, 8);
+    const int used = directFile ? juce::jmin (count, trackScratch.getNumChannels())
+                                : juce::jmin (count, 8);
 
     for (int c = 0; c < used; ++c)
     {
-        inPtrs[c] = inputScratch.getReadPointer (c);
+        inPtrs[c] = directFile ? trackScratch.getReadPointer (c)
+                               : inputScratch.getReadPointer (c);
         outPtrs[c] = buffer->getWritePointer (c, start);
     }
 
     engine.process (inPtrs, used, outPtrs, used, nCopy);
+
+    // The tracker gets the unattenuated file above. Playback keeps headroom for
+    // the generated percussion; this affects only the BRANO path.
+    if (directFile)
+        for (int c = 0; c < nCh; ++c)
+            buffer->addFrom (c, start, trackScratch,
+                             juce::jmin (c, trackScratch.getNumChannels() - 1),
+                             0, nCopy, 0.70f);
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
 
     if (nCopy < n)
@@ -1577,6 +1718,9 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+    if (trackTransport.hasStreamFinished() && trackTransport.isPlaying())
+        trackTransport.stop();
+    refreshInternalTrackButtons();
     applyLatencyFromDevice();
 
     // The correlation is tens of millions of multiplies and has no business on
@@ -1666,7 +1810,9 @@ void MainComponent::timerCallback()
             + " pBeat=" + juce::String (snap.pBeat, 2)
             + " valid=" + juce::String (snap.hypValid ? 1 : 0)
             + " onnx=" + juce::String (snap.aiOnnx ? 1 : 0)
-            + " src=" + juce::String (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER")
+            + " src=" + juce::String (snap.source == vp::FollowSource::internalPlayer
+                                           ? "BRANO"
+                                           : (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER"))
             + " sr=" + juce::String (snap.sampleRate, 0)
             + " hits=" + juce::String (engine.shakerHits())
             + " armed=" + juce::String (userWantsArmed ? 1 : 0));
@@ -2203,12 +2349,17 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
 
     g.setColour (mute());
     g.setFont (fontUi (11.5f, false));
-    const juce::String micText = ! micGranted ? "MICROFONO NEGATO"
+    const bool fromTrack = snap.source == vp::FollowSource::internalPlayer;
+    const juce::String micText = fromTrack ? (trackReader != nullptr ? "BRANO DIRETTO"
+                                                                       : "CARICA UN BRANO")
+                               : (! micGranted ? "MICROFONO NEGATO"
                                : (inputChannels <= 0 ? "MICROFONO SPENTO"
                                : (snap.inputPeak > 0.0012f ? "SENTO LA STANZA"
-                                                           : "IN ASCOLTO"));
+                                                           : "IN ASCOLTO")));
     const juce::String dot (juce::CharPointer_UTF8 ("   \xc2\xb7   "));
-    g.drawFittedText (micText + dot + (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER")
+    const juce::String sourceText = fromTrack ? "BRANO"
+                                             : (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER");
+    g.drawFittedText (micText + dot + sourceText
                           + (snap.aiOnnx ? juce::String() : dot + "AI STUB"),
                       rows.mic, juce::Justification::centred, 1);
 }
@@ -2328,7 +2479,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     {
         auto body = card (take (h[kInput]), "INGRESSO");
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &sourceButton, &procButton, &kickButton });
+                   { &sourceButton, &trackLoadButton, &trackPlayButton,
+                     &procButton, &kickButton });
         settingsRows.inputNote = body.withTrimmedTop (noteGap);
     }
 
@@ -2455,7 +2607,10 @@ void MainComponent::paint (juce::Graphics& g)
         juce::StringArray lines;
         lines.add ("DEBUG");
         lines.add (juce::String (snap.aiOnnx ? "AI ONNX BeatNet" : "AI STUB (modello NON caricato)"));
-        lines.add (juce::String (snap.source == vp::FollowSource::speaker ? "source IPAD/SPEAKER" : "source MIXER"));
+        lines.add (juce::String (snap.source == vp::FollowSource::internalPlayer
+                                     ? "source BRANO/FILE"
+                                     : (snap.source == vp::FollowSource::speaker
+                                            ? "source IPAD/SPEAKER" : "source MIXER")));
         lines.add ("BPM " + juce::String (snap.bpm, 2) + "  nn " + juce::String (snap.neuralBpm, 2)
                    + "  target " + juce::String (snap.targetBpm, 2));
         lines.add ("tempo " + juce::String (vp::regimeLabel (snap.tempoRegime))

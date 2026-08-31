@@ -75,7 +75,11 @@ inline const char* toString (GrooveStyle s) noexcept
 enum class FollowSource : int
 {
     kitMic = 0,
-    speaker = 1
+    speaker = 1,
+    /** A file decoded by the app and fed to the tracker before it is mixed to
+        the output. There is no acoustic round trip and none of the app's own
+        percussion can leak into this signal. */
+    internalPlayer = 2
 };
 
 enum class InputMode : int
