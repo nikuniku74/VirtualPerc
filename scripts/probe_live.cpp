@@ -522,6 +522,22 @@ int main (int argc, char** argv)
                          static_cast<double> (lo), static_cast<double> (hi),
                          100.0 * (hi - lo) / lo,
                          (hi - lo) / lo > 0.08 ? "   <-- troppa per una band: uno dei due e' sbagliato" : "");
+        // An independent second opinion on the tempo was tried here and is not
+        // in the build. The strokes were asked for their own period by the same
+        // phase-coherence test HarmonicTempo uses, which works there because
+        // chord changes are sparse and regular. A band's attacks are neither:
+        // they are dense and land on every subdivision, and a shorter period
+        // always has more chances to look coherent by accident, so the search
+        // walks off to whatever short period the noise favours. Measured, it
+        // answered 173/113/138/163/142 BPM on a take the app held at a steady
+        // 110 for seven minutes - obvious nonsense, and only obvious because it
+        // was that far out.
+        //
+        // Correcting it means normalising the score against what random events
+        // would give at each period, which is a beat tracker rather than a
+        // check on one. Until that exists this bench cannot say whether a tempo
+        // that walks was the band or the app - and saying so is better than a
+        // number that looks like an answer.
         std::printf ("il tempo nel tempo: ");
         for (size_t i = 0; i < bpmTrack.size(); ++i)
             std::printf ("%.0f%s", static_cast<double> (bpmTrack[i].second),
