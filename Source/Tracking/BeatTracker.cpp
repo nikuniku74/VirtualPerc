@@ -465,7 +465,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
 
         case TrackingState::listening:
             if (periodic && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
-                && listeningSamples > static_cast<int> (sampleRate * 0.70)
+                && listeningSamples > static_cast<int> (sampleRate * 0.35)
                 && heldBpm > 50.0f && beatCount >= 2
                 && samplesSinceBeat < static_cast<int> (sampleRate * 1.6))
             {
@@ -481,7 +481,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 lockHoldSamples = 0;
             }
             else if (periodic && confidence > 0.28f
-                     && lockHoldSamples > static_cast<int> (sampleRate * (lockedOnce ? 0.10f : 0.16f)))
+                     && lockHoldSamples > static_cast<int> (sampleRate * (lockedOnce ? 0.06f : 0.08f)))
             {
                 currentState = TrackingState::following;
             }
@@ -1490,14 +1490,18 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             alignBarFromVotes (true);
 
         bool onEntryBeat = false;
+        // An automatic player need not wait for the next bar line once tempo
+        // and phase are known. Join on the next quarter, as a percussionist
+        // does, while keeping the clock's already-estimated bar position. A
+        // listener-provided count-in is different: its first tap explicitly
+        // declared the one, so honour that and enter on the downbeat.
+        const bool countInDeclaredTheOne = tapEstablished;
         for (int i = 0; i < out.clock.pulsesFired; ++i)
         {
             if (out.clock.pulseIndex[i] != 0)
                 continue;
-            // The first quarter lighting is the clock's one - what the four
-            // dots show - not the network's downbeat guess. Coming in on 2, 3
-            // or 4 is the part starting in the middle of the bar.
-            if (out.clock.pulseBeatInBar[i] == 0 || timedOut)
+            if (! countInDeclaredTheOne
+                || out.clock.pulseBeatInBar[i] == 0 || timedOut)
             {
                 onEntryBeat = true;
                 break;

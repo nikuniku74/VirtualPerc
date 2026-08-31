@@ -2408,10 +2408,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (! tapped || (sawDeclared && ! declaredLater),
                 "and the one is marked for a moment, only just after the tap");
 
-        // START waits for the first quarter to light - the clock's one, which
-        // is what the four dots show - and not for the next any-beat. Coming
-        // in on 2, 3 or 4 is the thing a listener hears as the part starting
-        // in the middle of the bar.
+        // Once the tracker is locked, START joins on the next beat. Waiting
+        // for the clock's one made an already-aligned player sit out most of a
+        // bar; the estimated bar position is kept, so the phrase stays intact.
         {
             const int shortN = static_cast<int> (sr * 24.0);
             std::vector<float> startSong (static_cast<size_t> (shortN), 0.0f);
@@ -2456,9 +2455,11 @@ void vpRunAiBeatTests (int& passed, int& failed)
                                           : 99.0;
             std::printf ("ipad-entry  delay=%.3f s  phase=%.3f\n",
                          entryDelay, static_cast<double> (audiblePhase));
+            const float quarter = audiblePhase * 4.0f;
             expect (startSample >= 0 && audibleSample >= 0
-                        && (audiblePhase < 0.08f || audiblePhase > 0.98f),
-                    "START enters when the first quarter lights, not on the next any-beat");
+                        && entryDelay < 0.65
+                        && std::fabs (quarter - std::round (quarter)) < 0.08f,
+                    "START enters on the next aligned quarter instead of waiting a bar");
         }
     }
 

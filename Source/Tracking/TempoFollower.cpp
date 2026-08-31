@@ -413,15 +413,16 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     const float effectiveTarget = target + tempoTrim;
     const float err = effectiveTarget - tempo;
 
-    // A small correction used to be applied whole, on the block it arrived. That
-    // is a step in the rate of the grid, and the decoder refreshes six times a
-    // second, so every wobble inside the window went straight through to the
-    // part and the tempo was never actually still. It is still fast - a couple
-    // of BPM closes in about a fifth of a second, which no listener hears as a
-    // change of speed - but it is a glide now rather than a jump.
-    const float glide = std::fabs (err) <= (locked ? 2.5f : 1.2f)
-                            ? 0.045f
-                            : (locked ? 0.55f : 0.90f);
+    // Acquisition and playing are deliberately different jobs. Before the
+    // first stroke there is nothing to disturb, so take a credible new rate
+    // quickly. Once the part is sounding, the decoder's roughly 6 Hz refresh
+    // must not be heard as six tiny accelerations a second: a player holds the
+    // pulse and lets phase correction deal with the small timing differences.
+    // A real, sustained tempo move still crosses the wider branch and closes in
+    // well under a second; only the sub-2.5 BPM wobble is given more inertia.
+    const float glide = locked
+                            ? (std::fabs (err) <= 2.5f ? 0.22f : 0.28f)
+                            : (std::fabs (err) <= 1.2f ? 0.045f : 0.18f);
 
     // Floored while the beats the tempo was fitted through are worse placed
     // than this song's own - which is what a passage with the drummer out looks

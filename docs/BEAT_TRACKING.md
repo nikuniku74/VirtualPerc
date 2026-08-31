@@ -24,7 +24,7 @@ A recorded track was cut to a click, so once its tempo is found it must stop mov
 FOLLOWING → LOW_CONFIDENCE → RECOVERING → FOLLOWING
 ```
 
-Always listening while audio is running. START arms the shaker and waits for the next bar downbeat. STOP mutes percussion; analysis keeps following.
+Always listening while audio is running. Once the causal tracker has tempo and phase, START joins on the next quarter instead of waiting up to a bar. A manual TAP count-in still enters on the one the listener declared. STOP mutes percussion; analysis keeps following.
 
 START arms the shaker but holds it silent until the analysis has heard the input *start*: the app finds a tempo in an empty room, and a part playing to one is the thing a listener actually hears go wrong. A tap releases it. See `docs/AI_BEAT_TRACKING.md`.
 

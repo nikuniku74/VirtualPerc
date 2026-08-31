@@ -403,6 +403,58 @@ int main()
                 "decoder wobble inside its tolerance no longer steps the grid");
     }
 
+    // The analysis publishes at about 6 Hz, not every audio callback. Holding
+    // each slightly different estimate until the next publication is the real
+    // shape of its jitter, and used to make the played BPM visibly breathe.
+    // Acquisition must remain quick at the same time: stability after lock is
+    // not permission to make the first lock sluggish.
+    {
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (100.0f);
+        clock.setLocked (true);
+
+        float lo = 1000.0f, hi = 0.0f;
+        const int refreshBlocks = static_cast<int> (0.166 * sr / block);
+        const int totalBlocks = static_cast<int> (8.0 * sr / block);
+        for (int i = 0; i < totalBlocks; ++i)
+        {
+            if ((i % refreshBlocks) == 0)
+                clock.setTargetTempo (((i / refreshBlocks) & 1) == 0 ? 101.8f : 98.2f, 1.0f);
+            const float bpm = clock.advance (block).tempoBpm;
+            if (i > static_cast<int> (2.0 * sr / block))
+            {
+                lo = std::min (lo, bpm);
+                hi = std::max (hi, bpm);
+            }
+        }
+
+        std::printf ("tempo-held   6 Hz target span=%.3f BPM\n",
+                     static_cast<double> (hi - lo));
+        expect (hi - lo < 1.8f,
+                "a held pulse does not replay the decoder's 6 Hz BPM wobble");
+
+        // Ten BPM is not jitter. The clock should adopt it causally, but in
+        // less than a second rather than spending several seconds between the
+        // old and new rates.
+        clock.forceTempo (100.0f);
+        clock.setLocked (true);
+        clock.setTargetTempo (110.0f, 1.0f);
+        for (int i = 0; i < static_cast<int> (0.8 * sr / block); ++i)
+            clock.advance (block);
+        expect (std::fabs (clock.currentTempo() - 110.0f) < 1.0f,
+                "a sustained live tempo move is adopted inside a second");
+
+        clock.forceTempo (100.0f);
+        clock.setLocked (false);
+        clock.setTargetTempo (112.0f, 1.0f);
+        for (int i = 0; i < static_cast<int> (0.8 * sr / block); ++i)
+            clock.advance (block);
+        expect (std::fabs (clock.currentTempo() - 112.0f) < 0.25f,
+                "initial tempo acquisition stays fast before the part enters");
+    }
+
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, block, 1);

@@ -197,6 +197,8 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 
 ### Coming in on the one
 
+The measurements below document the original downbeat-only entry path. The current automatic path keeps the estimated bar position but joins on the next aligned quarter; only a manual TAP count-in waits for the one explicitly declared by the listener. This removes up to almost one bar of avoidable silence without looking ahead.
+
 The percussion should enter on beat one. Measured over eight tracks by finding the first non-zero sample of the percussion channel and comparing it with the generator's own bar:
 
 | | before | after |
