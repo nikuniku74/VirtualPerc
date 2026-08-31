@@ -511,17 +511,64 @@ int main (int argc, char** argv)
                      100.0 * within20 / static_cast<double> (errs.size()));
         std::printf ("peggiore        %.1f ms\n", worst);
 
-        std::printf ("\nha perso il tempo?  %d salti oltre il 6%%",  jumps);
+        std::printf ("\ncambi di tempo netti: %d  (un brano nuovo e' uno di questi)",  jumps);
         if (octaveJumps > 0)
             std::printf (", di cui %d di ottava (meta'/doppio)  <-- questo si sente", octaveJumps);
         std::printf ("\n");
+        // How still it holds while the band is on the same piece.
+        //
+        // The first version of this reported the whole take's range and warned
+        // when it exceeded 8%, which was wrong: a set has more than one song in
+        // it, and a band that goes from 129 to 111 because they started the
+        // next number has not made a mistake, and neither has a tracker that
+        // follows them. Measured on a real take that did exactly that, the
+        // bench called a correct 5-second adaptation a fault.
+        //
+        // What a percussionist is actually judged on is the other thing: with
+        // the band settled on one tempo - which still breathes by a couple of
+        // BPM - does the part sit still, or does it hunt? So the range is
+        // reported without a verdict, and what carries the verdict is the
+        // wobble *within* a stretch, measured around the local trend so that a
+        // band genuinely speeding up does not read as instability.
         float lo = 999.0f, hi = 0.0f;
         for (const auto& b : bpmTrack) { lo = std::min (lo, b.second); hi = std::max (hi, b.second); }
         if (hi > lo)
-            std::printf ("da %.0f a %.0f BPM nella presa  (%.0f%% di escursione)%s\n",
-                         static_cast<double> (lo), static_cast<double> (hi),
-                         100.0 * (hi - lo) / lo,
-                         (hi - lo) / lo > 0.08 ? "   <-- troppa per una band: uno dei due e' sbagliato" : "");
+            std::printf ("da %.0f a %.0f BPM nella presa   (un set ha piu' brani: non e' un difetto)\n",
+                         static_cast<double> (lo), static_cast<double> (hi));
+
+        // Wobble around the local trend, over windows of about twenty seconds.
+        std::vector<double> wob;
+        const int win = 5;   // samples, at one every five seconds
+        for (size_t i = 0; i + win <= bpmTrack.size(); ++i)
+        {
+            double mean = 0.0;
+            for (int k = 0; k < win; ++k)
+                mean += bpmTrack[i + k].second;
+            mean /= win;
+            // A window straddling a change of song is not instability.
+            double spanLo = 999.0, spanHi = 0.0;
+            for (int k = 0; k < win; ++k)
+            {
+                spanLo = std::min (spanLo, static_cast<double> (bpmTrack[i + k].second));
+                spanHi = std::max (spanHi, static_cast<double> (bpmTrack[i + k].second));
+            }
+            if ((spanHi - spanLo) / spanLo > 0.06)
+                continue;
+            double sq = 0.0;
+            for (int k = 0; k < win; ++k)
+                sq += (bpmTrack[i + k].second - mean) * (bpmTrack[i + k].second - mean);
+            wob.push_back (std::sqrt (sq / win) / mean * 100.0);
+        }
+        if (! wob.empty())
+        {
+            std::sort (wob.begin(), wob.end());
+            const double w = wob[wob.size() / 2];
+            std::printf ("tiene il tempo? oscilla dello %.2f%% mentre la band sta sul pezzo"
+                         "   (%.1f BPM a 110)%s\n",
+                         w, w * 1.10,
+                         w < 0.5 ? "   fermo come un percussionista"
+                                 : w < 1.2 ? "   accettabile" : "   <-- si sente");
+        }
         // An independent second opinion on the tempo was tried here and is not
         // in the build. The strokes were asked for their own period by the same
         // phase-coherence test HarmonicTempo uses, which works there because
