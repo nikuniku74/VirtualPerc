@@ -23,6 +23,7 @@ Assets/Models/*.onnx
 .venv-ai/
 .env
 *.swp
-.cursor/
+.cursor/*
+!.cursor/rules/
 __pycache__/
 *.pyc

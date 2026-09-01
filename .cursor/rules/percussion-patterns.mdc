@@ -1,0 +1,32 @@
+---
+description: How the shaker and conga parts are written and played - 16-step groove tables, stroke articulations, per-style shaker weighting and accents, the 8-bar phrase, swing/humanize/ghosts, band dynamics, voices and attack compensation. Apply to Source/Percussion/ and Source/Loops/.
+globs: Source/Percussion/**,Source/Loops/**,Source/Stretch/**,scripts/render_groove.cpp,Assets/Percussion/**,docs/SMART_PERCUSSION.md,docs/RECORDED_LOOPS.md
+alwaysApply: false
+---
+
+Read `.claude/skills/percussion-patterns/SKILL.md` in full before editing
+anything in `Source/Percussion/`. It is the single source of truth for the
+groove tables and it is shared with Claude Code and Codex - update it there, not
+here.
+
+Non-negotiables it spells out:
+
+- **No conga on the first quarter's down-stroke** (`step != 0`). The tables
+  observe it and the guard in `eventsAt` enforces it. Keep both. The shaker is
+  deliberately exempt: a shaker on the pulse *is* the pulse.
+- `GrooveEvent::delayBeats` is always >= 0. Feel and swing are lateness, never
+  earliness.
+- The shaker is two strokes - `shakerDown` on the pulse, `shakerUp` on the
+  return - and each style's `shaker[16]` is a **bar-long** figure, not one beat
+  repeated four times.
+- `setShakerSubdivision` thins the style's pattern; it never adds to it.
+- Dynamics make the part play **less**, not just quieter: `v_survives` thins
+  from the bottom against `kThinCeiling = 0.72`, so the skeleton always survives.
+- Each of the nine styles has its own conga figure, its own shaker weighting and
+  its own `accent[4]`. They are not variations on one pattern.
+- No allocation, no locks, no I/O in `render()`.
+
+Musical changes are reviewed **by ear**: build `VPRender` and listen
+(`--style X --bpm N --bars 8 --click`). Timing changes are reviewed by
+`VPTiming`, which measures where the stroke lands in the rendered audio rather
+than where the clock said it would. Always also run `./scripts/run-tests.sh`.
