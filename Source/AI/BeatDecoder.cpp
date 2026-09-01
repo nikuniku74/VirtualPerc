@@ -210,6 +210,15 @@ namespace
     // of buffer before it can even see the slow half of its range, and a level
     // established before then is established from subdivisions.
     constexpr double kPeakOnlyGraceSec = 6.0;
+
+    // The full state-space verdict deliberately waits for two complete periods.
+    // Acquisition does not need to: once two accurately placed peaks have
+    // supplied an interval, the still-provisional state-space winner can choose
+    // between that interval and its half/double.  The margin is lower than the
+    // committed anchor margin because this grid is explicitly cheap to replace.
+    constexpr float kFastAcquireMarginLine = 0.55f;
+    constexpr float kFastAcquireMarginRoom = 0.90f;
+    constexpr float kFastAcquireMaxLevelError = 0.20f; // octaves
 }
 
 void BeatDecoder::prepare (double framesPerSecond)
@@ -233,6 +242,9 @@ void BeatDecoder::reset() noexcept
     beatsInBar = 0;
     frame = 0;
     established = false;
+    provisional = false;
+    intervalAcquired = false;
+    provisionalStrength = 0.0f;
     prevPulse = 0.0f;
     prevPrevPulse = 0.0f;
     prevDownbeat = 0.0f;
@@ -263,6 +275,7 @@ void BeatDecoder::reset() noexcept
     fixedErrorBeats = 0;
     std::fill (longHist, longHist + kLongHistory, 0.0f);
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
+    std::fill (beatStrength, beatStrength + kBeatHistory, 0.0f);
     anchorBpm = 0.0f;
     hmm.reset();
     hyp = {};
@@ -483,6 +496,9 @@ void BeatDecoder::notifyInputRestart() noexcept
     longWrite = 0;
     longFilled = 0;
     established = false;
+    provisional = false;
+    intervalAcquired = false;
+    provisionalStrength = 0.0f;
     enterRegime (TempoRegime::unknown);
 }
 
@@ -698,13 +714,126 @@ void BeatDecoder::commit (float candidateBpm, float rate) noexcept
     bpm = std::clamp (bpm + (candidateBpm - bpm) * rate, kMinBpm, kMaxBpm);
 }
 
-void BeatDecoder::registerBeat (double beatTimeSec) noexcept
+void BeatDecoder::registerBeat (double beatTimeSec, float strength) noexcept
 {
     beatTime[beatWrite] = beatTimeSec;
+    beatStrength[beatWrite] = strength;
     beatWrite = (beatWrite + 1) % kBeatHistory;
     if (beatFilled < kBeatHistory)
         ++beatFilled;
     ++beatSerial;
+}
+
+bool BeatDecoder::tryFastAcquire() noexcept
+{
+    // A period is not present in one isolated event. Two events are the first
+    // instant at which a causal system can measure one; through a microphone we
+    // ask for a third event because a reflection/transient pair is common. A
+    // direct feed has no acoustic echo and can use the first interval.
+    const int minimum = lineFeed ? 2 : 3;
+    if (! useAnchor || beatFilled < minimum || hmm.bpm() < kMinBpm)
+        return false;
+
+    const float margin = hmm.levelMargin();
+    const float required = lineFeed ? kFastAcquireMarginLine : kFastAcquireMarginRoom;
+
+    const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+    const int older = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+    const float raw = static_cast<float> (beatTime[newest] - beatTime[older]);
+    if (raw <= 0.0f)
+        return false;
+
+    const float rawBpm = 60.0f / raw;
+    const bool fastOctaveAmbiguous = rawBpm > 145.0f && rawBpm * 0.5f >= kMinBpm;
+    if (fastOctaveAmbiguous && beatFilled < 3)
+        return false;
+
+    // A peak interval may be the pulse or a subdivision. Keep both causal
+    // readings alive and let the accumulated state-space path choose the level.
+    // Do not infer a *missed* beat here: two consecutive intervals at the same
+    // spacing are evidence that this spacing exists, while doubling a slow
+    // pulse on the strength of the early 120-BPM prior is exactly how 76 BPM
+    // was briefly reported as 152. A genuinely missing-beat sequence is left
+    // to the longer estimator, which has enough context to prove it.
+    const float level = hmm.bpm();
+    float bestPeriod = 0.0f;
+    float bestError = 99.0f;
+    bool intervalSelfSufficient = false;
+    constexpr float scales[] = { 1.0f, 2.0f };
+    for (float scale : scales)
+    {
+        const float candidatePeriod = raw * scale;
+        const float candidateBpm = 60.0f / candidatePeriod;
+        if (candidateBpm < kMinBpm || candidateBpm > kMaxBpm)
+            continue;
+        const float error = std::fabs (std::log2 (candidateBpm / level));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestPeriod = candidatePeriod;
+        }
+    }
+    // Below 90 BPM, doubling a clean sequence merely because the very young
+    // state space is still near its 118-BPM prior is a known error (76 -> 152).
+    // With no intervening peaks the observed spacing is the only causal fact,
+    // so prefer it and let the long estimator revisit missed-beat material.
+    if (rawBpm < 90.0f && rawBpm >= kMinBpm)
+    {
+        bestPeriod = raw;
+        bestError = 0.0f;
+        intervalSelfSufficient = true;
+    }
+
+    // At the opposite end, three alternating peak heights are direct evidence
+    // that the short spacing is a subdivision: strong-weak-strong (or its
+    // inverse) repeats only after two intervals. This resolves slow music with
+    // loud eighths without making genuinely fast, evenly weighted music wait
+    // for the long fold.
+    if (fastOctaveAmbiguous && beatFilled >= 3)
+    {
+        const int oldest = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+        const float a = beatStrength[oldest];
+        const float b = beatStrength[older];
+        const float c = beatStrength[newest];
+        const float ends = 0.5f * (a + c);
+        const bool endsAgree = std::fabs (a - c) < 0.16f * std::max (0.1f, ends);
+        const bool alternates = endsAgree
+                                && std::fabs (b - ends) > 0.18f * std::max (0.1f, ends);
+        if (alternates)
+        {
+            bestPeriod = raw * 2.0f;
+            bestError = 0.0f;
+            intervalSelfSufficient = true;
+        }
+    }
+
+    if (margin < required && ! intervalSelfSufficient)
+        return false;
+
+    if (bestPeriod <= 0.0f || bestError > kFastAcquireMaxLevelError)
+        return false;
+
+    // In the room path, make the two measured intervals corroborate the same
+    // grid. This rejects a pair made from an impact and its reflection without
+    // adding a bar-sized observation window.
+    if (! lineFeed)
+    {
+        const int oldest = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+        const float previousRaw = static_cast<float> (beatTime[older] - beatTime[oldest]);
+        if (previousRaw <= 0.0f)
+            return false;
+        const float ratio = previousRaw / raw;
+        if (std::fabs (ratio - 1.0f) > 0.14f)
+            return false;
+    }
+
+    bpm = std::clamp (applyUserOctave (60.0f / bestPeriod), kMinBpm, kMaxBpm);
+    gridAnchorSec = beatTime[newest];
+    established = true;
+    provisional = true;
+    intervalAcquired = true;
+    provisionalStrength = std::clamp ((margin - required) / 2.0f + 0.55f, 0.55f, 0.90f);
+    return true;
 }
 
 void BeatDecoder::updateTempo() noexcept
@@ -716,10 +845,24 @@ void BeatDecoder::updateTempo() noexcept
     // 120 is what used to make a 75 BPM song take twenty seconds to find.
     if (! established)
     {
-        if (combReady)
+        if (combReady && tempo.levelSettled())
         {
+            // `ready()` only says that one candidate period is measurable.
+            // Before `levelSettled()` the buffer has not yet held enough audio
+            // to test that candidate's slower octave, so adopting it outright
+            // is how loud eighths at 76 BPM briefly became 152 BPM. The fast
+            // interval/HMM path below is specifically built for this interval.
             bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
             established = true;
+            provisional = false;
+            intervalAcquired = false;
+        }
+        else if (tryFastAcquire())
+        {
+            // Interpolated event times provide the precise period; the state
+            // path only chooses its metrical level. This precedes adopting the
+            // state-space number because an alternating eighth pattern contains
+            // more direct level evidence than its whole-frame early winner.
         }
         else if (useAnchor && hmm.ready() && anchorBpm >= kMinBpm
                  && hmm.levelMargin() > (lineFeed ? kAnchorAcquireMarginLine
@@ -742,6 +885,9 @@ void BeatDecoder::updateTempo() noexcept
             // it finally arrives, at the provisional cost of two beats.
             bpm = std::clamp (applyUserOctave (anchorBpm), kMinBpm, kMaxBpm);
             established = true;
+            provisional = true;
+            intervalAcquired = false;
+            provisionalStrength = std::max (0.55f, anchorStrength);
         }
         else if (beatFilled >= 4 && timeSec > kPeakOnlyGraceSec)
         {
@@ -758,10 +904,23 @@ void BeatDecoder::updateTempo() noexcept
                 bpm = std::clamp (60.0f / period, kMinBpm, kMaxBpm);
                 gridAnchorSec = anchor;
                 established = true;
+                provisional = true;
+                intervalAcquired = true;
+                provisionalStrength = 0.50f;
             }
         }
         if (! established)
             return;
+    }
+
+    // The short-window grid is allowed to start the clock; it becomes an
+    // ordinary committed grid only when the long-window fold has actually
+    // examined the slower octave. Until then the correction logic below keeps
+    // its shorter tenure.
+    if (provisional && combReady && tempo.levelSettled())
+    {
+        provisional = false;
+        provisionalStrength = 0.0f;
     }
 
     // The comb owns the metrical level. If the committed tempo has left its
@@ -771,7 +930,18 @@ void BeatDecoder::updateTempo() noexcept
     // single bad comb frame must not cost us the beat history.
     const bool gridHealthy = lastFitResidual < kGridHealthyResidual
                              && lastFitCoverage > kGridHealthyCoverage;
-    const bool combDisagrees = combReady && bpm > kMinBpm
+    const bool combMayCorrect = tempo.levelSettled()
+                                || (provisional && ! intervalAcquired);
+    // Direction matters. A grid twice too fast can look healthy because every
+    // detected beat lands on every other tick. A grid twice too slow cannot:
+    // it would have to discard every other event. If this grid was built from
+    // actual intervals and still covers those events tightly, a late 120 -> 60
+    // fold is not evidence against it. This is the room-then-band failure that
+    // otherwise appeared fourteen seconds after a correct lock.
+    const bool unprovenSlowerOctave = intervalAcquired && gridHealthy
+                                      && combBpm < bpm * 0.70f;
+    const bool combDisagrees = combReady && combMayCorrect && ! unprovenSlowerOctave
+                               && bpm > kMinBpm
                                && std::fabs (std::log2 (bpm / combBpm)) > kOctaveThreshold;
 
     int snapBeats = tempoRegime == TempoRegime::fixed ? kOctaveSnapBeatsFixed
@@ -850,6 +1020,7 @@ void BeatDecoder::updateTempo() noexcept
         ++gridSerial;
         beatWrite = 0;
         beatFilled = 0;
+        intervalAcquired = false;
         foldPhaseBeats = 0;
         octaveMismatchBeats = 0;
         octaveVoteBpm = 0.0f;
@@ -932,8 +1103,13 @@ void BeatDecoder::updateTempo() noexcept
         // Not enough clean beats on the grid; let the fold carry the tempo, and
         // only while the tempo is not being held: a fixed tempo that has already
         // been measured off its own beat times is not improved by a comb whose
-        // resolution is a whole frame.
-        if (combReady && tempoRegime != TempoRegime::fixed)
+        // resolution is a whole frame. The same applies to a newly measured
+        // interval: before the fold has examined the slower octave, pulling the
+        // exact first-quarter measurement towards it recreates the multi-second
+        // acquisition this path exists to remove.
+        const bool foldMayPull = ! provisional || ! intervalAcquired
+                                 || tempo.levelSettled();
+        if (combReady && foldMayPull && tempoRegime != TempoRegime::fixed)
             commit (combBpm, kRateAcquiring);
         return;
     }
@@ -1163,6 +1339,16 @@ float BeatDecoder::scoreConfidence() const noexcept
     if (! established)
         return std::clamp (0.35f * tempo.salience(), 0.0f, 1.0f);
 
+    if (provisional)
+    {
+        // Enough to enter LOCKING, deliberately below a mature grid. Input
+        // level and event count are still enforced by BeatTracker, so this is
+        // not permission for silence or one transient to start the part.
+        const float events = std::clamp (static_cast<float> (beatFilled) / 4.0f, 0.0f, 1.0f);
+        return std::clamp (0.20f + 0.34f * provisionalStrength + 0.12f * events,
+                           0.0f, 0.62f);
+    }
+
     // How sure we are that there is a pulse, and that its level is not a coin
     // toss, from whichever of the two level sources can answer. Before the fold
     // has its ten beats of buffer it answers neither, and a tracker waiting for
@@ -1271,7 +1457,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
 
     if (peak)
     {
-        registerBeat (eventTimeSec);
+        registerBeat (eventTimeSec, prevPulse);
         lastBeatSec = eventTimeSec;
         refractoryFrames = minRefr;
         beatsInBar = (beatsInBar + 1) % 4;

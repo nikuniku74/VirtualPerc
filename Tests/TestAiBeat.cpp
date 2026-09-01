@@ -311,6 +311,94 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and the fold alone really does need ten beats before it says anything");
     }
 
+    // Fast acquisition is a causal measurement, not a shorter timer. A direct
+    // feed may speak as soon as the second event supplies one interval; a room
+    // asks for one corroborating interval. Sweep the useful range so the speed
+    // does not come from silently preferring the 120 BPM default.
+    {
+        constexpr double fps = 50.0;
+        const float tempi[] = { 76.0f, 100.0f, 140.0f, 168.0f };
+        bool lineFastAndRight = true;
+        bool roomFastAndRight = true;
+
+        for (float trueBpm : tempi)
+        {
+            const double framesPerBeat = 60.0 / static_cast<double> (trueBpm) * fps;
+            auto firstValid = [&] (bool lineFeed)
+            {
+                vp::BeatDecoder dec;
+                dec.prepare (fps);
+                dec.setLevelAnchor (true);
+                dec.setLineFeed (lineFeed);
+                for (int f = 0; f < static_cast<int> (fps * 5.0); ++f)
+                {
+                    // Start between analysis frames, with silence before the
+                    // first peak, as a real START-over-playing transition does.
+                    const double beats = static_cast<double> (f) / framesPerBeat - 0.35;
+                    const double toBeat = std::fabs (beats - std::round (beats)) * framesPerBeat;
+                    const float pulse = 0.03f + 0.92f
+                        * static_cast<float> (std::exp (-0.5 * (toBeat / 1.5) * (toBeat / 1.5)));
+                    const auto h = dec.observe (pulse, 0.03f, 0.0f);
+                    if (h.valid)
+                        return std::make_pair (static_cast<double> (f) / fps, h.bpm);
+                }
+                return std::make_pair (99.0, 0.0f);
+            };
+
+            const auto line = firstValid (true);
+            const auto room = firstValid (false);
+            const double beatSec = 60.0 / static_cast<double> (trueBpm);
+            lineFastAndRight = lineFastAndRight
+                && line.first / beatSec < (trueBpm > 145.0f ? 2.65 : 1.55)
+                && std::fabs (line.second - trueBpm) / trueBpm < 0.05f;
+            roomFastAndRight = roomFastAndRight
+                && room.first / beatSec < 2.70
+                && std::fabs (room.second - trueBpm) / trueBpm < 0.05f;
+            std::printf ("fast-acquire %3.0f BPM  line %.2f s/%.1f  room %.2f s/%.1f\n",
+                         static_cast<double> (trueBpm), line.first,
+                         static_cast<double> (line.second), room.first,
+                         static_cast<double> (room.second));
+        }
+
+        expect (lineFastAndRight,
+                "a direct feed acquires from the first measured quarter across the tempo range");
+        expect (roomFastAndRight,
+                "a microphone acquires from two agreeing quarters across the tempo range");
+
+        // The dangerous fast case: at 76 BPM a loud eighth train presents a
+        // perfectly regular 152 BPM spacing. Three alternating heights must
+        // select 76 before either long-window source is allowed to commit 152.
+        vp::BeatDecoder eighths;
+        eighths.prepare (fps);
+        eighths.setLevelAnchor (true);
+        eighths.setLineFeed (true);
+        constexpr float slowBpm = 76.0f;
+        const double fpb = 60.0 / static_cast<double> (slowBpm) * fps;
+        double acquiredAt = 99.0;
+        float acquiredBpm = 0.0f;
+        for (int f = 0; f < static_cast<int> (fps * 4.0); ++f)
+        {
+            const double halves = (static_cast<double> (f) / fpb - 0.35) * 2.0;
+            const double nearest = std::round (halves);
+            const double distance = std::fabs (halves - nearest) * fpb * 0.5;
+            const bool weak = (static_cast<long long> (nearest) & 1LL) != 0;
+            const float top = weak ? 0.68f : 0.95f;
+            const float pulse = 0.03f + (top - 0.03f)
+                * static_cast<float> (std::exp (-0.5 * (distance / 1.5) * (distance / 1.5)));
+            const auto h = eighths.observe (pulse, 0.03f, 0.0f);
+            if (h.valid)
+            {
+                acquiredAt = static_cast<double> (f) / fps;
+                acquiredBpm = h.bpm;
+                break;
+            }
+        }
+        std::printf ("fast-eighths  true 76, observed 152: %.2f s / %.1f BPM\n",
+                     acquiredAt, static_cast<double> (acquiredBpm));
+        expect (acquiredAt < 1.5 && std::fabs (acquiredBpm - slowBpm) < 3.0f,
+                "fast acquisition reads alternating eighths as subdivisions, not as the beat");
+    }
+
     // The same bar, with the analysis starved on purpose.
     //
     // Feeding the engine faster than the worker can keep up makes the FIFO

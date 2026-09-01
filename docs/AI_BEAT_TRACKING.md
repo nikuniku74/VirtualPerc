@@ -135,7 +135,7 @@ All the end-to-end figures here come from a probe that drives the engine faster 
 
 The estimator also refuses to report a level whose *too-fast* charge could not be evaluated yet. Early on the buffer holds a few seconds, the slow half of the range is not searched at all, and the fastest candidate present wins by default with nothing slower to lose to — which is how a 68 BPM song used to be established at 136 in the first two seconds and defended ever after.
 
-#### Acquisition: the state space speaks first
+#### Acquisition: the first measurable interval speaks first
 
 `TempoEstimator` reports nothing until its buffer holds five periods of the octave *below* its winner — ten beats of the tempo being played. Measured end to end that requirement **was** the time to lock, to a third of a second:
 
@@ -146,13 +146,31 @@ The estimator also refuses to report a level whose *too-fast* charge could not b
 | 128 | 4.69 | 5.1 |
 | 140 | 4.29 | 4.6 |
 
-`BeatHmm` accumulates from the first frame and, on real activations, names the right level with a margin at 1.2–1.7 s — on 10 of 12 captures, the two failures being the same 76-read-as-152 the fold gets wrong too. So when the fold cannot speak yet and the state space is clear, the decoder acquires from the state space instead of waiting.
+The old fast path still waited for `BeatHmm` to complete two periods and reach a large margin. That was better than ten beats, but it made the downstream rule “two beats are enough” misleading: the two beats were counted only *after* the decoder had spent 1.2–1.7 s deciding that a tempo existed, while the sparse fallback was held for a fixed 6 s.
+
+The decoder now has a provisional, strictly causal path. Two interpolated activation peaks are the first instant at which a period can physically be measured. On a direct feed it can publish that first interval immediately; through a microphone it asks for a third peak so two intervals agree and an impact/reflection pair cannot start the part. The state-space winner chooses between the observed spacing and its slower metrical level, but the BPM precision comes from the sub-frame peak times rather than its 20 ms states.
+
+Fast acquisition is deliberately cheap to correct and never enters the fixed regime by itself. The long fold and least-squares fits keep accumulating, promote it only after independently confirming the level, and take over without stopping or restarting the clock.
+
+Two octave traps have explicit causal evidence instead of a timer:
+
+- below 90 BPM, a clean sequence with no intervening peaks is kept at its observed spacing instead of being doubled towards the young state space's 118 BPM prior (the 76 → 152 failure);
+- above 145 observed events/minute, three alternating peak heights select the slower level, so strong eighths at 76 are recognised as subdivisions while evenly weighted music at 168 remains 168.
 
 What it takes from it is the **level and a starting grid, not the number**: the state space's periods are whole frames, so it reads about 2 % sharp (120.0 for 118, 142.9 for 140), which is fine to lock to and not fine to play on. The least-squares fit owns the tempo from the fourth beat. The margin required to *acquire* is higher than the one required to fold the comb into the state space's octave (`kAnchorAcquireMargin` 4 against `kAnchorMargin` 2): folding is undone at the next refresh, acquiring is what the grid, the fits and the bar are then built on.
 
-Its readiness is two periods of the **winning** tempo, not two of the slowest tempo in the space: the old rule cost 2.4 s whatever was playing.
+The full state-space readiness remains two periods of the **winning** tempo, not two of the slowest tempo in the space. It is now a confirmation/fallback rather than the earliest possible gate.
 
-Measured on the decoder alone at 140 BPM: first valid tempo at **0.88 s** with the state space against **4.30 s** with the fold alone.
+Measured on the decoder alone with peaks beginning partway through a beat:
+
+| BPM | direct feed | microphone | reported BPM |
+|---|---:|---:|---:|
+| 76 | 1.08 s | 1.88 s | 76.1 / 75.9 |
+| 100 | 0.84 s | 1.42 s | 100.0 / 100.0 |
+| 140 | 0.60 s | 1.02 s | 140.0 / 140.2 |
+| 168 | 0.86 s | 0.86 s | 167.9 / 167.9 |
+
+At 76 BPM with strong alternating eighths (an observed 152-event/minute train), it publishes **76.1 BPM at 1.08 s**, rather than briefly committing 152.
 
 ### Fixed vs live tempo
 
@@ -162,7 +180,7 @@ A record cut to a click does not change tempo; a band on stage does. `BeatDecode
 |---|---|---|
 | `fixed` | refined towards the long fit, capped at 1.5 % per beat | a Spotify track must stop moving once found |
 | `live` | short fit, extrapolated forward by the short/long gap | every fit lags a player mid-accelerando |
-| `unknown` | acquiring | adopt the comb outright rather than easing from 120 |
+| `unknown` | acquiring | adopt the provisional interval immediately; adopt the comb outright only after its slower octave has actually been examined |
 
 `fixed` is deliberately stubborn: it is released by three recent intervals agreeing on a direction, which arrives well before the eight-beat fit notices, and it is what keeps a drum fill from dragging the tempo. It cannot be entered while `TempoEstimator` still names a different level, so a bad first guess cannot make itself permanent.
 
@@ -193,7 +211,9 @@ A user `inputGain` (0–2, default 1) scales the mixed analysis bus *before* lea
 
 The analysis bus always subtracts a delayed copy of our shaker/congas (`subtractSpeakerLeak`). The delay is searched around the device latency; in SPEAKER/iPad-mic mode the search also covers the extra acoustic hop (roughly 8–80 ms) so the canceller still finds the part when the room path is longer than the hardware figure. Makeup is applied after the subtraction.
 
-Acquire timing (`LISTENING` 0.70 s + two beats, `LOCKING` ~0.16 s) is unchanged: shortening it locked a 78 BPM click a half-beat off. The decoder still uses the comb head-start for tempo; the clock still waits for a valid hypothesis before snapping phase.
+The state machine still requires audible, periodic input, at least two detected events, `LISTENING` for 0.70 s and about 0.16 s in `LOCKING`. Those are no longer stacked behind a multi-second decoder wait: for ordinary tempi the measured interval itself already spans the listening guard. The clock still waits for a valid hypothesis before steering phase.
+
+No causal system can infer a period or the first quarter from one isolated sound. “Between the first and second quarter” is achievable only when subdivisions, harmony or other events inside that interval provide the missing evidence; otherwise the second quarter is the first instant that defines one quarter's duration. The implementation uses those extra events when BeatNet exposes them, but never reads future audio.
 
 ### The room the app was listening to is not evidence
 

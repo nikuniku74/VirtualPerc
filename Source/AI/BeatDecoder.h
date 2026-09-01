@@ -138,7 +138,11 @@ private:
     /** Moves a tempo by whole octaves to whichever one the state space is
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
-    void  registerBeat (double beatTimeSec) noexcept;
+    void  registerBeat (double beatTimeSec, float strength) noexcept;
+    /** Fast causal acquisition from the intervals already heard. The state
+        space chooses the metrical level; interpolated peaks provide the finer
+        period that its whole-frame states cannot. */
+    bool  tryFastAcquire() noexcept;
     /** Phase of the committed grid at `timeSec`, and where the folded
         activation says the beat actually is. See `checkGridPhase`. */
     float gridPhaseNow (float periodSec) const noexcept;
@@ -198,8 +202,18 @@ private:
     int    beatsInBar = 0;
     uint64_t frame = 0;
     bool   established = false;
+    /** True until the long-window sources have confirmed an initial interval
+        lock. It may be corrected cheaply; it must never acquire the tenure of
+        a grid that has already proved itself. */
+    bool   provisional = false;
+    /** The current grid came from measured intervals rather than the coarse
+        early HMM. Kept after promotion: a later half-tempo comb must not throw
+        away a grid that still explains every measured event. */
+    bool   intervalAcquired = false;
+    float  provisionalStrength = 0.0f;
 
     double beatTime[kBeatHistory] {};
+    float  beatStrength[kBeatHistory] {};
     int    beatWrite = 0;
     int    beatFilled = 0;
     uint32_t beatSerial = 0;
