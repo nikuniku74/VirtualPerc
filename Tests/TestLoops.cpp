@@ -528,6 +528,29 @@ void vpRunLoopTests (int& passed, int& failed)
                 "stretcher: and it is a real number, not a backend that measured nothing");
     }
 
+    // --- 3c. resetting something that was never prepared -------------------
+    {
+        // Owners reset their parts from their own reset, and that can happen
+        // before anything has been sized - a renderer whose bank has not
+        // arrived yet has players it has not prepared. Signalsmith's reset
+        // divides by a block size that is zero until configure, so this used to
+        // be a SIGFPE rather than a no-op.
+        vp::LoopStretcher fresh;
+        fresh.reset();
+        fresh.reset();
+        expect (! fresh.isPrepared(),
+                "stretcher: resetting one that was never prepared does nothing, and does not crash");
+
+        vp::LoopPlayer player;
+        player.reset();
+        vp::HybridPercussionRenderer hybrid;
+        hybrid.reset();
+        hybrid.prepare (kSr, 256);
+        hybrid.reset();
+        expect (! hybrid.loopIsPlaying(),
+                "hybrid: and so does resetting a renderer that has no bank to play");
+    }
+
     // --- 4. coming in on the beat -----------------------------------------
     {
         vp::LoopBank bank;
@@ -1042,6 +1065,77 @@ void vpRunLoopTests (int& passed, int& failed)
         runFor (400, vp::TempoRegime::fixed);
         expect (! hybrid.loopIsPlaying() && ! hybrid.wantsRecorded(),
                 "hybrid: switched off, nothing but PercussionEngine plays");
+    }
+
+    // --- 11b. with no bank, the hybrid is a pass-through -------------------
+    {
+        // The guarantee the whole flag rests on: with no recordings loaded,
+        // what comes out of HybridPercussionRenderer is what PercussionEngine
+        // would have produced on its own, to the sample. Asserted rather than
+        // argued, because the argument - "the gain works out to exactly one" -
+        // is the kind that stays true until somebody adds a term to the mix.
+        //
+        // This is also what settles a question the full suite cannot: the leak
+        // canceller's residual moves by a few percent between builds on a host
+        // where the neural worker's timing moves with it, and a rendered part
+        // that is bit-identical is the evidence that the movement is not this.
+        vp::PercussionEngine alone;
+        alone.prepare (kSr);
+        alone.setSeed (0x51A4E1u);
+        alone.setGroove (120.0f, 4);
+        alone.setGrooveStyle (vp::GrooveStyle::pop);
+
+        vp::PercussionEngine through;
+        through.prepare (kSr);
+        through.setSeed (0x51A4E1u);
+        through.setGroove (120.0f, 4);
+        through.setGrooveStyle (vp::GrooveStyle::pop);
+
+        vp::HybridPercussionRenderer hybrid;
+        hybrid.prepare (kSr, 256);
+        hybrid.setEnabled (true);        // on, and still nothing to play
+        hybrid.start();
+
+        vp::TempoFollower clockA, clockB;
+        for (vp::TempoFollower* c : { &clockA, &clockB })
+        {
+            c->prepare (kSr);
+            c->setPulsesPerBeat (4);
+            c->forceTempo (120.0f);
+            c->setTargetTempo (120.0f, 1.0f);
+            c->setLocked (true);
+            c->snapPhase (0.0f);
+        }
+
+        std::vector<float> aL (256, 0.0f), aR (256, 0.0f);
+        std::vector<float> bL (256, 0.0f), bR (256, 0.0f);
+        vp::HybridPercussionRenderer::Input in;
+        in.audible = true;
+        in.bpm = 120.0f;
+        in.regime = vp::TempoRegime::fixed;   // it would take the loop if it could
+        in.style = vp::GrooveStyle::pop;
+
+        double worst = 0.0;
+        for (int i = 0; i < 3000; ++i)
+        {
+            const auto tickA = clockA.advance (256);
+            const auto tickB = clockB.advance (256);
+            alone.render (aL.data(), aR.data(), 256, tickA, true);
+            in.tick = tickB;
+            hybrid.render (through, bL.data(), bR.data(), 256, in);
+            for (int n = 0; n < 256; ++n)
+            {
+                worst = std::max (worst, std::fabs (static_cast<double> (aL[static_cast<size_t> (n)])
+                                                    - static_cast<double> (bL[static_cast<size_t> (n)])));
+                worst = std::max (worst, std::fabs (static_cast<double> (aR[static_cast<size_t> (n)])
+                                                    - static_cast<double> (bR[static_cast<size_t> (n)])));
+            }
+        }
+        std::printf ("        worst sample difference over 3000 blocks: %g\n", worst);
+        expect (worst == 0.0,
+                "hybrid: with no bank loaded the part is PercussionEngine's, to the sample");
+        expect (! hybrid.loopIsPlaying() && hybrid.handovers() == 0,
+                "hybrid: and it never tried to hand the part over to a recording it does not have");
     }
 
     // --- 12. the hybrid allocates nothing either ---------------------------

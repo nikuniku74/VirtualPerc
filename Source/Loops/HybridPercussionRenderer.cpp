@@ -30,13 +30,6 @@ void HybridPercussionRenderer::prepare (double sr, int maxBlk) noexcept
     sampleRate = sr > 1.0 ? sr : 48000.0;
     maxBlock = std::max (32, maxBlk);
 
-    for (LoopPlayer* p : { &congas, &shaker })
-    {
-        p->prepare (sampleRate, maxBlock);
-        p->setCorrection (kTauFixedSec, kPullFixed);
-        p->setCrossfadeMs (25.0f);
-    }
-
     loopL.assign (static_cast<size_t> (maxBlock), 0.0f);
     loopR.assign (static_cast<size_t> (maxBlock), 0.0f);
     stemL.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -45,7 +38,23 @@ void HybridPercussionRenderer::prepare (double sr, int maxBlk) noexcept
     strokeR.assign (static_cast<size_t> (maxBlock), 0.0f);
 
     prepared = true;
+    playersPrepared = false;
+    if (congas.bank() != nullptr)
+        preparePlayers();
     reset();
+}
+
+void HybridPercussionRenderer::preparePlayers() noexcept
+{
+    if (! prepared || playersPrepared)
+        return;
+    for (LoopPlayer* p : { &congas, &shaker })
+    {
+        p->prepare (sampleRate, maxBlock);
+        p->setCorrection (kTauFixedSec, kPullFixed);
+        p->setCrossfadeMs (25.0f);
+    }
+    playersPrepared = true;
 }
 
 void HybridPercussionRenderer::reset() noexcept
@@ -65,6 +74,8 @@ void HybridPercussionRenderer::reset() noexcept
 
 void HybridPercussionRenderer::setBank (const LoopBank* b) noexcept
 {
+    if (b != nullptr)
+        preparePlayers();
     congas.setBank (b);
     shaker.setBank (b);
     mode = Mode::strokes;
@@ -173,7 +184,8 @@ int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL,
     }
 
     const LoopBank* bank = congas.bank();
-    const bool haveBank = enabled && prepared && bank != nullptr && ! bank->empty();
+    const bool haveBank = enabled && prepared && playersPrepared
+                          && bank != nullptr && ! bank->empty();
 
     // --- what the music is asking for --------------------------------------
     //

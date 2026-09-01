@@ -103,6 +103,13 @@ int LoopStretcher::primeFrames() const noexcept
 
 void LoopStretcher::reset() noexcept
 {
+    // Nothing to throw away before `prepare` has sized anything, and asking
+    // anyway is not harmless: Signalsmith's own reset divides by a block size
+    // that is still zero, which is a SIGFPE rather than a no-op. Owners call
+    // reset from their own reset, which can run before they have been prepared.
+    if (! prepared)
+        return;
+
 #if defined(VP_USE_SIGNALSMITH) && VP_USE_SIGNALSMITH
     impl->stretch.reset();
 #endif

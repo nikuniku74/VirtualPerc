@@ -600,7 +600,12 @@ function (vp_apply_ai_options target)
     endif()
     if (VP_SIGNALSMITH_ACTIVE)
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=1)
-        target_include_directories (${target} PRIVATE
+        # SYSTEM, so the vendored headers' own warnings do not bury ours. They
+        # produce 119 of them under juce_recommended_warning_flags - sign
+        # conversions, float equality, shadowed locals - and none of them are
+        # actionable here: patching a vendored library is a merge conflict every
+        # time it is updated. Ours still have to be zero.
+        target_include_directories (${target} SYSTEM PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch/include
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-linear/include)
         if (APPLE AND VP_SIGNALSMITH_ACCELERATE)

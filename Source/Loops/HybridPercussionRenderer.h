@@ -119,6 +119,17 @@ private:
     LoopRole roleForBar() const noexcept;
     /** Ask one stem for a part, and say whether the library had one. */
     bool aimStem (LoopPlayer& player, LoopStem stem, const Input& in) noexcept;
+    /** Size the two players, but only once there is a bank for them to play.
+
+        Deliberately not part of `prepare`. Preparing a player prepares its
+        stretcher, and preparing a stretcher *measures* it - two passes of a
+        test burst through the backend, per voice, per stem. That is work worth
+        doing when a recording is going to be played and pure waste when the
+        app is running as it always has, and it lands in the middle of opening
+        the audio device, where it delays the analysis worker's first audio
+        relative to everything else. Nothing that is not used should cost
+        anything. Allocates: same thread rules as `setBank`. */
+    void preparePlayers() noexcept;
 
     /** One player per stem, because the recordings are per stem and the balance
         between them stays the listener's - the same reason
@@ -133,6 +144,7 @@ private:
     double sampleRate = 48000.0;
     int    maxBlock = 1024;
     bool   prepared = false;
+    bool   playersPrepared = false;
 #if defined(VP_ENABLE_RECORDED_LOOPS) && VP_ENABLE_RECORDED_LOOPS
     bool   enabled = true;
 #else
