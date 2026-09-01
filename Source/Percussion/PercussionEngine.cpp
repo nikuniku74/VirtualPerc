@@ -172,7 +172,26 @@ void PercussionEngine::setHumanization (float amount) noexcept
 
 void PercussionEngine::setSwing (float amount) noexcept
 {
-    groove.setSwing (amount);
+    requestedSwing = clamp01 (amount);
+    if (! hasSeenPulse)
+        applyPendingGrooveControls();
+}
+
+void PercussionEngine::setGrooveStyle (GrooveStyle s) noexcept
+{
+    const int i = static_cast<int> (s);
+    requestedStyle = (i >= 0 && i < static_cast<int> (GrooveStyle::count))
+                         ? s : GrooveStyle::marcha;
+    if (! hasSeenPulse)
+        applyPendingGrooveControls();
+}
+
+void PercussionEngine::applyPendingGrooveControls() noexcept
+{
+    appliedSwing = requestedSwing;
+    appliedStyle = requestedStyle;
+    groove.setSwing (appliedSwing);
+    groove.setStyle (appliedStyle);
 }
 
 void PercussionEngine::setIntensity (float amount) noexcept
@@ -632,6 +651,8 @@ void PercussionEngine::reset() noexcept
     samplesSinceHit = 1000000;
     barCounter = 0;
     lastBarBeat = -1;
+    hasSeenPulse = false;
+    applyPendingGrooveControls();
     std::fill (rrCursor, rrCursor + kStrokes, 0);
     reverb.reset();
 }
@@ -657,6 +678,8 @@ void PercussionEngine::silence() noexcept
     clearVoices();
     reverb.reset();
     samplesSinceHit = 1000000;
+    hasSeenPulse = false;
+    applyPendingGrooveControls();
 }
 
 void PercussionEngine::setGroove (float bpm, int pulsesPerBeat) noexcept
@@ -671,6 +694,13 @@ void PercussionEngine::releaseStroke (Stroke stroke) noexcept
     for (auto& v : voices)
         if (v.active && v.stroke == stroke && v.fadeStep <= 0.0f && v.pos >= 0)
             v.fadeStep = step;
+}
+
+void PercussionEngine::discardPendingVoices() noexcept
+{
+    for (auto& v : voices)
+        if (v.active && v.pos < 0)
+            v = {};
 }
 
 PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
@@ -759,6 +789,13 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     std::fill (left, left + numSamples, 0.0f);
     std::fill (right, right + numSamples, 0.0f);
 
+    // A snap changes where future grid positions are. Voices with a negative
+    // position have not sounded yet: they were scheduled by the old grid and
+    // keeping them is exactly the short double rhythm that Stop appeared to
+    // fix. Tails that have already begun are left alone.
+    if (tick.reanchored)
+        discardPendingVoices();
+
     {
         // A guard against firing the same grid position twice - which the clock
         // can do when a phase correction steps the grid backwards - and nothing
@@ -767,7 +804,12 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         // tempo above ~145 the guard was longer than the actual pulse and
         // swallowed every second stroke.
         const int minGap = static_cast<int> (sampleRate * kRetriggerGuardSec);
-        const float beatSamples = 60.0f / std::max (40.0f, grooveBpm)
+        // The tick is the rate that produced these pulse positions. Using a
+        // separately cached/displayed BPM makes a swung note slightly wrong
+        // during every accelerando and re-lock, precisely when its placement is
+        // most exposed. Fall back only for synthetic callers with an empty tick.
+        const float timingBpm = tick.tempoBpm > 40.0f ? tick.tempoBpm : grooveBpm;
+        const float beatSamples = 60.0f / std::max (40.0f, timingBpm)
                                   * static_cast<float> (sampleRate);
         const bool playing = enabled && audible;
 
@@ -781,6 +823,14 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
 
             const int barBeat = tick.pulseBeatInBar[i];
             const int idx = tick.pulseIndex[i];
+
+            // Part and swing are one musical decision. Commit them together on
+            // a quarter boundary, never between two sixteenths of the same
+            // beat. The previous beat's maximum delay is shorter than a
+            // quarter, so no event from the old setting can cross this point.
+            if (idx == 0)
+                applyPendingGrooveControls();
+            hasSeenPulse = true;
 
             // Bars are counted off the beat-in-bar wrapping back to zero, so
             // the two-bar phrase and the fill stay aligned to the song's bar
@@ -815,7 +865,8 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             const int n = groove.eventsAt (barCounter, step, events, GrooveEngine::kMaxEvents);
             for (int e = 0; e < n; ++e)
             {
-                const int delay = static_cast<int> (events[e].delayBeats * beatSamples);
+                const int delay = static_cast<int> (std::lround (events[e].delayBeats
+                                                                  * beatSamples));
                 trigger (events[e].stroke, events[e].velocity, offset + delay);
             }
             if (n > 0)

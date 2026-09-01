@@ -641,6 +641,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     // That is right while the clock is free-running and wrong immediately after
     // a snap, where the phase was *placed* on a pulse and nothing has played it
     // yet. Reaching back by a hair puts that pulse inside this block.
+    tick.reanchored = reanchor;
     if (reanchor)
     {
         // Just enough to bring a pulse sitting exactly on the new phase inside

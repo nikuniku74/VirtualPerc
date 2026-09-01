@@ -1154,16 +1154,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (shBeat2 > shBeat1 * 1.05f,
                 "the rock shaker puts its weight on the backbeat");
 
-        // Dance: a salsa tumbao *stated*, not filled in. The low drum answers
-        // the one from its "e" and lands on 3, the slap is the loudest stroke
-        // and sits on the "e" of 2 (never on 2 itself), the opens close the
-        // bar, and the shaker still leans on the off-eighth.
-        //
-        // Two of the four "a"s carry a stroke, not three: the part used to be
-        // thirteen strokes a bar and is now six, so the lean onto the sixteenth
-        // before the beat is stated twice in the bar instead of being played
-        // through it. Anything that asks for more than two here is asking for
-        // the wall back.
+        // Dance: the kick owns all four numbered beats, so the congas answer on
+        // off-eighths and one selected "a". Stopped lows keep the first answers
+        // short; ringing opens provide the lift. This must not quietly turn
+        // back into a salsa tumbao with another low drum on beat three.
         int danceOnTheA = 0;
         for (int step : { 3, 7, 11, 15 })
             if (congaVelocityAt (dance, step) > 0.4f)
@@ -1171,28 +1165,29 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const float danceShakerPulse = shakerVelocityAt (dance, 0);
         const float danceShakerOff = shakerVelocityAt (dance, 2);
         const float danceOn1 = congaVelocityAt (dance, 0);
-        const float danceOnE1 = congaVelocityAt (dance, 1);
         const float danceOn2 = congaVelocityAt (dance, 4);
-        const float danceSlap = congaVelocityAt (dance, 5);
         const float danceOn3 = congaVelocityAt (dance, 8);
-        std::printf ("groove-dance   hits on the a: %d/4   1=%.2f e-di-1=%.2f 2=%.2f slap-e=%.2f 3=%.2f  shaker pulse=%.2f off=%.2f\n",
+        const float danceOn4 = congaVelocityAt (dance, 12);
+        const float danceAnd2 = congaVelocityAt (dance, 6);
+        const float danceAnd4 = congaVelocityAt (dance, 14);
+        std::printf ("groove-dance   hits on the a: %d/4   beats %.2f/%.2f/%.2f/%.2f  offbeats %.2f/%.2f  shaker pulse=%.2f off=%.2f\n",
                      danceOnTheA,
-                     static_cast<double> (danceOn1), static_cast<double> (danceOnE1),
-                     static_cast<double> (danceOn2),
-                     static_cast<double> (danceSlap), static_cast<double> (danceOn3),
+                     static_cast<double> (danceOn1), static_cast<double> (danceOn2),
+                     static_cast<double> (danceOn3), static_cast<double> (danceOn4),
+                     static_cast<double> (danceAnd2), static_cast<double> (danceAnd4),
                      static_cast<double> (danceShakerPulse),
                      static_cast<double> (danceShakerOff));
-        expect (danceOnTheA >= 2 && danceOnTheA <= 2 && danceShakerOff > danceShakerPulse,
+        expect (danceOnTheA == 1 && danceShakerOff > danceShakerPulse,
                 "dance leans on the sixteenth before the beat and accents the offbeat");
-        expect (danceOn1 < 0.01f && danceOnE1 > 0.4f && danceOn3 > 0.4f
-                    && danceOn2 < 0.01f && danceSlap > 0.4f,
-                "dance tumbao: the one left to the band, tumba on its e and on 3, "
-                "slap on the e of 2, nothing on 2");
+        expect (danceOn1 < 0.01f && danceOn2 < 0.01f
+                    && danceOn3 < 0.01f && danceOn4 < 0.01f
+                    && danceAnd2 > 0.6f && danceAnd4 > 0.8f,
+                "dance answers the four-on-the-floor beat instead of doubling it");
 
         // Pop: the job is to be felt and not noticed, so it has to be the
         // sparsest of the four by a clear margin.
         expect (congaCount (pop) < congaCount (rock)
-                    && congaCount (pop) * 2 <= congaCount (dance),
+                    && congaCount (pop) < congaCount (dance),
                 "pop is the sparsest part of the four");
 
         // And no two styles may be the same bar.
@@ -1531,7 +1526,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
         perc.setCongasEnabled (false);
         perc.setShakerEnabled (true);
         perc.setShakerSubdivision (vp::Subdivision::sixteenth);
-        perc.setGroove (bpm, 4);
+        // Deliberately stale: the tick below is the clock that actually placed
+        // the pulses, and swing must use that rate rather than a cached display
+        // value left over from the preceding block.
+        perc.setGroove (90.0f, 4);
         perc.setGrooveStyle (vp::GrooveStyle::marcha);
 
         std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
@@ -2460,6 +2458,65 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         && entryDelay < 0.65
                         && std::fabs (quarter - std::round (quarter)) < 0.08f,
                     "START enters on the next aligned quarter instead of waiting a bar");
+        }
+
+        // Spotify may already be playing before START. A steady-level record
+        // has no quiet-to-loud edge, so analysisEpoch quite correctly stays at
+        // zero; that must not leave a confident, audible, periodic source mute.
+        {
+            const int shortN = static_cast<int> (sr * 18.0);
+            std::vector<float> steadySong (static_cast<size_t> (shortN), 0.0f);
+            for (int i = 0; i < shortN; ++i)
+                steadySong[static_cast<size_t> (i)] = 0.025f * std::sin (
+                    2.0 * 3.14159265358979323846 * 523.25 * static_cast<double> (i) / sr);
+
+            vp::VirtualPercussionEngine startEng;
+            startEng.setBeatModel (std::make_unique<SteadyBeatModel> (framesPerBeat));
+            startEng.prepare (sr, block, 1);
+            startEng.settings().followSource.store (
+                static_cast<int> (vp::FollowSource::speaker));
+
+            int startSample = -1, firstHitSample = -1, hitsAtStart = 0;
+            float firstHitBarPhase = -1.0f;
+            vp::EngineSnapshot last {};
+            int startBlocks = 0;
+            for (int p = 0; p + block <= shortN; p += block)
+            {
+                const float* ins[1] = { steadySong.data() + p };
+                startEng.process (ins, 1, outs, 2, block);
+                last = startEng.snapshot();
+
+                if (startSample < 0 && static_cast<double> (p) / sr > 7.0
+                    && last.state == vp::TrackingState::following
+                    && last.barPhase > 0.28f && last.barPhase < 0.34f)
+                {
+                    startSample = p;
+                    hitsAtStart = startEng.shakerHits();
+                    startEng.start();
+                }
+                else if (startSample >= 0 && startEng.shakerHits() > hitsAtStart)
+                {
+                    firstHitSample = p;
+                    firstHitBarPhase = last.barPhase;
+                    break;
+                }
+
+                if ((++startBlocks % 8) == 0)
+                    std::this_thread::sleep_for (std::chrono::milliseconds (2));
+            }
+
+            const double entryDelay = firstHitSample >= startSample && startSample >= 0
+                                          ? static_cast<double> (firstHitSample - startSample) / sr
+                                          : 99.0;
+            const float quarter = firstHitBarPhase * 4.0f;
+            std::printf ("start-over-music  delay=%.3f s phase=%.3f restarts=%d hits=%d\n",
+                         entryDelay, static_cast<double> (firstHitBarPhase),
+                         last.analysisRestarts, startEng.shakerHits() - hitsAtStart);
+            expect (startSample >= 0 && firstHitSample >= 0
+                        && last.analysisRestarts == 0
+                        && entryDelay < 0.65
+                        && std::fabs (quarter - std::round (quarter)) < 0.08f,
+                    "START over music already playing sounds on the very next quarter");
         }
     }
 

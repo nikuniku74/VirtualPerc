@@ -74,11 +74,11 @@ Both are derived from the **slap** recording rather than the open one: what make
 
 All nine styles reach for them, and where they go is a decision per style: the marcha's bass on 3 and its answering crack, the rock anchor (a rock mix has a bass guitar on the "and" of 1 already), the dance slap that has to cut without ringing into the next stroke, funk's whole vocabulary, samba's surdo-like 2, reggae's one-drop three, and DUE-UNO's low half — which keeps that style at exactly two sounds while making one of them a stopped one, a thud answered by a tone.
 
-Measured across the eight-bar phrase of every style: **54 stopped strokes against 294 that ring.** The proportion is the point — a part made only of stopped strokes has no sustain in it at all, and the test asserts both that nearly every style uses them and that the ringing ones are still most of what the part is made of. Rendered, the bar is empty 26–41 % of the time depending on the style, which is the space those strokes buy.
+Measured across the eight-bar phrase of every style: **82 stopped strokes against 266 that ring.** The proportion is the point — a part made only of stopped strokes has no sustain in it at all, and the test asserts both that nearly every style uses them and that the ringing ones are still most of what the part is made of. Rendered, the bar is empty 26–41 % of the time depending on the style, which is the space those strokes buy.
 
 ### The one belongs to the band
 
-No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enforces it as well as every table observing it. The band is already there — kick, bass and the downbeat of whatever the guitarist is playing, together — and a conga on top of that is not heard as a percussionist, it is heard as a thicker attack. A player standing next to a drummer plays *around* the one: the low tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth late, and the one is left alone. Per style: marcha and samba put the heel on the "e" of 1; rock, pop and bossa put the low tone on the "and"; dance and funk on the "e", where those parts already live in sixteenths; reggae is one-drop and never had anything there.
+No style puts a conga on the **first quarter's down-stroke**, and `eventsAt` enforces it as well as every table observing it. The band is already there — kick, bass and the downbeat of whatever the guitarist is playing, together — and a conga on top of that is not heard as a percussionist, it is heard as a thicker attack. A player standing next to a drummer plays *around* the one: the low tone lands on its "e" or its "and", the heel-toe pair starts a sixteenth late, and the one is left alone. Per style: marcha and samba begin from the "e" of 1; rock, dance, pop and bossa answer on the "and"; funk lives on the surrounding sixteenths; reggae is one-drop and never had anything there.
 
 The shaker is deliberately not covered by the rule. A shaker on the pulse *is* the pulse, and it is what the listener follows.
 
@@ -179,7 +179,7 @@ Three decibels is the *smaller* half of it: half the strokes have gone as well, 
 
 No written figure puts more than **two conga strokes in a quarter**, and nothing audible does either with the ghost generator wide open. The fill bar is exempt, because that is what a fill is.
 
-The dance part was the reason: it was thirteen strokes a bar, three and four to a quarter, because it was transcribed from a salsa percussion loop — a record where the congas *are* the record. Under a live band they are not. The space between the strokes is where the rest of the band is, and a part that fills it is a wall however good the figure inside it is. Dance is now six a bar and says the same thing: the low drum answering the one from its "e", nothing at all on 2, the slap as the loudest stroke on the "e" of 2, the opens closing the bar.
+The dance part was the reason: it was thirteen strokes a bar, three and four to a quarter, because it was transcribed from a salsa percussion loop — a record where the congas *are* the record. Under a dance kick they are not. The current six-stroke figure leaves all four numbered beats to the four-on-the-floor pulse, answers with stopped lows, and lets only the offbeat opens ring. The syncopated slap moves through the phrase instead of repeating a tumbao on beat three.
 
 ### Four styles
 
@@ -188,9 +188,9 @@ A player does not bring a marcha to a rock track, so the styles are four differe
 | Style | Congas | Shaker | Ghosts |
 |---|---|---|---|
 | **marcha** | the tumbao: slap on 2, bass on 3, the paired open tones closing the bar | eighths, weight on the pulse | busy |
-| **rock** | off the backbeat entirely — the snare owns 2 and 4 — anchoring the "and" of 1 and pushing on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
-| **dance** | a tumbao stated rather than filled in: low drum on the "e" of 1 and on 3, slap on the "e" of 2, opens closing the bar | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
-| **pop** | mostly space: a light low tone off the one, a lift, the push into the next bar | eighths, level and quiet | almost none |
+| **rock** | all numbered beats left to kick/snare; stopped low answers and open tones in the gaps, with the strongest push on the "and" of 4 | eighths, weight on **2 and 4**, with the drummer | sparse |
+| **dance** | six answers around the four-on-the-floor kick: stopped lows, ringing offbeat opens and one moving syncopated slap; no conga on any numbered beat | sixteenths, weight on the **off-eighth** where the open hat sits | medium |
+| **pop** | four restrained notes: stopped answer, quiet connector, lift and open push; articulation varies while density stays out of the vocal's way | eighths, level and quiet | almost none |
 | **due-uno** | not a genre, a shape: two strokes on a quarter and one on the next, all the way round, on two drums and nothing else | eighths, weight on the pulse | none, on purpose |
 
 **DUE-UNO** is the one style written to a brief rather than transcribed, and the only one `AUTO` will never choose — "keep it simple" is a decision about the gig, not about the music, so the automatic chooser (which decides between four genres) does not get a vote on it. Every stroke sits off the beat: the low-high pair answers the beat that has just gone, the single tone leans on the one coming. Six strokes a bar out of two drums, and the ghost notes are switched off for it, because a ghost is a heel or a toe and that would be a third sound.
@@ -278,7 +278,7 @@ This used to be a constant array of eight entries inside the render loop, repeat
 - **Nothing varied.** No two-bar phrasing, no accent contour across the bar, no fills, no ghost notes.
 - **`humanization` was pinned to 0.00** in the UI and only jittered shaker velocity; timing was exactly on the grid and there was no swing.
 
-Now: a two-bar phrase (bar B doubles the bass and moves the heel), a fill closing every eight bars, an accent contour across the bar, ghost notes on the sixteenths scaled by intensity, swing that lands only on the off-eighths, and micro-timing. Micro-timing is expressed as *lateness* only — the clock hands out grid positions as they pass and a voice cannot be scheduled before one — so the feel is biased late by half its own spread.
+Now: a two-bar phrase (bar B doubles the bass and moves the heel), a fill closing every eight bars, an accent contour across the bar, ghost notes on the sixteenths scaled by intensity, a continuous beat warp from straight to triplet swing, and micro-timing. The off-eighth reaches exactly 2/3 of the beat at full swing; the surrounding sixteenths divide the two warped halves rather than fighting it. Scheduling uses the BPM carried by the clock tick that produced the pulse and rounds to the nearest sample, so an accelerando cannot expose a stale-BPM swing offset. Micro-timing is expressed as *lateness* only — the clock hands out grid positions as they pass and a voice cannot be scheduled before one — so the feel is biased late by half its own spread.
 
 ## The clock is not allowed to hear itself
 

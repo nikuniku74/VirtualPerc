@@ -9,6 +9,9 @@ struct ClockTick
 {
     /** The tempo the clock is actually running at over this block. */
     float tempoBpm = 0.0f;
+    /** The grid was placed onto a newly accepted song phase in this block.
+        Anything scheduled for the future on the old grid is stale. */
+    bool reanchored = false;
     bool wrappedBeat = false;
     bool wrappedBar  = false;
     int  pulsesFired = 0;

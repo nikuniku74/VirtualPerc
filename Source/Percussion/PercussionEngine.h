@@ -43,7 +43,9 @@ public:
     {
         return static_cast<float> (bankAttackLead) / static_cast<float> (sampleRate) * 1000.0f;
     }
-    void setGrooveStyle (GrooveStyle s) noexcept { groove.setStyle (s); }
+    /** Requests a new part. While playing, the change is committed on the next
+        quarter so one beat can never contain two different parts. */
+    void setGrooveStyle (GrooveStyle s) noexcept;
     /** How much the band is giving, 0..1. See Percussion/BandDynamics.h. */
     void setDynamics (float amount) noexcept { groove.setDynamics (amount); }
 
@@ -92,6 +94,8 @@ public:
     /** Attack of one articulation's first layer, in milliseconds. Diagnostic. */
     float attackMsFor (Stroke s) const noexcept;
     int  activeVoices() const noexcept { return lastActive; }
+    GrooveStyle currentGrooveStyle() const noexcept { return appliedStyle; }
+    float currentSwing() const noexcept { return appliedSwing; }
 
     /** Times a stroke had to take a slot from a voice that was still sounding,
         because none was idle. A same-stroke retrigger does not count: that one
@@ -156,6 +160,8 @@ private:
     Voice& allocateVoice() noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset) noexcept;
     void   releaseStroke (Stroke stroke) noexcept;
+    void   discardPendingVoices() noexcept;
+    void   applyPendingGrooveControls() noexcept;
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   applyReverbParams() noexcept;
@@ -173,6 +179,10 @@ private:
     float volume = 0.8f;
     float instrumentMix = 0.5f;
     float reverbAmount = 0.30f;
+    float requestedSwing = 0.0f;
+    float appliedSwing = 0.0f;
+    GrooveStyle requestedStyle = GrooveStyle::marcha;
+    GrooveStyle appliedStyle = GrooveStyle::marcha;
     float grooveBpm = 120.0f;
     int groovePulses = 4;
     int bankAttackLead = 0;
@@ -184,6 +194,7 @@ private:
     int lastReleasing = 0;
     int barCounter = 0;
     int lastBarBeat = -1;
+    bool hasSeenPulse = false;
     std::uint32_t voiceClock = 0;
 };
 

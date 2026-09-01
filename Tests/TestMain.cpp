@@ -976,6 +976,79 @@ int main()
                 "the phrase comes back where the song is, not where it was muted");
     }
 
+    // Live controls must not split one beat between two timing maps. Swing used
+    // to change immediately, even when an offbeat from the old value was
+    // already waiting in the voice queue; changing style did the same to the
+    // pattern. Stop appeared to repair both because it happened to clear those
+    // pending voices. A player changes the figure on the next quarter.
+    {
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+        perc.setGrooveStyle (vp::GrooveStyle::rock);
+        perc.setSwing (0.0f);
+
+        std::vector<float> L (static_cast<size_t> (block));
+        std::vector<float> R (static_cast<size_t> (block));
+        vp::ClockTick tick;
+        tick.tempoBpm = 120.0f;
+        tick.pulsesFired = 1;
+        tick.pulseIndex[0] = 1;
+        tick.pulseBeatInBar[0] = 0;
+        perc.render (L.data(), R.data(), block, tick, true);
+
+        perc.setGrooveStyle (vp::GrooveStyle::dance);
+        perc.setSwing (1.0f);
+        expect (perc.currentGrooveStyle() == vp::GrooveStyle::rock
+                    && std::fabs (perc.currentSwing()) < 1.0e-6f,
+                "part and swing wait rather than changing halfway through a beat");
+
+        tick.pulseIndex[0] = 2;
+        perc.render (L.data(), R.data(), block, tick, true);
+        expect (perc.currentGrooveStyle() == vp::GrooveStyle::rock
+                    && std::fabs (perc.currentSwing()) < 1.0e-6f,
+                "the old beat remains internally consistent through its offbeat");
+
+        tick.pulseIndex[0] = 0;
+        tick.pulseBeatInBar[0] = 1;
+        perc.render (L.data(), R.data(), block, tick, true);
+        expect (perc.currentGrooveStyle() == vp::GrooveStyle::dance
+                    && std::fabs (perc.currentSwing() - 1.0f) < 1.0e-6f,
+                "part and swing commit together on the next quarter");
+    }
+
+    // A phase snap invalidates only strokes which have not happened yet. At
+    // full swing the off-eighth is queued thousands of samples ahead; keeping
+    // it after a re-anchor produces one hit on the old beat beside the new one.
+    {
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+        perc.setSwing (1.0f);
+        perc.setGroove (120.0f, 4);
+
+        std::vector<float> L (static_cast<size_t> (block));
+        std::vector<float> R (static_cast<size_t> (block));
+        vp::ClockTick oldGrid;
+        oldGrid.tempoBpm = 120.0f;
+        oldGrid.pulsesFired = 1;
+        oldGrid.pulseIndex[0] = 2;
+        oldGrid.pulseBeatInBar[0] = 0;
+        perc.render (L.data(), R.data(), block, oldGrid, true);
+        const int queued = perc.activeVoices();
+
+        vp::ClockTick newGrid;
+        newGrid.tempoBpm = 120.0f;
+        newGrid.reanchored = true;
+        perc.render (L.data(), R.data(), block, newGrid, true);
+        std::printf ("grid-reanchor  queued-before=%d active-after=%d\n",
+                     queued, perc.activeVoices());
+        expect (queued > 0 && perc.activeVoices() == 0,
+                "a re-anchor cannot play a delayed stroke from the old grid");
+    }
+
     // What the grid does while the clock is aligning itself, which is what a
     // listener hears - and which nothing measured, because every other test
     // reads `tick.tempoBpm`, the tempo *before* the steer. The pulses come out

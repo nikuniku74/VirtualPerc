@@ -986,6 +986,17 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
     lastLeakRemain.store (postPeak, std::memory_order_relaxed);
+    // This is the last honest amplitude in the path. The make-up immediately
+    // below deliberately raises a quiet room to BeatNet's operating level, so
+    // asking the tracker whether the source is real after that point makes a
+    // room look just as loud as a record. Used only to let START join music
+    // that was already playing; the normal quiet-to-loud epoch remains the
+    // primary start detector.
+    // A microphone in a room can produce peaks around 0.03 even with nobody
+    // playing (measured by the room-start regression). A direct/mixer source
+    // therefore needs the higher line-level threshold; the iPad acoustic path
+    // needs the lower one because its real music is much quieter at the mic.
+    tracker.setSourceAudible (postPeak > (speaker ? 0.004f : 0.040f));
     // How much the band is giving. Taken here on purpose: our own part has
     // just been subtracted, so the dynamics cannot follow themselves, and the
     // make-up gain below - which exists to hold the network's operating point

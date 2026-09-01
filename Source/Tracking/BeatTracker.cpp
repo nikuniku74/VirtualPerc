@@ -465,7 +465,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
 
         case TrackingState::listening:
             if (periodic && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
-                && listeningSamples > static_cast<int> (sampleRate * 0.35)
+                && listeningSamples > static_cast<int> (sampleRate * 0.70)
                 && heldBpm > 50.0f && beatCount >= 2
                 && samplesSinceBeat < static_cast<int> (sampleRate * 1.6))
             {
@@ -481,7 +481,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 lockHoldSamples = 0;
             }
             else if (periodic && confidence > 0.28f
-                     && lockHoldSamples > static_cast<int> (sampleRate * (lockedOnce ? 0.06f : 0.08f)))
+                     && lockHoldSamples > static_cast<int> (sampleRate * (lockedOnce ? 0.10f : 0.16f)))
             {
                 currentState = TrackingState::following;
             }
@@ -840,9 +840,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     else
         inputPeakEnv += (blockPeak - inputPeakEnv) * release;
     const bool loudEnough = inputPeakEnv > (speakerFollow ? 0.0010f : 0.0020f);
-    if (inputPeakEnv > (speakerFollow ? 0.004f : 0.020f))
-        heardMusic = true;
-
     BeatHypothesis hyp;
     const bool haveHyp = neural.tryLoad (hyp);
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
@@ -1254,6 +1251,26 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
             voteBeats = 0.0f;
         }
+
+        // A rebuilt decoder grid can be a genuinely different pulse, not the
+        // few milliseconds of uncertainty the live loop is meant to smooth.
+        // Previously a sounding part only leaned towards it, while Stop/Start
+        // made the same grid exact immediately; that is why the manual Stop
+        // sometimes appeared necessary. For a large, confident displacement,
+        // rejoin the accepted beat now. This is causal: songPhase describes a
+        // beat already observed and latency-projected to the present. The tick
+        // marks the re-anchor so PercussionEngine can discard only not-yet-heard
+        // strokes from the old grid.
+        const float rebuiltGridError = wrapCentered (follower.beatPhase() - songPhase);
+        if (armed && sounding && periodic && nnConf > 0.40f
+            && std::fabs (rebuiltGridError) > 0.12f)
+        {
+            waitForQuantize = true;
+            quantizeWaitSamples = 0;
+            waitForSongBeat = true;
+            sounding = false;
+            follower.snapPhase (songPhase, true);
+        }
     }
 
     if (gridMuteSamples > 0)
@@ -1453,14 +1470,17 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // and is the one thing a room alone never does. Until that has happened the
     // percussion is armed and silent rather than playing to nobody.
     //
-    // It has a blind spot and it is deliberate: an app opened onto a track
-    // already playing never sees a change, and waits. The listener releases it
-    // the same way they would tell it anything else - a tap, or a tempo set by
-    // hand - and the state on screen says which of the two it is waiting for.
-    // The alternative is a timeout, and a timeout long enough to be a guard is
-    // long enough to be a nuisance, while one short enough to be tolerable
-    // brings back the shaker playing to an empty stage.
-    const bool inputIsLive = sawInputStart || tapEstablished || ! tempoFollow;
+    // A track may already be playing when START is pressed - Spotify on the
+    // iPad is the ordinary case. Such a signal has no quiet-to-loud edge for
+    // the epoch watcher to report, but it has crossed the separate `heardMusic`
+    // level and the decoder has a periodic grid. Refusing that case leaves a
+    // perfectly locked clock permanently mute until STOP/START or TAP. START is
+    // enough authorisation once those two independent facts agree. A room that
+    // merely fooled the decoder remains below the higher heardMusic threshold,
+    // so pressing START before the band still waits as intended.
+    const bool alreadyPlaying = armed && heardMusic && periodic;
+    const bool inputIsLive = sawInputStart || alreadyPlaying
+                             || tapEstablished || ! tempoFollow;
     const bool canPlay = armed
                       && inputIsLive
                       && (currentState == TrackingState::following

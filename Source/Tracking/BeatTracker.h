@@ -139,6 +139,15 @@ public:
         neural.setInputEpoch (epoch);
     }
 
+    /** The un-normalised analysis input is plainly music-level. This must be
+        supplied before analysis make-up: after make-up an empty room is raised
+        to the network's operating level and is indistinguishable by amplitude. */
+    void setSourceAudible (bool audible) noexcept
+    {
+        if (audible)
+            heardMusic = true;
+    }
+
     struct Output
     {
         ClockTick     clock;
