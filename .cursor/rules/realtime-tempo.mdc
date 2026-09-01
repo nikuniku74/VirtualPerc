@@ -1,0 +1,30 @@
+---
+description: How BPM, beat phase and the bar are found and followed in real time - BeatNet/ONNX worker, BeatDecoder, BeatTracker, TempoFollower clock, latency compensation, octave and tap. Apply to Source/AI/ and Source/Tracking/.
+globs: Source/AI/**,Source/Tracking/**,Source/Audio/**,scripts/probe_*.cpp,docs/AI_BEAT_TRACKING.md,docs/BEAT_TRACKING.md,docs/CORE_TIMING_AUDIT.md
+alwaysApply: false
+---
+
+Read `.claude/skills/realtime-tempo/SKILL.md` in full before changing anything
+in `Source/AI/` or `Source/Tracking/`. It is the single source of truth for the
+tempo chain and it is shared with Claude Code and Codex - update it there, not
+here.
+
+Non-negotiables it spells out:
+
+- ONNX never runs on the audio thread; the musical clock never leaves it.
+- No allocation, no locks, no I/O in `process` / `advance` / `render`.
+- The clock never restarts because the BPM changed - a tempo change is a rate
+  change, never a re-anchor.
+- Never take the beat's tempo *or its position* from a single onset or a volume
+  spike.
+- Every hypothesis is projected to "now" by
+  `(numSamples - offset)/sampleRate + reportedLatencyMs*0.001` before it reaches
+  the clock. If you add a new evidence source, project it the same way.
+- Phase time constants are in **seconds**, never a per-block blend - a fixed
+  blend makes the constant a function of buffer size.
+- The octave (half/double time) is not fully solvable from the signal. Do not
+  "fix" it in the decoder; AUTO plus the listener's choice is the design.
+
+Verify with `./scripts/run-tests.sh` plus the probe targets listed in the skill
+(`VPAlign`, `VPBar`, `VPTiming`, `VPProbe`, `VPRoom`, `VPReplay`). A timing
+change with no probe number attached is not reviewable.
