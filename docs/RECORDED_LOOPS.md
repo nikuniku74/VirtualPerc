@@ -230,7 +230,7 @@ git submodule update --init --recursive
 
 ## 6. I test
 
-`./build-host/VPTests_artefacts/Release/VPTests --loops` — **51 test**, pochi
+`./build-host/VPTests_artefacts/Release/VPTests --loops` — **56 test**, pochi
 secondi, senza la suite neurale. Girano su tutti e due i backend: con i submodule
 c'è Signalsmith, con `-DVP_USE_SIGNALSMITH=OFF` c'è il WSOLA interno, e devono
 passare tutti e due.
@@ -248,6 +248,8 @@ passare tutti e due.
 | STOP immediato | `STOP is immediate - not the next quarter, not the next bar` |
 | cambio parte/swing senza STOP | `the part changed recording without a STOP`, più i test di swing |
 | build macOS e iPadOS Release | CMake: il flag è ortogonale, il target iOS non cambia |
+| il flag spento non cambia niente | `with no bank loaded the part is PercussionEngine's, to the sample` — 3000 blocchi, differenza massima **0** |
+| reset prima di prepare | `resetting one that was never prepared does nothing, and does not crash` |
 
 Numeri misurati con Signalsmith su materiale sintetico (un colpo per quarto):
 latenza dello stretcher **5880 campioni**, identica a 128, 512 e 4096; errore di

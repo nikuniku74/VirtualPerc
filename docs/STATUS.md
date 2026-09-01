@@ -81,7 +81,8 @@ rifiutata e la parte torna ai colpi singoli.
 
 ### Misure
 
-`VPTests --loops`, **51 su 51**, su tutti e due i backend (Signalsmith e WSOLA).
+`VPTests --loops`, **56 su 56**, in tutte e tre le configurazioni: Signalsmith,
+WSOLA di riserva, e flag acceso. Zero warning dal nostro codice in tutte e tre.
 
 | Cosa | Misura |
 |---|---|
@@ -92,10 +93,28 @@ rifiutata e la parte torna ai colpi singoli.
 | Allocazioni nel callback hybrid, 2000 chiamate con scambi | **0** |
 | Buffer 128 / 512 / 4096 | stessi colpi, stesse posizioni, stesso livello |
 | Passo massimo nella forma d'onda, 3 giri | 0,0262 su un seno che ne fa 0,033 — nessun gradino |
+| Flag spento: parte resa contro `PercussionEngine` da solo, 3000 blocchi | differenza massima **0** — è la stessa parte, campione per campione |
 
-Suite intera con il flag spento: **262 passed, 3 failed**, e i tre sono gli stessi
-casi instabili di prima su questo host Linux (variavano già fra 2 e 4 su albero
-non modificato). Nessuna regressione.
+Suite intera, cinque corse: **274 passed, 2 failed** con il flag spento (due
+corse) e lo stesso con il flag acceso (due corse su tre; la terza ne ha
+raccolti altri due). I falliti sono gli stessi casi instabili di prima su
+questo host Linux — variavano già fra 2 e 4 su albero non modificato, e sono
+sensibili al momento in cui il worker neurale pubblica. Nessuna regressione.
+
+### Una cosa che il flag acceso ha fatto emergere, e che non era rumore
+
+Con il flag acceso il residuo del cancellatore di leak su POP passava da 0,376 a
+**0,442**, oltre il limite di 0,40 del test. Il percorso di rendering non
+c'entrava — la prova è il test qui sopra, differenza zero su 3000 blocchi — e la
+causa era il *tempo di prepare*: preparare un player prepara il suo stretcher, e
+preparare uno stretcher lo **misura**, due passaggi di un colpo di prova per
+voce per stem. Quattro calibrazioni, pagate in mezzo all'apertura del device
+audio, con zero registrazioni caricate e nessuna in arrivo. Spostavano l'istante
+in cui il worker neurale riceve il primo audio, e da lì tutto il resto.
+
+Ora i player si preparano quando arriva un banco. Residuo POP con il flag
+acceso: **0,370 / 0,376 / 0,376**, identico al flag spento (0,376). Quello che
+non si usa non deve costare niente, e qui costava una misura.
 
 ### Cosa manca
 
