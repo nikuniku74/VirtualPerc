@@ -44,9 +44,31 @@ BeatNet-class ONNX (see `docs/AI_BEAT_TRACKING.md`). Started in `BeatTracker::pr
 
 When the iOS xcframework is present, link ONNX Runtime via the C API and enable the CoreML EP (`VP_ORT_COREML`), then CPU. Host tests use the official macOS dylib. Do not call `OrtRun` from `process()`. Without the SDK, `StubBeatModel` keeps the tree building.
 
-## TD-15 — Time stretch for loop kits: Signalsmith (MIT) or built-in WSOLA
+## TD-15 — Time stretch for loop kits: Signalsmith (MIT), WSOLA as the floor
 
-Loop kits may time-stretch with pitch locked. Preferred library: Signalsmith Stretch (MIT, `-DVP_USE_SIGNALSMITH=ON`). Default build uses a built-in WSOLA so we do not vendor a third-party header yet. SoundTouch (LGPL) and Rubber Band (GPL) remain forbidden (`docs/LICENSES.md`). Shaker grains (`TD-03`) stay the default live voice.
+Loop kits time-stretch with pitch locked. **Signalsmith Stretch is now vendored** as a submodule (MIT), together with `signalsmith-linear` (MIT) which it needs for its FFT. `VP_USE_SIGNALSMITH` is a tri-state: `AUTO` (the default) uses the library when the submodules are checked out, `ON` insists on it and fails configure without it, `OFF` forces the built-in WSOLA. The WSOLA is a floor, not a product: it exists so a clone without `--recursive` still builds and its tests still mean something.
+
+The stretcher lives behind `Source/Stretch/LoopStretcher.*`, not in `TimeStretchEngine`, which stays exactly as it is: that one is the prototype `loadPercussionLoop` drives, and the new path has two obligations it does not have - no allocation inside `process`, and a *measured* latency rather than the library's own reported one (see TD-16).
+
+SoundTouch (LGPL) and Rubber Band (GPL) remain forbidden (`docs/LICENSES.md`). Shaker grains (`TD-03`) stay the default live voice; TD-03 is not reversed, it is bounded - see TD-16.
+
+## TD-16 — Recorded loops carry the groove, single strokes carry the decisions
+
+TD-03 said a shaker that follows accelerando must change *when* hits occur, not stretch a loop. That is still true, and it is now the reason the two engines are split by the decoder's tempo regime rather than by a preference:
+
+| regime | who plays |
+|---|---|
+| `fixed` | the recording, corrected only for drift |
+| `live` | single strokes, exactly as TD-03 says |
+| `unknown` | single strokes |
+
+The recording carries the groove, the microtiming and the sound of two hands on a drum in a room, none of which is reachable by scheduling samples on a grid. The single-stroke engine carries everything that has to be *decided* while the song is happening: coming in and going out, section changes, the band dropping, and a tempo that is genuinely moving. The handover is on a quarter, preferably on a bar line, over a 45 ms crossfade, and it never touches the clock or the phrase.
+
+Behind `VP_ENABLE_RECORDED_LOOPS`, **off by default**. The classes are compiled and tested in every build so they cannot rot; the flag decides whether `VirtualPercussionEngine` calls them. `PercussionEngine` is driven, never replaced, and is the fallback whenever there is no recording near enough - a tempo past the stretch limit, a swing no take is near, a part the library does not have.
+
+The stretcher's latency is measured in `prepare()` rather than read off the library, by pushing a percussive burst through it at two rates and finding where it comes out. The two are not the same quantity: one is an analysis centre, the other is where a stroke is *heard*, and a constant taken from one version of one library is a constant that goes quietly wrong on the next. Measured at 5880 frames for Signalsmith at 48 kHz; a bug that made it depend on the buffer size put the part 120 ms late on a 4096-frame buffer and on time on a 128-frame one, which is exactly what this measurement now protects.
+
+See `docs/RECORDED_LOOPS.md` for the manifest format and for what has to be recorded.
 
 ## TD-09 — JUCE license
 

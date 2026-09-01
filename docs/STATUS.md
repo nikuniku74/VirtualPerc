@@ -26,6 +26,86 @@ Dopo questo cambio **riconfigura** iOS (`./scripts/configure-ios.sh`) e reinstal
 | Modello | BeatNet BDA GTZAN, LSTM streaming, `Assets/Models/beatnet.onnx` ~1.6 MB |
 | Flags | `VP_USE_ONNX=1`, `VP_ORT_COREML=1`, `VP_HAS_BEAT_MODEL=1` |
 
+## Il percussionista registrato: il motore c'è, la libreria no (1 settembre)
+
+Aggiunto il motore a loop registrati, dietro `VP_ENABLE_RECORDED_LOOPS`, **spento
+di default**. Con il flag spento l'app è esattamente quella di prima: quel ramo
+non viene nemmeno compilato dentro `processBlock`, e `PercussionEngine` è l'unica
+cosa che suona. `BeatDecoder`, `BeatTracker` e `TempoFollower` non sono stati
+toccati.
+
+Documento completo, con la lista di cosa registrare: **[docs/RECORDED_LOOPS.md](RECORDED_LOOPS.md)**.
+
+### La regola
+
+Il regime che il decoder già pubblica, e niente inventato sopra:
+
+| regime | chi suona |
+|---|---|
+| `fixed` | la registrazione, corretta solo per la deriva, molto lentamente |
+| `live` | colpi singoli — TD-03 vale ancora, ed è per questo |
+| `unknown` | colpi singoli, il motore attuale |
+
+Il passaggio avviene solo su un quarto, di preferenza a inizio battuta, con 45 ms
+di crossfade, e non tocca né l'orologio né la frase. Il regime deve tenere la sua
+risposta per ~24 blocchi: un tremolio del decoder faceva due scambi al minuto, e
+si sentivano tutti e due.
+
+### Le due cose che erano sbagliate e sono state misurate
+
+**La latenza dello stretcher non è quella che dichiara la libreria.** Un
+phase-vocoder restituisce audio in ritardo rispetto all'ingresso, e un player che
+lo ignora suona ogni colpo tardi di quella quantità — 120 ms, con Signalsmith al
+preset di default. Ora la latenza viene *misurata* in `prepare()`: un colpo secco
+passa per il backend a due rapporti diversi e si guarda dove esce. Misurata a
+**5880 campioni** con Signalsmith a 48 kHz, **1400** con il WSOLA interno.
+
+La prima versione della misura sbagliava con i buffer grandi — il colpo usciva
+oltre la fine della finestra di misura e il centroide leggeva solo l'attacco.
+Risultato: la parte era **120 ms in ritardo su un buffer da 4096 e in tempo su uno
+da 128**. Il test `the measured lead is the same at every buffer size` esiste
+apposta per quello.
+
+Lo stesso, in modo diverso, nel WSOLA di riserva: la sua lettura restava
+incollata al limite superiore del ring e dove si assestava dipendeva da quanto
+audio arrivava per chiamata — 1018 campioni di anticipo su un buffer da 128, 263
+su uno da 4096.
+
+**Lo swing dentro il quarto non può passare per l'anello di correzione.**
+L'anello ha una costante di tempo più lunga di un quarto: uno spostamento di
+12,5 ms chiesto usciva a 5,4. Ora il warp è aggiunto in avanti — è una funzione
+nota, non c'era ragione di farla scoprire a un anello — e esce a 9,1 ms. Il
+residuo è lo smearing della finestra del vocoder (120 ms), ed è la ragione per
+cui la tolleranza sullo swing nel banco è stretta: oltre 0,18 la scelta è
+rifiutata e la parte torna ai colpi singoli.
+
+### Misure
+
+`VPTests --loops`, **51 su 51**, su tutti e due i backend (Signalsmith e WSOLA).
+
+| Cosa | Misura |
+|---|---|
+| Errore colpo/quarto | **2,35 ms** (limite: 5) |
+| Errore di fase a regime | **−0,02 ms** |
+| Errore attraverso 3 BPM di deriva | **3,35 ms** |
+| Allocazioni nel callback, 900 chiamate con due cambi loop | **0** |
+| Allocazioni nel callback hybrid, 2000 chiamate con scambi | **0** |
+| Buffer 128 / 512 / 4096 | stessi colpi, stesse posizioni, stesso livello |
+| Passo massimo nella forma d'onda, 3 giri | 0,0262 su un seno che ne fa 0,033 — nessun gradino |
+
+Suite intera con il flag spento: **262 passed, 3 failed**, e i tre sono gli stessi
+casi instabili di prima su questo host Linux (variavano già fra 2 e 4 su albero
+non modificato). Nessuna regressione.
+
+### Cosa manca
+
+**I loop.** Non ci sono nel repository e non si sintetizzano: sono esattamente il
+materiale che il motore esiste per suonare. La prima consegna è **DANCE, due
+stem, dodici file** (tre BPM nativi × due take × congas e shaker), per il
+confronto d'ascolto. Solo dopo, e solo se convince, gli altri stili. La lista
+esatta, i requisiti audio e il formato del manifest sono in
+[docs/RECORDED_LOOPS.md](RECORDED_LOOPS.md).
+
 ## Le prime misure su registrazioni vere di una band (31 agosto)
 
 Tre registrazioni dal vivo della band - 31 s, 41 s e 7 min 27 s - passate
@@ -2359,6 +2439,7 @@ il rilevatore di stile decide.
 
 ```bash
 ./scripts/run-tests.sh                 # host
+./build-host/VPTests_artefacts/Release/VPTests --loops   # solo i loop registrati, secondi
 ./scripts/configure-ios.sh             # re-embed + Xcode proj
 ./scripts/build-simulator.sh
 ```

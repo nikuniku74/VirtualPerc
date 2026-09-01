@@ -22,7 +22,10 @@ C++ Audio Engine (JUCE devices + real-time callback)
         ├── TempoFollower (internal clock)
         ├── GrooveEngine (interface now, logic in later MVP)
         ├── PercussionEngine (sample performance)
-        ├── TimeStretchEngine (loop kits)
+        ├── HybridPercussionRenderer (which of the two plays)
+        │     ├── LoopBank / LoopPlayer / LoopStretcher (recorded loops)
+        │     └── PercussionEngine (single strokes)
+        ├── TimeStretchEngine (loop kits, prototype)
         └── MIDI Engine (interface reserved, not in MVP 1)
                 │
                 ▼
@@ -55,7 +58,11 @@ Communication: per-field `std::atomic` snapshot. Settings use atomics too (UI �
 - `TempoFollower` — adaptive PLL clock (`currentTempo`, `beatPhase`, `barPhase`)
 - `BeatTracker` — neural hypothesis + tap tempo + LISTENING → FOLLOWING
 - `PercussionEngine` — sample-accurate shaker hits on the clock grid
-- `TimeStretchEngine` — optional loop kits (WSOLA / Signalsmith)
+- `TimeStretchEngine` — optional loop kits (WSOLA / Signalsmith), prototype
+- `LoopBank` / `LoopPlayer` / `LoopStretcher` / `HybridPercussionRenderer` —
+  the recorded percussionist, behind `VP_ENABLE_RECORDED_LOOPS` (off by
+  default). The clock is never the loop's: the loop is pulled onto the grid,
+  corrected by rate and never by a jump. See `docs/RECORDED_LOOPS.md`.
 - `VirtualPercussionEngine` — public real-time facade
 
 ## Input path (ready for multi-mic)

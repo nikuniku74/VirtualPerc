@@ -1,11 +1,13 @@
 #include "Audio/VirtualPercussionEngine.h"
 #include "Percussion/PercussionEngine.h"
 #include "TestAiBeat.h"
+#include "TestLoops.h"
 #include "Tracking/TempoFollower.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace
@@ -45,10 +47,21 @@ namespace
     }
 }
 
-int main()
+int main (int argc, char** argv)
 {
     constexpr double sr = 48000.0;
     constexpr int block = 128;
+
+    // The recorded-loop tests on their own. The suite drives the neural worker
+    // in real time and takes minutes; the loop tests take seconds, and being
+    // able to run them alone is the difference between iterating on them and
+    // not. The default - no arguments - is still the whole suite.
+    if (argc > 1 && std::string (argv[1]) == "--loops")
+    {
+        vpRunLoopTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
 
     std::printf ("Virtual Percussionist — engine / clock / AI tests\n");
 
@@ -1353,6 +1366,7 @@ int main()
     }
 
     vpRunAiBeatTests (gPassed, gFailed);
+    vpRunLoopTests (gPassed, gFailed);
 
     std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
     return gFailed == 0 ? 0 : 1;

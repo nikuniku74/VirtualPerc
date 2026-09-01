@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core/Types.h"
+#include "Loops/HybridPercussionRenderer.h"
+#include "Loops/LoopBank.h"
 #include "Percussion/BandDynamics.h"
 #include "Percussion/PercussionEngine.h"
 #include "Percussion/StyleDetector.h"
@@ -13,6 +15,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace vp
@@ -98,6 +101,26 @@ public:
     void loadPercussionLoop (const float* left, const float* right, int frames, float nativeBpm);
     void clearPercussionLoop();
 
+    /** The recorded percussionist (docs/RECORDED_LOOPS.md).
+
+        `loadLoopBank` reads a manifest and every file it names into memory and
+        hands the result to the hybrid renderer. It allocates and it does file
+        I/O, so like `loadPercussionLoop` it may only be called while the device
+        is closed - before prepare() or after releaseResources(). It returns
+        false and fills `error` when the bank is not usable, and in that case
+        nothing changes: a bank is all there or it is not used.
+
+        With `VP_ENABLE_RECORDED_LOOPS` off - the default - loading a bank is
+        allowed and changes nothing: the render path is the one it always was.
+        The build flag is the switch; `setRecordedLoopsEnabled` is how the app
+        turns it off again at runtime once the build has turned it on. */
+    bool loadLoopBank (const std::string& manifestPath, std::string& error);
+    void clearLoopBank();
+    void setRecordedLoopsEnabled (bool on) noexcept { hybrid.setEnabled (on); }
+    bool recordedLoopsEnabled() const noexcept { return hybrid.isEnabled(); }
+    /** True when a recording is what is currently being heard. */
+    bool recordedLoopPlaying() const noexcept { return hybrid.loopIsPlaying(); }
+
 private:
     void processBlock (const float* const* inputs, int numInputs,
                        float* const* outputs, int numOutputs,
@@ -123,6 +146,12 @@ private:
 
     BeatTracker tracker;
     PercussionEngine percussion;
+    /** The recorded percussionist and the bank it plays out of. Both exist
+        whatever `VP_ENABLE_RECORDED_LOOPS` says - they are compiled and tested
+        in every build - but with the flag off nothing in `processBlock` calls
+        them and the part is `PercussionEngine`'s exactly as before. */
+    HybridPercussionRenderer hybrid;
+    std::unique_ptr<LoopBank> loopBank;
     StyleDetector styleDetector;
     StretchFactor stretch;
     TimeStretchEngine stretcher;
@@ -235,6 +264,9 @@ private:
     std::atomic<float> lastStyleSync { 0.0f };
     std::atomic<float> lastStyleOccupancy { 0.0f };
     std::atomic<int>   lastHits { 0 };
+    std::atomic<bool>  lastLoopPlaying { false };
+    std::atomic<float> lastLoopPhaseMs { 0.0f };
+    std::atomic<int>   lastHandovers { 0 };
     std::atomic<float> lastAttackLeadMs { 0.0f };
 
     std::atomic<float> clickBpm { 120.0f };

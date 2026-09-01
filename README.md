@@ -19,6 +19,16 @@ CMake fails at configure time. Once per checkout:
 git submodule update --init --filter=blob:none third_party/JUCE
 ```
 
+Signalsmith Stretch and Signalsmith Linear are submodules too (both MIT,
+header-only, small). They are what the recorded-loop percussionist stretches
+with. Without them the tree still configures and builds - the loop player falls
+back to a built-in WSOLA, which is a floor and not the shipping sound - so this
+one is optional but wanted:
+
+```bash
+git submodule update --init third_party/signalsmith-stretch third_party/signalsmith-linear
+```
+
 ```bash
 ./scripts/setup-ai.sh   # ONNX Runtime + Assets/Models/beatnet.onnx
 ./scripts/run-tests.sh

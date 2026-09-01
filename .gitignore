@@ -2,6 +2,9 @@ build/
 build-ios/
 build-sim/
 build-host/
+build-wsola/
+build-loops/
+build-*/
 cmake-build-*/
 .DS_Store
 *.xcuserstate

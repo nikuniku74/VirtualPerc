@@ -270,6 +270,14 @@ struct EngineSnapshot
     /** False when the listener has locked a BPM (FISSO). Default true (SEGUI). */
     bool  tempoFollow          = true;
 
+    /** The recorded percussionist: whether a recording is what is being heard,
+        how far its audio is from where the clock says it should be, and how
+        many times the part has changed hands between the two engines. All
+        three are zero in a build with VP_ENABLE_RECORDED_LOOPS off. */
+    bool  loopPlaying          = false;
+    float loopPhaseMs          = 0.0f;
+    int   loopHandovers        = 0;
+
     int   grooveStyle          = 0;
     float grooveStyleConfidence = 0.0f;
     float styleEvenKick        = 0.0f;

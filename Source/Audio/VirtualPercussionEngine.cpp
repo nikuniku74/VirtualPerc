@@ -113,6 +113,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
 
     tracker.prepare (sampleRate);
     percussion.prepare (sampleRate);
+    hybrid.prepare (sampleRate, maxBlock);
+    hybrid.setBank (loopBank.get());
     styleDetector.prepare (sampleRate);
     percussion.setSeed (0x51A4E1u);
     stretcher.prepare (sampleRate, maxBlock);
@@ -125,6 +127,7 @@ void VirtualPercussionEngine::reset() noexcept
 {
     tracker.reset();
     percussion.reset();
+    hybrid.reset();
     styleDetector.reset();
     stretcher.reset();
     stretch.reset();
@@ -177,12 +180,31 @@ void VirtualPercussionEngine::start() noexcept
 {
     tracker.start();
     percussion.clearVoices();
+    hybrid.start();
 }
 
 void VirtualPercussionEngine::stop() noexcept
 {
     tracker.stop();
     percussion.silence();
+    hybrid.stop();
+}
+
+bool VirtualPercussionEngine::loadLoopBank (const std::string& manifestPath, std::string& error)
+{
+    auto bank = std::make_unique<LoopBank>();
+    if (! bank->loadFromManifestFile (manifestPath, error))
+        return false;
+
+    loopBank = std::move (bank);
+    hybrid.setBank (loopBank.get());
+    return true;
+}
+
+void VirtualPercussionEngine::clearLoopBank()
+{
+    hybrid.setBank (nullptr);
+    loopBank.reset();
 }
 
 void VirtualPercussionEngine::tapAt (double timeSeconds) noexcept
@@ -1076,6 +1098,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // of three is not an entrance. `wrappedBar` is the clock saying the count
     // has just come round, which is the only moment either is worth doing.
     const bool followDynamics = wantDynamics;
+    bool sectionJustChanged = false;
     percussion.setDynamics (followDynamics ? bandDynamics.level() : 1.0f);
     if (! followDynamics)
     {
@@ -1098,6 +1121,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         {
             percussion.alignPhrase();
             ++sectionCount;
+            sectionJustChanged = true;
         }
     }
 
@@ -1115,8 +1139,30 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     }
     else
     {
+#if defined(VP_ENABLE_RECORDED_LOOPS) && VP_ENABLE_RECORDED_LOOPS
+        // The recorded percussionist. With the flag off - which is the default -
+        // this whole branch is not compiled and the call below is the only thing
+        // that renders the part, exactly as it always was. See
+        // docs/RECORDED_LOOPS.md and TD-16.
+        HybridPercussionRenderer::Input hin;
+        hin.tick = tr.clock;
+        hin.regime = tr.regime;
+        hin.audible = tr.percussionShouldPlay && ! standingDown;
+        hin.bpm = tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
+                                            : (tr.bpm > 40.0f ? tr.bpm : 120.0f);
+        hin.style = chosen;
+        hin.swing = cfg.swing.load (std::memory_order_relaxed);
+        hin.intensity = cfg.intensity.load (std::memory_order_relaxed);
+        hin.dynamics = followDynamics ? bandDynamics.level() : 1.0f;
+        hin.congasEnabled = cfg.congasEnabled.load (std::memory_order_relaxed);
+        hin.shakerEnabled = cfg.shakerEnabled.load (std::memory_order_relaxed);
+        hin.instrumentMix = cfg.instrumentMix.load (std::memory_order_relaxed);
+        hin.sectionChanged = sectionJustChanged;
+        hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
+#else
         percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
                            tr.percussionShouldPlay && ! standingDown);
+#endif
     }
 
     const bool monitorClick = clickEnabled.load (std::memory_order_relaxed);
@@ -1196,6 +1242,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastFitResidual.store (tr.fitResidual, std::memory_order_relaxed);
     lastFitCoverage.store (tr.fitCoverage, std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
+    lastLoopPlaying.store (hybrid.loopIsPlaying(), std::memory_order_relaxed);
+    lastLoopPhaseMs.store (hybrid.player().phaseErrorMs(), std::memory_order_relaxed);
+    lastHandovers.store (hybrid.handovers(), std::memory_order_relaxed);
     lastStyleConf.store (styleDetector.confidence(), std::memory_order_relaxed);
     // Everything the UI shows is published from here. Reading it off the
     // objects instead - as the style features and the hit count were - is the
@@ -1295,6 +1344,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);
     s.tempoFollow = cfg.tempoFollow.load (std::memory_order_relaxed);
 
+    s.loopPlaying = lastLoopPlaying.load (std::memory_order_relaxed);
+    s.loopPhaseMs = lastLoopPhaseMs.load (std::memory_order_relaxed);
+    s.loopHandovers = lastHandovers.load (std::memory_order_relaxed);
     s.grooveStyle = lastStyle.load (std::memory_order_relaxed);
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
     s.styleEvenKick = lastStyleEvenKick.load (std::memory_order_relaxed);

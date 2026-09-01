@@ -28,7 +28,14 @@ Android + Oboe around `vp_core`.
 
 ## Neural tracking + loop TSM
 
-ONNX BeatNet-class tracker is the analysis path. Loop stretch is optional. See `docs/AI_BEAT_TRACKING.md`.
+ONNX BeatNet-class tracker is the analysis path. See `docs/AI_BEAT_TRACKING.md`.
+
+Loop stretch is no longer a placeholder: Signalsmith Stretch is vendored and the
+recorded-loop percussionist is implemented and tested behind
+`VP_ENABLE_RECORDED_LOOPS` (off). What is missing is the library of recordings -
+see `docs/RECORDED_LOOPS.md` for the list. First delivery is DANCE only, two
+stems, twelve files, for a listening comparison; the other styles follow only if
+it convinces.
 
 ## Explicitly later
 

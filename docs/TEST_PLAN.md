@@ -18,8 +18,33 @@
 | Groove, styles, swing, humanisation, samples, grid | See `Tests/TestAiBeat.cpp` |
 | AudioFifo / BeatDecoder / stretch / WSOLA / log-spect / worker | See `Tests/TestAiBeat.cpp` |
 | FIFO overrun | Reported exactly; the decoder keeps the tempo but drops its stale confidence |
+| Recorded loops: manifest, WAV reader, bank, player, hybrid | See `Tests/TestLoops.cpp`, and `docs/RECORDED_LOOPS.md` for what each one protects |
 
 Shaker events must keep a monotonically increasing sample index (no loop restart).
+
+### Recorded loops
+
+`./build-host/VPTests_artefacts/Release/VPTests --loops` runs only these - seconds
+rather than the minutes the neural suite takes, because it does not drive the
+worker in real time.
+
+| Case | Expect |
+|---|---|
+| Coming in | Silence until the quarter the part enters on; the first stroke *on* it |
+| The junction | No step in the waveform anywhere across three passes - no click |
+| The callback | Zero heap allocations, entry, junctions and loop changes included |
+| 128 / 512 / 4096 buffers | Same strokes, same times to within 5 ms, same level to within 8% |
+| Changing recording | One stroke per quarter through the change - none doubled, none dropped |
+| Phase | Every stroke within 5 ms of its quarter (measured: 2.35 ms) |
+| A 3 BPM drift | Still within 5 ms at the end of it (measured: 3.35 ms) |
+| Regime `live` | The part goes back to single strokes, on a quarter, once |
+| STOP | Silent on the sample, not on the next quarter |
+| Swing | The off-eighth moves by the amount asked for; a swing no take is near is refused |
+| Stretcher latency | The same measured lead at every buffer size |
+
+Both backends are run: with the submodules checked out the tests run against
+Signalsmith, and `-DVP_USE_SIGNALSMITH=OFF` runs the same suite against the
+built-in WSOLA. Both must pass - the fallback is a floor, not an excuse.
 
 ## Diagnostics (built on demand, not part of a run)
 

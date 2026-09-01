@@ -37,11 +37,67 @@ set (VP_CORE_SOURCES
     Source/AI/ModelLocator.cpp
     Source/Stretch/StretchFactor.cpp
     Source/Stretch/TimeStretchEngine.cpp
+    Source/Stretch/LoopStretcher.cpp
+    Source/Loops/LoopManifest.cpp
+    Source/Loops/WavFile.cpp
+    Source/Loops/LoopBank.cpp
+    Source/Loops/LoopPlayer.cpp
+    Source/Loops/HybridPercussionRenderer.cpp
     Source/Platform/NativeAudioBridge.cpp
 )
 
 option (VP_USE_ONNX "Link ONNX Runtime Mobile for neural beat tracking" OFF)
-option (VP_USE_SIGNALSMITH "Use vendored Signalsmith Stretch" OFF)
+# ON, OFF or AUTO. AUTO - the default - uses the vendored Signalsmith Stretch
+# when the submodules are checked out and the built-in WSOLA when they are not,
+# so a fresh clone without `--recursive` still configures and still builds.
+# OFF forces the fallback, which is how its tests get run.
+set (VP_USE_SIGNALSMITH "AUTO" CACHE STRING "Use vendored Signalsmith Stretch: ON, OFF or AUTO")
+set_property (CACHE VP_USE_SIGNALSMITH PROPERTY STRINGS AUTO ON OFF)
+
+# The recorded-loop percussionist. Off: the app is exactly what it was, and
+# PercussionEngine is the only thing that plays. On: HybridPercussionRenderer
+# hands the part to a recording in the fixed tempo regime and back to single
+# strokes when the tempo moves. See docs/RECORDED_LOOPS.md.
+#
+# The classes are compiled either way, so the tests exercise them in the default
+# build and they cannot rot. What this switches is whether the engine uses them.
+option (VP_ENABLE_RECORDED_LOOPS "Let recorded loops carry the groove" OFF)
+# Signalsmith Linear can use Apple's Accelerate for its FFT. Off by default: the
+# portable path is what every platform here has been measured on, and turning it
+# on is a change to the sound of the shipping build that wants measuring first.
+option (VP_SIGNALSMITH_ACCELERATE "Let Signalsmith Linear use Accelerate on Apple" OFF)
+
+# Signalsmith Stretch is header-only and vendored as two submodules (the
+# stretcher and the linear-algebra/FFT library under it, both MIT).
+set (VP_SIGNALSMITH_HEADER
+     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch/include/signalsmith-stretch/signalsmith-stretch.h")
+set (VP_SIGNALSMITH_LINEAR_HEADER
+     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-linear/include/signalsmith-linear/stft.h")
+if (EXISTS "${VP_SIGNALSMITH_HEADER}" AND EXISTS "${VP_SIGNALSMITH_LINEAR_HEADER}")
+    set (VP_SIGNALSMITH_PRESENT TRUE)
+else()
+    set (VP_SIGNALSMITH_PRESENT FALSE)
+endif()
+
+if (VP_USE_SIGNALSMITH STREQUAL "AUTO")
+    set (VP_SIGNALSMITH_ACTIVE ${VP_SIGNALSMITH_PRESENT})
+elseif (VP_USE_SIGNALSMITH)
+    if (NOT VP_SIGNALSMITH_PRESENT)
+        message (FATAL_ERROR
+                 "VP_USE_SIGNALSMITH=ON but third_party/signalsmith-stretch is not checked out. "
+                 "Run: git submodule update --init --recursive")
+    endif()
+    set (VP_SIGNALSMITH_ACTIVE TRUE)
+else()
+    set (VP_SIGNALSMITH_ACTIVE FALSE)
+endif()
+
+if (VP_SIGNALSMITH_ACTIVE)
+    message (STATUS "Loop time stretch: Signalsmith Stretch")
+else()
+    message (STATUS "Loop time stretch: built-in WSOLA (not the shipping sound)")
+endif()
+
 set (ONNXRUNTIME_ROOT "" CACHE PATH "Root of ONNX Runtime host SDK (include/ + lib/)")
 set (ONNXRUNTIME_IOS_XCF "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime-ios/onnxruntime.xcframework"
      CACHE PATH "ONNX Runtime iOS xcframework")
@@ -215,6 +271,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         ${VP_CORE_SOURCES}
         Tests/TestMain.cpp
         Tests/TestAiBeat.cpp
+        Tests/TestLoops.cpp
     )
 
     target_include_directories (VPTests PRIVATE
@@ -541,12 +598,24 @@ function (vp_apply_ai_options target)
         target_compile_definitions (${target} PRIVATE VP_HAS_PERC_SAMPLES=1)
         target_link_libraries (${target} PRIVATE VpPercussionSamples juce::juce_audio_formats)
     endif()
-    if (VP_USE_SIGNALSMITH)
+    if (VP_SIGNALSMITH_ACTIVE)
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=1)
         target_include_directories (${target} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch)
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-linear/include)
+        if (APPLE AND VP_SIGNALSMITH_ACCELERATE)
+            target_compile_definitions (${target} PRIVATE
+                SIGNALSMITH_USE_ACCELERATE ACCELERATE_NEW_LAPACK)
+            target_link_libraries (${target} PRIVATE "-framework Accelerate")
+        endif()
     else()
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=0)
+    endif()
+
+    if (VP_ENABLE_RECORDED_LOOPS)
+        target_compile_definitions (${target} PRIVATE VP_ENABLE_RECORDED_LOOPS=1)
+    else()
+        target_compile_definitions (${target} PRIVATE VP_ENABLE_RECORDED_LOOPS=0)
     endif()
 endfunction()
 
