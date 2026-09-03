@@ -31,7 +31,7 @@ public:
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
-    void setShakerSubdivision (Subdivision s) noexcept { groove.setShakerSubdivision (s); }
+    void setSubdivision (Subdivision s) noexcept { groove.setSubdivision (s); }
 
     /** How far ahead of the beat the clock must place a pulse for the stroke to
         be *heard* on it: the slowest attack in the bank. The tracker adds this

@@ -9,6 +9,16 @@ namespace vp
 
 namespace
 {
+    bool stepAllowedForSubdivision (int step, Subdivision subdivision) noexcept
+    {
+        if (subdivision == Subdivision::quarter)
+            return (step % 4) == 0;
+        if (subdivision == Subdivision::eighth
+            || subdivision == Subdivision::autoDetect)
+            return (step % 2) == 0;
+        return true;
+    }
+
     // Everything is on a sixteenth grid. Steps 0, 4, 8, 12 are the quarters;
     // 2, 6, 10, 14 are the off-eighths; the odd steps are the sixteenths in
     // between - the "e" and the "a" - where the quiet strokes live.
@@ -670,9 +680,9 @@ void GrooveEngine::setDynamics (float amount) noexcept
     dynamics = clamp01 (amount);
 }
 
-void GrooveEngine::setShakerSubdivision (Subdivision s) noexcept
+void GrooveEngine::setSubdivision (Subdivision s) noexcept
 {
-    shakerGrid = s == Subdivision::autoDetect ? Subdivision::eighth : s;
+    subdivisionGrid = s == Subdivision::autoDetect ? Subdivision::eighth : s;
 }
 
 float GrooveEngine::dynamicGain() const noexcept
@@ -747,6 +757,8 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     if (out == nullptr || maxOut <= 0 || step < 0 || step >= kStepsPerBar)
         return 0;
 
+    const bool subdivisionAllowsStep =
+        stepAllowedForSubdivision (step, subdivisionGrid);
     const StyleSpec& spec = kStyles[static_cast<int> (style)];
     int n = 0;
     const int beat = step / 4;
@@ -757,13 +769,8 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         // The subdivision setting thins the style's pattern; it never adds to
         // it, so a style that does not want sixteenths does not get them just
         // because the user asked for a busy shaker.
-        bool allowed = true;
-        if (shakerGrid == Subdivision::quarter)
-            allowed = (step % 4) == 0;
-        else if (shakerGrid == Subdivision::eighth)
-            allowed = (step % 2) == 0;
-
-        const float v = allowed && v_survives (spec.shaker[step]) ? spec.shaker[step] : 0.0f;
+        const float v = subdivisionAllowsStep && v_survives (spec.shaker[step])
+                            ? spec.shaker[step] : 0.0f;
         if (v > 0.0f)
         {
             // Down on the pulse, up on the return. They are different strokes
@@ -792,6 +799,18 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     // edited later cannot quietly put a stroke back on the downbeat. The shaker
     // is not covered by it - a shaker on the pulse is the pulse, and it is what
     // the listener follows.
+    // Coarse grids suppress conga output, not the deterministic player state.
+    // Before congas shared this gate, an odd-step table hit or ghost consumed
+    // its velocity/timing draws and therefore fixed every later allowed hit.
+    // Generate into a bounded discard buffer on filtered steps so that stream
+    // remains bit-identical, while leaving the shaker's pre-existing
+    // skip-before-RNG behavior unchanged.
+    GrooveEvent discardedCongas[kMaxEvents];
+    GrooveEvent* congaOut = subdivisionAllowsStep ? out : discardedCongas;
+    const int congaMaxOut = subdivisionAllowsStep ? maxOut
+                                                  : std::min (maxOut, kMaxEvents);
+    int congaN = subdivisionAllowsStep ? n : 0;
+
     if (congasOn && step != 0)
     {
         // An eight-bar sentence: A B A C  D B A, then the fill. The first four
@@ -823,17 +842,18 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
             count = spec.nD;
         }
 
-        for (int i = 0; i < count && n < maxOut; ++i)
+        for (int i = 0; i < count && congaN < congaMaxOut; ++i)
         {
             if (bar[i].step != step)
                 continue;
             // The quiet half of the figure goes first as the band comes down.
             if (! v_survives (bar[i].velocity))
                 continue;
-            out[n].stroke = bar[i].stroke;
-            out[n].velocity = humanVelocity (bar[i].velocity * accent * dynamicGain());
-            out[n].delayBeats = humanDelay (step);
-            ++n;
+            congaOut[congaN].stroke = bar[i].stroke;
+            congaOut[congaN].velocity = humanVelocity (
+                bar[i].velocity * accent * dynamicGain());
+            congaOut[congaN].delayBeats = humanDelay (step);
+            ++congaN;
         }
 
         // Ghost notes: the barely-there fingertip strokes on the sixteenths a
@@ -842,7 +862,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         // have to stay quiet enough that you notice them only when they stop.
         // How many there are is part of the style: a pop record wants almost
         // none, a marcha is built out of them.
-        if (n < maxOut && ! fill && (step % 2) == 1)
+        if (congaN < congaMaxOut && ! fill && (step % 2) == 1)
         {
             // Ghosts are the first thing to go: they are the part of the
             // playing that exists only because there was room for it.
@@ -850,14 +870,18 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
                                  * dynamics * dynamics;
             if (rng.nextFloat() < chance)
             {
-                out[n].stroke = rng.nextFloat() < 0.5f ? Stroke::toe : Stroke::heel;
-                out[n].velocity = humanVelocity (0.16f * accent * dynamicGain());
-                out[n].delayBeats = humanDelay (step);
-                ++n;
+                congaOut[congaN].stroke =
+                    rng.nextFloat() < 0.5f ? Stroke::toe : Stroke::heel;
+                congaOut[congaN].velocity =
+                    humanVelocity (0.16f * accent * dynamicGain());
+                congaOut[congaN].delayBeats = humanDelay (step);
+                ++congaN;
             }
         }
     }
 
+    if (subdivisionAllowsStep)
+        n = congaN;
     return n;
 }
 

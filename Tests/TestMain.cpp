@@ -4,10 +4,15 @@
 #include "TestLoops.h"
 #include "Tracking/TempoFollower.h"
 
+#include "../scripts/probe_song_render.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -45,6 +50,807 @@ namespace
             pos += block;
         }
     }
+    // ---------------------------------------------------------------------
+    // The leak canceller bench.
+    //
+    // Extracted from main() so `--leak` can run it on its own: the sweep is a
+    // hundred-odd engine runs and iterating on it inside the full suite means
+    // waiting for the neural worker every time.
+    //
+    // The mic hears the app's own output delayed by the round trip, so the
+    // reference has to be older than the block is long - otherwise the tail of
+    // the block would need output that has not been rendered yet. 150 ms covers
+    // every buffer size used here. `reportedLatencyMs` is a parameter because
+    // the honest default is *zero* - nobody has measured the rig - and a
+    // reference taken 8 ms back is where a grid-locked part looks most like the
+    // band. See the no-leak bench below.
+    // ---------------------------------------------------------------------
+    struct LeakRun
+    {
+        /** Mean of leakRemain/inputPeak over the counted blocks: the share of
+            our own return the analysis is still carrying. 1.0 is "not
+            subtracted at all". */
+        float remain = 1.0f;
+        /** The worst single counted block. A mean hides one badly missed onset,
+            and one missed onset is what the tracker follows. */
+        float worstBlock = 1.0f;
+        int   counted = 0;
+        /** The rendered part, block by block, when asked for. The canceller is
+            an analysis-only seam: switching it changes what the tracker is
+            handed and must not change a sample of what the listener hears. */
+        std::vector<float> output;
+    };
+
+    LeakRun leakRun (double sr, int blk, vp::FollowSource source, float acousticExtraMs,
+                     int style, vp::Subdivision subdivision, bool cancellationEnabled,
+                     bool captureOutput, float reportedLatencyMs = 150.0f)
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, blk, 1);
+        eng.settings().followSource.store (static_cast<int> (source));
+        eng.settings().masterVolume.store (1.0f);
+        eng.settings().reverbAmount.store (0.0f);
+        eng.settings().subdivision.store (static_cast<int> (subdivision));
+        eng.settings().grooveAuto.store (false);
+        if (style >= 0)
+            eng.settings().grooveStyle.store (style);
+        eng.setLeakCancellationEnabledForTest (cancellationEnabled);
+        // Hold the part still. This measures the canceller, and the canceller's
+        // residual depends on how much part there is to cancel - which is why it
+        // is run over every style and every subdivision rather than whichever
+        // one happens to be the default. Dynamics would move it for the same
+        // reason and for a reason that is an artefact here: the only thing on
+        // this rig's input is the app's own return, so the band the dynamics
+        // would be reading is us.
+        eng.settings().dynamicsFollow.store (false);
+        eng.setReportedLatencyMs (reportedLatencyMs);
+        eng.setFixedBpm (120.0f);
+
+        const double back = std::max (0.008, static_cast<double> (reportedLatencyMs) * 0.001);
+        const int delay = static_cast<int> ((back + acousticExtraMs * 0.001) * sr);
+        std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
+        int histWrite = 0;
+
+        std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        eng.start();
+        eng.tapAt (0.0);
+        eng.tapAt (0.5);
+        eng.tapAt (1.0);
+        eng.tapAt (1.5);
+
+        double sum = 0.0;
+        float worst = 0.0f;
+        std::vector<float> rendered;
+        if (captureOutput)
+            rendered.reserve (static_cast<size_t> (sr * 12.0));
+        int counted = 0;
+        const int blocks = static_cast<int> (sr * 8.0) / blk;
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < blk; ++i)
+            {
+                const int ri = (histWrite - delay + i + static_cast<int> (history.size()))
+                               % static_cast<int> (history.size());
+                in[static_cast<size_t> (i)] = history[static_cast<size_t> (ri)] * 0.6f;
+            }
+            const float* ins[1] = { in.data() };
+            eng.process (ins, 1, outs, 2, blk);
+            for (int i = 0; i < blk; ++i)
+            {
+                history[static_cast<size_t> (histWrite)] =
+                    0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                histWrite = (histWrite + 1) % static_cast<int> (history.size());
+            }
+            // Every block, not only the counted ones: this is the listener's
+            // signal, and the A/B has to cover the acquisition as well.
+            if (captureOutput)
+            {
+                rendered.insert (rendered.end(), oL.begin(), oL.end());
+                rendered.insert (rendered.end(), oR.begin(), oR.end());
+            }
+            const auto snap = eng.snapshot();
+            if (b > blocks / 3 && snap.inputPeak > 0.08f)
+            {
+                const float ratio = snap.leakRemain / snap.inputPeak;
+                sum += static_cast<double> (ratio);
+                worst = std::max (worst, ratio);
+                ++counted;
+            }
+        }
+        LeakRun out;
+        out.remain = counted > 0 ? static_cast<float> (sum / counted) : 1.0f;
+        out.worstBlock = counted > 0 ? worst : 1.0f;
+        out.counted = counted;
+        out.output = std::move (rendered);
+        return out;
+    }
+
+    /** The same closed loop, but the mic hears the app through the iPad's own
+        speaker in a room, built from the reflection taps, gains, band limits and
+        noise floor of `vp::probe::speakerRoomMic` - the room this repository
+        measures everything else in.
+
+        The bench above hands the canceller an exact scaled copy of its own output
+        at a whole number of samples, and a converged two-band fit removes
+        essentially all of it. A room is not that, and the difference matters
+        enough to be measured one cause at a time. Same rig, 8 s, funk at
+        eighths, `leakRemain/inputPeak`:
+
+            exact copy, integer delay                     0.0000
+            + delay 0.373 of a sample off the grid         0.0957
+            + a -56 dB noise floor                         0.0045
+            + 260 Hz/9 kHz band limiting, nothing else     0.8050
+            + one wall at 7.3 ms and a second at 14.6 ms   0.8484
+            everything, one wall                           0.8755   (off 0.9903)
+            everything, the full eight-tap tail            0.9150   (off 0.9902)
+
+        Against the cancellation-off control on each fixture, the share of the
+        return actually removed: **90.2%** when the direct component reaches the
+        mic spectrally unmodified at a fractional delay (0.0963 against 0.9791);
+        **18.9%** once that same direct component is band-shaped by the fixture's
+        260 Hz and 9 kHz limits and nothing else changes (0.8050 against 0.9928);
+        **11.5%** on the complete one-wall fixture (0.8755 against 0.9903) and
+        **7.6%** with the full eight-tap tail (0.9150 against 0.9902).
+
+        So: a return at a fractional delay is still cancelled. A return whose
+        *spectrum* has been reshaped inside each band is largely not - two gains
+        cannot follow a 260 Hz high pass through a conga - and neither is a
+        reflection that is not in the reference at any single delay. The
+        0.805-0.915 residual is where those two limits of a two-band, single-delay
+        model put the floor for this fixture; it is not a regression, and it is not
+        a claim that the direct arrival has been taken out of a room. The 0.0000
+        above is a statement about the estimator on an exact copy, and nothing
+        more. */
+    enum class RoomModel { fractional, oneWall, eightWalls };
+
+    LeakRun roomLeakRun (double sr, int blk, bool cancellationEnabled, int style,
+                         RoomModel model)
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, blk, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+        eng.settings().masterVolume.store (1.0f);
+        eng.settings().reverbAmount.store (0.0f);
+        eng.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
+        eng.settings().grooveAuto.store (false);
+        eng.settings().grooveStyle.store (style);
+        eng.settings().dynamicsFollow.store (false);
+        eng.setLeakCancellationEnabledForTest (cancellationEnabled);
+        eng.setReportedLatencyMs (150.0f);
+        eng.setFixedBpm (120.0f);
+
+        const int taps[8] = { 411, 967, 1733, 2591, 3701, 5273, 7639, 11003 };
+        const float gains[8] = { 0.42f, 0.31f, 0.26f, 0.20f, 0.16f, 0.12f, 0.09f, 0.06f };
+        vp::probe::Biquad hp1, hp2, lp;
+        hp1.highpass (sr, 260.0, 0.707);
+        hp2.highpass (sr, 260.0, 0.707);
+        lp.lowpass (sr, 9000.0, 0.707);
+        std::mt19937 rng (839u ^ 0x5eedu);
+
+        // 150 ms device plus a 25.37 ms flight: not a whole number of samples,
+        // which is the first thing an exact-copy bench does not test. The
+        // reference the canceller keeps is sampled on the grid, so the best any
+        // integer delay can do here is 0.37 of a sample out.
+        const double directFrac = 0.175373 * sr;
+        const int direct = static_cast<int> (directFrac);
+        const double frac = directFrac - direct;
+        const int span = direct + taps[7] + blk * 4;
+        std::vector<float> history (static_cast<size_t> (span), 0.0f);
+        int histWrite = 0;
+
+        std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        eng.start();
+        eng.tapAt (0.0);
+        eng.tapAt (0.5);
+        eng.tapAt (1.0);
+        eng.tapAt (1.5);
+
+        double sum = 0.0;
+        float worst = 0.0f;
+        int counted = 0;
+        const int size = static_cast<int> (history.size());
+        const int blocks = static_cast<int> (sr * 8.0) / blk;
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int i = 0; i < blk; ++i)
+            {
+                const int at = histWrite - direct + i;
+                const float d0 = history[static_cast<size_t> ((at + size) % size)];
+                const float d1 = history[static_cast<size_t> ((at - 1 + size) % size)];
+                float s = static_cast<float> ((1.0 - frac)) * d0 + static_cast<float> (frac) * d1;
+                // One wall at 7.3 ms and 0.35, or the whole eight-tap tail.
+                if (model == RoomModel::eightWalls)
+                {
+                    for (int k = 0; k < 8; ++k)
+                        s += gains[k]
+                             * history[static_cast<size_t> ((at - taps[k] + size) % size)];
+                }
+                else if (model == RoomModel::oneWall)
+                {
+                    const int w = static_cast<int> (0.0073 * sr);
+                    s += 0.35f * history[static_cast<size_t> ((at - w + size) % size)]
+                         + 0.12f * history[static_cast<size_t> ((at - 2 * w + size) % size)];
+                }
+                if (model != RoomModel::fractional)
+                    s = lp.process (hp2.process (hp1.process (s)));
+                s += 0.0016f * vp::probe::noiseAt (rng);
+                in[static_cast<size_t> (i)] = std::clamp (s * 0.6f, -1.0f, 1.0f);
+            }
+            const float* ins[1] = { in.data() };
+            eng.process (ins, 1, outs, 2, blk);
+            for (int i = 0; i < blk; ++i)
+            {
+                history[static_cast<size_t> (histWrite)] =
+                    0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                histWrite = (histWrite + 1) % size;
+            }
+            const auto snap = eng.snapshot();
+            if (b > blocks / 3 && snap.inputPeak > 0.08f)
+            {
+                const float ratio = snap.leakRemain / snap.inputPeak;
+                sum += static_cast<double> (ratio);
+                worst = std::max (worst, ratio);
+                ++counted;
+            }
+        }
+        LeakRun out;
+        out.remain = counted > 0 ? static_cast<float> (sum / counted) : 1.0f;
+        out.worstBlock = counted > 0 ? worst : 1.0f;
+        out.counted = counted;
+        return out;
+    }
+
+    /** One sharp click per beat at `bpm`, first click on sample zero. Stands in
+        for a band that is on the same grid as the part - which is the case the
+        canceller has to be able to leave alone. */
+    void renderBandClick (std::vector<float>& dest, float bpm, double sr, float amp)
+    {
+        std::fill (dest.begin(), dest.end(), 0.0f);
+        const double beatSamples = 60.0 / static_cast<double> (bpm) * sr;
+        const int beats = static_cast<int> (static_cast<double> (dest.size()) / beatSamples);
+        const int len = static_cast<int> (0.05 * sr);
+        for (int b = 0; b < beats; ++b)
+        {
+            const size_t at = static_cast<size_t> (static_cast<double> (b) * beatSamples);
+            uint32_t rng = 0x9e3779b9u ^ static_cast<uint32_t> (b);
+            for (int i = 0; i < len && at + static_cast<size_t> (i) < dest.size(); ++i)
+            {
+                const float t = static_cast<float> (i) / static_cast<float> (sr);
+                rng = rng * 1664525u + 1013904223u;
+                const float noise = static_cast<float> (rng >> 8) / 8388608.0f - 1.0f;
+                dest[at + static_cast<size_t> (i)] =
+                    (0.5f * noise + 0.5f * std::sin (2.0f * 3.14159265f * 1000.0f * t))
+                    * std::exp (-t * 120.0f) * (b % 4 == 0 ? 0.9f : 0.6f) * amp;
+            }
+        }
+    }
+
+    struct NoLeakRun
+    {
+        std::vector<float> inPeak;
+        std::vector<float> remain;
+    };
+
+    /** A feed that carries **no** leak at all, while the part the app is playing
+        sits on the same grid as the band. Nothing here may be subtracted: our
+        own output is genuinely correlated with the input, and every sample the
+        canceller takes off is a real onset taken away from the tracker.
+
+        The reported latency is left at zero on purpose - that is what a rig
+        nobody has measured reports, and it puts the canceller's reference 8 ms
+        back, which is where a grid-locked part looks most like the band.
+        Measured: at 150 ms the same bench moves nothing at all on either path,
+        so zero is both the honest default and the hard case. */
+    NoLeakRun noLeakRun (double sr, int blk, vp::FollowSource source, bool cancellationEnabled)
+    {
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, blk, 1);
+        eng.settings().followSource.store (static_cast<int> (source));
+        eng.settings().masterVolume.store (1.0f);
+        eng.settings().reverbAmount.store (0.0f);
+        eng.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
+        eng.settings().grooveAuto.store (false);
+        eng.settings().dynamicsFollow.store (false);
+        eng.setLeakCancellationEnabledForTest (cancellationEnabled);
+        eng.setReportedLatencyMs (0.0f);
+        eng.setFixedBpm (120.0f);
+        eng.start();
+        eng.tapAt (0.0);
+        eng.tapAt (0.5);
+        eng.tapAt (1.0);
+        eng.tapAt (1.5);
+
+        const int blocks = static_cast<int> (sr * 8.0) / blk;
+        std::vector<float> band (static_cast<size_t> (blocks * blk), 0.0f);
+        renderBandClick (band, 120.0f, sr, 0.30f);
+        std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        NoLeakRun out;
+        out.inPeak.reserve (static_cast<size_t> (blocks));
+        out.remain.reserve (static_cast<size_t> (blocks));
+        for (int b = 0; b < blocks; ++b)
+        {
+            const float* ins[1] = { band.data() + static_cast<size_t> (b) * blk };
+            eng.process (ins, 1, outs, 2, blk);
+            const auto snap = eng.snapshot();
+            out.inPeak.push_back (snap.inputPeak);
+            out.remain.push_back (snap.leakRemain);
+        }
+        return out;
+    }
+
+    /** What the canceller did to a bus it should not have touched, measured three
+        ways because one of them is not enough.
+
+        `relRms` - the analysis peak sequence against the same sequence with the
+        subtraction disabled, relative to it. This is the one that says how much
+        of the tracker's input was moved overall.
+
+        `worstAbs` - the largest single-block change, as a share of the run's own
+        mean block peak. A ratio cannot say whether a change matters, and this
+        gives the size of the largest change in the run's own units: an absolute
+        bound that applies to every counted block, quiet ones included. What it is
+        not is a *relative* bound on a quiet block - a tail at a fiftieth of the
+        mean can still move by a large fraction of itself inside this figure.
+
+        `worstGated` - the largest ratio among blocks carrying at least half the
+        run's mean level. Ungated, this metric is dominated by the decay tails
+        between the band's onsets, where the denominator is a few thousandths and
+        a change of one part in a thousand reads as 1.2x. Measured on the shipped
+        estimator through the speaker at 128 frames: 1.2049 ungated, on a block
+        whose own peak is 0.0074 against a run mean of 0.045 and loud blocks of
+        0.25, with an absolute change of 0.0015. The gated figure for the same run
+        is 1.0374. Both are reported; the gated one is asserted, and `worstAbs`
+        is what stops that gate from hiding anything. */
+    struct NoLeakDamage
+    {
+        float relRms = 1.0f;
+        float worstAbs = 1.0f;      // as a share of the mean counted block peak
+        float worstGated = 1.0f;
+        float worstUngated = 1.0f;
+        float meanIn = 0.0f;
+        int   counted = 0;
+    };
+
+    NoLeakDamage noLeakDamage (const NoLeakRun& on, const NoLeakRun& off)
+    {
+        NoLeakDamage d;
+        const int blocks = static_cast<int> (on.remain.size());
+        const int from = blocks / 3 + 1;
+        double meanIn = 0.0;
+        int m = 0;
+        for (int b = from; b < blocks; ++b)
+            if (off.inPeak[static_cast<size_t> (b)] > 0.002f)
+            {
+                meanIn += static_cast<double> (off.inPeak[static_cast<size_t> (b)]);
+                ++m;
+            }
+        if (m == 0)
+            return d;
+        meanIn /= m;
+        d.meanIn = static_cast<float> (meanIn);
+
+        double sqDiff = 0.0, sqOff = 0.0, worstAbs = 0.0, worstGated = 0.0, worstUngated = 0.0;
+        for (int b = from; b < blocks; ++b)
+        {
+            if (off.inPeak[static_cast<size_t> (b)] <= 0.002f)
+                continue;
+            const double a = on.remain[static_cast<size_t> (b)];
+            const double c = off.remain[static_cast<size_t> (b)];
+            sqDiff += (a - c) * (a - c);
+            sqOff += c * c;
+            worstAbs = std::max (worstAbs, std::fabs (a - c));
+            if (c > 0.0)
+            {
+                worstUngated = std::max (worstUngated, a / c);
+                if (static_cast<double> (off.inPeak[static_cast<size_t> (b)]) > 0.5 * meanIn)
+                    worstGated = std::max (worstGated, a / c);
+            }
+            ++d.counted;
+        }
+        d.relRms = sqOff > 0.0 ? static_cast<float> (std::sqrt (sqDiff / sqOff)) : 0.0f;
+        d.worstAbs = static_cast<float> (worstAbs / meanIn);
+        d.worstGated = static_cast<float> (worstGated);
+        d.worstUngated = static_cast<float> (worstUngated);
+        return d;
+    }
+
+    void runLeakTests (double sr)
+    {
+        const vp::Subdivision subs[3] = { vp::Subdivision::quarter, vp::Subdivision::eighth,
+                                          vp::Subdivision::sixteenth };
+        const char* subNames[3] = { "quarter", "eighth", "sixteenth" };
+        struct Path { const char* name; vp::FollowSource source; float extraMs; };
+        const Path paths[2] = { { "MIXER", vp::FollowSource::kitMic, 0.0f },
+                                { "IPAD+25ms", vp::FollowSource::speaker, 25.0f } };
+
+        // Every style, every subdivision, both listening paths.
+        //
+        // This used to run on whatever `grooveStyle` and `subdivision` happen to
+        // default to, and to assert a residual under 0.25 - a number that turns
+        // out to belong to that part rather than to the canceller. Measured
+        // across the nine styles the spread was three to one with the *sparser*
+        // parts the worse of them, and worse again as the subdivision thins:
+        // 0.07-0.18 at sixteenths, 0.29-0.46 at eighths - which is the shipped
+        // default - and 0.62-0.74 at quarters, which the listener can select.
+        //
+        // That spread is not a property of the parts. It is the canceller
+        // estimating its gain from one block and then smoothing the *answer*: a
+        // block whose reference is silent goes down the degenerate branch,
+        // returns a hard zero, and that zero - an absence of evidence, not a
+        // measurement - is fed to the smoother, which forgets the path between
+        // strokes. See .superpowers/sdd/sparse-leak-root-cause.md.
+        //
+        // So the bound is absolute, it is the same bound everywhere, and it is
+        // asserted at the subdivision the app actually ships in. A canceller
+        // that holds its estimate over silence cancels this bench to below
+        // 0.0001 on all fifty-four rows - the echo here is an exact scaled copy
+        // of our own output, so a converged fit removes essentially all of it,
+        // and the room bench further down is where the honest figure lives -
+        // which leaves 0.10 loose by three orders of magnitude and still tight
+        // enough to catch any return to a per-block estimate.
+        float worstMean = 0.0f;
+        float worstBlock = 0.0f;
+        float weakestControl = 1.0e9f;
+        int rows = 0;
+        int fewestBlocks = 1 << 30;
+        const char* worstMeanRow = "";
+        const char* worstBlockRow = "";
+        static char meanRow[64] = {};
+        static char blockRow[64] = {};
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            for (int s = 0; s < 3; ++s)
+                for (int p = 0; p < 2; ++p)
+                {
+                    const auto on = leakRun (sr, 1024, paths[p].source, paths[p].extraMs, st,
+                                             subs[s], true, false);
+                    const auto off = leakRun (sr, 1024, paths[p].source, paths[p].extraMs, st,
+                                              subs[s], false, false);
+                    std::printf ("leak-residual  %-9s %-9s %-7s mean=%.4f worst=%.4f "
+                                 "off=%.4f blocks=%d\n",
+                                 paths[p].name, subNames[s],
+                                 vp::toString (static_cast<vp::GrooveStyle> (st)),
+                                 static_cast<double> (on.remain),
+                                 static_cast<double> (on.worstBlock),
+                                 static_cast<double> (off.remain), on.counted);
+                    if (on.remain > worstMean)
+                    {
+                        worstMean = on.remain;
+                        std::snprintf (meanRow, sizeof (meanRow), "%s %s %s", paths[p].name,
+                                       subNames[s],
+                                       vp::toString (static_cast<vp::GrooveStyle> (st)));
+                        worstMeanRow = meanRow;
+                    }
+                    if (on.worstBlock > worstBlock)
+                    {
+                        worstBlock = on.worstBlock;
+                        std::snprintf (blockRow, sizeof (blockRow), "%s %s %s", paths[p].name,
+                                       subNames[s],
+                                       vp::toString (static_cast<vp::GrooveStyle> (st)));
+                        worstBlockRow = blockRow;
+                    }
+                    weakestControl = std::min (weakestControl, off.remain);
+                    fewestBlocks = std::min (fewestBlocks, on.counted);
+                    ++rows;
+                }
+        std::printf ("leak-residual  worst mean=%.4f on %s   worst block=%.4f on %s   "
+                     "weakest off-control=%.4f   rows=%d   fewest counted blocks=%d\n",
+                     static_cast<double> (worstMean), worstMeanRow,
+                     static_cast<double> (worstBlock), worstBlockRow,
+                     static_cast<double> (weakestControl), rows, fewestBlocks);
+
+        expect (rows == static_cast<int> (vp::GrooveStyle::count) * 6,
+                "the leak bench covers every style, every subdivision and both paths");
+        // The control first: everything below is meaningless if the bench is not
+        // actually presenting a leak to be cancelled, and a row that counted two
+        // blocks is not a measurement. The sparsest row - quarters at 1024 - has
+        // twenty-four counted blocks, so the floor is set below that.
+        expect (fewestBlocks >= 20,
+                "every row of the bench measured a run's worth of blocks, not a handful");
+        expect (weakestControl > 0.90f,
+                "with cancellation off the app's own part is all still there, on every row");
+        expect (worstMean < 0.10f,
+                "the app's own part is subtracted from the analysis whatever part it is "
+                "playing and however dense the grid is");
+        expect (worstBlock < 0.25f,
+                "no single block is left carrying our own part, not just no average");
+
+        // The seam is analysis-only. Switching the canceller changes what the
+        // tracker is handed; it must not change one sample of what the listener
+        // hears. Captured over the whole run, acquisition included, on both
+        // paths at the shipped default.
+        {
+            const auto mixOn = leakRun (sr, 1024, paths[0].source, paths[0].extraMs,
+                                        static_cast<int> (vp::GrooveStyle::funk),
+                                        vp::Subdivision::eighth, true, true);
+            const auto mixOff = leakRun (sr, 1024, paths[0].source, paths[0].extraMs,
+                                         static_cast<int> (vp::GrooveStyle::funk),
+                                         vp::Subdivision::eighth, false, true);
+            const auto roomOn = leakRun (sr, 1024, paths[1].source, paths[1].extraMs,
+                                         static_cast<int> (vp::GrooveStyle::funk),
+                                         vp::Subdivision::eighth, true, true);
+            const auto roomOff = leakRun (sr, 1024, paths[1].source, paths[1].extraMs,
+                                          static_cast<int> (vp::GrooveStyle::funk),
+                                          vp::Subdivision::eighth, false, true);
+            float loudest = 0.0f;
+            for (float v : mixOn.output)
+                loudest = std::max (loudest, std::fabs (v));
+            std::printf ("leak-seam      captured %zu samples, peak %.4f\n",
+                         mixOn.output.size(), static_cast<double> (loudest));
+            expect (mixOn.output.size() > static_cast<size_t> (sr) && loudest > 0.05f,
+                    "the A/B captured a real rendered part to compare");
+            expect (mixOn.output == mixOff.output && roomOn.output == roomOff.output,
+                    "cancellation is analysis-only: the rendered part is bit for bit the "
+                    "same with it on and off");
+        }
+
+        // Buffer size. `kGainSmooth` was a per-callback constant, so its time
+        // constant was a function of the block length - the same trap the phase
+        // constants in TempoFollower were fixed for. Measured with the per-block
+        // smoother at eighths: 0.4792 at 256 frames, 0.4607 at 1024, 0.2379 at
+        // 4096, because at 85 ms a block spans several strokes and is never
+        // silent. Bigger buffers hid the bug. Each path is judged against
+        // itself: they are different signals and comparing across them says
+        // nothing.
+        for (int p = 0; p < 2; ++p)
+        {
+            float sizes[3] = { 0.0f, 0.0f, 0.0f };
+            int blocksSeen[3] = { 0, 0, 0 };
+            const int blks[3] = { 256, 1024, 4096 };
+            for (int i = 0; i < 3; ++i)
+            {
+                const auto r = leakRun (sr, blks[i], paths[p].source, paths[p].extraMs,
+                                        static_cast<int> (vp::GrooveStyle::funk),
+                                        vp::Subdivision::eighth, true, false);
+                sizes[i] = r.remain;
+                blocksSeen[i] = r.counted;
+            }
+            std::printf ("leak-buffer    %-9s 256=%.4f (%d blk) 1024=%.4f (%d blk) "
+                         "4096=%.4f (%d blk)\n", paths[p].name,
+                         static_cast<double> (sizes[0]), blocksSeen[0],
+                         static_cast<double> (sizes[1]), blocksSeen[1],
+                         static_cast<double> (sizes[2]), blocksSeen[2]);
+            const float lo = std::min (std::min (sizes[0], sizes[1]), sizes[2]);
+            const float hi = std::max (std::max (sizes[0], sizes[1]), sizes[2]);
+            expect (std::min (std::min (blocksSeen[0], blocksSeen[1]), blocksSeen[2]) >= 8,
+                    "every buffer size measured enough blocks to mean something");
+            expect (hi < 0.10f,
+                    "the subtraction covers every buffer size, not only the one it was "
+                    "tuned on");
+            // Within a factor of three of each other, taken against a floor so a
+            // residual that has gone to zero everywhere cannot fail it.
+            expect (hi <= std::max (0.01f, lo) * 3.0f,
+                    "the estimator's window is a length of time, not a number of callbacks");
+        }
+
+        // And the other direction, at every buffer size. A leak is a large part
+        // of the input by definition; a part that happens to be playing the same
+        // rhythm as the band is not, and subtracting it costs the tracker real
+        // onsets. The per-block estimate got this wrong on both counts - too slow
+        // to reach the truth when the leak was real and sparse, and noisy enough
+        // to sit at a few per cent when there was no leak at all. Measured with
+        // the per-block smoother on a feed carrying none, at 1024: the analysis
+        // moved 33% rms on the mixer path and 23% through the speaker, with
+        // single blocks raised by 8.9x and 39.8x.
+        for (int p = 0; p < 2; ++p)
+            for (int blk : { 128, 256, 1024 })
+            {
+                const auto on = noLeakRun (sr, blk, paths[p].source, true);
+                const auto off = noLeakRun (sr, blk, paths[p].source, false);
+                const auto d = noLeakDamage (on, off);
+                std::printf ("leak-noleak    %-9s blk=%4d relRms=%.4f worstAbs=%.2f%% of mean "
+                             "gated=%.4f (ungated=%.4f) meanIn=%.4f blocks=%d\n",
+                             paths[p].name, blk, static_cast<double> (d.relRms),
+                             static_cast<double> (100.0f * d.worstAbs),
+                             static_cast<double> (d.worstGated),
+                             static_cast<double> (d.worstUngated),
+                             static_cast<double> (d.meanIn), d.counted);
+                expect (d.counted > 10 && d.meanIn > 0.01f,
+                        "the no-leak bench actually presented a band to be left alone");
+                expect (d.relRms < 0.02f,
+                        "a feed that carries no leak is left alone, even when our own part "
+                        "is playing the band's rhythm");
+                // Ten per cent of the run's own mean block peak is about 0.9 dB
+                // there and four thousandths of the loudest block. This bounds
+                // the absolute perturbation of every counted block; with the rms
+                // figure above and the half-mean gated ratio below, the loud and
+                // measured blocks are held tightly. The quiet tails between
+                // onsets are bounded in absolute terms only - the gated ratio
+                // steps over them and this figure does not constrain them
+                // relative to their own level. Measured worst: 4.21%, speaker.
+                expect (d.worstAbs < 0.10f,
+                        "and no block of it is moved by more than a tenth of the run's own "
+                        "mean level");
+                // The ratio, on blocks loud enough for a ratio to mean anything.
+                // Measured worst: 1.0374.
+                expect (d.worstGated <= 1.10f,
+                        "no audible block of it is made louder by the subtraction");
+            }
+
+        // A device restart must not carry the fit across. `prepare()` clears the
+        // reference ring, so evidence gathered against the old session's timing
+        // describes a signal that is no longer there - and if the new session's
+        // effective delay happens to match the old one, nothing else would ever
+        // notice. Re-prepared and compared against a new engine given the same
+        // input: not "close", identical, because there is no mechanism by which
+        // a correct implementation could differ.
+        {
+            const int blk = 1024;
+            vp::VirtualPercussionEngine eng;
+            // Session one: a strong leak, so the fit ends up far from zero.
+            {
+                eng.prepare (sr, blk, 1);
+                eng.settings().followSource.store (
+                    static_cast<int> (vp::FollowSource::kitMic));
+                eng.settings().masterVolume.store (1.0f);
+                eng.settings().reverbAmount.store (0.0f);
+                eng.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
+                eng.settings().grooveAuto.store (false);
+                eng.settings().dynamicsFollow.store (false);
+                eng.setReportedLatencyMs (150.0f);
+                eng.setFixedBpm (120.0f);
+                eng.start();
+                eng.tapAt (0.0);
+                eng.tapAt (0.5);
+                eng.tapAt (1.0);
+                eng.tapAt (1.5);
+                const int delay = static_cast<int> (0.150 * sr);
+                std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
+                int histWrite = 0;
+                std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+                std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+                std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+                float* outs[2] = { oL.data(), oR.data() };
+                for (int b = 0; b < static_cast<int> (sr * 8.0) / blk; ++b)
+                {
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        const int ri = (histWrite - delay + i
+                                        + static_cast<int> (history.size()))
+                                       % static_cast<int> (history.size());
+                        in[static_cast<size_t> (i)] = history[static_cast<size_t> (ri)] * 0.6f;
+                    }
+                    const float* ins[1] = { in.data() };
+                    eng.process (ins, 1, outs, 2, blk);
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        history[static_cast<size_t> (histWrite)] =
+                            0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                        histWrite = (histWrite + 1) % static_cast<int> (history.size());
+                    }
+                }
+            }
+
+            // Session two, on the same engine: the device comes back with the
+            // same sample rate, the same buffer and the same reported latency, so
+            // the effective delay is unchanged and only the fit itself could
+            // carry over. The room is quieter than it was - a quarter of the
+            // return - which is the case that shows: evidence gathered when the
+            // path was strong describes a path that no longer exists, and the
+            // gain it implies over-subtracts until the new evidence outweighs it.
+            auto secondSession = [&] (vp::VirtualPercussionEngine& e)
+            {
+                e.prepare (sr, blk, 1);
+                e.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+                e.settings().masterVolume.store (1.0f);
+                e.settings().reverbAmount.store (0.0f);
+                e.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
+                e.settings().grooveAuto.store (false);
+                e.settings().dynamicsFollow.store (false);
+                e.setReportedLatencyMs (150.0f);
+                e.setFixedBpm (120.0f);
+                e.start();
+                e.tapAt (0.0);
+                e.tapAt (0.5);
+                e.tapAt (1.0);
+                e.tapAt (1.5);
+                const int blocks = static_cast<int> (sr * 4.0) / blk;
+                const int delay = static_cast<int> (0.150 * sr);
+                std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
+                int histWrite = 0;
+                std::vector<float> in (static_cast<size_t> (blk), 0.0f);
+                std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
+                std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
+                float* outs[2] = { oL.data(), oR.data() };
+                std::vector<float> trace;
+                for (int b = 0; b < blocks; ++b)
+                {
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        const int ri = (histWrite - delay + i
+                                        + static_cast<int> (history.size()))
+                                       % static_cast<int> (history.size());
+                        in[static_cast<size_t> (i)] =
+                            history[static_cast<size_t> (ri)] * 0.15f;
+                    }
+                    const float* ins[1] = { in.data() };
+                    e.process (ins, 1, outs, 2, blk);
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        history[static_cast<size_t> (histWrite)] =
+                            0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
+                        histWrite = (histWrite + 1) % static_cast<int> (history.size());
+                    }
+                    const auto s = e.snapshot();
+                    trace.push_back (s.inputPeak);
+                    trace.push_back (s.leakRemain);
+                }
+                return trace;
+            };
+
+            const auto reprepared = secondSession (eng);
+            vp::VirtualPercussionEngine fresh;
+            const auto brandNew = secondSession (fresh);
+            int firstDiff = -1;
+            float worstDelta = 0.0f;
+            for (size_t i = 0; i < std::min (reprepared.size(), brandNew.size()); ++i)
+            {
+                const float d = std::fabs (reprepared[i] - brandNew[i]);
+                if (d > 0.0f && firstDiff < 0)
+                    firstDiff = static_cast<int> (i / 2);
+                worstDelta = std::max (worstDelta, d);
+            }
+            std::printf ("leak-lifecycle re-prepared vs new engine: %zu blocks, first "
+                         "difference at %d, worst %.6f\n",
+                         reprepared.size() / 2, firstDiff, static_cast<double> (worstDelta));
+            expect (reprepared.size() == brandNew.size() && reprepared.size() > 40,
+                    "the lifecycle bench ran both sessions");
+            expect (reprepared == brandNew,
+                    "a device restart starts the leak canceller over: prepare() leaves no "
+                    "fit behind");
+        }
+
+        // Finally, the same thing in a room rather than down a wire. These are the
+        // numbers to quote about a real rig: through the iPad's speaker with the
+        // repository's own reflection model, most of the return is either
+        // band-shaped or not in the reference at any single delay, and a two-band
+        // canceller reaches little of it - 11.5% of the return on the one-wall
+        // fixture, 7.6% with the full tail, against 90.2% when the direct
+        // component arrives spectrally unmodified. What is asserted per fixture is
+        // the mean over the run, which is the only thing these three rows measure.
+        {
+            const RoomModel models[3] = { RoomModel::fractional, RoomModel::oneWall,
+                                          RoomModel::eightWalls };
+            const char* names[3] = { "frac+noise", "one wall", "8 walls" };
+            float remains[3] = { 1.0f, 1.0f, 1.0f };
+            for (int m = 0; m < 3; ++m)
+            {
+                const auto on = roomLeakRun (sr, 1024, true,
+                                             static_cast<int> (vp::GrooveStyle::funk),
+                                             models[m]);
+                const auto off = roomLeakRun (sr, 1024, false,
+                                              static_cast<int> (vp::GrooveStyle::funk),
+                                              models[m]);
+                std::printf ("leak-room      %-11s on=%.4f off=%.4f worst=%.4f blocks=%d\n",
+                             names[m], static_cast<double> (on.remain),
+                             static_cast<double> (off.remain),
+                             static_cast<double> (on.worstBlock), on.counted);
+                remains[m] = on.remain;
+                expect (on.counted >= 20 && off.remain > 0.90f,
+                        "the room bench presented a room's worth of our own return");
+                expect (on.remain < off.remain,
+                        "in a room the canceller still lowers the mean share of our own "
+                        "return that reaches the tracker");
+            }
+            // The one bound here that is about the estimator rather than about
+            // the room: a return that is our own output at a delay 0.373 of a
+            // sample off the sample grid, with a noise floor under it, is still
+            // cancelled. Measured 0.0957 - the same 0.25 the per-block bound
+            // above uses, and the misalignment is what sets it.
+            expect (remains[0] < 0.25f,
+                    "a leak that does not land on a whole sample is still subtracted");
+        }
+    }
 }
 
 int main (int argc, char** argv)
@@ -59,6 +865,25 @@ int main (int argc, char** argv)
     if (argc > 1 && std::string (argv[1]) == "--loops")
     {
         vpRunLoopTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
+    // Same argument for the leak canceller bench: a hundred-odd engine runs
+    // that finish in seconds, behind minutes of neural worker tests.
+    if (argc > 1 && std::string (argv[1]) == "--leak")
+    {
+        runLeakTests (sr);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
+    // And the own-output / analysis-epoch benches, which are the other end of
+    // the same subject: twenty real-time runs of the neural worker, and the
+    // question they ask is whether the app's own part moves its own analysis.
+    if (argc > 1 && std::string (argv[1]) == "--makeup")
+    {
+        vpRunMakeupTests (gPassed, gFailed, argc > 2 ? argv[2] : nullptr);
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }
@@ -657,7 +1482,7 @@ int main (int argc, char** argv)
         vp::PercussionEngine perc;
         perc.prepare (sr);
         perc.setGroove (bpm, pulses);
-        perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+        perc.setSubdivision (vp::Subdivision::sixteenth);
         perc.setReverbAmount (0.0f);
         perc.setVolume (1.0f);
 
@@ -682,132 +1507,10 @@ int main (int argc, char** argv)
                 "a retriggered stroke rings out over a ramp, and no voice is stolen mid-note");
     }
 
-    // B4 - the speaker-leak subtraction has to cover the whole block. It used to
-    // stop at 2048 samples, so on a larger buffer the tail of every block went
-    // through untouched and the splice between the two halves put a step into
-    // the analysis signal once per callback.
-    //
-    // The mic hears the app's own output delayed by the round trip, so the
-    // reference has to be older than the block is long - otherwise the tail of
-    // the block would need output that has not been rendered yet. 150 ms covers
-    // every buffer size used here.
-    {
-        auto leakRemain = [&] (int blk, vp::FollowSource source, float acousticExtraMs = 0.0f,
-                               int style = -1)
-        {
-            vp::VirtualPercussionEngine eng;
-            eng.prepare (sr, blk, 1);
-            eng.settings().followSource.store (static_cast<int> (source));
-            eng.settings().masterVolume.store (1.0f);
-            eng.settings().reverbAmount.store (0.0f);
-            if (style >= 0)
-                eng.settings().grooveStyle.store (style);
-            // Hold the part still. This measures the canceller, and the
-            // canceller's residual depends on how much part there is to
-            // cancel - which is why it is run over every style rather than
-            // whichever one happens to be the default. Dynamics would move it
-            // for the same reason and for a reason that is an artefact here:
-            // the only thing on this rig's input is the app's own return, so
-            // the band the dynamics would be reading is us.
-            eng.settings().dynamicsFollow.store (false);
-            eng.setReportedLatencyMs (150.0f);
-
-            const int delay = static_cast<int> ((0.150 + acousticExtraMs * 0.001) * sr);
-            std::vector<float> history (static_cast<size_t> (delay + blk * 4), 0.0f);
-            int histWrite = 0;
-
-            std::vector<float> in (static_cast<size_t> (blk), 0.0f);
-            std::vector<float> oL (static_cast<size_t> (blk), 0.0f);
-            std::vector<float> oR (static_cast<size_t> (blk), 0.0f);
-            float* outs[2] = { oL.data(), oR.data() };
-
-            eng.start();
-            eng.tapAt (0.0);
-            eng.tapAt (0.5);
-            eng.tapAt (1.0);
-            eng.tapAt (1.5);
-
-            double sum = 0.0;
-            int counted = 0;
-            const int blocks = static_cast<int> (sr * 8.0) / blk;
-            for (int b = 0; b < blocks; ++b)
-            {
-                for (int i = 0; i < blk; ++i)
-                {
-                    const int ri = (histWrite - delay + i + static_cast<int> (history.size()))
-                                   % static_cast<int> (history.size());
-                    in[static_cast<size_t> (i)] = history[static_cast<size_t> (ri)] * 0.6f;
-                }
-                const float* ins[1] = { in.data() };
-                eng.process (ins, 1, outs, 2, blk);
-                for (int i = 0; i < blk; ++i)
-                {
-                    history[static_cast<size_t> (histWrite)] =
-                        0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
-                    histWrite = (histWrite + 1) % static_cast<int> (history.size());
-                }
-                const auto snap = eng.snapshot();
-                if (b > blocks / 3 && snap.inputPeak > 0.08f)
-                {
-                    sum += static_cast<double> (snap.leakRemain / snap.inputPeak);
-                    ++counted;
-                }
-            }
-            return counted > 0 ? static_cast<float> (sum / counted) : 1.0f;
-        };
-
-        const float small = leakRemain (1024, vp::FollowSource::speaker);
-        const float large = leakRemain (4096, vp::FollowSource::speaker);
-        std::printf ("leak-residual  through@1024=%.3f  through@4096=%.3f\n", small, large);
-        expect (large <= small * 1.10f,
-                "speaker-leak subtraction covers a block larger than the old 2048 cap");
-
-        // Every style, not the default one.
-        //
-        // This used to run on whatever `grooveStyle` happens to default to, and
-        // to assert a residual under 0.25 - a number that turns out to belong
-        // to that part rather than to the canceller. Measured across the eight:
-        // 0.108 on funk against 0.320 on pop, a spread of three to one, with
-        // the *sparser* parts the worse of them. The ratio is taken on peaks,
-        // and a part that leaves more silence gives the block's least-squares
-        // fit less to work with, so it does worse - which means the sparsest
-        // style in the app was already 28% outside the line the test drew, and
-        // the test never looked at it. It also means any edit to the groove
-        // tables moves this number, and a canceller test that a change of
-        // musical figure can fail is testing the wrong thing.
-        //
-        // So: the worst style has to clear a limit the canceller can actually
-        // hold on the sparsest part there is, and all eight are checked.
-        float worstMixer = 0.0f;
-        int worstStyle = 0;
-        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
-        {
-            const float v = leakRemain (1024, vp::FollowSource::kitMic, 0.0f, st);
-            std::printf ("leak-residual  MIXER@1024 %-7s %.3f\n",
-                         vp::toString (static_cast<vp::GrooveStyle> (st)),
-                         static_cast<double> (v));
-            if (v > worstMixer)
-            {
-                worstMixer = v;
-                worstStyle = st;
-            }
-        }
-        std::printf ("leak-residual  MIXER@1024 peggio=%.3f su %s  "
-                     "(1.000 = non sottratto affatto)\n",
-                     static_cast<double> (worstMixer),
-                     vp::toString (static_cast<vp::GrooveStyle> (worstStyle)));
-        expect (worstMixer < 0.40f,
-                "the app's own part is subtracted from the analysis on a mixer feed too, "
-                "whichever part it is playing");
-
-        // iPad speaker: the mic hears the part later than the device latency
-        // by the acoustic hop. A canceller glued to the reported figure misses
-        // that and the tracker follows its own congas.
-        const float room = leakRemain (1024, vp::FollowSource::speaker, 25.0f);
-        std::printf ("leak-residual  IPAD+25ms@1024=%.3f\n", static_cast<double> (room));
-        expect (room < 0.35f,
-                "speaker leak is subtracted even when the acoustic delay is past the device latency");
-    }
+    // B4 - the leak canceller: what it takes out when there is a leak, and
+    // what it leaves alone when there is not. See runLeakTests above; `--leak`
+    // runs just this.
+    runLeakTests (sr);
 
     // Input trim is analysis-only: twice the gain, twice the peak the tracker
     // is handed, and the output of the part does not move with it.
@@ -889,7 +1592,7 @@ int main (int argc, char** argv)
             perc.setHumanization (0.0f);
             perc.setSwing (0.0f);
             perc.setGroove (bpm, 4);
-            perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+            perc.setSubdivision (vp::Subdivision::sixteenth);
             perc.setGrooveStyle (static_cast<vp::GrooveStyle> (styleIdx));
 
             std::vector<float> L (static_cast<size_t> (blk)), R (static_cast<size_t> (blk));
@@ -951,7 +1654,7 @@ int main (int argc, char** argv)
             // thing being measured. At zero intensity the part is deterministic.
             perc.setIntensity (0.0f);
             perc.setGroove (120.0f, 4);
-            perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+            perc.setSubdivision (vp::Subdivision::sixteenth);
 
             std::vector<float> L (static_cast<size_t> (block)), R (static_cast<size_t> (block));
             std::vector<int> perBar;
@@ -1366,6 +2069,7 @@ int main (int argc, char** argv)
     }
 
     vpRunAiBeatTests (gPassed, gFailed);
+    vpRunMakeupTests (gPassed, gFailed);
     vpRunLoopTests (gPassed, gFailed);
 
     std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);

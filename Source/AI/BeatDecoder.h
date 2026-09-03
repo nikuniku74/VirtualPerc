@@ -123,13 +123,6 @@ public:
         not the same number; see kAnchorAcquireMarginLine. */
     void setLineFeed (bool on) noexcept { lineFeed = on; }
 
-    /** Kept as a seam for `VPAlign`'s tempo bench, which measures alternatives
-        to how a tempo change is taken against each other on the same run. It
-        currently selects nothing: the three alternatives that were measured are
-        recorded at the exit from the fixed regime and none of them shipped.
-        Nothing in the app calls it. */
-    void setQuickStep (bool on) noexcept { quickStep = on; }
-
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
 
@@ -139,6 +132,46 @@ private:
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec, float strength) noexcept;
+    /** A beat time the fits are allowed to use, without a beat *event*.
+
+        On a confirmed transition the two peaks that measured the new period are
+        already behind us, and the fits need them or they have to re-form from
+        scratch over eight beats of the tempo that has just been left. They must
+        not be announced: `beatSerial` is what the audio thread counts strokes
+        from, and a stroke played for a beat that sounded a second ago is worse
+        than the fit being late. So the history gets them and the counter does
+        not. */
+    void  storeBeatForFit (double beatTimeSec, float strength) noexcept;
+    /** The abrupt-change detector, fed every peak that clears the refractory
+        and minimum-spacing checks - including the ones the on-grid gate is
+        about to throw away, which on a large step is all of them.
+
+        Returns true on the frame a change is confirmed, which is the one frame
+        the caller may admit a peak the current grid rejected. */
+    bool  observeTempoTransition (double eventTimeSec, float strength,
+                                  bool acceptedByCurrentGrid) noexcept;
+    /** Forget the candidate *and* the interval reference it was measured from.
+        For the boundaries at which no interval spanning them means anything. */
+    void  clearTempoTransition (TempoTransitionReason reason) noexcept;
+    /** Forget the candidate only, keeping the newest peak as the reference the
+        next interval is measured from. */
+    void  dropTransitionCandidate (TempoTransitionReason reason) noexcept;
+    /** How unsteady the intervals already accepted are, as a fraction of their
+        own mean: the median absolute relative deviation of at most the newest
+        eight, taken about their median rather than their mean so that one
+        interval spanning a swallowed beat cannot move the reference it is being
+        judged against. This is what "a changed interval" has to be measured
+        against - a fifth of a percent on a line feed and several percent through
+        a microphone are both ordinary, and one threshold cannot serve both. */
+    float recentIntervalJitter() const noexcept;
+    /** How loud the recently accepted beats are, as the median of at most the
+        newest eight. A reflection clears the absolute beat threshold; what it
+        does not do is stand beside the beats around it, so this is the level a
+        candidate peak is held to through a microphone. */
+    float recentBeatStrengthMedian() const noexcept;
+    /** Whether a measured period is a tempo this grid could have moved to, as
+        opposed to a subdivision, a missed beat or something off the range. */
+    bool  transitionCandidateAllowed (float candidatePeriodSec) const noexcept;
     /** Fast causal acquisition from the intervals already heard. The state
         space chooses the metrical level; interpolated peaks provide the finer
         period that its whole-frame states cannot. */
@@ -245,7 +278,6 @@ private:
     int   octaveShift = 0;
     bool  useAnchor = false;
     bool  lineFeed = false;
-    bool  quickStep = true;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear
@@ -280,6 +312,41 @@ private:
     int   fixedSamples = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;
+
+    // The abrupt-change detector. Everything here is a scalar with a fixed
+    // lifetime: the whole point of it is to answer inside two beats, and it
+    // runs beside code that must not allocate or wait.
+    TempoTransitionState  transitionState  = TempoTransitionState::stable;
+    TempoTransitionReason transitionReason = TempoTransitionReason::none;
+    /** The two ends of the candidate: the peak the first changed interval
+        started from, and the newest peak inside it. */
+    double transitionFirstSec = -1.0;
+    double transitionLastSec = -1.0;
+    float  transitionFirstStrength = 0.0f;
+    float  transitionLastStrength = 0.0f;
+    float  transitionPeriodSec = 0.0f;
+    float  transitionConfidence = 0.0f;
+    int    transitionIntervals = 0;
+    int    transitionRapidBeats = 0;
+    /** Decoder-frame deadline for the rapid publication. Accepted beats can
+        close it sooner, but silence and rejected peaks must not leave it armed.
+        Derived at confirmation from the reported, user-octaved period. */
+    double transitionRapidDeadlineSec = -1.0;
+    /** Accepted fit-history beats still owed before another candidate may open.
+        A confirmation empties the fit history down to the two peaks that
+        measured the new period, and until a short fit has re-formed over it the
+        stale fold is the strongest thing naming a tempo - which is enough to
+        drag the committed BPM back and have the detector confirm the same
+        change twice. See `observeTempoTransition`. */
+    int    transitionRefitBeats = 0;
+    uint32_t transitionSerial = 0;
+    /** The newest eligible peak, whatever the grid then did with it. Intervals
+        are measured from this rather than from `lastBeatSec` because on a step
+        large enough to matter the grid rejects exactly the peaks that carry the
+        evidence, and `lastBeatSec` stops moving at the very moment the answer
+        is needed. */
+    double transitionPrevEventSec = -1.0;
+    float  transitionPrevStrength = 0.0f;
 
     BeatHypothesis hyp {};
 };

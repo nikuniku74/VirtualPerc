@@ -110,8 +110,30 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     leakScratchLo.assign (static_cast<size_t> (maxBlock), 0.0f);
     outRing.assign (static_cast<size_t> (ringSize), 0.0f);
     ringWrite = 0;
+    // The reference the canceller fits against has just been zeroed, so any
+    // evidence gathered against it describes a signal that no longer exists.
+    // With the same device back at the same latency nothing else would notice:
+    // the delay key would match and the old cross-products would keep pulling
+    // the gain toward the old room. Measured on a restart from a 0.6 return into
+    // a 0.15 one: the analysis differed from a new engine's by 0.156 of peak,
+    // thirty blocks in.
+    resetLeakEstimate();
+    // Same boundary, same reason: the level this input arrives at is a property
+    // of the device that has just been swapped out.
+    resetAnalysisLevelState();
 
     tracker.prepare (sampleRate);
+    // A new audio-device session owns a newly cleared hypothesis slot. Mirror
+    // that lifecycle boundary in the public diagnostics before any new audio.
+    lastHypValid.store (false, std::memory_order_relaxed);
+    clearAnalysisLevelMirrors();
+    lastTempoTransitionState.store (
+        static_cast<int> (TempoTransitionState::stable), std::memory_order_relaxed);
+    lastTempoTransitionReason.store (
+        static_cast<int> (TempoTransitionReason::none), std::memory_order_relaxed);
+    lastTempoTransitionBpm.store (0.0f, std::memory_order_relaxed);
+    lastTempoTransitionConfidence.store (0.0f, std::memory_order_relaxed);
+    lastTempoTransitionIntervals.store (0, std::memory_order_relaxed);
     percussion.prepare (sampleRate);
     hybrid.prepare (sampleRate, maxBlock);
     hybrid.setBank (loopBank.get());
@@ -123,9 +145,79 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     lastSr.store (sampleRate, std::memory_order_relaxed);
 }
 
+void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
+{
+    // Where the analysis level is, where it has been, and how much of it is
+    // ours: `applyAnalysisMakeup`'s envelope and gain, `updateAnalysisEpoch`'s
+    // three level trackers and their timers, the epoch count itself, and the
+    // own-output envelope the blame is drawn from.
+    //
+    // All of it is a description of one input on one device. A new session is a
+    // new input - the route can go from a mixer aux at line level to a
+    // microphone in a room forty decibels down - so carrying this across is
+    // describing audio that is no longer arriving. `reset()` has always cleared
+    // it; `prepare()` cleared none of it, while zeroing the very buffers it was
+    // measured from. Measured on a line-level session followed by a
+    // re-`prepare()` onto a source forty decibels down: the new session analysed
+    // its input at a gain of 1.0 where a new engine reached 23.7, and reported
+    // the old session's epoch count on its first block.
+    peakEnv = 0.0f;
+    makeupGain = 1.0f;
+    levelFast = 0.0f;
+    levelRef = 0.0f;
+    levelLoud = 0.0f;
+    levelStepSamples = 0;
+    levelPrimeSamples = 0;
+    analysisEpoch.store (0, std::memory_order_relaxed);
+    ownPeakLast = 0.0f;
+    ownFast = 0.0f;
+    ownRef = 0.0f;
+    ownStepSamples = 0;
+}
+
+void VirtualPercussionEngine::clearAnalysisLevelMirrors() noexcept
+{
+    // The public face of the three scalars above. They are written from the
+    // audio callback only, so between a `prepare()` and the first block of the
+    // new session a reader - the UI, a probe, a test - was handed the *last*
+    // session's epoch count, make-up gain and analysis peak, from a device that
+    // is no longer open. Their neighbours in the same snapshot (`hypValid`, the
+    // tempo-transition group) are already cleared at this boundary; these three
+    // were the ones left describing audio that has stopped arriving.
+    lastRestarts.store (0, std::memory_order_relaxed);
+    lastAnalysisGain.store (1.0f, std::memory_order_relaxed);
+    lastAnalysisPeak.store (0.0f, std::memory_order_relaxed);
+}
+
+void VirtualPercussionEngine::resetLeakEstimate() noexcept
+{
+    leakLp = 0.0f;
+    analysisHp = 0.0f;
+    leakGainLo = 0.0f;
+    leakGainHi = 0.0f;
+    leakFitXyLo = 0.0;
+    leakFitXyHi = 0.0;
+    leakFitLoLo = 0.0;
+    leakFitHiHi = 0.0;
+    leakFitLoHi = 0.0;
+    leakFitDelay = -1;
+    leakDelaySamples = 0;
+    leakScanCountdown = 0;
+    leakDelayLocked = false;
+}
+
 void VirtualPercussionEngine::reset() noexcept
 {
     tracker.reset();
+    lastHypValid.store (false, std::memory_order_relaxed);
+    clearAnalysisLevelMirrors();
+    lastTempoTransitionState.store (
+        static_cast<int> (TempoTransitionState::stable), std::memory_order_relaxed);
+    lastTempoTransitionReason.store (
+        static_cast<int> (TempoTransitionReason::none), std::memory_order_relaxed);
+    lastTempoTransitionBpm.store (0.0f, std::memory_order_relaxed);
+    lastTempoTransitionConfidence.store (0.0f, std::memory_order_relaxed);
+    lastTempoTransitionIntervals.store (0, std::memory_order_relaxed);
     percussion.reset();
     hybrid.reset();
     styleDetector.reset();
@@ -134,25 +226,8 @@ void VirtualPercussionEngine::reset() noexcept
     clickPhase = 0.0;
     std::fill (outRing.begin(), outRing.end(), 0.0f);
     ringWrite = 0;
-    leakLp = 0.0f;
-    analysisHp = 0.0f;
-    leakGainLo = 0.0f;
-    leakGainHi = 0.0f;
-    leakDelaySamples = 0;
-    leakScanCountdown = 0;
-    leakDelayLocked = false;
-    peakEnv = 0.0f;
-    makeupGain = 1.0f;
-    levelFast = 0.0f;
-    levelRef = 0.0f;
-    levelLoud = 0.0f;
-    levelStepSamples = 0;
-    levelPrimeSamples = 0;
-    analysisEpoch = 0;
-    ownPeakLast = 0.0f;
-    ownFast = 0.0f;
-    ownRef = 0.0f;
-    ownStepSamples = 0;
+    resetLeakEstimate();
+    resetAnalysisLevelState();
     tapWrite.store (0, std::memory_order_relaxed);
     tapRead = 0;
 }
@@ -194,6 +269,19 @@ bool VirtualPercussionEngine::loadLoopBank (const std::string& manifestPath, std
 {
     auto bank = std::make_unique<LoopBank>();
     if (! bank->loadFromManifestFile (manifestPath, error))
+        return false;
+
+    loopBank = std::move (bank);
+    hybrid.setBank (loopBank.get());
+    return true;
+}
+
+bool VirtualPercussionEngine::loadLoopBankFromMemory (const std::string& manifestText,
+                                                       const LoopBank::AudioLoader& loader,
+                                                       std::string& error)
+{
+    auto bank = std::make_unique<LoopBank>();
+    if (! bank->loadWithAudioLoader (manifestText, loader, error))
         return false;
 
     loopBank = std::move (bank);
@@ -244,6 +332,11 @@ void VirtualPercussionEngine::setFixedBpm (float bpm) noexcept
     cfg.tempoFollow.store (false, std::memory_order_relaxed);
     cfg.userBpm.store (bpm, std::memory_order_relaxed);
     cfg.userBpmGen.fetch_add (1u, std::memory_order_relaxed);
+}
+
+void VirtualPercussionEngine::notifyTrackSeek() noexcept
+{
+    analysisEpoch.fetch_add (1, std::memory_order_relaxed);
 }
 
 void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept
@@ -554,6 +647,22 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     if (n <= 0)
         return;
 
+    // Everything accumulated below was measured against the reference at one
+    // particular delay. When the accepted delay moves - the acoustic search
+    // found a better path, or the host revised the latency it reports - those
+    // cross-products describe an alignment that no longer exists, so they go.
+    // The gains themselves stay: the old estimate is still the best guess there
+    // is until new evidence has arrived to replace it.
+    if (delay != leakFitDelay)
+    {
+        leakFitDelay = delay;
+        leakFitXyLo = 0.0;
+        leakFitXyHi = 0.0;
+        leakFitLoLo = 0.0;
+        leakFitHiHi = 0.0;
+        leakFitLoHi = 0.0;
+    }
+
     // Split our own output in two around 1.5 kHz and fit a gain to each.
     //
     // One band was not enough. The reference used to be the top end alone -
@@ -585,34 +694,83 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     // Least squares over the two together, not one each: a one-pole split does
     // not make them orthogonal, and fitting them independently has each one
     // claiming part of what the other explains.
-    float gLo = 0.0f, gHi = 0.0f;
-    const double det = loLo * hiHi - loHi * loHi;
-    if (std::fabs (det) > 1.0e-12 && loLo > 1.0e-9 && hiHi > 1.0e-9)
+    //
+    // And over half a second of them, not over this block. The gain used to be
+    // solved from a single block and the *answer* smoothed towards it, which
+    // sounds equivalent and is not: a block whose reference happens to be
+    // silent has no answer to give, so it took the degenerate branch below and
+    // returned a hard zero - an absence of evidence, not a measurement - and
+    // the smoother mixed that in as though it were one. Between strokes the
+    // estimate therefore decayed towards zero, and the sparser the part the
+    // less of it was cancelled: across the nine styles the residual went from
+    // 0.07-0.18 at sixteenths to 0.29-0.46 at eighths, which is the shipped
+    // default, and 0.62-0.74 at quarters. Accumulating the normal equations
+    // instead lets a silent block contribute its honest zeros to both sides,
+    // which moves the answer not at all, and the same fifty-four rows come out
+    // under 0.0001.
+    //
+    // The forgetting factor is a length of time and not a number of callbacks.
+    // kGainSmooth was per callback, so on a 4096-frame buffer it forgot sixteen
+    // times faster in wall-clock terms than on 256 - the trap the phase
+    // constants in TempoFollower were fixed for. Measured at eighths before:
+    // 0.4792 at 256 frames against 0.2379 at 4096, the big buffer looking good
+    // only because at 85 ms a block is never silent.
+    constexpr double kLeakFitTauSec = 0.5;
+    const double alpha = std::exp (-static_cast<double> (n)
+                                   / std::max (1.0, kLeakFitTauSec * sampleRate));
+    leakFitXyLo = alpha * leakFitXyLo + xyLo;
+    leakFitXyHi = alpha * leakFitXyHi + xyHi;
+    leakFitLoLo = alpha * leakFitLoLo + loLo;
+    leakFitHiHi = alpha * leakFitHiHi + hiHi;
+    leakFitLoHi = alpha * leakFitLoHi + loHi;
+
+    // Signed here, clamped only where it is used, which is the whole difference
+    // between cancelling a leak and inventing one. Over a block of 256 samples
+    // the fit between two unrelated signals is not zero, it is zero plus a few
+    // per cent of noise; clamping that at zero first keeps only the positive
+    // half and averages it to a standing positive gain, so the analysis had a
+    // few per cent of the app's own part subtracted from it even on a feed that
+    // carried none - which costs the tracker real onsets, and was seen to put it
+    // badly out on a clean line feed with the part turned up.
+    //
+    // No evidence at all - the opening blocks, or the first block after the
+    // delay moved - leaves the previous estimate where it is instead of
+    // replacing it with a zero. The +-2 rail is only there to stop a
+    // pathological fit; the useful range is enforced at the point of use.
+    //
+    // The determinant is tested *relative* to the diagonal, not against a fixed
+    // floor: these are accumulated energies, so their size depends on the level
+    // and on how long the window has been running, and a number that means
+    // "singular" at one level means "fine" at another. It is also tested for
+    // sign - a Gram determinant is non-negative, so a negative one is rounding
+    // error, and dividing by it flips both coefficients. Measured: on this
+    // repository's benches the relative test and the old `fabs(det) > 1e-12`
+    // choose the same coefficients to four decimal places on all 54 rows, both
+    // buffer sweeps, every no-leak row and every room model. It is here because
+    // it cannot be wrong, not because it moved a number.
+    const double det = leakFitLoLo * leakFitHiHi - leakFitLoHi * leakFitLoHi;
+    if (det > 1.0e-6 * leakFitLoLo * leakFitHiHi && leakFitLoLo > 1.0e-9
+        && leakFitHiHi > 1.0e-9)
     {
-        gLo = static_cast<float> ((xyLo * hiHi - xyHi * loHi) / det);
-        gHi = static_cast<float> ((xyHi * loLo - xyLo * loHi) / det);
+        leakGainLo = std::clamp (
+            static_cast<float> ((leakFitXyLo * leakFitHiHi - leakFitXyHi * leakFitLoHi) / det),
+            -2.0f, 2.0f);
+        leakGainHi = std::clamp (
+            static_cast<float> ((leakFitXyHi * leakFitLoLo - leakFitXyLo * leakFitLoHi) / det),
+            -2.0f, 2.0f);
     }
     else
     {
-        if (loLo > 1.0e-9) gLo = static_cast<float> (xyLo / loLo);
-        if (hiHi > 1.0e-9) gHi = static_cast<float> (xyHi / hiHi);
+        // The two bands are collinear over the window, or one of them carries
+        // nothing, so each is fitted on its own. A band with no evidence in it
+        // keeps the gain it had.
+        if (leakFitLoLo > 1.0e-9)
+            leakGainLo = std::clamp (static_cast<float> (leakFitXyLo / leakFitLoLo),
+                                     -2.0f, 2.0f);
+        if (leakFitHiHi > 1.0e-9)
+            leakGainHi = std::clamp (static_cast<float> (leakFitXyHi / leakFitHiHi),
+                                     -2.0f, 2.0f);
     }
-
-    // Smoothed *before* it is clamped, which is the whole difference between
-    // cancelling a leak and inventing one. Over a block of 256 samples the fit
-    // between two unrelated signals is not zero, it is zero plus a few per cent
-    // of noise; clamping that at zero first keeps only the positive half and
-    // averages it to a standing positive gain, so the analysis had a few per
-    // cent of the app's own part subtracted from it even on a feed that carried
-    // none - which costs the tracker real onsets, and was seen to put it badly
-    // out on a clean line feed with the part turned up. Smoothing the signed fit
-    // lets the noise cancel, and a path that does not change from one callback
-    // to the next is estimated far better over half a second than over a block.
-    constexpr float kGainSmooth = 0.12f;
-    gLo = std::clamp (gLo, -2.0f, 2.0f);
-    gHi = std::clamp (gHi, -2.0f, 2.0f);
-    leakGainLo += (gLo - leakGainLo) * kGainSmooth;
-    leakGainHi += (gHi - leakGainHi) * kGainSmooth;
 
     const float maxG = speaker ? 0.98f : 0.95f;
     const float useLo = std::clamp (leakGainLo, 0.0f, maxG);
@@ -747,10 +905,38 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
 
     if (ownStepSamples > 0)
     {
-        // Take the new plateau as the level we are now sitting at, so that when
-        // the blame expires the part's own contribution is not still standing
-        // there looking like something that just started.
-        levelRef = std::max (levelRef, levelFast);
+        // Blamed on us: veto this rise and forget any step in progress. That is
+        // all this branch may do.
+        //
+        // It used to raise `levelRef` to the level it was vetoing as well, on
+        // the theory that when the blame expired the part's own contribution
+        // should not still be standing there looking like something that just
+        // started. It does not need to: `wasQuiet` below already refuses a rise
+        // that did not come out of a properly quiet room, and the part comes in
+        // over an input that was not quiet. What the ratchet did instead was
+        // move the reference permanently - it is only ever pushed *up* here, and
+        // afterwards it can only decay by the four-second release - so the one
+        // legitimate epoch of a session, the band starting, never cleared the
+        // bar again while the part was audible.
+        //
+        // Measured with a 138 BPM record and no leak on the input at all: the
+        // beat landed 2.96 ms differently with the master fader up than down,
+        // the analysis chain differed on 7678 of 9750 blocks, a genuine
+        // quiet-to-band step went completely unnoticed, and after twenty
+        // seconds of empty room the app took 4.35 s longer to settle on the
+        // tempo because the decoder was never told to drop the room's evidence.
+        // See .superpowers/sdd/makeup-phase-root-cause.md. Afterwards: 0.02 ms,
+        // zero differing blocks of 9750, the step called at 1.56 s, and the
+        // veto's own cases - our 0.6 return over a steady band, the part
+        // released over a quiet room - still at zero false restarts.
+        //
+        // The return is early, so while the blame stands `levelLoud`, the
+        // "was properly quiet" test and the downward decay of `levelRef` are
+        // skipped for the block rather than run. That is what the second of
+        // lateness costs: a legitimate start landing inside the window is
+        // called at 1.56 s with the part audible against 0.557 s with it
+        // muted. It costs nothing on the twenty-second pre-roll, which settles
+        // at 10.41 s either way.
         levelStepSamples = 0;
         return false;
     }
@@ -779,7 +965,7 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     {
         levelRef = std::max (levelFast, kMakeupFloor);
         levelStepSamples = 0;
-        ++analysisEpoch;
+        analysisEpoch.fetch_add (1, std::memory_order_relaxed);
         return true;
     }
 
@@ -890,8 +1076,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     tracker.setFollowStrength (static_cast<FollowStrength> (cfg.followStrength.load (std::memory_order_relaxed)));
     tracker.setSubdivisionOverride (static_cast<Subdivision> (cfg.subdivision.load (std::memory_order_relaxed)));
-    tracker.setTempoOctaveAuto (cfg.tempoOctaveAuto.load (std::memory_order_relaxed));
-    tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
+    tracker.setTempoOctaveAuto (true);
     {
         const bool follow = cfg.tempoFollow.load (std::memory_order_relaxed);
         tracker.setTempoFollow (follow);
@@ -987,7 +1172,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // its own shaker. It is adaptive and self-gating - the gain it fits is near
     // zero when there is nothing of ours on the input - so running it on a feed
     // that has no leak costs nothing.
-    if (! directFile)
+    if (! directFile && leakCancellationEnabledForTest)
         subtractSpeakerLeak (numSamples, speaker);
     maybeInjectClick (numSamples);
     // Mic rumble only. A mixer aux and the click tests carry kick body around
@@ -1057,7 +1242,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         lastHarmonicShare.store (harmony.tonalShare(), std::memory_order_relaxed);
     }
 
-    tracker.setInputEpoch (analysisEpoch);
+    tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed));
     const auto tr = tracker.process (mono.data(), numSamples);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
         cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
@@ -1067,7 +1252,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     percussion.setGroove (tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
                                                     : (tr.bpm > 40.0f ? tr.bpm : 120.0f),
                           tr.clockPulsesPerBeat);
-    percussion.setShakerSubdivision (tr.subdivision);
+    percussion.setSubdivision (tr.subdivision);
 
     // Fold the analysis signal onto the bar to see which part the music is
     // asking for. Only while the clock is actually on the song: folding audio
@@ -1218,7 +1403,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
-    lastRestarts.store (analysisEpoch, std::memory_order_relaxed);
+    lastRestarts.store (analysisEpoch.load (std::memory_order_relaxed),
+                        std::memory_order_relaxed);
     lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
     lastPeak.store (peak, std::memory_order_relaxed);
     lastAnalysisPeak.store (analysisPeak, std::memory_order_relaxed);
@@ -1241,6 +1427,15 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastFitResidual.store (tr.fitResidual, std::memory_order_relaxed);
     lastFitCoverage.store (tr.fitCoverage, std::memory_order_relaxed);
+    lastTempoTransitionState.store (static_cast<int> (tr.tempoTransitionState),
+                                    std::memory_order_relaxed);
+    lastTempoTransitionReason.store (static_cast<int> (tr.tempoTransitionReason),
+                                     std::memory_order_relaxed);
+    lastTempoTransitionBpm.store (tr.tempoTransitionBpm, std::memory_order_relaxed);
+    lastTempoTransitionConfidence.store (tr.tempoTransitionConfidence,
+                                         std::memory_order_relaxed);
+    lastTempoTransitionIntervals.store (tr.tempoTransitionIntervals,
+                                        std::memory_order_relaxed);
     lastStyle.store (static_cast<int> (chosen), std::memory_order_relaxed);
     lastLoopPlaying.store (hybrid.loopIsPlaying(), std::memory_order_relaxed);
     lastLoopPhaseMs.store (hybrid.player().phaseErrorMs(), std::memory_order_relaxed);
@@ -1339,9 +1534,18 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
     s.fitResidual = lastFitResidual.load (std::memory_order_relaxed);
     s.fitCoverage = lastFitCoverage.load (std::memory_order_relaxed);
+    s.tempoTransitionState = static_cast<TempoTransitionState> (
+        lastTempoTransitionState.load (std::memory_order_relaxed));
+    s.tempoTransitionReason = static_cast<TempoTransitionReason> (
+        lastTempoTransitionReason.load (std::memory_order_relaxed));
+    s.tempoTransitionBpm = lastTempoTransitionBpm.load (std::memory_order_relaxed);
+    s.tempoTransitionConfidence =
+        lastTempoTransitionConfidence.load (std::memory_order_relaxed);
+    s.tempoTransitionIntervals =
+        lastTempoTransitionIntervals.load (std::memory_order_relaxed);
     // The level in force, which under AUTO is not the one in the settings.
     s.tempoOctave = lastOctave.load (std::memory_order_relaxed);
-    s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);
+    s.tempoOctaveAuto = true;
     s.tempoFollow = cfg.tempoFollow.load (std::memory_order_relaxed);
 
     s.loopPlaying = lastLoopPlaying.load (std::memory_order_relaxed);

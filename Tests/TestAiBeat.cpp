@@ -22,6 +22,7 @@
 #include "Tracking/HarmonicChange.h"
 #include "Tracking/KickOnsetDetector.h"
 #include "Tracking/PhaseTrust.h"
+#include "Tracking/TempoFollower.h"
 
 #include "../scripts/probe_song_render.h"
 
@@ -31,6 +32,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <random>
 #include <atomic>
@@ -133,6 +136,463 @@ namespace
         }
         quietLeadIn (dest, sr);
     }
+
+    struct DecoderStepResult
+    {
+        /** When the decoder first published a confirmed rapid transition, and
+            the latest time at which a causal decision could have been made. */
+        double rapidAtSec = -1.0;
+        double deadlineSec = 0.0;
+        float  bpmAtDeadline = 0.0f;
+        /** The committed tempo well after the change. This is where a second
+            confirmation of the same target used to appear: the fold's buffer is
+            seconds long, so it goes on naming the tempo that was left, drags the
+            committed BPM back towards it, and the next interval at the *new*
+            tempo then looks like a fresh change. */
+        float  bpmLate = 0.0f;
+        int    rapidCount = 0;
+        /** How many times `transitionSerial` moved over the whole run. One step
+            is one event; more than that is the detector arguing with itself, and
+            a consumer keying off the serial would re-adopt on each one. */
+        int    serialIncrements = 0;
+        unsigned serialAtFirstConfirm = 0;
+        unsigned serialAtEnd = 0;
+        /** What was published on the frame the change was confirmed. */
+        vp::TempoTransitionReason reasonAtConfirm = vp::TempoTransitionReason::none;
+        int    intervalsAtConfirm = 0;
+        float  confidenceAtConfirm = -1.0f;
+        /** The real audio-thread clock driven from the published payload. */
+        float  clockBpmAtTwoBeats = 0.0f;
+        double clockBpmSampleSec = -1.0;
+        double clockPhaseMsAtThreeBeats = 1.0e9;
+        int    pulseCountMismatches = 0;
+        bool   clockMovedBackwards = false;
+        double expiredAtSec = -1.0;
+        vp::TempoTransitionReason reasonAtExpiry = vp::TempoTransitionReason::none;
+        float  bpmAtExpiry = 0.0f;
+        unsigned serialAtExpiry = 0;
+        int    downstreamAdoptions = 0;
+        int    acceptedBeatsAfterConfirm = 0;
+        vp::TempoTransitionState stateAfterFirstAccepted =
+            vp::TempoTransitionState::stable;
+        vp::TempoTransitionState stateAfterSecondAccepted =
+            vp::TempoTransitionState::rapid;
+        /** Which rejections were actually reached, so a test can tell "the two
+            intervals disagreed" from "that interval was never a tempo at all". */
+        bool   sawIncoherent = false;
+        bool   sawOutsideRange = false;
+        bool   sawCandidate = false;
+        bool   sawResetAfterCandidate = false;
+    };
+
+    /** Deterministic worker model for the end-to-end publication test. It
+        ignores feature values and emits the same clean causal beat curve used
+        by the decoder step fixture: 120 BPM, then a genuine 10% step to 132. */
+    class ScriptedTransitionModel final : public vp::IBeatModel
+    {
+    public:
+        explicit ScriptedTransitionModel (
+            std::shared_ptr<std::atomic<bool>> silenceControl = {})
+            : silence (std::move (silenceControl))
+        {
+            constexpr double fps = 50.0;
+            constexpr double duration = 40.0;
+            double t = 0.0;
+            while (t < duration)
+            {
+                beats.push_back (t * fps);
+                t += 60.0 / (t < 18.0 ? 120.0 : (t < 30.0 ? 132.0 : 120.0));
+            }
+        }
+
+        bool prepare (int) override { return true; }
+        void reset() override { frame = 0; }
+
+        bool infer (const float*, int, float activations3[3]) override
+        {
+            float pulse = 0.03f;
+            if (silence == nullptr || ! silence->load (std::memory_order_relaxed))
+            {
+                for (const double beat : beats)
+                {
+                    const double d = (static_cast<double> (frame) - beat) / 1.35;
+                    if (std::fabs (d) < 5.0)
+                        pulse = std::max (
+                            pulse,
+                            0.94f * static_cast<float> (std::exp (-0.5 * d * d)));
+                }
+            }
+            ++frame;
+            activations3[0] = pulse;
+            activations3[1] = 0.02f;
+            activations3[2] = 1.0f - pulse;
+            return true;
+        }
+
+    private:
+        std::vector<double> beats;
+        std::shared_ptr<std::atomic<bool>> silence;
+        int frame = 0;
+    };
+
+    int expectedPulseCrossings (double before, double after, int pulsesPerBeat)
+    {
+        constexpr double boundaryTolerance = 1.0e-9;
+        const double scale = static_cast<double> (pulsesPerBeat);
+        return static_cast<int> (std::floor (after * scale + boundaryTolerance))
+               - static_cast<int> (std::floor (before * scale + boundaryTolerance));
+    }
+
+    bool pulseCountMatches (double before, double after, int pulsesPerBeat,
+                            int reported) noexcept
+    {
+        return reported == expectedPulseCrossings (before, after, pulsesPerBeat);
+    }
+
+    enum class StepAnomaly
+    {
+        none,
+        /** One beat displaced off the grid, by little enough that the interval it
+            makes is still a tempo this grid could plausibly have moved to. That
+            is the case worth testing: it reaches the two-interval coherence
+            check and has to be rejected there, rather than being thrown out
+            earlier for naming a tempo outside the admissible range. */
+        offGridEvent,
+        /** One beat missing from the curve a few beats before the change, so one
+            accepted interval spans two beats. */
+        skippedBeat,
+        /** No tempo change at all: two reflection-quiet maxima, evenly spaced at
+            a period well off the committed one, standing in a gap between beats
+            that stayed loud. Everything about the pair except its level says
+            "tempo change". */
+        weakEvidence
+    };
+
+    enum class RapidTail
+    {
+        normal,
+        silence,
+        offGridOnly
+    };
+
+    // An abrupt tempo step, fed to the decoder as the activation curve it would
+    // actually see: one Gaussian bump per beat, the spacing changing at
+    // `changeAt`. Nothing here is a mock - the decoder runs its own peak
+    // picking, its own fits and its own regime machine over the whole 26
+    // seconds, so what this measures is causal detection latency.
+    DecoderStepResult runDecoderStep (float fromBpm, float toBpm, bool lineFeed,
+                                      StepAnomaly anomaly = StepAnomaly::none,
+                                      double rampSeconds = 0.0,
+                                      double discontinuityAt = -1.0,
+                                      RapidTail rapidTail = RapidTail::normal)
+    {
+        constexpr double fps = 50.0;
+        constexpr double changeAt = 18.0;
+        constexpr double duration = 26.0;
+        constexpr float  kStrongPeak = 0.94f;
+        // Above the decoder's absolute beat threshold, below the relative level
+        // a candidate peak has to reach against the beats around it.
+        constexpr float  kWeakPeak = 0.52f;
+
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (lineFeed);
+
+        vp::TempoFollower clock;
+        clock.prepare (48000.0);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (fromBpm);
+        clock.setTargetTempo (fromBpm, 1.0f);
+        clock.setFollowStrength (vp::FollowStrength::high);
+        clock.setLocked (true);
+
+        // Where the two-beat budget is counted from.
+        //
+        // The step lands on the first beat at or after `changeAt`. That beat is
+        // the last one of the old tempo as far as any causal observer is
+        // concerned - it is the *spacing after* it that changed - so the first
+        // interval at the new tempo ends one new beat later and the second ends
+        // one beat later again. The deadline is therefore counted from that
+        // beat, which is the first one already followed by the new tempo, and
+        // spans the two causally observable intervals that carry the change.
+        //
+        // Counting from `changeAt` instead would dock the budget by however far
+        // the step happened to fall between beats, which is not latency any
+        // causal detector spends: it is time before the evidence exists.
+        std::vector<std::pair<double, float>> beats;
+        double changeBeatSec = -1.0;
+        double t = 0.0;
+        while (t < duration + 1.0)
+        {
+            const bool changed = t >= changeAt;
+            if (changed && changeBeatSec < 0.0)
+                changeBeatSec = t;
+            beats.emplace_back (t * fps, kStrongPeak);
+            const float beatBpm = ! changed
+                                    ? fromBpm
+                                    : (rampSeconds <= 0.0
+                                        ? toBpm
+                                        : static_cast<float> (
+                                              fromBpm + (toBpm - fromBpm)
+                                                  * std::min (1.0,
+                                                      (t - changeAt) / rampSeconds)));
+            t += 60.0 / static_cast<double> (beatBpm);
+        }
+
+        const double fromPeriod = 60.0 / static_cast<double> (fromBpm);
+        if (anomaly == StepAnomaly::offGridEvent)
+        {
+            // Displaced rather than inserted. An extra beat between two others
+            // splits one period into two, and no split of one period leaves both
+            // halves inside a quarter of it - so an inserted event can only ever
+            // be rejected for being outside the range. Moving one beat by an
+            // eighth of a period makes two intervals of 1.12 and 0.88 periods:
+            // each on its own is a tempo this grid could have moved to, and it
+            // is only the two together that say otherwise.
+            for (auto& b : beats)
+                if (std::fabs (b.first / fps - changeAt) < 0.5 * fromPeriod)
+                {
+                    b.first += 0.125 * fromPeriod * fps;
+                    break;
+                }
+        }
+        else if (anomaly == StepAnomaly::weakEvidence)
+        {
+            // A reflection is not a passage that got quieter - it is a quiet
+            // maximum standing next to beats that did not. Modelling it as a
+            // level drop would test the wrong thing and would be right to fail:
+            // when the whole mix drops, the quiet peaks *are* the beats and a
+            // relative gate has to follow them down.
+            //
+            // So the beats stay loud and stay where they are; two are removed to
+            // leave the gap a reflection pair could occupy, and the pair put in
+            // it is evenly spaced at a period a tenth off the committed one.
+            // Everything about it except its level says the tempo changed.
+            const double from = changeAt + 0.25 * fromPeriod;
+            const double to = changeAt + 2.5 * fromPeriod;
+            beats.erase (std::remove_if (beats.begin(), beats.end(),
+                                         [&] (const std::pair<double, float>& b)
+                                         {
+                                             const double at = b.first / fps;
+                                             return at > from && at < to;
+                                         }),
+                         beats.end());
+            beats.emplace_back ((changeAt + 1.10 * fromPeriod) * fps, kWeakPeak);
+            beats.emplace_back ((changeAt + 2.20 * fromPeriod) * fps, kWeakPeak);
+        }
+        else if (anomaly == StepAnomaly::skippedBeat)
+        {
+            // Four beats before the change, so the doubled interval it leaves is
+            // still inside the eight-interval window the jitter estimate reads
+            // at the moment the step arrives.
+            const double dropAt = changeAt - 4.0 * fromPeriod;
+            for (size_t i = 0; i < beats.size(); ++i)
+                if (std::fabs (beats[i].first / fps - dropAt) < 0.5 * fromPeriod)
+                {
+                    beats.erase (beats.begin() + static_cast<long>(i));
+                    break;
+                }
+        }
+
+        std::sort (beats.begin(), beats.end(),
+                   [] (const auto& a, const auto& b) { return a.first < b.first; });
+
+        DecoderStepResult result;
+        // The second changed interval ends on the third changed peak. The
+        // activation curve quantizes that peak to its nearest analysis frame;
+        // `BeatDecoder` can prove it is a local maximum only on the following
+        // frame, when `prevPulse > currentPulse`. That exact frame is the first
+        // causal instant at which the two intervals are observable.
+        const auto firstChanged = std::lower_bound (
+            beats.begin(), beats.end(), changeBeatSec * fps - 1.0e-6,
+            [] (const std::pair<double, float>& beat, double frame)
+            {
+                return beat.first < frame;
+            });
+        const auto evidenceEndpoint = firstChanged + 2;
+        const long long evidencePeakFrame = std::llround (evidenceEndpoint->first);
+        const long long evidenceReadyFrame = evidencePeakFrame + 1;
+        result.deadlineSec = static_cast<double> (evidenceReadyFrame) / fps;
+        // Far enough past the change for the fold to have had every chance to
+        // drag the tempo back, and for a second confirmation to have fired.
+        const double lateAtSec = duration - 2.0;
+
+        unsigned prevSerial = 0;
+        uint32_t lastBeatSerial = 0;
+        uint32_t lastTransitionSerial = 0;
+        bool haveBeatSerial = false;
+        double previousClockPosition = 0.0;
+        bool sampledLate = false;
+        uint32_t beatSerialAtConfirm = 0;
+        for (int frame = 0; frame < static_cast<int> (duration * fps); ++frame)
+        {
+            float activation = 0.03f;
+            const double now = static_cast<double> (frame) / fps;
+            if (result.rapidAtSec >= 0.0 && rapidTail == RapidTail::offGridOnly)
+            {
+                const double period = 60.0 / static_cast<double> (toBpm);
+                const double halfGridBeats = (now - result.rapidAtSec) / period - 0.5;
+                const double d = (halfGridBeats - std::round (halfGridBeats))
+                                 * period * fps;
+                if (std::fabs (d) < 5.0)
+                    activation = std::max (
+                        activation,
+                        kStrongPeak * static_cast<float> (std::exp (-0.5 * d * d)));
+            }
+            else if (result.rapidAtSec < 0.0 || rapidTail == RapidTail::normal)
+            {
+                for (const auto& b : beats)
+                {
+                    const double d = (static_cast<double> (frame) - b.first) / 1.35;
+                    if (std::fabs (d) < 5.0)
+                        activation = std::max (
+                            activation,
+                            b.second * static_cast<float> (std::exp (-0.5 * d * d)));
+                }
+            }
+
+            const vp::BeatHypothesis h = dec.observe (activation, 0.02f, 1.0f - activation);
+            if (discontinuityAt >= 0.0
+                && now >= discontinuityAt
+                && now < discontinuityAt + 1.0 / fps)
+                dec.notifyDiscontinuity (0.20);
+
+            if (h.valid)
+            {
+                if (h.transitionState == vp::TempoTransitionState::rapid
+                    && h.transitionSerial != lastTransitionSerial)
+                {
+                    clock.beginTempoTransition (h.transitionBpm);
+                    lastTransitionSerial = h.transitionSerial;
+                    ++result.downstreamAdoptions;
+                }
+                clock.setTargetTempo (h.bpm, h.confidence);
+                clock.setGridPhase (
+                    h.beatPhase,
+                    clock.tempoTransitionActive()
+                        ? vp::kGridTauRapid
+                        : vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f));
+                if (! haveBeatSerial)
+                {
+                    lastBeatSerial = h.beatSerial;
+                    haveBeatSerial = true;
+                }
+                else if (h.beatSerial != lastBeatSerial)
+                {
+                    lastBeatSerial = h.beatSerial;
+                    clock.observeOnsetPhase (
+                        vp::wrap01 (clock.beatPhase() - h.beatPhase), h.confidence, 1);
+                }
+            }
+
+            // Tempo adoption is judged at the first evidence-ready frame,
+            // immediately after transition handling. Advancing this callback
+            // before sampling would grant another 20 ms that the causal
+            // detector did not need.
+            if (now >= result.deadlineSec && result.clockBpmAtTwoBeats == 0.0f)
+            {
+                result.clockBpmAtTwoBeats = clock.currentTempo();
+                result.clockBpmSampleSec = now;
+            }
+            if (now >= result.deadlineSec && result.bpmAtDeadline == 0.0f)
+                result.bpmAtDeadline = h.bpm;
+
+            const double positionBefore =
+                static_cast<double> (clock.beatsElapsed()) + clock.beatPhase();
+            const vp::ClockTick tick = clock.advance (960);
+            const double clockPosition =
+                static_cast<double> (clock.beatsElapsed()) + clock.beatPhase();
+            if (! pulseCountMatches (positionBefore, clockPosition, 4,
+                                     tick.pulsesFired))
+                ++result.pulseCountMismatches;
+            if (clockPosition + 1.0e-6 < previousClockPosition)
+                result.clockMovedBackwards = true;
+            previousClockPosition = clockPosition;
+
+            const double clockNow = now + 960.0 / 48000.0;
+            const double threeBeatDeadline =
+                changeBeatSec + 3.0 * 60.0 / static_cast<double> (toBpm);
+            if (clockNow >= threeBeatDeadline
+                && result.clockPhaseMsAtThreeBeats > 1.0e8)
+            {
+                // `advance(960)` moved the clock to the end of this 20 ms
+                // block. Judge the song at that same instant; comparing it to
+                // start-of-block `now` deterministically biased the oracle by
+                // one whole analysis frame.
+                double lastTrueBeat = 0.0;
+                for (const auto& beat : beats)
+                    if (beat.first / fps <= clockNow)
+                        lastTrueBeat = beat.first / fps;
+                const float truePhase = vp::wrap01 (
+                    static_cast<float> ((clockNow - lastTrueBeat) * toBpm / 60.0));
+                result.clockPhaseMsAtThreeBeats =
+                    std::fabs (vp::wrapCentered (clock.beatPhase() - truePhase))
+                    * 60.0 / static_cast<double> (toBpm) * 1000.0;
+            }
+
+            if (h.transitionReason == vp::TempoTransitionReason::incoherent)
+                result.sawIncoherent = true;
+            if (h.transitionReason == vp::TempoTransitionReason::outsideRange)
+                result.sawOutsideRange = true;
+            if (h.transitionReason == vp::TempoTransitionReason::candidateStarted)
+                result.sawCandidate = true;
+            if (result.sawCandidate
+                && h.transitionReason == vp::TempoTransitionReason::reset)
+                result.sawResetAfterCandidate = true;
+
+            if (h.transitionSerial != prevSerial)
+            {
+                ++result.serialIncrements;
+                if (result.serialIncrements == 1)
+                    result.serialAtFirstConfirm = h.transitionSerial;
+                prevSerial = h.transitionSerial;
+            }
+
+            if (h.transitionState == vp::TempoTransitionState::rapid)
+            {
+                if (result.rapidAtSec < 0.0)
+                {
+                    result.rapidAtSec = now;
+                    result.reasonAtConfirm = h.transitionReason;
+                    result.intervalsAtConfirm = h.transitionIntervals;
+                    result.confidenceAtConfirm = h.transitionConfidence;
+                    beatSerialAtConfirm = h.beatSerial;
+                }
+                ++result.rapidCount;
+            }
+            else if (result.rapidAtSec >= 0.0
+                     && result.expiredAtSec < 0.0
+                     && h.transitionReason == vp::TempoTransitionReason::expired)
+            {
+                result.expiredAtSec = now;
+                result.reasonAtExpiry = h.transitionReason;
+                result.bpmAtExpiry = h.bpm;
+                result.serialAtExpiry = h.transitionSerial;
+            }
+
+            if (result.rapidAtSec >= 0.0
+                && (result.expiredAtSec < 0.0
+                    || std::fabs (now - result.expiredAtSec) < 1.0e-9)
+                && h.beatSerial != beatSerialAtConfirm)
+            {
+                ++result.acceptedBeatsAfterConfirm;
+                beatSerialAtConfirm = h.beatSerial;
+                if (result.acceptedBeatsAfterConfirm == 1)
+                    result.stateAfterFirstAccepted = h.transitionState;
+                else if (result.acceptedBeatsAfterConfirm == 2)
+                    result.stateAfterSecondAccepted = h.transitionState;
+            }
+
+            if (now >= lateAtSec && ! sampledLate)
+            {
+                result.bpmLate = h.bpm;
+                sampledLate = true;
+            }
+            result.serialAtEnd = h.transitionSerial;
+        }
+        return result;
+    }
 }
 
 void vpRunAiBeatTests (int& passed, int& failed)
@@ -141,6 +601,461 @@ void vpRunAiBeatTests (int& passed, int& failed)
     gFail = &failed;
     std::printf ("\nAI beat tracking / TSM\n");
 
+    {
+        const vp::EngineSnapshot snap;
+        expect (snap.tempoTransitionState == vp::TempoTransitionState::stable
+                    && snap.tempoTransitionReason == vp::TempoTransitionReason::none
+                    && snap.tempoTransitionBpm == 0.0f
+                    && snap.tempoTransitionConfidence == 0.0f
+                    && snap.tempoTransitionIntervals == 0,
+                "engine snapshot transition diagnostics have exact safe defaults");
+
+        vp::EngineSettings defaults;
+        expect (defaults.kickChannel.load() == -1,
+                "dedicated kick input remains disabled by default");
+
+        // The shipped controls must describe a musical part, not only carry
+        // default scalar values: both hands play the marcha on eighths, the
+        // conga leaves beat one to the band, and its paired open tones still
+        // pull out of the bar on 4 and the "and" of 4.
+        vp::GrooveEngine defaultGroove;
+        defaultGroove.prepare (0xdefa017u);
+        defaultGroove.setStyle (static_cast<vp::GrooveStyle> (
+            defaults.grooveStyle.load()));
+        defaultGroove.setSubdivision (static_cast<vp::Subdivision> (
+            defaults.subdivision.load()));
+        defaultGroove.setShakerEnabled (defaults.shakerEnabled.load());
+        defaultGroove.setCongasEnabled (defaults.congasEnabled.load());
+        defaultGroove.setHumanize (defaults.humanization.load());
+        defaultGroove.setSwing (defaults.swing.load());
+        defaultGroove.setIntensity (defaults.intensity.load());
+        defaultGroove.setDynamics (1.0f);
+        int defaultShakers = 0, defaultCongas = 0, defaultOdd = 0;
+        bool congaOnOne = false, openOnFour = false, openOnAndFour = false;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+            const int count = defaultGroove.eventsAt (
+                0, step, events, vp::GrooveEngine::kMaxEvents);
+            for (int i = 0; i < count; ++i)
+            {
+                const bool shaker = events[i].stroke == vp::Stroke::shakerDown
+                                     || events[i].stroke == vp::Stroke::shakerUp;
+                if (shaker)
+                    ++defaultShakers;
+                else
+                {
+                    ++defaultCongas;
+                    congaOnOne = congaOnOne || step == 0;
+                    openOnFour = openOnFour || (step == 12
+                                                 && events[i].stroke == vp::Stroke::open);
+                    openOnAndFour = openOnAndFour || (step == 14
+                                                       && events[i].stroke == vp::Stroke::open);
+                }
+                if ((step % 2) != 0)
+                    ++defaultOdd;
+            }
+        }
+        expect (defaults.subdivision.load() == static_cast<int> (vp::Subdivision::eighth)
+                    && defaults.shakerEnabled.load() && defaults.congasEnabled.load()
+                    && ! defaults.grooveAuto.load()
+                    && defaults.grooveStyle.load() == static_cast<int> (vp::GrooveStyle::marcha)
+                    && defaultShakers == 8 && defaultCongas > 0 && defaultOdd == 0
+                    && ! congaOnOne && openOnFour && openOnAndFour,
+                "the default is an eighth-note marcha with both instruments, an open one and the closing open-tone pair");
+
+        vp::BeatHypothesis known;
+        known.valid = true;
+        known.transitionState = vp::TempoTransitionState::rapid;
+        known.transitionReason = vp::TempoTransitionReason::confirmed;
+        known.transitionBpm = 131.25f;
+        known.transitionConfidence = 0.87f;
+        known.transitionIntervals = 2;
+
+        vp::BeatTracker::Output propagated;
+        propagated.setTempoTransitionDiagnostics (&known);
+        expect (propagated.tempoTransitionState == known.transitionState
+                    && propagated.tempoTransitionReason == known.transitionReason
+                    && propagated.tempoTransitionBpm == known.transitionBpm
+                    && propagated.tempoTransitionConfidence == known.transitionConfidence
+                    && propagated.tempoTransitionIntervals == known.transitionIntervals,
+                "tracker output preserves the bounded transition payload");
+
+        known.valid = false;
+        propagated.setTempoTransitionDiagnostics (&known);
+        expect (propagated.tempoTransitionState == vp::TempoTransitionState::stable
+                    && propagated.tempoTransitionReason == vp::TempoTransitionReason::none
+                    && propagated.tempoTransitionBpm == 0.0f
+                    && propagated.tempoTransitionConfidence == 0.0f
+                    && propagated.tempoTransitionIntervals == 0,
+                "invalid hypothesis resets transition diagnostics safely");
+
+        propagated.tempoTransitionState = vp::TempoTransitionState::rapid;
+        propagated.tempoTransitionReason = vp::TempoTransitionReason::confirmed;
+        propagated.tempoTransitionBpm = 140.0f;
+        propagated.tempoTransitionConfidence = 1.0f;
+        propagated.tempoTransitionIntervals = 2;
+        propagated.setTempoTransitionDiagnostics (nullptr);
+        expect (propagated.tempoTransitionState == vp::TempoTransitionState::stable
+                    && propagated.tempoTransitionReason == vp::TempoTransitionReason::none
+                    && propagated.tempoTransitionBpm == 0.0f
+                    && propagated.tempoTransitionConfidence == 0.0f
+                    && propagated.tempoTransitionIntervals == 0,
+                "missing hypothesis resets transition diagnostics safely");
+    }
+
+    {
+        constexpr float targetBpm = 132.0f;
+        constexpr double reportedPeriod = 60.0 / static_cast<double> (targetBpm);
+        constexpr double frameSec = 1.0 / 50.0;
+
+        const auto silence = runDecoderStep (
+            120.0f, targetBpm, true, StepAnomaly::none, 0.0, -1.0,
+            RapidTail::silence);
+        expect (silence.rapidAtSec >= 0.0
+                    && silence.expiredAtSec > silence.rapidAtSec
+                    && silence.expiredAtSec
+                           <= silence.rapidAtSec + 2.0 * reportedPeriod + frameSec,
+                "rapid transition expires by two reported beats through complete silence");
+        expect (silence.reasonAtExpiry == vp::TempoTransitionReason::expired
+                    && silence.serialAtExpiry == silence.serialAtFirstConfirm
+                    && silence.serialAtEnd == silence.serialAtFirstConfirm
+                    && silence.serialIncrements == 1
+                    && std::fabs (silence.bpmAtExpiry - targetBpm) <= 1.0f,
+                "silence expiry preserves the confirmed serial and committed BPM");
+        expect (! silence.clockMovedBackwards && silence.pulseCountMismatches == 0,
+                "silence after confirmation cannot reverse or miscount the clock");
+
+        const auto offGrid = runDecoderStep (
+            120.0f, targetBpm, true, StepAnomaly::none, 0.0, -1.0,
+            RapidTail::offGridOnly);
+        expect (offGrid.rapidAtSec >= 0.0
+                    && offGrid.expiredAtSec > offGrid.rapidAtSec
+                    && offGrid.expiredAtSec
+                           <= offGrid.rapidAtSec + 2.0 * reportedPeriod + frameSec
+                    && offGrid.acceptedBeatsAfterConfirm == 0,
+                "off-grid-only peaks cannot postpone elapsed rapid expiry");
+
+        const auto accepted = runDecoderStep (120.0f, targetBpm, true);
+        expect (accepted.stateAfterFirstAccepted == vp::TempoTransitionState::rapid
+                    && accepted.stateAfterSecondAccepted
+                           == vp::TempoTransitionState::stable
+                    && accepted.reasonAtExpiry == vp::TempoTransitionReason::expired,
+                "the second accepted beat expires rapid state");
+        expect (accepted.downstreamAdoptions == 1
+                    && std::fabs (accepted.clockBpmAtTwoBeats - targetBpm) <= 1.0f,
+                "second-beat expiry still permits one downstream adoption");
+    }
+
+    {
+        // 44.1 kHz is an exact 2:1 model-rate ratio, so one 882-sample device
+        // block is exactly one 441-sample analysis hop with no fractional
+        // resampler boundary that could occasionally combine two frames.
+        constexpr double sr = 44100.0;
+        constexpr int block = 882;
+        constexpr int firstFrameSamples = vp::kBeatModelFrame * 2;
+        auto silenceControl = std::make_shared<std::atomic<bool>> (false);
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (
+            std::make_unique<ScriptedTransitionModel> (silenceControl));
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().analysisChannel.store (0);
+        const uint32_t initialPublication = eng.hypothesisPublicationSequence();
+        expect (initialPublication == 0,
+                "scripted engine starts before any complete publication");
+
+        std::vector<float> input (static_cast<size_t> (firstFrameSamples), 0.1f);
+        std::vector<float> left (static_cast<size_t> (firstFrameSamples), 0.0f);
+        std::vector<float> right (static_cast<size_t> (firstFrameSamples), 0.0f);
+        const float* ins[1] = { input.data() };
+        float* outs[2] = { left.data(), right.data() };
+
+        auto diagnosticsAreClear = [] (const vp::EngineSnapshot& s)
+        {
+            return s.tempoTransitionState == vp::TempoTransitionState::stable
+                   && s.tempoTransitionReason == vp::TempoTransitionReason::none
+                   && s.tempoTransitionBpm == 0.0f
+                   && s.tempoTransitionConfidence == 0.0f
+                   && s.tempoTransitionIntervals == 0;
+        };
+
+        expect (diagnosticsAreClear (eng.snapshot()),
+                "real engine path starts with no transition hypothesis");
+
+        bool sawInvalidPublication = false;
+        bool invalidStayedClear = false;
+        bool publicationObserved = false;
+        bool sawRapidSnapshot = false;
+        bool sequenceAdvancedExactly = true;
+        vp::BeatHypothesis rapidHyp;
+        vp::EngineSnapshot rapid;
+        std::vector<vp::BeatHypothesis> noResetSequence;
+
+        auto waitForNextPublication = [&] (uint32_t prior, vp::BeatHypothesis& captured)
+        {
+            const auto deadline = std::chrono::steady_clock::now()
+                                  + std::chrono::milliseconds (500);
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                const uint32_t completed = eng.hypothesisPublicationSequence();
+                if (completed != prior)
+                {
+                    sequenceAdvancedExactly = sequenceAdvancedExactly
+                                              && completed == prior + 2u;
+                    return eng.tryLoadNeuralHypothesis (captured);
+                }
+                std::this_thread::yield();
+            }
+            return false;
+        };
+
+        // Feed exactly enough device samples for the first model frame. Total
+        // input can support one and only one publication, regardless of how
+        // the worker divides its FIFO pops. Every later feed is exactly one hop.
+        eng.process (ins, 1, outs, 2, firstFrameSamples);
+
+        uint32_t priorPublication = initialPublication;
+        for (int callback = 0; callback < 1400 && ! sawRapidSnapshot; ++callback)
+        {
+            vp::BeatHypothesis workerHyp;
+            bool loaded = waitForNextPublication (priorPublication, workerHyp);
+            const uint32_t completed = eng.hypothesisPublicationSequence();
+            publicationObserved = publicationObserved || completed != priorPublication;
+            priorPublication = completed;
+
+            if (loaded)
+            {
+                noResetSequence.push_back (workerHyp);
+                if (! workerHyp.valid)
+                {
+                    sawInvalidPublication = true;
+                }
+                if (workerHyp.valid
+                    && workerHyp.transitionState == vp::TempoTransitionState::rapid)
+                {
+                    // One sample cannot complete a new analysis hop. This
+                    // callback therefore consumes exactly the publication just
+                    // captured and performs the engine's relaxed stores.
+                    rapidHyp = workerHyp;
+                    eng.process (ins, 1, outs, 2, 1);
+                    rapid = eng.snapshot();
+                    sawRapidSnapshot = true;
+                    break;
+                }
+            }
+
+            eng.process (ins, 1, outs, 2, block);
+            if (loaded && ! workerHyp.valid)
+            {
+                const auto consumed = eng.snapshot();
+                invalidStayedClear = invalidStayedClear
+                                     || (! consumed.hypValid
+                                         && diagnosticsAreClear (consumed));
+            }
+        }
+
+        expect (sequenceAdvancedExactly,
+                "scripted worker observes exactly one complete publication per hop");
+        expect (publicationObserved, "scripted transition publication is observed");
+        expect (sawInvalidPublication && invalidStayedClear,
+                "invalid worker hypothesis stays clear through engine snapshot");
+        std::printf ("transition-chain  seen=%d state=%d reason=%d bpm=%.2f conf=%.3f int=%d\n",
+                     sawRapidSnapshot ? 1 : 0,
+                     static_cast<int> (rapid.tempoTransitionState),
+                     static_cast<int> (rapid.tempoTransitionReason),
+                     static_cast<double> (rapid.tempoTransitionBpm),
+                     static_cast<double> (rapid.tempoTransitionConfidence),
+                     rapid.tempoTransitionIntervals);
+        expect (sawRapidSnapshot
+                    && rapid.tempoTransitionState == rapidHyp.transitionState
+                    && rapid.tempoTransitionReason == rapidHyp.transitionReason
+                    && rapid.tempoTransitionBpm == rapidHyp.transitionBpm
+                    && rapid.tempoTransitionConfidence == rapidHyp.transitionConfidence
+                    && rapid.tempoTransitionIntervals == rapidHyp.transitionIntervals,
+                "EngineSnapshot preserves the consumed transition payload bit-for-bit");
+        expect (rapidHyp.transitionState == vp::TempoTransitionState::rapid
+                    && rapidHyp.transitionReason == vp::TempoTransitionReason::confirmed
+                    && std::fabs (rapid.tempoTransitionBpm - 132.0f) < 0.5f
+                    && rapidHyp.transitionIntervals == 2,
+                "scripted model detects the expected 132 BPM transition");
+
+        // Feed one hop and reset without waiting for its publication. Whether
+        // the worker completes just before or just after the floor store, the
+        // payload describes audio older than that floor and must be rejected.
+        silenceControl->store (true, std::memory_order_relaxed);
+        const uint32_t sequenceBeforeRacingReset = eng.hypothesisPublicationSequence();
+        eng.process (ins, 1, outs, 2, block);
+        eng.reset();
+        const auto immediatelyAfterReset = eng.snapshot();
+        const auto racingDeadline = std::chrono::steady_clock::now()
+                                    + std::chrono::milliseconds (500);
+        while (eng.hypothesisPublicationSequence() == sequenceBeforeRacingReset
+               && std::chrono::steady_clock::now() < racingDeadline)
+            std::this_thread::yield();
+        const uint32_t sequenceAtReset = eng.hypothesisPublicationSequence();
+        vp::BeatHypothesis stale;
+        const bool stalePublicationVisible = eng.tryLoadNeuralHypothesis (stale);
+        expect (diagnosticsAreClear (immediatelyAfterReset)
+                    && ! immediatelyAfterReset.hypValid
+                    && ! stalePublicationVisible
+                    && sequenceAtReset == sequenceBeforeRacingReset + 2u,
+                "reset racing a completed slot write rejects that publication");
+
+        eng.process (ins, 1, outs, 2, 1);
+        const auto afterNextCallback = eng.snapshot();
+        expect (diagnosticsAreClear (afterNextCallback) && ! afterNextCallback.hypValid
+                    && eng.hypothesisPublicationSequence() == sequenceAtReset,
+                "pre-reset hypothesis cannot republish on the next callback");
+
+        bool postResetStayedClear = true;
+        bool postResetPublicationObserved = false;
+        vp::BeatHypothesis postResetHyp;
+        vp::EngineSnapshot postResetSnap;
+        for (int callback = 0; callback < 300 && ! postResetPublicationObserved; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            postResetStayedClear = postResetStayedClear
+                                   && diagnosticsAreClear (eng.snapshot())
+                                   && ! eng.snapshot().hypValid;
+
+            vp::BeatHypothesis workerHyp;
+            const bool loaded = waitForNextPublication (prior, workerHyp);
+            if (loaded && workerHyp.valid)
+            {
+                postResetHyp = workerHyp;
+                eng.process (ins, 1, outs, 2, 1);
+                postResetSnap = eng.snapshot();
+                postResetPublicationObserved = true;
+            }
+        }
+        expect (postResetPublicationObserved,
+                "genuine post-reset valid publication is observed");
+        expect (postResetStayedClear,
+                "reset diagnostics stay clear until new valid evidence");
+        expect (postResetPublicationObserved
+                    && postResetSnap.hypValid
+                    && postResetHyp.transitionState == vp::TempoTransitionState::rapid
+                    && postResetHyp.transitionSerial == rapidHyp.transitionSerial
+                    && diagnosticsAreClear (postResetSnap),
+                "first fresh rapid publication stays quarantined from diagnostics");
+
+        bool stableClearedQuarantine = false;
+        for (int callback = 0; callback < 100 && ! stableClearedQuarantine; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            const auto whileQuarantined = eng.snapshot();
+            postResetStayedClear = postResetStayedClear
+                                   && diagnosticsAreClear (whileQuarantined);
+
+            vp::BeatHypothesis workerHyp;
+            if (waitForNextPublication (prior, workerHyp)
+                && workerHyp.valid
+                && workerHyp.transitionState == vp::TempoTransitionState::stable)
+            {
+                eng.process (ins, 1, outs, 2, 1);
+                const auto stableSnap = eng.snapshot();
+                stableClearedQuarantine =
+                    stableSnap.hypValid
+                    && stableSnap.tempoTransitionState == vp::TempoTransitionState::stable;
+            }
+        }
+        expect (stableClearedQuarantine && postResetStayedClear,
+                "elapsed stable publication clears transition quarantine during silence");
+        silenceControl->store (false, std::memory_order_relaxed);
+
+        bool nextRapidAdopted = false;
+        vp::BeatHypothesis nextRapid;
+        vp::EngineSnapshot nextRapidSnap;
+        for (int callback = 0; callback < 700 && ! nextRapidAdopted; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            vp::BeatHypothesis workerHyp;
+            if (waitForNextPublication (prior, workerHyp)
+                && workerHyp.valid
+                && workerHyp.transitionState == vp::TempoTransitionState::rapid
+                && workerHyp.transitionSerial != postResetHyp.transitionSerial)
+            {
+                nextRapid = workerHyp;
+                eng.process (ins, 1, outs, 2, 1);
+                nextRapidSnap = eng.snapshot();
+                nextRapidAdopted = true;
+            }
+        }
+        expect (nextRapidAdopted
+                    && nextRapidSnap.tempoTransitionState
+                           == vp::TempoTransitionState::rapid
+                    && nextRapidSnap.tempoTransitionBpm == nextRapid.transitionBpm
+                    && nextRapidSnap.targetBpm == nextRapid.transitionBpm,
+                "new rapid serial adopts once after stable clears quarantine");
+
+        vp::VirtualPercussionEngine reference;
+        reference.setBeatModel (std::make_unique<ScriptedTransitionModel>());
+        reference.prepare (sr, block, 1);
+        reference.settings().followSource.store (
+            static_cast<int> (vp::FollowSource::kitMic));
+        reference.settings().analysisChannel.store (0);
+        reference.process (ins, 1, outs, 2, firstFrameSamples);
+
+        bool equivalentWithoutReset = ! noResetSequence.empty();
+        uint32_t referenceSequence = 0;
+        for (size_t i = 0; i < noResetSequence.size() && equivalentWithoutReset; ++i)
+        {
+            const auto deadline = std::chrono::steady_clock::now()
+                                  + std::chrono::milliseconds (500);
+            while (reference.hypothesisPublicationSequence() == referenceSequence
+                   && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+
+            const uint32_t completed = reference.hypothesisPublicationSequence();
+            vp::BeatHypothesis actual;
+            equivalentWithoutReset = completed == referenceSequence + 2u
+                                     && reference.tryLoadNeuralHypothesis (actual);
+            if (equivalentWithoutReset)
+            {
+                const auto& expected = noResetSequence[i];
+                equivalentWithoutReset =
+                    std::memcmp (&actual.bpm, &expected.bpm, sizeof (actual.bpm)) == 0
+                    && std::memcmp (&actual.beatPhase, &expected.beatPhase,
+                                    sizeof (actual.beatPhase)) == 0
+                    && actual.beatSerial == expected.beatSerial
+                    && actual.downbeatSerial == expected.downbeatSerial
+                    && actual.gridSerial == expected.gridSerial
+                    && actual.transitionSerial == expected.transitionSerial
+                    && actual.analysisSample == expected.analysisSample;
+            }
+            referenceSequence = completed;
+            if (i + 1 < noResetSequence.size())
+                reference.process (ins, 1, outs, 2, block);
+        }
+        expect (equivalentWithoutReset,
+                "publication observation leaves the no-reset hypothesis sequence unchanged");
+
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().analysisChannel.store (0);
+        vp::BeatHypothesis oldSession;
+        expect (eng.hypothesisPublicationSequence() == 0
+                    && ! eng.tryLoadNeuralHypothesis (oldSession)
+                    && diagnosticsAreClear (eng.snapshot())
+                    && ! eng.snapshot().hypValid,
+                "repeated prepare clears the completed publication from session A");
+
+        eng.process (ins, 1, outs, 2, firstFrameSamples);
+        const auto sessionBDeadline = std::chrono::steady_clock::now()
+                                      + std::chrono::milliseconds (500);
+        while (eng.hypothesisPublicationSequence() == 0
+               && std::chrono::steady_clock::now() < sessionBDeadline)
+            std::this_thread::yield();
+        vp::BeatHypothesis sessionB;
+        expect (eng.hypothesisPublicationSequence() == 2
+                    && eng.tryLoadNeuralHypothesis (sessionB)
+                    && sessionB.analysisSample > 0,
+                "session B accepts its own first complete publication");
+    }
 
     {
         vp::AudioFifo fifo;
@@ -376,6 +1291,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const double fpb = 60.0 / static_cast<double> (slowBpm) * fps;
         double acquiredAt = 99.0;
         float acquiredBpm = 0.0f;
+        bool eighthWentRapid = false;
         for (int f = 0; f < static_cast<int> (fps * 4.0); ++f)
         {
             const double halves = (static_cast<double> (f) / fpb - 0.35) * 2.0;
@@ -386,17 +1302,377 @@ void vpRunAiBeatTests (int& passed, int& failed)
             const float pulse = 0.03f + (top - 0.03f)
                 * static_cast<float> (std::exp (-0.5 * (distance / 1.5) * (distance / 1.5)));
             const auto h = eighths.observe (pulse, 0.03f, 0.0f);
-            if (h.valid)
+            eighthWentRapid = eighthWentRapid
+                              || h.transitionState == vp::TempoTransitionState::rapid;
+            if (h.valid && acquiredBpm == 0.0f)
             {
                 acquiredAt = static_cast<double> (f) / fps;
                 acquiredBpm = h.bpm;
-                break;
             }
         }
         std::printf ("fast-eighths  true 76, observed 152: %.2f s / %.1f BPM\n",
                      acquiredAt, static_cast<double> (acquiredBpm));
         expect (acquiredAt < 1.5 && std::fabs (acquiredBpm - slowBpm) < 3.0f,
                 "fast acquisition reads alternating eighths as subdivisions, not as the beat");
+        expect (! eighthWentRapid,
+                "alternating eighths never become an abrupt tempo transition");
+    }
+
+    // An abrupt step of 5-10%, which is what a band does when it comes out of a
+    // chorus, against the two things the decoder already had: a long fit that
+    // cannot describe a tempo until most of its window is at it, and a fixed
+    // regime built to refuse exactly this. Neither can answer inside two beats,
+    // so the step is confirmed from the two causal intervals that carry it -
+    // and the second assertion is the one that keeps it honest, because a
+    // single off-grid onset supplies one interval and must never be enough.
+    {
+        for (const bool line : { true, false })
+        {
+            const float stepPairs[][2] = {
+                { 120.0f, 132.0f },
+                { 128.0f, 120.0f },
+                { 76.0f, 82.0f },
+                { 168.0f, 156.0f }
+            };
+            DecoderStepResult stepResults[4];
+            for (int step = 0; step < 4; ++step)
+            {
+                const float fromBpm = stepPairs[step][0];
+                const float toBpm = stepPairs[step][1];
+                stepResults[step] = runDecoderStep (fromBpm, toBpm, line);
+                const auto& result = stepResults[step];
+                expect (std::fabs (result.clockBpmAtTwoBeats - toBpm) <= 1.0f,
+                        "clock adopts a five-to-ten-percent step within two beats");
+                expect (result.clockBpmSampleSec >= 0.0
+                            && result.clockBpmSampleSec <= result.deadlineSec + 1.0e-9,
+                        "clock adoption is visible on the exact first evidence-ready frame");
+                expect (result.clockPhaseMsAtThreeBeats <= 25.0,
+                        "clock phase is below twenty-five milliseconds by the following beat");
+                expect (! result.clockMovedBackwards,
+                        "rapid tempo transition never moves clock phase backwards");
+                expect (result.pulseCountMismatches == 0,
+                        "rapid tempo transition neither drops nor duplicates a quarter grid");
+                // The short-window fit is quantized at 50 Hz at the two range
+                // edges; late stability means it stays on the adopted regime,
+                // while the deadline assertion above carries the strict
+                // absolute one-BPM requirement.
+                expect (std::fabs (result.bpmLate - toBpm) / toBpm <= 0.02f,
+                        "every rapid step stays on its adopted tempo regime after the bounded window");
+                std::printf ("tempo-deadline %s %.0f->%.0f evidence %.2f sample %.2f"
+                             " clock %.2f\n",
+                             line ? "line" : "room",
+                             static_cast<double> (fromBpm),
+                             static_cast<double> (toBpm),
+                             result.deadlineSec, result.clockBpmSampleSec,
+                             static_cast<double> (result.clockBpmAtTwoBeats));
+            }
+            const auto& up = stepResults[0];
+            const auto& down = stepResults[1];
+            std::printf ("tempo-step %s  120->132 rapido a %.2f s (limite %.2f, %.1f BPM,"
+                         " tardi %.1f, serial x%d),"
+                         "  128->120 rapido a %.2f s (limite %.2f, %.1f BPM,"
+                         " tardi %.1f, serial x%d)\n",
+                         line ? "line" : "room",
+                         up.rapidAtSec, up.deadlineSec, static_cast<double> (up.bpmAtDeadline),
+                         static_cast<double> (up.bpmLate), up.serialIncrements,
+                         down.rapidAtSec, down.deadlineSec,
+                         static_cast<double> (down.bpmAtDeadline),
+                         static_cast<double> (down.bpmLate), down.serialIncrements);
+            expect (up.rapidAtSec >= 0.0 && up.rapidAtSec <= up.deadlineSec,
+                    line ? "line confirms rising tempo step within two beats"
+                         : "microphone confirms rising tempo step within two beats");
+            expect (down.rapidAtSec >= 0.0 && down.rapidAtSec <= down.deadlineSec,
+                    line ? "line confirms falling tempo step within two beats"
+                         : "microphone confirms falling tempo step within two beats");
+            expect (std::fabs (up.bpmAtDeadline - 132.0f) <= 1.0f
+                        && std::fabs (down.bpmAtDeadline - 120.0f) <= 1.0f,
+                    line ? "line step tempo is within one BPM at deadline"
+                         : "microphone step tempo is within one BPM at deadline");
+
+            // The change is one event, so the serial moves once. It used to move
+            // twice: confirming forces the live regime, the fold goes on naming
+            // the tempo that was left and pulls the committed BPM back towards
+            // it, and the next interval at the new tempo reads as another
+            // change. A consumer keyed off the serial would re-adopt each time.
+            expect (up.serialIncrements == 1 && down.serialIncrements == 1,
+                    line ? "a line tempo step publishes exactly one transition serial"
+                         : "a microphone tempo step publishes exactly one transition serial");
+            expect (up.serialAtEnd == up.serialAtFirstConfirm
+                        && down.serialAtEnd == down.serialAtFirstConfirm,
+                    line ? "and the line serial does not move again for the rest of the run"
+                         : "and the microphone serial does not move again for the rest of the run");
+            // And the tempo that was measured is still the tempo being played
+            // seconds later, rather than something the fold walked back.
+            expect (std::fabs (up.bpmLate - 132.0f) <= 1.0f
+                        && std::fabs (down.bpmLate - 120.0f) <= 1.0f,
+                    line ? "the line step tempo holds within one BPM against the stale fold"
+                         : "the microphone step tempo holds within one BPM against the stale fold");
+            // The payload a follower reads, not just the state flag: two
+            // intervals is what confirmed it, and the confidence is a real
+            // fraction rather than a field nobody filled in.
+            expect (up.reasonAtConfirm == vp::TempoTransitionReason::confirmed
+                        && up.intervalsAtConfirm == 2
+                        && up.confidenceAtConfirm > 0.0f
+                        && up.confidenceAtConfirm <= 1.0f,
+                    line ? "the line transition publishes its reason, interval count and confidence"
+                         : "the microphone transition publishes its reason, interval count and confidence");
+        }
+
+        expect (! pulseCountMatches (0.24, 0.26, 4, 0)
+                    && ! pulseCountMatches (0.24, 0.26, 4, 2)
+                    && pulseCountMatches (0.24, 0.26, 4, 1),
+                "the pulse oracle rejects both a skipped crossing and an injected duplicate");
+
+        {
+            vp::TempoTransitionConsumer consumer;
+            vp::BeatHypothesis h;
+            h.valid = true;
+            h.transitionState = vp::TempoTransitionState::rapid;
+            h.transitionBpm = 132.0f;
+            h.transitionSerial = 0;
+            const bool firstZero = consumer.consume (h, false);
+            const bool sameZero = consumer.consume (h, false);
+            h.transitionSerial = 1;
+            const bool changed = consumer.consume (h, false);
+            h.transitionSerial = 0xffffffffu;
+            const bool high = consumer.consume (h, false);
+            h.transitionSerial = 0;
+            const bool wrapped = consumer.consume (h, false);
+            expect (firstZero && ! sameZero && changed && high && wrapped,
+                    "production transition serial consumption handles zero, repeats and wrap");
+
+            consumer.reset();
+            h.transitionSerial = 7;
+            const bool manual = consumer.consume (h, true);
+            const bool released = consumer.consume (h, false);
+            expect (! manual && ! released,
+                    "manual ownership consumes a transition without replay after release");
+
+            consumer.reset();
+            h.transitionSerial = 7;
+            const bool quarantinedRapid = consumer.consume (h, false);
+            h.transitionState = vp::TempoTransitionState::suspected;
+            h.transitionSerial = 8;
+            const bool quarantinedSuspected = consumer.consume (h, false);
+            h.transitionState = vp::TempoTransitionState::stable;
+            const bool stableAdopted = consumer.consume (h, false);
+            h.transitionState = vp::TempoTransitionState::rapid;
+            h.transitionSerial = 0;
+            const bool freshAfterWrap = consumer.consume (h, false);
+            const bool wrappedReplay = consumer.consume (h, false);
+            expect (! quarantinedRapid && ! quarantinedSuspected && ! stableAdopted
+                        && freshAfterWrap && ! wrappedReplay,
+                    "reset quarantine waits for stable then accepts one fresh wrapped serial");
+
+            consumer.reset();
+            h.transitionBpm = std::numeric_limits<float>::quiet_NaN();
+            expect (! consumer.consume (h, false),
+                    "an invalid production transition payload is consumed but never adopted");
+        }
+
+        {
+            vp::TempoFollower clock;
+            clock.prepare (48000.0);
+            clock.forceTempo (120.0f);
+            clock.beginTempoTransition (132.0f);
+            clock.setTargetTempo (120.0f, 1.0f);
+            expect (clock.tempoTransitionActive()
+                        && std::fabs (clock.currentTempo() - 132.0f) < 0.01f
+                        && std::fabs (clock.targetTempo() - 132.0f) < 0.01f,
+                    "a stale ordinary target cannot undo a confirmed adoption");
+
+            clock.resetClock();
+            const bool resetClockClears = ! clock.tempoTransitionActive();
+            clock.beginTempoTransition (132.0f);
+            clock.forceTempo (120.0f);
+            const bool forceClears = ! clock.tempoTransitionActive();
+            clock.beginTempoTransition (132.0f);
+            clock.reset();
+            expect (resetClockClears && forceClears && ! clock.tempoTransitionActive(),
+                    "reset, resetClock and forceTempo clear the bounded transition");
+
+            clock.forceTempo (120.0f);
+            clock.beginTempoTransition (std::numeric_limits<float>::quiet_NaN());
+            expect (! clock.tempoTransitionActive()
+                        && std::fabs (clock.currentTempo() - 120.0f) < 0.01f,
+                    "invalid transition BPM cannot activate or alter the clock");
+        }
+
+        {
+            constexpr double sr = 48000.0;
+            constexpr float bpm = 132.0f;
+            constexpr int remaining = 64;
+            constexpr int oversized = 4096;
+            const int window = static_cast<int> (std::lround (sr * 60.0 / bpm));
+
+            vp::TempoFollower base;
+            base.prepare (sr);
+            base.forceTempo (120.0f);
+            base.setPulsesPerBeat (4);
+            base.setLocked (true);
+            base.setFollowStrength (vp::FollowStrength::high);
+            base.beginTempoTransition (bpm);
+            base.setGridPhase (0.18f, vp::kGridTauRapid);
+            base.advance (window - remaining);
+            // Put a real quarter crossing in the last few samples of the rapid
+            // segment. Averaging the two rates preserves an endpoint but moves
+            // this pulse, so offsets—not only final phase—prove exact splitting.
+            base.snapPhase (0.2475f);
+            base.setGridPhase (0.18f, vp::kGridTauRapid);
+
+            vp::TempoFollower single = base;
+            vp::TempoFollower explicitSplit = base;
+            const vp::ClockTick rapidTick = explicitSplit.advance (remaining);
+            const vp::ClockTick ordinaryTick =
+                explicitSplit.advance (oversized - remaining);
+            const vp::ClockTick singleTick = single.advance (oversized);
+
+            vp::ClockTick expectedTick = rapidTick;
+            expectedTick.reanchored = rapidTick.reanchored || ordinaryTick.reanchored;
+            expectedTick.wrappedBeat = rapidTick.wrappedBeat || ordinaryTick.wrappedBeat;
+            expectedTick.wrappedBar = rapidTick.wrappedBar || ordinaryTick.wrappedBar;
+            expectedTick.tempoBpm = ordinaryTick.tempoBpm;
+            for (int i = 0; i < ordinaryTick.pulsesFired
+                            && expectedTick.pulsesFired < 8; ++i)
+            {
+                const int out = expectedTick.pulsesFired++;
+                expectedTick.pulseIndex[out] = ordinaryTick.pulseIndex[i];
+                expectedTick.pulseOffset[out] =
+                    remaining + ordinaryTick.pulseOffset[i];
+                expectedTick.pulseBeatInBar[out] = ordinaryTick.pulseBeatInBar[i];
+                expectedTick.barPulse[out] = ordinaryTick.barPulse[i];
+                expectedTick.pulsePhaseError[out] = ordinaryTick.pulsePhaseError[i];
+            }
+
+            bool tickMatches = singleTick.reanchored == expectedTick.reanchored
+                               && singleTick.wrappedBeat == expectedTick.wrappedBeat
+                               && singleTick.wrappedBar == expectedTick.wrappedBar
+                               && singleTick.pulsesFired == expectedTick.pulsesFired
+                               && std::fabs (singleTick.tempoBpm
+                                             - expectedTick.tempoBpm) < 1.0e-6f;
+            for (int i = 0; i < expectedTick.pulsesFired && tickMatches; ++i)
+            {
+                tickMatches = singleTick.pulseIndex[i] == expectedTick.pulseIndex[i]
+                              && singleTick.pulseOffset[i]
+                                     == expectedTick.pulseOffset[i]
+                              && singleTick.pulseBeatInBar[i]
+                                     == expectedTick.pulseBeatInBar[i]
+                              && singleTick.barPulse[i] == expectedTick.barPulse[i]
+                              && std::fabs (singleTick.pulsePhaseError[i]
+                                            - expectedTick.pulsePhaseError[i]) < 1.0e-7f;
+            }
+
+            const bool pulseNearBoundary =
+                (rapidTick.pulsesFired > 0
+                 && rapidTick.pulseOffset[rapidTick.pulsesFired - 1]
+                        >= remaining - 16)
+                || (ordinaryTick.pulsesFired > 0
+                    && ordinaryTick.pulseOffset[0] <= 16);
+            expect (pulseNearBoundary,
+                    "the split fixture places a real quarter pulse at the transition boundary");
+            expect (! single.tempoTransitionActive()
+                        && ! explicitSplit.tempoTransitionActive()
+                        && std::fabs (single.beatPhase()
+                                      - explicitSplit.beatPhase()) < 1.0e-7f
+                        && std::fabs (single.currentTempo()
+                                      - explicitSplit.currentTempo()) < 1.0e-6f
+                        && single.beatsElapsed() == explicitSplit.beatsElapsed()
+                        && single.beatInBarIndex()
+                               == explicitSplit.beatInBarIndex()
+                        && tickMatches,
+                    "one boundary-crossing callback exactly matches two explicit calls");
+
+            vp::TempoFollower nonPositive = base;
+            const float phaseBefore = nonPositive.beatPhase();
+            const float tempoBefore = nonPositive.currentTempo();
+            const int beatsBefore = nonPositive.beatsElapsed();
+            const vp::ClockTick zeroTick = nonPositive.advance (0);
+            const vp::ClockTick negativeTick = nonPositive.advance (-64);
+            expect (zeroTick.pulsesFired == 0 && negativeTick.pulsesFired == 0
+                        && nonPositive.beatPhase() == phaseBefore
+                        && nonPositive.currentTempo() == tempoBefore
+                        && nonPositive.beatsElapsed() == beatsBefore,
+                    "zero and negative advance lengths leave clock state unchanged");
+        }
+
+        // One displaced beat, placed so that each of the two intervals it makes
+        // is on its own a tempo the grid could have moved to. It has to be
+        // rejected for the two of them disagreeing, which is the check that
+        // separates a tempo change from a fill.
+        const auto outlier = runDecoderStep (120.0f, 120.0f, true, StepAnomaly::offGridEvent);
+        std::printf ("tempo-step outlier  rapid=%d  incoerente=%d  fuori-intervallo=%d\n",
+                     outlier.rapidCount, outlier.sawIncoherent ? 1 : 0,
+                     outlier.sawOutsideRange ? 1 : 0);
+        expect (outlier.rapidCount == 0,
+                "one off-grid event cannot confirm a tempo transition");
+        expect (outlier.sawIncoherent && ! outlier.sawOutsideRange,
+                "and it is rejected for the two intervals disagreeing, not for being out of range");
+
+        // These are the adversarial boundaries around the same detector. A
+        // displaced fill reaches the candidate/coherence path; gradual ramps
+        // remain ordinary live-fit evidence; a timeline hole erases a candidate
+        // before the peak after the splice can complete it.
+        expect (outlier.rapidCount == 0,
+                "one fill onset does not trigger rapid tempo");
+
+        const auto ramp4 = runDecoderStep (118.0f, 126.0f, true,
+                                           StepAnomaly::none, 4.0);
+        const auto ramp12 = runDecoderStep (118.0f, 126.0f, true,
+                                            StepAnomaly::none, 12.0);
+        expect (ramp4.rapidCount == 0,
+                "four-second accelerando remains on the live-fit path");
+        expect (ramp12.rapidCount == 0,
+                "twelve-second accelerando remains on the live-fit path");
+        expect (! ramp4.sawOutsideRange && ! ramp12.sawOutsideRange,
+                "accelerando controls are judged by transition guards, not the range gate");
+
+        const auto discontinuity = runDecoderStep (
+            120.0f, 120.0f, true, StepAnomaly::offGridEvent, 0.0, 18.5);
+        expect (discontinuity.rapidCount == 0,
+                "analysis discontinuity clears partial tempo-transition evidence");
+        expect (discontinuity.sawCandidate && discontinuity.sawResetAfterCandidate
+                    && ! discontinuity.sawOutsideRange,
+                "the discontinuity control opens then explicitly clears admissible evidence");
+
+        const auto steadySlow = runDecoderStep (76.0f, 76.0f, true);
+        expect (std::fabs (steadySlow.bpmAtDeadline - 76.0f) <= 1.0f
+                    && steadySlow.rapidCount == 0,
+                "steady slow tempo cannot turn rapid transition into double tempo");
+
+        // A beat the mix swallowed leaves one interval spanning two. Measured
+        // against the mean of the intervals that is a 78% deviation and it
+        // dragged the mean far enough that every ordinary interval looked
+        // unsteady too, which stood the detector down for the whole eight-
+        // interval window - so a real step arriving inside those eight beats
+        // was not detected at all. Measured against their median it is one
+        // outlier, which is what it is.
+        for (const bool line : { true, false })
+        {
+            const auto skipped = runDecoderStep (120.0f, 132.0f, line, StepAnomaly::skippedBeat);
+            std::printf ("tempo-step %s skipped-beat  rapido a %.2f s (limite %.2f, %.1f BPM)\n",
+                         line ? "line" : "room", skipped.rapidAtSec, skipped.deadlineSec,
+                         static_cast<double> (skipped.bpmAtDeadline));
+            expect (skipped.rapidAtSec >= 0.0 && skipped.rapidAtSec <= skipped.deadlineSec
+                        && std::fabs (skipped.bpmAtDeadline - 132.0f) <= 1.0f,
+                    line ? "a swallowed beat does not blind the line detector to the next step"
+                         : "a swallowed beat does not blind the microphone detector to the next step");
+        }
+
+        // Through a microphone the room supplies quiet local maxima all the
+        // time, and two of them happening to be evenly spaced is the one way
+        // this detector can be talked into a tempo nobody played. Testing that
+        // against the absolute threshold proved nothing: the peak gate already
+        // requires it, so the condition could never fail. What separates a
+        // reflection from a beat is how loud it is beside the beats around it,
+        // and the tempo here never moves - so a confirmation is a tempo the
+        // room invented.
+        const auto weak = runDecoderStep (120.0f, 120.0f, false, StepAnomaly::weakEvidence);
+        std::printf ("tempo-step room weak-evidence  rapid=%d  bpm=%.1f\n",
+                     weak.rapidCount, static_cast<double> (weak.bpmLate));
+        expect (weak.rapidCount == 0,
+                "a reflection-quiet pair cannot confirm a tempo transition through a microphone");
+        expect (std::fabs (weak.bpmLate - 120.0f) <= 1.0f,
+                "and the grid it could not move is still on the tempo being played");
     }
 
     // The same bar, with the analysis starved on purpose.
@@ -1089,6 +2365,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         gr.setHumanize (0.0f);      // isolate the pattern from the feel
         gr.setSwing (0.0f);
         gr.setIntensity (0.0f);     // no ghosts, so the skeleton is visible
+        gr.setSubdivision (vp::Subdivision::sixteenth);
 
         auto strokesAt = [&gr] (int bar, int step, std::vector<vp::Stroke>& into)
         {
@@ -1163,6 +2440,373 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
+        // The user's grid thins every synthesized instrument at the one event
+        // boundary. It removes authored and probabilistic events; it never
+        // moves a stroke, invents one, or lets dynamics make the test vacuous.
+        auto congaSteps = [] (vp::GrooveStyle style, int bar, vp::Subdivision subdivision)
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0x51BD1u);
+            groove.setStyle (style);
+            groove.setHumanize (0.0f);
+            groove.setSwing (0.0f);
+            groove.setIntensity (0.0f);
+            groove.setDynamics (1.0f);
+            groove.setShakerEnabled (false);
+            groove.setSubdivision (subdivision);
+
+            std::vector<int> steps;
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                const int count = groove.eventsAt (bar, step, events,
+                                                   vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < count; ++i)
+                    steps.push_back (step);
+            }
+            return steps;
+        };
+        auto exactSteps = [] (const std::vector<int>& actual,
+                              const std::vector<int>& expected)
+        {
+            return actual == expected;
+        };
+
+        const auto dance16 = congaSteps (vp::GrooveStyle::dance, 0,
+                                         vp::Subdivision::sixteenth);
+        const auto dance8 = congaSteps (vp::GrooveStyle::dance, 0,
+                                        vp::Subdivision::eighth);
+        expect (exactSteps (dance16, std::vector<int> { 2, 3, 6, 10, 11, 14 }),
+                "sixteenth subdivision preserves the exact authored dance A congas");
+        expect (exactSteps (dance8, std::vector<int> { 2, 6, 10, 14 }),
+                "eighth subdivision keeps dance A eighths and removes its e/a congas");
+
+        const auto fill16 = congaSteps (vp::GrooveStyle::dance, 7,
+                                        vp::Subdivision::sixteenth);
+        const auto fill8 = congaSteps (vp::GrooveStyle::dance, 7,
+                                       vp::Subdivision::eighth);
+        expect (exactSteps (fill16, std::vector<int> { 8, 10, 11, 13, 14, 15 }),
+                "sixteenth subdivision preserves the exact authored dance fill");
+        expect (exactSteps (fill8, std::vector<int> { 8, 10, 14 }),
+                "eighth subdivision applies the same thinning to dance fill congas");
+
+        std::set<int> quarterSteps;
+        int quarterCongas = 0;
+        for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
+            for (int bar = 0; bar < 8; ++bar)
+            {
+                const auto steps = congaSteps (static_cast<vp::GrooveStyle> (st), bar,
+                                               vp::Subdivision::quarter);
+                quarterCongas += static_cast<int> (steps.size());
+                quarterSteps.insert (steps.begin(), steps.end());
+            }
+        expect (quarterCongas > 0
+                    && quarterSteps == std::set<int> ({ 4, 8, 12 }),
+                "quarter subdivision keeps congas only on 4/8/12 and still forbids step 0");
+
+        // AUTO is not merely similar to eighths: with the same seed and call
+        // order it must produce the identical event stream, including RNG
+        // results for human feel and ghosts on every allowed step.
+        vp::GrooveEngine automatic, eighth;
+        automatic.prepare (0xA170u);
+        eighth.prepare (0xA170u);
+        for (auto* groove : { &automatic, &eighth })
+        {
+            groove->setStyle (vp::GrooveStyle::funk);
+            groove->setHumanize (1.0f);
+            groove->setSwing (0.7f);
+            groove->setIntensity (1.0f);
+            groove->setDynamics (1.0f);
+        }
+        automatic.setSubdivision (vp::Subdivision::autoDetect);
+        eighth.setSubdivision (vp::Subdivision::eighth);
+        bool autoEqualsEighth = true;
+        int comparedEvents = 0;
+        for (int bar = 0; bar < 16; ++bar)
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent a[vp::GrooveEngine::kMaxEvents];
+                vp::GrooveEvent e[vp::GrooveEngine::kMaxEvents];
+                const int na = automatic.eventsAt (bar, step, a,
+                                                   vp::GrooveEngine::kMaxEvents);
+                const int ne = eighth.eventsAt (bar, step, e,
+                                                vp::GrooveEngine::kMaxEvents);
+                comparedEvents += na;
+                if (na != ne)
+                    autoEqualsEighth = false;
+                for (int i = 0; i < std::min (na, ne); ++i)
+                    if (a[i].stroke != e[i].stroke
+                        || a[i].velocity != e[i].velocity
+                        || a[i].delayBeats != e[i].delayBeats)
+                        autoEqualsEighth = false;
+            }
+        expect (autoEqualsEighth && comparedEvents > 0,
+                "AUTO event shape exactly equals eighth with identical seed and call order");
+
+        auto funkOddCounts = [] (vp::Subdivision subdivision)
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0xF00Du);
+            groove.setStyle (vp::GrooveStyle::funk);
+            groove.setHumanize (1.0f);
+            groove.setIntensity (1.0f);
+            groove.setDynamics (1.0f);
+            groove.setShakerEnabled (false);
+            groove.setSubdivision (subdivision);
+            int oddCongas = 0;
+            int ghostEvidence = 0;
+            for (int bar = 0; bar < 72; ++bar)
+            {
+                if (groove.isFillBar (bar))
+                    continue;
+                for (int step = 1; step < vp::GrooveEngine::kStepsPerBar; step += 2)
+                {
+                    vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                    const int count = groove.eventsAt (bar, step, events,
+                                                       vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < count; ++i)
+                    {
+                        ++oddCongas;
+                        // Funk's authored odd heel/toe strokes are >= 0.22
+                        // before humanisation; below 0.18 is deterministic
+                        // evidence of the ghost generator's 0.16 stroke.
+                        if ((events[i].stroke == vp::Stroke::heel
+                             || events[i].stroke == vp::Stroke::toe)
+                            && events[i].velocity < 0.18f)
+                            ++ghostEvidence;
+                    }
+                }
+            }
+            return std::pair<int, int> { oddCongas, ghostEvidence };
+        };
+        const auto funk16 = funkOddCounts (vp::Subdivision::sixteenth);
+        const auto funk8 = funkOddCounts (vp::Subdivision::eighth);
+        expect (funk16.first > 0 && funk16.second > 0,
+                "sixteenth subdivision retains deterministic funk conga ghosts");
+        expect (funk8.first == 0,
+                "eighth subdivision suppresses all odd-step authored and ghost congas");
+
+        auto shakerCounts = [] (vp::Subdivision subdivision)
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0x5A4Eu);
+            groove.setStyle (vp::GrooveStyle::dance);
+            groove.setHumanize (0.0f);
+            groove.setIntensity (0.0f);
+            groove.setDynamics (1.0f);
+            groove.setCongasEnabled (false);
+            groove.setShakerEnabled (true);
+            groove.setSubdivision (subdivision);
+            int even = 0, odd = 0;
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                const int count = groove.eventsAt (0, step, events,
+                                                   vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < count; ++i)
+                    ((step % 2) == 0 ? even : odd)++;
+            }
+            return std::pair<int, int> { even, odd };
+        };
+        const auto shaker16 = shakerCounts (vp::Subdivision::sixteenth);
+        const auto shaker8 = shakerCounts (vp::Subdivision::eighth);
+        expect (shaker16.first == shaker8.first && shaker8.first > 0
+                    && shaker16.second > 0 && shaker8.second == 0,
+                "shaker eighth thinning is unchanged and sixteenth retains authored odd strokes");
+
+        // Conga thinning must be inaudible to the deterministic player state:
+        // the old path generated odd-step events before deciding not to expose
+        // them, so their random draws still belong to every later allowed hit.
+        bool evenCongaStreamMatches = true;
+        int comparedEvenCongas = 0;
+        int filteredOddCongas = 0;
+        for (int capacity : { 1, vp::GrooveEngine::kMaxEvents })
+        {
+            vp::GrooveEngine full, thinned;
+            full.prepare (0xC06A51u);
+            thinned.prepare (0xC06A51u);
+            for (auto* groove : { &full, &thinned })
+            {
+                groove->setStyle (vp::GrooveStyle::funk);
+                groove->setHumanize (0.83f);
+                groove->setSwing (0.57f);
+                groove->setIntensity (1.0f);
+                groove->setDynamics (1.0f);
+                groove->setShakerEnabled (false);
+            }
+            full.setSubdivision (vp::Subdivision::sixteenth);
+            thinned.setSubdivision (vp::Subdivision::eighth);
+
+            for (int bar = 0; bar < 24; ++bar)
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent a[vp::GrooveEngine::kMaxEvents];
+                    vp::GrooveEvent b[vp::GrooveEngine::kMaxEvents];
+                    const int na = full.eventsAt (bar, step, a, capacity);
+                    const int nb = thinned.eventsAt (bar, step, b, capacity);
+                    if ((step % 2) != 0)
+                    {
+                        filteredOddCongas += na;
+                        if (nb != 0)
+                            evenCongaStreamMatches = false;
+                        continue;
+                    }
+                    comparedEvenCongas += na;
+                    if (na != nb)
+                        evenCongaStreamMatches = false;
+                    for (int i = 0; i < std::min (na, nb); ++i)
+                        if (a[i].stroke != b[i].stroke
+                            || a[i].velocity != b[i].velocity
+                            || a[i].delayBeats != b[i].delayBeats)
+                            evenCongaStreamMatches = false;
+                }
+        }
+        expect (evenCongaStreamMatches && comparedEvenCongas > 0
+                    && filteredOddCongas > 0,
+                "eighth conga thinning preserves the full-grid RNG stream on every later allowed hit");
+
+        bool quarterStreamMatches = true;
+        int quarterOrdinary = 0;
+        int quarterFill = 0;
+        int quarterAtReducedDynamics = 0;
+        int quarterFilteredEvents = 0;
+        bool quarterGhostPresentAndFiltered = false;
+        bool quarterPayloadAfterGhostMatches = false;
+        for (int capacity : { 1, vp::GrooveEngine::kMaxEvents })
+        {
+            vp::GrooveEngine full, thinned;
+            full.prepare (0x4A71E2u);
+            thinned.prepare (0x4A71E2u);
+            for (auto* groove : { &full, &thinned })
+            {
+                groove->setStyle (vp::GrooveStyle::marcha);
+                groove->setHumanize (0.91f);
+                groove->setSwing (0.43f);
+                groove->setIntensity (1.0f);
+                groove->setShakerEnabled (false);
+            }
+            full.setSubdivision (vp::Subdivision::sixteenth);
+            thinned.setSubdivision (vp::Subdivision::quarter);
+
+            for (int bar = 0; bar < 32; ++bar)
+            {
+                const float dynamics = (bar % 3) == 0 ? 1.0f
+                                      : (bar % 3) == 1 ? 0.65f : 0.35f;
+                full.setDynamics (dynamics);
+                thinned.setDynamics (dynamics);
+                const bool fill = full.isFillBar (bar);
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent a[vp::GrooveEngine::kMaxEvents];
+                    vp::GrooveEvent b[vp::GrooveEngine::kMaxEvents];
+                    const int na = full.eventsAt (bar, step, a, capacity);
+                    const int nb = thinned.eventsAt (bar, step, b, capacity);
+                    if (step == 0)
+                    {
+                        if (na != 0 || nb != 0)
+                            quarterStreamMatches = false;
+                        continue;
+                    }
+                    if ((step % 4) != 0)
+                    {
+                        quarterFilteredEvents += na;
+                        if (nb != 0)
+                            quarterStreamMatches = false;
+                        // Marcha A has no authored hit on step 7. With this
+                        // seed the capacity-4 full-grid engine generates one
+                        // ghost there, while quarter must discard it.
+                        if (capacity == vp::GrooveEngine::kMaxEvents
+                            && bar == 0 && step == 7)
+                            quarterGhostPresentAndFiltered =
+                                na == 1 && nb == 0
+                                && (a[0].stroke == vp::Stroke::heel
+                                    || a[0].stroke == vp::Stroke::toe);
+                        continue;
+                    }
+
+                    bool payloadMatches = na == nb;
+                    for (int i = 0; i < std::min (na, nb); ++i)
+                        if (a[i].stroke != b[i].stroke
+                            || a[i].velocity != b[i].velocity
+                            || a[i].delayBeats != b[i].delayBeats)
+                            payloadMatches = false;
+                    if (! payloadMatches)
+                        quarterStreamMatches = false;
+                    // Step 8 is the first allowed payload after the proven
+                    // unauthored step-7 ghost and therefore catches a skipped
+                    // ghost decision or payload draw immediately.
+                    if (capacity == vp::GrooveEngine::kMaxEvents
+                        && bar == 0 && step == 8)
+                        quarterPayloadAfterGhostMatches = payloadMatches && na > 0;
+                    if (na > 0)
+                    {
+                        (fill ? quarterFill : quarterOrdinary) += na;
+                        if (dynamics < 1.0f)
+                            quarterAtReducedDynamics += na;
+                    }
+                }
+            }
+        }
+        expect (quarterStreamMatches && quarterOrdinary > 0 && quarterFill > 0
+                    && quarterAtReducedDynamics > 0 && quarterFilteredEvents > 0
+                    && quarterGhostPresentAndFiltered
+                    && quarterPayloadAfterGhostMatches,
+                "quarter conga thinning preserves full-grid RNG through ordinary fill ghost and dynamics paths");
+
+        // Captured from the pre-feature engine, not recomputed from the
+        // predicate under test. Hex float literals preserve the exact bits.
+        struct ShakerGolden
+        {
+            int step;
+            vp::Stroke stroke;
+            float velocity;
+            float delay;
+        };
+        constexpr ShakerGolden shakerGolden[] = {
+            { 0,  vp::Stroke::shakerDown, 0x1.4688a4p-1f, 0x1.808090p-10f },
+            { 2,  vp::Stroke::shakerUp,   0x1.f7e474p-1f, 0x1.aacfeap-4f },
+            { 4,  vp::Stroke::shakerDown, 0x1.2eca64p-1f, 0x1.a6e0c4p-10f },
+            { 6,  vp::Stroke::shakerUp,   0x1.7d3d80p-1f, 0x1.a82826p-4f },
+            { 8,  vp::Stroke::shakerDown, 0x1.982428p-1f, 0x1.e3cfe2p-9f },
+            { 10, vp::Stroke::shakerUp,   0x1.700720p-1f, 0x1.a7757cp-4f },
+            { 12, vp::Stroke::shakerDown, 0x1.156030p-1f, 0x1.8a051ap-11f },
+            { 14, vp::Stroke::shakerUp,   0x1.c44424p-1f, 0x1.b00caep-4f },
+        };
+        vp::GrooveEngine shakerUnderTest;
+        shakerUnderTest.prepare (0x5A4Eu);
+        shakerUnderTest.setStyle (vp::GrooveStyle::dance);
+        shakerUnderTest.setHumanize (0.73f);
+        shakerUnderTest.setSwing (0.61f);
+        shakerUnderTest.setIntensity (1.0f);
+        shakerUnderTest.setDynamics (1.0f);
+        shakerUnderTest.setCongasEnabled (false);
+        shakerUnderTest.setSubdivision (vp::Subdivision::eighth);
+        bool shakerMatchesGolden = true;
+        int goldenIndex = 0;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+            const int count = shakerUnderTest.eventsAt (
+                0, step, events, vp::GrooveEngine::kMaxEvents);
+            if ((step % 2) != 0)
+            {
+                if (count != 0)
+                    shakerMatchesGolden = false;
+                continue;
+            }
+            const auto& golden = shakerGolden[goldenIndex++];
+            if (count != 1 || golden.step != step
+                || events[0].stroke != golden.stroke
+                || events[0].velocity != golden.velocity
+                || events[0].delayBeats != golden.delay)
+                shakerMatchesGolden = false;
+        }
+        expect (shakerMatchesGolden
+                    && goldenIndex == static_cast<int> (std::size (shakerGolden)),
+                "eighth shaker preserves the pre-feature stroke velocity delay stream bit-for-bit");
+    }
+
+    {
         // The styles have to be different parts, not one pattern under four
         // names, and each has a property that identifies it.
         auto strokesOfBar = [] (vp::GrooveStyle st, int bar, std::vector<vp::GrooveEvent>& into)
@@ -1173,6 +2817,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             gr.setHumanize (0.0f);
             gr.setSwing (0.0f);
             gr.setIntensity (0.0f);   // no ghosts: show the skeleton
+            gr.setSubdivision (vp::Subdivision::sixteenth);
             into.clear();
             for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
             {
@@ -1330,6 +2975,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             gr.prepare (0xC04A5u);
             gr.setHumanize (1.0f);
             gr.setIntensity (1.0f);
+            gr.setSubdivision (vp::Subdivision::sixteenth);
             int congasOnTheOne = 0, shakersOnTheOne = 0;
             for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
             {
@@ -1380,6 +3026,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 gr.prepare (0xB1A5u);
                 gr.setHumanize (humanize);
                 gr.setIntensity (intensity);
+                gr.setSubdivision (vp::Subdivision::sixteenth);
                 int worst = 0;
                 for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
                 {
@@ -1441,6 +3088,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             gr.setStyle (vp::GrooveStyle::twoOne);
             gr.setHumanize (1.0f);
             gr.setIntensity (1.0f);
+            gr.setSubdivision (vp::Subdivision::sixteenth);
             bool shapeHolds = true;
             std::set<int> sounds;
             int fills = 0;
@@ -1497,6 +3145,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 gr.setStyle (static_cast<vp::GrooveStyle> (st));
                 gr.setHumanize (0.0f);
                 gr.setIntensity (0.0f);
+                gr.setSubdivision (vp::Subdivision::sixteenth);
                 bool here = false;
                 for (int bar = 0; bar < 8; ++bar)
                     for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
@@ -1554,7 +3203,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // The same warp has to carry the 16ths with it. Leaving "e" and "a"
         // on the straight grid while "&" jumps to the triplet is why a swung
         // shaker on sixteenths sounded broken rather than shuffled.
-        gr.setShakerSubdivision (vp::Subdivision::sixteenth);
+        gr.setSubdivision (vp::Subdivision::sixteenth);
         auto delayAt = [&gr, &ev] (int step) -> float
         {
             const int n = gr.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
@@ -1613,7 +3262,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         perc.setSwing (1.0f);
         perc.setCongasEnabled (false);
         perc.setShakerEnabled (true);
-        perc.setShakerSubdivision (vp::Subdivision::sixteenth);
+        perc.setSubdivision (vp::Subdivision::sixteenth);
         // Deliberately stale: the tick below is the clock that actually placed
         // the pulses, and swing must use that rate rather than a cached display
         // value left over from the preceding block.
@@ -2620,7 +4269,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             gr.setStyle (static_cast<vp::GrooveStyle> (st));
             gr.setHumanize (0.0f);      // the shape, not the scatter
             gr.setIntensity (0.0f);     // and no ghosts on top of it
-            gr.setShakerSubdivision (vp::Subdivision::sixteenth);
+            gr.setSubdivision (vp::Subdivision::sixteenth);
 
             // The shaker weight at every sixteenth of one bar.
             float shaker[vp::GrooveEngine::kStepsPerBar] {};
@@ -3591,11 +5240,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
         // The engine is driven twice over the same song: once with the mix
         // alone, as it has always been, and once with the mix on one channel
         // and the desk's kick send on another. The network is the same in both
-        // runs and is deliberately a good one - it is handed the true beats,
-        // quantised to its own 20 ms frame grid, which is the best any network
-        // could possibly do on this material. So what separates the two runs is
-        // only what the kick channel adds on top of a perfect network: the
-        // sub-frame timing, and knowing when the kit has stopped.
+        // runs and is deliberately frame-quantized: each true beat is handed
+        // as one high activation on the single causal 20 ms inference frame
+        // where its integer count first crosses, with floor between. That
+        // leaves ±10 ms frame uncertainty on the decoder path alone; the kick
+        // channel is what sample-timed onsets are meant to tighten. Beat zero is
+        // intentionally skipped by the crossing oracle; scoring begins after 15 s.
         //
         // Scored on the *spread* of the phase error and not on its mean. The
         // clock leads the song on purpose, by the pipeline and the output path,
@@ -3608,25 +5258,28 @@ void vpRunAiBeatTests (int& passed, int& failed)
             TruthBeatModel (const std::vector<double>& phase, double sr)
                 : truePhase (phase), songSr (sr) {}
             bool prepare (int) override { return true; }
-            void reset() override {}
+            void reset() override { frame = 0; prevBeatInt = -1; }
             bool infer (const float*, int, float activations3[3]) override
             {
                 const double t = static_cast<double> (frame++)
                                  * vp::kBeatModelHop / vp::kBeatModelSampleRate;
                 const size_t s = static_cast<size_t> (t * songSr);
-                float pulse = 0.03f;
-                float down = 0.03f;
+                constexpr float kFloor = 0.03f;
+                float pulse = kFloor;
+                float down = kFloor;
                 if (s < truePhase.size())
                 {
                     const double beats = truePhase[s];
-                    const double toBeat = std::fabs (beats - std::round (beats));
-                    // The bump the network would emit, in beats rather than in
-                    // frames, so it is the same shape at every tempo.
-                    pulse = 0.03f + 0.95f * static_cast<float> (
-                                std::exp (-0.5 * (toBeat / 0.055) * (toBeat / 0.055)));
-                    const int beatNo = static_cast<int> (std::llround (beats));
-                    if ((((beatNo % 4) + 4) % 4) == 0)
-                        down = pulse * 0.9f;
+                    const int beatInt = static_cast<int> (std::floor (beats));
+                    // One spike per crossed beat — no Gaussian spread across
+                    // frames; parabolic peak-pick already gives sub-frame timing.
+                    if (prevBeatInt >= 0 && beatInt > prevBeatInt)
+                    {
+                        pulse = 0.98f;
+                        if ((((beatInt % 4) + 4) % 4) == 0)
+                            down = pulse * 0.9f;
+                    }
+                    prevBeatInt = beatInt;
                 }
                 activations3[0] = pulse;
                 activations3[1] = down;
@@ -3637,6 +5290,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             const std::vector<double>& truePhase;
             double songSr;
             long long frame = 0;
+            int prevBeatInt = -1;
         };
 
         constexpr double sr = 48000.0;
@@ -3644,7 +5298,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
         vp::probe::SongOptions opt;
         opt.bpm = 118.0f;
         opt.driftBpm = 2.5f;      // a band that has rehearsed, not a sequencer
-        opt.jitterMs = 9.0f;      // and is made of people
+        // Oracle grid and kick stem must share the same beat placement; jitter
+        // on the stems but not in truePhase would score kick as destabilising.
+        opt.jitterMs = 0.0f;
         opt.breakdown = true;
         const int n = static_cast<int> (sr * 36.0);
 
@@ -3735,18 +5391,11 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "the kick channel is recognised as a kick and its strikes are counted");
         expect (without.onsets == 0,
                 "and none of it runs when no kick channel is assigned");
-        // Measured across runs: 19.4 -> 11.8, 18.3 -> 15.3 and 18.3 -> 13.3 ms
-        // rms, against a network that is being handed the true beats. So this
-        // is not the kick channel making up for a bad network - it is what a
-        // channel carrying one drum adds on top of the best a network could do.
-        //
-        // The assertion is looser than any single one of those because the
-        // figure moves by about a fifth from run to run: the analysis is a
-        // thread, and how much of the machine it gets is not this test's to
-        // decide. Draining its backlog every block takes most of that out but
-        // not all of it. The direction is what is being guarded here; the
-        // number belongs in a probe, and docs/AUDIO_ENGINE.md quotes the median.
-        expect (with.spreadMs < without.spreadMs * 0.92,
+        // What is guarded is direction: with the frame-quantized oracle the kick
+        // channel must tighten ordinary phase spread by at least 5% over the
+        // decoder-only run — a 5% regression barrier against measured ~5.7%
+        // benefit; the absolute amount (probe output, not this gate) is printed above.
+        expect (with.spreadMs < without.spreadMs * 0.95,
                 "sample-timed strikes hold the clock stiller than the frame grid can");
         // The *worst* excursion is deliberately not asserted on, and that is a
         // finding rather than a gap in the test. Across runs it went 48.6 -> 27.4,
@@ -3946,6 +5595,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 gr.setHumanize (0.0f);
                 gr.setIntensity (0.0f);
                 gr.setDynamics (dynamics);
+                gr.setSubdivision (vp::Subdivision::sixteenth);
                 int congas = 0, shakers = 0;
                 float loudest = 0.0f;
                 for (int s = 0; s < vp::GrooveEngine::kStepsPerBar; ++s)
@@ -4583,7 +6233,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // How closely does the clock sit on the song's pulse, and does it
             // stay there? Everything else in this file measures the reported
             // tempo, which can be right while the percussion plays late.
-            for (float trackBpm : { 78.0f, 100.0f, 138.0f })
+            for (float trackBpm : { 78.0f, 100.0f, 120.0f, 138.0f, 156.0f })
             {
                 const double sr = 48000.0;
                 const int block = 128;
@@ -4604,15 +6254,20 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 float* outs[2] = { oL.data(), oR.data() };
 
                 const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
+                const int hop = static_cast<int> (std::ceil (
+                    vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
                 float worstLate = 0.0f;
                 float earlyHalf = 0.0f, lateHalf = 0.0f;
                 int   earlyN = 0, lateN = 0;
-                int pos = 0, blocks = 0;
+                int pos = 0, blocks = 0, samplesInHop = 0;
+                bool workerDrained = true;
                 vp::EngineSnapshot last;
-                while (pos + block <= n)
+                while (pos < n)
                 {
+                    const int numThisBlock = std::min ({ block, n - pos,
+                                                        hop - samplesInHop });
                     const float* ins[1] = { song.data() + pos };
-                    eng.process (ins, 1, outs, 2, block);
+                    eng.process (ins, 1, outs, 2, numThisBlock);
                     last = eng.snapshot();
                     if (last.state == vp::TrackingState::following && last.bpm > 40.0f)
                     {
@@ -4637,21 +6292,43 @@ void vpRunAiBeatTests (int& passed, int& failed)
                                      static_cast<double> (last.neuralBpm),
                                      static_cast<double> (last.targetBpm),
                                      last.tempoRegime, vp::toString (last.state));
-                    pos += block;
-                    if ((++blocks % 10) == 0)
-                        std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                    pos += numThisBlock;
+                    samplesInHop += numThisBlock;
+                    ++blocks;
+                    const bool boundary = samplesInHop == hop;
+                    const auto until = std::chrono::steady_clock::now()
+                                       + std::chrono::milliseconds (400);
+                    if (boundary)
+                    {
+                        while (eng.analysisCompletedSamples() < pos
+                               && std::chrono::steady_clock::now() < until)
+                            std::this_thread::yield();
+                        if (eng.analysisCompletedSamples() < pos)
+                            workerDrained = false;
+                        samplesInHop = 0;
+                    }
                 }
                 const float meanEarly = earlyN > 0 ? earlyHalf / static_cast<float> (earlyN) : 0.0f;
                 const float meanLate = lateN > 0 ? lateHalf / static_cast<float> (lateN) : 0.0f;
                 const float beatMs = 60000.0f / trackBpm;
-                std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms  mean %+.3f -> %+.3f beat"
-                             "  (%+.0f -> %+.0f ms)  worst=%.3f  regime=%d\n",
+                const float lead = last.attackLeadMs;
+                const float earlyErrMs = meanEarly * beatMs - lead;
+                const float lateErrMs = meanLate * beatMs - lead;
+                std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms attack=%5.1fms"
+                             "  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
+                             "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d\n",
                              static_cast<double> (trackBpm), static_cast<double> (last.bpm),
                              static_cast<double> (last.leadMs),
+                             static_cast<double> (lead),
                              static_cast<double> (meanEarly), static_cast<double> (meanLate),
                              static_cast<double> (meanEarly * beatMs),
                              static_cast<double> (meanLate * beatMs),
+                             static_cast<double> (earlyErrMs),
+                             static_cast<double> (lateErrMs),
                              static_cast<double> (worstLate), last.tempoRegime);
+
+                expect (workerDrained,
+                        "ONNX analysis worker kept up with real-time playback");
 
                 // The clock is deliberately early now, by the slowest attack in
                 // the percussion bank: a shaker started exactly on the pulse is
@@ -4665,12 +6342,249 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 // BPM, which passes a clock an audible distance off the beat.
                 // 8 ms is about where a listener stops hearing a percussionist
                 // as "with" the track.
-                const float lead = last.attackLeadMs;
-                expect (std::fabs (meanEarly * beatMs - lead) < 8.0f
-                            && std::fabs (meanLate * beatMs - lead) < 8.0f,
+                expect (std::fabs (earlyErrMs) < 8.0f
+                            && std::fabs (lateErrMs) < 8.0f,
                         "what is heard sits on the song pulse, not beside it");
                 expect (std::fabs (meanLate - meanEarly) < 0.02f,
                         "phase alignment holds over time instead of walking off");
+            }
+
+            // The same chain at 138 BPM, but asking what the *leak canceller*
+            // does to it. Nothing here leaks: the input is the click track and
+            // the app's own output never reaches it. The canceller should
+            // therefore be invisible - and it was not. The estimate it fits per
+            // block is noisy enough that our own part, which is playing the same
+            // rhythm as the click, gets partly subtracted from the analysis by a
+            // different amount on every run, which is where the run-to-run
+            // spread in the phase number above came from. Measured before the
+            // fix: 1.6 ms of spread over three runs and a mean analysis peak of
+            // 0.0145 against an input peak of 0.0138 - the canceller was adding
+            // level to a bus it had only ever been asked to take level off.
+            //
+            // Shorter than the loop above on purpose: the acquisition is the
+            // same, but this needs several runs of it and it asks about
+            // repeatability rather than absolute accuracy.
+            {
+                constexpr double sr = 48000.0;
+                constexpr int block = 128;
+                constexpr float trackBpm = 138.0f;
+                constexpr double seconds = 26.0;
+                constexpr double fromSeconds = 14.0;
+                const int n = static_cast<int> (sr * seconds);
+                std::vector<float> song (static_cast<size_t> (n), 0.0f);
+                renderClickTrack (song, trackBpm, sr);
+
+                struct CancellerRun
+                {
+                    float errMs = 0.0f;      // where the sound sat, over the window
+                    float meanRemain = 0.0f; // post-subtraction analysis peak
+                    float meanInPeak = 0.0f; // raw input peak
+                    bool  drained = true;
+                    // How much of the run the numbers above are an average of.
+                    // A phase error over four blocks is not a phase error, and a
+                    // run that never left `acquiring` would otherwise report a
+                    // perfect 0.00 ms and a perfect spread.
+                    int   measured = 0;
+                    // Hypotheses the worker actually published. A single one
+                    // would satisfy "fresh".
+                    uint32_t published = 0;
+                    // Where the tracker ended up: following, and at the tempo of
+                    // the record rather than at half or twice it.
+                    bool  following = false;
+                    float bpm = 0.0f;
+                    // And that there was something to hear. The whole point of
+                    // the canceller is the part; a run with a silent part
+                    // measures nothing about it.
+                    int   hits = 0;
+                    float outPeak = 0.0f;
+                };
+
+                auto runOnce = [&] (bool partOn, bool cancellation)
+                {
+                    vp::VirtualPercussionEngine eng;
+                    eng.prepare (sr, block, 1);
+                    if (! partOn)
+                    {
+                        eng.settings().shakerEnabled.store (false);
+                        eng.settings().congasEnabled.store (false);
+                        eng.settings().masterVolume.store (0.0f);
+                    }
+                    eng.setLeakCancellationEnabledForTest (cancellation);
+                    eng.start();
+                    const uint32_t seq0 = eng.hypothesisPublicationSequence();
+
+                    std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+                    std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+                    float* outs[2] = { oL.data(), oR.data() };
+                    const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
+                    const int hop = static_cast<int> (std::ceil (
+                        vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+
+                    CancellerRun r;
+                    double errSum = 0.0, remainSum = 0.0, inSum = 0.0;
+                    int measured = 0;
+                    int pos = 0;
+                    int samplesInHop = 0;
+                    float outPeak = 0.0f;
+                    vp::EngineSnapshot last;
+                    while (pos < n)
+                    {
+                        const int numThisBlock = std::min ({ block, n - pos,
+                                                            hop - samplesInHop });
+                        const float* ins[1] = { song.data() + pos };
+                        eng.process (ins, 1, outs, 2, numThisBlock);
+                        last = eng.snapshot();
+                        for (int i = 0; i < numThisBlock; ++i)
+                            outPeak = std::max (outPeak,
+                                                std::fabs (oL[static_cast<size_t> (i)]));
+                        const double t = static_cast<double> (pos) / sr;
+                        if (t > fromSeconds && last.state == vp::TrackingState::following
+                            && last.bpm > 40.0f)
+                        {
+                            const double truePhase = static_cast<double> (pos) * beatsPerSample;
+                            errSum += static_cast<double> (vp::wrapCentered (
+                                last.beatPhase
+                                - static_cast<float> (truePhase - std::floor (truePhase))));
+                            remainSum += static_cast<double> (last.leakRemain);
+                            inSum += static_cast<double> (last.inputPeak);
+                            ++measured;
+                        }
+                        pos += numThisBlock;
+                        samplesInHop += numThisBlock;
+                        const bool boundary = samplesInHop == hop;
+                        const auto until = std::chrono::steady_clock::now()
+                                           + std::chrono::milliseconds (400);
+                        if (boundary)
+                        {
+                            while (eng.analysisCompletedSamples() < pos
+                                   && std::chrono::steady_clock::now() < until)
+                                std::this_thread::yield();
+                            if (eng.analysisCompletedSamples() < pos)
+                                r.drained = false;
+                            samplesInHop = 0;
+                        }
+                    }
+                    if (measured > 0)
+                    {
+                        const float beatMs = 60000.0f / trackBpm;
+                        r.errMs = static_cast<float> (errSum / measured) * beatMs
+                                  - last.attackLeadMs;
+                        r.meanRemain = static_cast<float> (remainSum / measured);
+                        r.meanInPeak = static_cast<float> (inSum / measured);
+                    }
+                    r.measured = measured;
+                    r.published = eng.hypothesisPublicationSequence() - seq0;
+                    r.following = last.state == vp::TrackingState::following;
+                    r.bpm = last.bpm;
+                    r.hits = eng.shakerHits();
+                    r.outPeak = outPeak;
+                    return r;
+                };
+
+                // Everything a run has to have done for the numbers taken from
+                // it to mean anything. The window is 12 s of 128-sample blocks,
+                // so a run that followed throughout measures about 4500 of them;
+                // the floor is a third of that. The worker publishes at the model
+                // hop, a couple of thousand times over 26 s. The part plays
+                // eighths at 138 BPM, so sixty beats is well over a hundred
+                // strokes. Without these, a run that never locked would report a
+                // flawless 0.00 ms with a flawless spread.
+                auto sane = [&] (const CancellerRun& r, bool partOn)
+                {
+                    return r.drained && r.measured >= 1500 && r.published >= 300
+                           && r.following && std::fabs (r.bpm - trackBpm) < 3.0f
+                           && (partOn ? (r.hits > 100 && r.outPeak > 0.02f)
+                                      : (r.hits == 0 && r.outPeak <= 0.0f));
+                };
+
+                constexpr int kRuns = 5;
+                float onLo = 1.0e9f, onHi = -1.0e9f, onSum = 0.0f;
+                float remainSum = 0.0f, inSum = 0.0f;
+                bool allSane = true, allDrained = true;
+                for (int i = 0; i < kRuns; ++i)
+                {
+                    const auto r = runOnce (true, true);
+                    std::printf ("leak-138  cancel=on  run=%d  err=%+.2fms  remain=%.4f "
+                                 "inPeak=%.4f  blocks=%d pub=%u %s bpm=%.1f hits=%d "
+                                 "outPk=%.3f drained=%d\n",
+                                 i, static_cast<double> (r.errMs),
+                                 static_cast<double> (r.meanRemain),
+                                 static_cast<double> (r.meanInPeak), r.measured,
+                                 r.published, r.following ? "following" : "NOT-following",
+                                 static_cast<double> (r.bpm), r.hits,
+                                 static_cast<double> (r.outPeak), r.drained ? 1 : 0);
+                    onLo = std::min (onLo, r.errMs);
+                    onHi = std::max (onHi, r.errMs);
+                    onSum += r.errMs;
+                    remainSum += r.meanRemain;
+                    inSum += r.meanInPeak;
+                    allSane = allSane && sane (r, true);
+                    allDrained = allDrained && r.drained;
+                }
+                float offSum = 0.0f;
+                for (int i = 0; i < 2; ++i)
+                {
+                    const auto r = runOnce (true, false);
+                    std::printf ("leak-138  cancel=off run=%d  err=%+.2fms  remain=%.4f "
+                                 "inPeak=%.4f  blocks=%d pub=%u %s bpm=%.1f hits=%d "
+                                 "outPk=%.3f drained=%d\n",
+                                 i, static_cast<double> (r.errMs),
+                                 static_cast<double> (r.meanRemain),
+                                 static_cast<double> (r.meanInPeak), r.measured,
+                                 r.published, r.following ? "following" : "NOT-following",
+                                 static_cast<double> (r.bpm), r.hits,
+                                 static_cast<double> (r.outPeak), r.drained ? 1 : 0);
+                    offSum += r.errMs;
+                    allSane = allSane && sane (r, true);
+                    allDrained = allDrained && r.drained;
+                }
+                const float onMean = onSum / static_cast<float> (kRuns);
+                const float offMean = offSum * 0.5f;
+
+                // Diagnostic, not asserted here. Silencing the part moves the
+                // phase by about three milliseconds through a different route -
+                // the analysis epoch restarting on our own output - which is a
+                // separate defect with its own report and is deliberately not
+                // touched by this cycle.
+                const auto silent = runOnce (false, true);
+                std::printf ("leak-138  cancel=on  spread=%.2fms  cancel-on/off delta=%+.2fms"
+                             "  part-on/off delta=%+.2fms (diagnostic; silent run "
+                             "hits=%d outPk=%.3f)\n",
+                             static_cast<double> (onHi - onLo),
+                             static_cast<double> (onMean - offMean),
+                             static_cast<double> (onMean - silent.errMs),
+                             silent.hits, static_cast<double> (silent.outPeak));
+
+                expect (allSane,
+                        "every canceller run followed the record at its own tempo, published "
+                        "hypotheses throughout, measured a run's worth of blocks and had an "
+                        "audible part to cancel");
+                // The control on the diagnostic below: the part-off variant
+                // really is silent, so the part-on/off delta is a comparison and
+                // not the same run twice.
+                expect (sane (silent, false),
+                        "the part-off diagnostic run followed the record with nothing "
+                        "playing");
+                expect (std::fabs (onMean - offMean) < 0.5f,
+                        "switching the leak canceller on does not move where the beat is "
+                        "heard when there is no leak to cancel");
+                expect (onHi - onLo < 0.5f,
+                        "the leak canceller's estimate is repeatable run to run");
+                // Not an exact `<=`. There is no leak on this rig, but our own
+                // part is playing the click's rhythm, so the fit converges to a
+                // small non-zero gain rather than to zero: a little of the part
+                // is taken off the analysis, which moves the peak in both
+                // directions by parts per million of it. This is not rounding.
+                // The claim worth making is the one about direction and size -
+                // the canceller does not *add* level to a bus it was only ever
+                // asked to take level off. Measured before the fix: 1.039x the
+                // input peak. After: 1.000007x, the 7 ppm this tolerance is for.
+                // The no-leak bench in TestMain.cpp pins the same effect down on
+                // a rig where it can be measured properly: 0.6% rms at worst,
+                // and no single block moved by more than a tenth of the run's
+                // mean level.
+                expect (remainSum <= inSum * 1.001f,
+                        "the canceller never hands the tracker more level than came in");
             }
 
             // A fixed record through the iPad speaker is the case where the
@@ -4879,7 +6793,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // way a room would. Both should track the song equally well.
             auto runWithLeak = [&] (bool partOn, float leakGain, vp::FollowSource src,
                                     float songGain,
-                                    float& outBpm, float& outSpan, vp::TrackingState& outState)
+                                    float& outBpm, float& outSpan, vp::TrackingState& outState,
+                                    int& outBacklog, bool& outWorkerDrained)
             {
                 vp::VirtualPercussionEngine e;
                 e.prepare (sr, block, 1);
@@ -4900,9 +6815,37 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 float lo = 1000.0f, hi = 0.0f;
                 int samples = 0;
                 vp::EngineSnapshot snap {};
-                int p = 0, blk = 0;
+                const int analysisHop = static_cast<int> (std::ceil (
+                    vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+                int p = 0;
+                outWorkerDrained = true;
+                uint32_t sequenceAnchor = 0;
+                bool haveSequenceAnchor = false;
+                bool publicationDue = false;
+                int fedAfterAnchor = 0;
+                int lastSynchronizedSample = -1;
                 while (p + block <= n)
                 {
+                    bool publicationProven = false;
+                    if (publicationDue)
+                    {
+                        const auto until = std::chrono::steady_clock::now()
+                                           + std::chrono::milliseconds (250);
+                        while ((e.hypothesisPublicationSequence() == sequenceAnchor
+                                || e.analysisBacklog() > analysisHop)
+                               && std::chrono::steady_clock::now() < until)
+                            std::this_thread::yield();
+                        publicationProven =
+                            e.hypothesisPublicationSequence() != sequenceAnchor
+                            && e.analysisBacklog() <= analysisHop;
+                        if (! publicationProven)
+                        {
+                            outWorkerDrained = false;
+                            publicationDue = false;
+                            haveSequenceAnchor = false;
+                        }
+                    }
+
                     for (int i = 0; i < block; ++i)
                         in[static_cast<size_t> (i)] = songGain * kit[static_cast<size_t> (p + i)]
                                                       + echo[static_cast<size_t> (p + i)];
@@ -4918,20 +6861,53 @@ void vpRunAiBeatTests (int& passed, int& failed)
                                                            + eR[static_cast<size_t> (i)]);
                     }
 
-                    snap = e.snapshot();
-                    if (p > static_cast<int> (sr * 8.0) && snap.bpm > 40.0f)
-                    {
-                        lo = std::min (lo, snap.bpm);
-                        hi = std::max (hi, snap.bpm);
-                        ++samples;
-                    }
                     p += block;
-                    if ((++blk % 10) == 0)
-                        std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                    if (publicationProven)
+                    {
+                        // This unchanged callback ran only after the worker
+                        // completed a post-anchor publication, so its snapshot
+                        // has consumed proven-fresh analysis.
+                        snap = e.snapshot();
+                        lastSynchronizedSample = p;
+                        if (p > static_cast<int> (sr * 8.0) && snap.bpm > 40.0f)
+                        {
+                            lo = std::min (lo, snap.bpm);
+                            hi = std::max (hi, snap.bpm);
+                            ++samples;
+                        }
+                        sequenceAnchor = e.hypothesisPublicationSequence();
+                        fedAfterAnchor = 0;
+                        publicationDue = false;
+                        haveSequenceAnchor = true;
+                    }
+                    else if (! haveSequenceAnchor)
+                    {
+                        const uint32_t completed = e.hypothesisPublicationSequence();
+                        if (completed != 0)
+                        {
+                            // Initial feature-frame warm-up can consume several
+                            // hops before the first inference is publishable.
+                            sequenceAnchor = completed;
+                            fedAfterAnchor = 0;
+                            haveSequenceAnchor = true;
+                        }
+                    }
+                    else
+                    {
+                        fedAfterAnchor += block;
+                        if (fedAfterAnchor >= analysisHop)
+                            publicationDue = true;
+                    }
                 }
+                const bool finalSnapshotIsFresh =
+                    lastSynchronizedSample >= 0
+                    && n - lastSynchronizedSample <= analysisHop + block;
+                if (! finalSnapshotIsFresh)
+                    outWorkerDrained = false;
                 outBpm = snap.bpm;
                 outSpan = samples > 0 ? hi - lo : -1.0f;
                 outState = snap.state;
+                outBacklog = e.analysisBacklog();
                 return samples;
             };
 
@@ -4954,14 +6930,25 @@ void vpRunAiBeatTests (int& passed, int& failed)
             {
                 float b = 0.0f, span = -1.0f;
                 vp::TrackingState st {};
-                const int got = runWithLeak (c.on, c.gain, c.src, c.song, b, span, st);
-                const bool ok = got > 20 && st == vp::TrackingState::following
+                int backlog = -1;
+                bool workerDrained = false;
+                const int got = runWithLeak (
+                    c.on, c.gain, c.src, c.song, b, span, st, backlog, workerDrained);
+                const bool ok = workerDrained && got > 20
+                                && st == vp::TrackingState::following
                                 && std::fabs (b - bpm) < 12.0f && span < 8.0f;
                 std::printf ("self-leak  %-12s bpm=%6.1f  span=%5.1f  state=%-10s %s\n",
                              c.name, static_cast<double> (b), static_cast<double> (span),
                              vp::toString (st), ok ? "" : "  <-- lost it");
                 if (! ok)
+                {
+                    std::printf ("           samples=%d backlog=%d hop=%d drained=%s\n",
+                                 got, backlog,
+                                 static_cast<int> (std::ceil (
+                                     vp::kBeatModelHop * sr / vp::kBeatModelSampleRate)),
+                                 workerDrained ? "yes" : "no");
                     leakHeld = false;
+                }
             }
             expect (leakHeld,
                     "the tracker holds the song while hearing its own part come back");
@@ -5364,4 +7351,1904 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and the tempo survives it");
     }
 #endif
+}
+
+// ===========================================================================
+// The app's own output against its own analysis.
+//
+// `updateAnalysisEpoch` watches the analysis level for the moment an empty room
+// turns into a band, and it has an exception: a rise our own part caused is not
+// a band starting. That exception is right and it is causal - it looks at the
+// previous block's output, never at audio that has not arrived.
+//
+// What it must not do is redefine where the level *is*. It used to, and the
+// reference it wrote was the band's own level, measured on a feed carrying none
+// of our part. That raised the bar the "was properly quiet" test has to clear
+// for the rest of the session, so the one legitimate epoch of a run - the band
+// starting - never fired while the part was audible. Measured on the bench
+// below: the phase moved 2.96 ms, the analysis chain differed on 7678 of 9750
+// blocks, and after twenty seconds of room the app took 4.35 s longer to settle
+// on the right tempo. See .superpowers/sdd/makeup-phase-root-cause.md.
+//
+// Everything here is one variable at a time. Silencing the part with the master
+// fader alone leaves the groove, the voices and the RNG stream running - the
+// stroke count is the same on both sides of every A/B below - so what is being
+// compared is the *level of our own output* and nothing else about the part.
+// ===========================================================================
+namespace
+{
+    constexpr double kMkSr = 48000.0;
+    constexpr int    kMkBlock = 128;
+
+    // Everything published per block that the analysis chain can move.
+    struct MakeupBlock
+    {
+        float inPeak = 0.0f;
+        float remain = 0.0f;
+        float gain = 0.0f;
+        float anaPeak = 0.0f;
+        int   restarts = 0;
+        /** `ownPeakLast` for this block: what the epoch watcher blames us
+            with, for the `epoch` probe's replay. */
+        float own = 0.0f;
+    };
+
+    struct MakeupRun
+    {
+        float errMs = 0.0f;
+        int   measured = 0;
+        uint32_t published = 0;
+        /** Blocks on which the analysis worker had not caught up inside the
+            budget below. A run that fell behind is not a run whose phase means
+            anything, but one late block in ten thousand is the host machine and
+            not the engine, so this is counted rather than latched. */
+        int   lateBlocks = 0;
+        int   blocks = 0;
+        bool  following = false;
+        float bpm = 0.0f;
+        int   hits = 0;
+        float outPeak = 0.0f;
+        int   restarts = 0;
+        float meanRemain = 0.0f, meanInPeak = 0.0f, meanGain = 0.0f;
+        /** Seconds from the start of the run at which the epoch counter first
+            moved, or -1. */
+        double firstRestartSec = -1.0;
+        /** First second at which the committed tempo was within 2% of the
+            record's and stayed there, counted from `bandAtSeconds`. */
+        double settleSec = -1.0;
+        /** Peak of the return actually injected, so a leak fixture cannot pass
+            by injecting nothing. */
+        float echoPeak = 0.0f;
+        std::vector<MakeupBlock> trace;
+
+        /** Everything below is for the `dist` and `epoch` probes: the phase
+            before the clock's lead is taken off it, the worker's worst backlog,
+            what the tracker had decided by the end of the run, and the phase
+            error averaged inside each second of the measurement window - which
+            is what shows a run whose tempo is a fraction out walking away from
+            the pulse rather than sitting off it. */
+        float rawErrMs = 0.0f, leadMs = 0.0f;
+        int   worstBacklog = 0, gaps = 0, rotations = 0, regime = 0, sub = 0;
+        bool  barLocked = false, tapLock = false;
+        float trust = 0.0f, gridTau = 0.0f, conf = 0.0f, neuralBpm = 0.0f;
+        double followSec = -1.0;
+        double bucketSum[16] {};
+        int    bucketN[16] {};
+    };
+
+    /** A model that answers the same clean pulse train whatever it is handed,
+        on the analysis frame grid. Two runs of it publish the same hypotheses
+        at the same analysis samples, so the only thing left that can move the
+        clock is what the audio thread does with them. */
+    class MakeupScriptedModel final : public vp::IBeatModel
+    {
+    public:
+        explicit MakeupScriptedModel (double framesPerBeat) : fpb (framesPerBeat) {}
+        bool prepare (int) override { return true; }
+        void reset() override {}
+        bool infer (const float*, int, float activations3[3]) override
+        {
+            const double beats = static_cast<double> (frame++) / fpb;
+            const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+            const int    beatNo = static_cast<int> (std::llround (beats));
+            const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                     std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+            activations3[0] = pulse;
+            activations3[1] = (((beatNo % 4) + 4) % 4) == 0 ? pulse * 0.95f : 0.03f;
+            activations3[2] = 1.0f - activations3[0];
+            return true;
+        }
+    private:
+        double fpb;
+        long long frame = 0;
+    };
+
+    struct MakeupOpts
+    {
+        float  bpm = 138.0f;
+        /** Master fader up or down. The only own-output knob. */
+        bool   partAudible = true;
+        float  partVolume = 0.90f;
+        bool   cancellation = false;
+        /** Window the phase error is averaged over. */
+        double fromSeconds = 14.0;
+        /** Where the record starts inside `band`, for the epoch and settle
+            timings; also where `settleSec` is measured from. */
+        double bandAtSeconds = 0.0;
+        /** A genuine return: `leakGain` of our own output, `leakDelayMs` later,
+            added to the input. Zero for the no-leak benches.
+
+            The default delay is 150 ms, which is beyond anything the canceller
+            searches - 8 to 88 ms through the speaker, the reported round trip
+            through a mixer - so it is the worst case: a return nothing removes.
+            A path the canceller can actually find is the realistic one. */
+        float  leakGain = 0.0f;
+        float  leakDelayMs = 150.0f;
+        /** Follow the iPad's own speaker, which is the mode whose canceller
+            searches for the acoustic hop instead of trusting the round trip. */
+        bool   speakerSource = false;
+        /** FISSO releases the part without waiting for the input to start, which
+            is how a listener reaches "part audible over a quiet room". */
+        float  fixedBpm = 0.0f;
+        bool   keepTrace = true;
+        /** Run the deterministic model above instead of the network. */
+        bool   scripted = false;
+        /** At each exact analysis-hop boundary, hold the next callback until
+            the worker has completed every input sample fed so far.
+
+            An empty FIFO only says pop() took the samples, and a publication
+            sequence stable for 150 us says nothing while the worker can sleep
+            for 8 ms. Both admitted a second phase mode 5.45 ms away at 156 BPM
+            under load. The completed-sample counter advances only after
+            inference and publication, so the next callback consumes a result
+            at a position fixed by the input hop rather than by scheduling. */
+        bool   syncWorker = false;
+    };
+
+    MakeupRun runMakeupBench (const std::vector<float>& band, const MakeupOpts& o)
+    {
+        vp::VirtualPercussionEngine eng;
+        if (o.scripted)
+            eng.setBeatModel (std::make_unique<MakeupScriptedModel> (
+                60.0 / static_cast<double> (o.bpm)
+                * (vp::kBeatModelSampleRate / vp::kBeatModelHop)));
+        eng.prepare (kMkSr, kMkBlock, 1);
+        eng.settings().masterVolume.store (o.partAudible ? o.partVolume : 0.0f);
+        eng.setReportedLatencyMs (o.leakGain > 0.0f ? 8.0f : 0.0f);
+        eng.setLeakCancellationEnabledForTest (o.cancellation);
+        if (o.speakerSource)
+            eng.settings().followSource.store (
+                static_cast<int> (vp::FollowSource::speaker), std::memory_order_relaxed);
+        if (o.fixedBpm > 0.0f)
+            eng.setFixedBpm (o.fixedBpm);
+        eng.start();
+        const uint32_t seq0 = eng.hypothesisPublicationSequence();
+
+        const int n = static_cast<int> (band.size());
+        const int delay = static_cast<int> (kMkSr * o.leakDelayMs * 0.001);
+        std::vector<float> echo (static_cast<size_t> (n + delay + kMkBlock), 0.0f);
+        std::vector<float> mix (static_cast<size_t> (kMkBlock), 0.0f);
+        std::vector<float> oL (static_cast<size_t> (kMkBlock), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (kMkBlock), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+        const double beatsPerSample = static_cast<double> (o.bpm) / 60.0 / kMkSr;
+        const int hop = static_cast<int> (std::ceil (
+            vp::kBeatModelHop * kMkSr / vp::kBeatModelSampleRate));
+
+        MakeupRun r;
+        if (o.keepTrace)
+            r.trace.reserve (static_cast<size_t> (n / kMkBlock + 2));
+        double errSum = 0.0, remainSum = 0.0, inSum = 0.0, gainSum = 0.0;
+        int lastRestarts = 0;
+        vp::EngineSnapshot last {};
+
+        int pos = 0;
+        int samplesInSyncHop = 0;
+        while (pos < n)
+        {
+            const int toHop = hop - samplesInSyncHop;
+            const int numThisBlock = std::min (n - pos,
+                                               o.syncWorker ? std::min (kMkBlock, toHop)
+                                                            : kMkBlock);
+            for (int i = 0; i < numThisBlock; ++i)
+                mix[static_cast<size_t> (i)] = band[static_cast<size_t> (pos + i)]
+                                               + echo[static_cast<size_t> (pos + i)];
+            const float* ins[1] = { mix.data() };
+            eng.process (ins, 1, outs, 2, numThisBlock);
+            last = eng.snapshot();
+
+            // Exactly what pushOutputToRing stores as `ownPeakLast`, which is
+            // the signal the epoch watcher blames us with.
+            float ownPeak = 0.0f;
+            for (int i = 0; i < numThisBlock; ++i)
+            {
+                const float y = 0.5f * (oL[static_cast<size_t> (i)]
+                                        + oR[static_cast<size_t> (i)]);
+                r.outPeak = std::max (r.outPeak, std::fabs (y));
+                ownPeak = std::max (ownPeak, std::fabs (y));
+                if (o.leakGain > 0.0f)
+                {
+                    const size_t at = static_cast<size_t> (pos + delay + i);
+                    echo[at] += o.leakGain * y;
+                    r.echoPeak = std::max (r.echoPeak, std::fabs (echo[at]));
+                }
+            }
+
+            if (o.keepTrace)
+            {
+                MakeupBlock b;
+                b.inPeak = last.inputPeak;
+                b.remain = last.leakRemain;
+                b.gain = last.analysisGain;
+                b.anaPeak = last.analysisPeak;
+                b.restarts = last.analysisRestarts;
+                b.own = ownPeak;
+                r.trace.push_back (b);
+            }
+
+            const double t = static_cast<double> (pos) / kMkSr;
+            r.worstBacklog = std::max (r.worstBacklog, last.analysisBacklog);
+            if (r.followSec < 0.0 && last.state == vp::TrackingState::following)
+                r.followSec = t;
+            if (last.analysisRestarts != lastRestarts)
+            {
+                if (r.firstRestartSec < 0.0)
+                    r.firstRestartSec = t;
+                lastRestarts = last.analysisRestarts;
+            }
+            if (t >= o.bandAtSeconds && last.bpm > 40.0f)
+            {
+                const bool right = std::fabs (last.bpm - o.bpm) / o.bpm < 0.02f;
+                if (right)
+                {
+                    if (r.settleSec < 0.0)
+                        r.settleSec = t - o.bandAtSeconds;
+                }
+                else
+                {
+                    r.settleSec = -1.0;
+                }
+            }
+            if (t > o.fromSeconds && last.state == vp::TrackingState::following
+                && last.bpm > 40.0f)
+            {
+                const double truePhase = static_cast<double> (pos - static_cast<int> (
+                                             kMkSr * o.bandAtSeconds)) * beatsPerSample;
+                const double e = static_cast<double> (vp::wrapCentered (
+                    last.beatPhase
+                    - static_cast<float> (truePhase - std::floor (truePhase))));
+                errSum += e;
+                {
+                    const int b = std::clamp (static_cast<int> ((t - o.fromSeconds) / 1.0),
+                                              0, 15);
+                    r.bucketSum[b] += e;
+                    ++r.bucketN[b];
+                }
+                remainSum += static_cast<double> (last.leakRemain);
+                inSum += static_cast<double> (last.inputPeak);
+                gainSum += static_cast<double> (last.analysisGain);
+                ++r.measured;
+            }
+
+            pos += numThisBlock;
+            samplesInSyncHop += numThisBlock;
+            const bool syncBoundary = o.syncWorker && samplesInSyncHop == hop;
+            const auto until = std::chrono::steady_clock::now()
+                               + std::chrono::milliseconds (syncBoundary ? 400 : 50);
+            if (o.syncWorker)
+            {
+                if (syncBoundary)
+                    while (eng.analysisCompletedSamples() < pos
+                           && std::chrono::steady_clock::now() < until)
+                        std::this_thread::yield();
+            }
+            else
+            {
+                while (eng.analysisBacklog() > hop
+                       && std::chrono::steady_clock::now() < until)
+                    std::this_thread::yield();
+            }
+            if ((syncBoundary && eng.analysisCompletedSamples() < pos)
+                || (! o.syncWorker && eng.analysisBacklog() > hop))
+                ++r.lateBlocks;
+            if (syncBoundary)
+                samplesInSyncHop = 0;
+            ++r.blocks;
+        }
+
+        if (r.measured > 0)
+        {
+            const float beatMs = 60000.0f / o.bpm;
+            r.errMs = static_cast<float> (errSum / r.measured) * beatMs
+                      - last.attackLeadMs;
+            r.meanRemain = static_cast<float> (remainSum / r.measured);
+            r.meanInPeak = static_cast<float> (inSum / r.measured);
+            r.meanGain = static_cast<float> (gainSum / r.measured);
+        }
+        if (r.measured > 0)
+            r.rawErrMs = static_cast<float> (errSum / r.measured) * (60000.0f / o.bpm);
+        r.leadMs = last.attackLeadMs;
+        r.gaps = last.analysisGaps;
+        r.rotations = last.barRotations;
+        r.regime = last.tempoRegime;
+        r.sub = static_cast<int> (last.subdivision);
+        r.barLocked = last.barLocked;
+        r.tapLock = last.tapLocked;
+        r.trust = last.evidenceTrust;
+        r.gridTau = last.gridTauSec;
+        r.conf = last.confidence;
+        r.neuralBpm = last.neuralBpm;
+        r.published = eng.hypothesisPublicationSequence() - seq0;
+        r.following = last.state == vp::TrackingState::following;
+        r.bpm = last.bpm;
+        r.hits = eng.shakerHits();
+        r.restarts = last.analysisRestarts;
+        return r;
+    }
+
+    // Everything a run has to have done for its numbers to mean anything. A run
+    // that never left `acquiring` would report a flawless 0.00 ms phase error
+    // with a flawless spread, and a run with nothing playing measures nothing
+    // about the part.
+    bool makeupSane (const MakeupRun& r, const MakeupOpts& o, int minBlocks, int minHits)
+    {
+        const bool part = o.partAudible ? (r.outPeak > 0.02f) : (r.outPeak <= 0.0f);
+        return r.lateBlocks * 200 <= r.blocks && r.measured >= minBlocks
+               && r.published >= 300
+               && r.following && std::fabs (r.bpm - o.bpm) < 3.0f
+               && r.hits > minHits && part;
+    }
+
+    // The same guards for the benches that measure no phase window. The epoch
+    // and lifecycle runs push `fromSeconds` past the end of the record on
+    // purpose, so `measured` is zero there and everything else still applies -
+    // including the one these benches used to leave out, that the analysis
+    // worker kept up: an epoch claim from a run whose worker was a second
+    // behind is a claim about the test machine.
+    bool makeupLive (const MakeupRun& r, const MakeupOpts& o, int minHits,
+                     unsigned int minPublished = 300)
+    {
+        const bool part = o.partAudible ? (r.outPeak > 0.02f) : (r.outPeak <= 0.0f);
+        return r.lateBlocks * 200 <= r.blocks && r.published >= minPublished
+               && r.following && std::fabs (r.bpm - o.bpm) < 3.0f
+               && r.hits > minHits && part;
+    }
+
+    void printMakeupRun (const char* tag, const MakeupOpts& o, const MakeupRun& r)
+    {
+        std::printf ("  %-22s bpm=%3.0f part=%d cancel=%d leak=%.2f  err=%+.3fms"
+                     "  n=%d pub=%u late=%d/%d %s bpm=%.2f  hits=%d outPk=%.3f"
+                     "  restarts=%d@%.3fs  inPk=%.5f remain=%.5f gain=%.4f"
+                     "  settle=%.2fs echoPk=%.3f\n",
+                     tag, static_cast<double> (o.bpm), o.partAudible ? 1 : 0,
+                     o.cancellation ? 1 : 0, static_cast<double> (o.leakGain),
+                     static_cast<double> (r.errMs), r.measured, r.published,
+                     r.lateBlocks, r.blocks,
+                     r.following ? "following" : "NOT-following",
+                     static_cast<double> (r.bpm), r.hits,
+                     static_cast<double> (r.outPeak), r.restarts, r.firstRestartSec,
+                     static_cast<double> (r.meanInPeak),
+                     static_cast<double> (r.meanRemain),
+                     static_cast<double> (r.meanGain), r.settleSec,
+                     static_cast<double> (r.echoPeak));
+        std::fflush (stdout);
+    }
+
+    // A quiet room in front of the record: filtered noise thirty decibels under
+    // the band, which is what the microphone hears before anybody plays.
+    void prependRoom (std::vector<float>& dest, int roomSamples, float bandPeak,
+                      float fraction = 0.03f)
+    {
+        uint32_t rng = 0x0ff1ceu;
+        float lp = 0.0f, peak = 0.0f;
+        const int n = std::min (roomSamples, static_cast<int> (dest.size()));
+        for (int i = 0; i < n; ++i)
+        {
+            rng = rng * 1664525u + 1013904223u;
+            const float u = static_cast<float> (rng >> 8) / 8388608.0f - 1.0f;
+            lp += (u - lp) * 0.05f;
+            dest[static_cast<size_t> (i)] = lp;
+            peak = std::max (peak, std::fabs (lp));
+        }
+        if (peak > 0.0f)
+            for (int i = 0; i < n; ++i)
+                dest[static_cast<size_t> (i)] *= bandPeak * fraction / peak;
+    }
+
+    /** The analysis gain a session settles on, for the lifecycle checks. Returns
+        the gain on the first block and after `blocks` blocks, plus the epoch
+        counter, so a session's start can be compared with a fresh engine's. */
+    struct SessionGain
+    {
+        float first = 0.0f;
+        float after = 0.0f;
+        /** The epoch count on the first block, which is what a carried-over
+            counter shows up in, and at the end of the session. */
+        int   restarts = 0;
+        int   restartsEnd = 0;
+        /** The level the session actually ran at, so a lifecycle claim cannot be
+            made about an engine that was handed silence. */
+        float peak = 0.0f;
+    };
+
+    SessionGain feedForGain (vp::VirtualPercussionEngine& eng,
+                             const std::vector<float>& src, int blocks)
+    {
+        std::vector<float> oL (static_cast<size_t> (kMkBlock), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (kMkBlock), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+        SessionGain g;
+        int pos = 0;
+        for (int b = 0; b < blocks && pos + kMkBlock <= static_cast<int> (src.size()); ++b)
+        {
+            const float* ins[1] = { src.data() + pos };
+            eng.process (ins, 1, outs, 2, kMkBlock);
+            const auto s = eng.snapshot();
+            if (b == 0)
+            {
+                g.first = s.analysisGain;
+                g.restarts = s.analysisRestarts;
+            }
+            g.after = s.analysisGain;
+            g.restartsEnd = s.analysisRestarts;
+            g.peak = std::max (g.peak, s.leakRemain);
+            pos += kMkBlock;
+        }
+        return g;
+    }
+
+    /** Steady filtered noise at an exact peak: a source whose analysis level is
+        a constant, so the make-up gain converges to one number instead of
+        chasing a click track. */
+    void steadyNoise (std::vector<float>& dest, int from, int to, float peak,
+                      uint32_t seed)
+    {
+        uint32_t rng = seed;
+        float lp = 0.0f, worst = 0.0f;
+        const int hi = std::min (to, static_cast<int> (dest.size()));
+        for (int i = from; i < hi; ++i)
+        {
+            rng = rng * 1664525u + 1013904223u;
+            const float u = static_cast<float> (rng >> 8) / 8388608.0f - 1.0f;
+            lp += (u - lp) * 0.35f;
+            dest[static_cast<size_t> (i)] = lp;
+            worst = std::max (worst, std::fabs (lp));
+        }
+        if (worst > 0.0f)
+            for (int i = from; i < hi; ++i)
+                dest[static_cast<size_t> (i)] *= peak / worst;
+    }
+}
+
+void vpRunMakeupTests (int& passed, int& failed, const char* only)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nOwn output vs the analysis epoch\n");
+
+    auto want = [only] (const char* id)
+    {
+        return only == nullptr || std::strcmp (only, id) == 0;
+    };
+
+    // The measurement tools behind the numbers in the comments and in
+    // .superpowers/sdd/makeup-phase-fix-report.md. They assert nothing and they
+    // take minutes, so unlike the benches above they run only when named.
+    auto probe = [only] (const char* id)
+    {
+        return only != nullptr && std::strcmp (only, id) == 0;
+    };
+
+    // A selector that names nothing runs nothing, and a run that asserts
+    // nothing passes. Say so instead, loudly and with a non-zero exit: the
+    // alternative is a green "0 passed, 0 failed" standing in for a suite.
+    if (only != nullptr)
+    {
+        static const char* const kBenches[] = { "a", "b", "c", "d", "e", "f",
+                                                "dist", "sweep", "epoch" };
+        bool known = false;
+        for (const char* id : kBenches)
+            known = known || std::strcmp (only, id) == 0;
+        if (! known)
+        {
+            std::printf ("  unknown --makeup selector \"%s\": expected one of"
+                         " the benches a b c d e f or the probes dist sweep"
+                         " epoch\n", only);
+            expect (false, "the --makeup selector names a bench that exists");
+            return;
+        }
+    }
+
+#if defined(VP_USE_ONNX) && VP_USE_ONNX
+    vp::OnnxBeatModel probeModel;
+    const bool haveOnnx = vp::loadDefaultBeatModel (probeModel);
+#else
+    const bool haveOnnx = false;
+#endif
+
+    // ------------------------------------------------------------- RED-A1
+    //
+    // The coupling gate: the same input, carrying no leak, with the part
+    // audible and with the master fader down. The analysis cannot tell the two
+    // apart, so nothing downstream of it may either.
+    //
+    // It does not run the network, and that is the point. Two runs of the real
+    // model over the same audio do not commit the same tempo to the last
+    // decimal: over fifteen runs a variant at 100 BPM, twenty-nine committed
+    // 99.987 and one committed 100.004, and that one - which had the fader
+    // *down* - read 4.47 ms further from the pulse than every other run,
+    // because a tempo 0.017 BPM out walks the phase across the measurement
+    // window. Which of those a run lands on is decided by how the worker thread
+    // and the audio thread interleave, so the difference between two
+    // independent network runs is a measurement of the host's scheduler. The
+    // distribution and the trajectories are in
+    // .superpowers/sdd/makeup-phase-fix-report.md.
+    //
+    // Here the model answers a fixed pulse train on the analysis frame grid, so
+    // the *content* of every hypothesis is fixed. That alone is not enough: the
+    // block a hypothesis lands on is still the scheduler's to choose, and one
+    // block of difference is a difference in the clock. Loading the host during
+    // an earlier campaign produced exactly that - one of four runs at 156 BPM
+    // came out 5.45 ms from the other three with the analysis chain identical
+    // on all 4500 blocks and the same 1194 publications.
+    //
+    // So the bench also holds each block boundary until the worker has gone
+    // quiet: nothing left in the analysis ring, and no publication still in
+    // flight (`MakeupOpts::syncWorker`). With that wait the run is a function
+    // of the block index and nothing else, and it measures bit-exact: over ten
+    // pairs across the five tempos, every delta and every spread came out
+    // 0.0000 ms, with the phase error identical to three decimals between runs
+    // - including 156 BPM, where the unsynchronised bench was worth 0.83 ms of
+    // its own. The bound is kept at 0.20 ms rather than zero because a host
+    // slow enough to time the wait out should report a number, not a crash;
+    // that is five times under the 1 ms this cycle was asked for, and two
+    // hundred times under the 2.96 ms the defect was worth.
+    if (want ("a"))
+    {
+        auto couplingAt = [] (float bpm)
+        {
+            constexpr double seconds = 12.0;
+            const int n = static_cast<int> (kMkSr * seconds);
+            std::vector<float> song (static_cast<size_t> (n), 0.0f);
+            renderClickTrack (song, bpm, kMkSr);
+
+            MakeupRun on[2], off[2];
+            bool sane = true;
+            for (int i = 0; i < 2; ++i)
+                for (bool audible : { true, false })
+                {
+                    MakeupOpts o;
+                    o.bpm = bpm;
+                    o.partAudible = audible;
+                    o.cancellation = false;
+                    o.scripted = true;
+                    o.syncWorker = true;
+                    o.fromSeconds = 6.0;
+                    o.keepTrace = true;
+                    auto r = runMakeupBench (song, o);
+                    printMakeupRun (audible ? "red-A1 scripted audible"
+                                            : "red-A1 scripted muted", o, r);
+                    // Muting with the fader leaves the groove, the voices and
+                    // the RNG stream running, so the stroke count is the same on
+                    // both sides: a muted run with no strokes is a broken
+                    // fixture, not a silent part.
+                    sane = sane && makeupSane (r, o, 1500, 25);
+                    (audible ? on[i] : off[i]) = std::move (r);
+                }
+
+            auto firstDiff = [] (const MakeupRun& x, const MakeupRun& y)
+            {
+                const size_t m = std::min (x.trace.size(), y.trace.size());
+                if (m == 0 || x.trace.size() != y.trace.size())
+                    return -2LL;
+                for (size_t k = 0; k < m; ++k)
+                    if (x.trace[k].inPeak != y.trace[k].inPeak
+                        || x.trace[k].remain != y.trace[k].remain
+                        || x.trace[k].gain != y.trace[k].gain
+                        || x.trace[k].anaPeak != y.trace[k].anaPeak
+                        || x.trace[k].restarts != y.trace[k].restarts)
+                        return static_cast<long long> (k);
+                return -1LL;
+            };
+            const long long d0 = firstDiff (on[0], off[0]);
+            const long long d1 = firstDiff (on[1], off[1]);
+            const float delta0 = on[0].errMs - off[0].errMs;
+            const float delta1 = on[1].errMs - off[1].errMs;
+            const float spreadOn = std::fabs (on[0].errMs - on[1].errMs);
+            const float spreadOff = std::fabs (off[0].errMs - off[1].errMs);
+            std::printf ("makeup-coupling %5.1f BPM  delta %+.4f / %+.4f ms"
+                         "  spread audible %.4f muted %.4f  chain first difference"
+                         " %lld / %lld of %zu blocks  epochs %d/%d\n",
+                         static_cast<double> (bpm),
+                         static_cast<double> (delta0), static_cast<double> (delta1),
+                         static_cast<double> (spreadOn),
+                         static_cast<double> (spreadOff), d0, d1,
+                         on[0].trace.size(), on[0].restarts, off[0].restarts);
+            std::fflush (stdout);
+
+            char name[192];
+            std::snprintf (name, sizeof name,
+                           "at %.0f BPM the master fader does not move where the beat is "
+                           "heard on a feed with no leak", static_cast<double> (bpm));
+            expect (sane, "every scripted run at this tempo followed the record, "
+                          "published hypotheses throughout and had a part playing");
+            expect (d0 == -1 && d1 == -1 && on[0].trace.size() >= 1500,
+                    "the analysis chain is identical on every block of both pairs: "
+                    "input, leak remainder, gain, peak and epoch count");
+            expect (std::fabs (delta0) < 0.20f && std::fabs (delta1) < 0.20f, name);
+            expect (spreadOn < 0.20f && spreadOff < 0.20f,
+                    "and each variant repeats run to run at this tempo");
+            expect (on[0].restarts == off[0].restarts && on[1].restarts == off[1].restarts,
+                    "and the epoch count the worker was told is the same either way");
+        };
+
+        for (float bpm : { 78.0f, 100.0f, 120.0f, 138.0f, 156.0f })
+            couplingAt (bpm);
+    }
+
+    if (! haveOnnx)
+    {
+        expect (true, "own-output epoch benches skipped (no beatnet.onnx)");
+    }
+    else
+    {
+        // ------------------------------------------------------------- RED-A2
+        //
+        // The same A/B under the real network. Every analysis hop is completed
+        // before the next hop is fed, so publication order is a condition of
+        // the fixture rather than a side effect of host scheduling. Three runs
+        // a variant expose the distribution; no mean or median is allowed to
+        // hide a second phase mode.
+        //
+        // The fader delta is asserted here too, but only across pairs that
+        // committed the same tempo - see RED-A1 for why that condition has to
+        // be stated rather than assumed, and § "the outlier" in the report for
+        // the fifteen-run distribution behind it. A tempo-matched pair is a
+        // fair comparison; a pair whose two runs locked 0.017 BPM apart is a
+        // comparison of two different clocks.
+        //
+        // The old free-running fixture showed a minority mode 8.6 ms away at
+        // 100 BPM and up to 0.86 ms of scheduler spread at 156 BPM. Requiring
+        // every run and the full spread to pass makes either mode visible.
+        if (want ("a"))
+        {
+            constexpr double seconds = 26.0;
+            constexpr int kRuns = 3;
+            const int n = static_cast<int> (kMkSr * seconds);
+
+            auto atTempo = [&] (float bpm)
+            {
+                std::vector<float> song (static_cast<size_t> (n), 0.0f);
+                renderClickTrack (song, bpm, kMkSr);
+
+                MakeupRun on[kRuns], off[kRuns];
+                bool sane = true;
+                for (int i = 0; i < kRuns; ++i)
+                    for (bool audible : { true, false })
+                    {
+                        MakeupOpts o;
+                        o.bpm = bpm;
+                        o.partAudible = audible;
+                        o.cancellation = false;
+                        o.syncWorker = true;
+                        // The chain comparison costs a trace; one pair of them
+                        // per tempo is enough to say the analysis was identical.
+                        o.keepTrace = i == 0;
+                        auto r = runMakeupBench (song, o);
+                        printMakeupRun (audible ? "red-A2 part-audible"
+                                                : "red-A2 part-muted", o, r);
+                        sane = sane && makeupSane (r, o, 1500, 50);
+                        (audible ? on[i] : off[i]) = std::move (r);
+                    }
+
+                auto median = [] (const MakeupRun* v)
+                {
+                    float e[kRuns];
+                    for (int i = 0; i < kRuns; ++i)
+                        e[i] = v[i].errMs;
+                    std::sort (e, e + kRuns);
+                    return e[kRuns / 2];
+                };
+                auto spread = [] (const MakeupRun* v)
+                {
+                    float lo = v[0].errMs, hi = v[0].errMs;
+                    for (int i = 1; i < kRuns; ++i)
+                    {
+                        lo = std::min (lo, v[i].errMs);
+                        hi = std::max (hi, v[i].errMs);
+                    }
+                    return hi - lo;
+                };
+                const float onMed = median (on), offMed = median (off);
+                const float onSpread = spread (on), offSpread = spread (off);
+                bool everyRunInPhase = true;
+                for (int i = 0; i < kRuns; ++i)
+                    everyRunInPhase = everyRunInPhase
+                                      && std::fabs (on[i].errMs) < 8.0f
+                                      && std::fabs (off[i].errMs) < 8.0f;
+
+                // Only pairs that committed the same tempo are comparable: the
+                // phase error is measured over twelve seconds, so 0.017 BPM of
+                // difference is milliseconds of walk that has nothing to do with
+                // the fader. Runs that disagree by more than 0.005 BPM are
+                // counted and reported rather than averaged in.
+                int matched = 0;
+                float worstDelta = 0.0f;
+                for (int i = 0; i < kRuns; ++i)
+                {
+                    if (std::fabs (on[i].bpm - off[i].bpm) >= 0.005f)
+                        continue;
+                    ++matched;
+                    worstDelta = std::max (worstDelta,
+                                           std::fabs (on[i].errMs - off[i].errMs));
+                }
+                std::printf ("makeup-phase %5.1f BPM  audible median %+.3fms"
+                             " (spread %.3f)  muted median %+.3fms (spread %.3f)"
+                             "  median delta %+.3fms  tempo-matched pairs %d/%d"
+                             "  worst matched delta %.3fms  restarts %d/%d\n",
+                             static_cast<double> (bpm), static_cast<double> (onMed),
+                             static_cast<double> (onSpread),
+                             static_cast<double> (offMed),
+                             static_cast<double> (offSpread),
+                             static_cast<double> (onMed - offMed), matched, kRuns,
+                             static_cast<double> (worstDelta), on[0].restarts,
+                             off[0].restarts);
+                std::fflush (stdout);
+
+                char name[192];
+                std::snprintf (name, sizeof name,
+                               "at %.0f BPM the master fader does not move where the beat is "
+                               "heard, over every pair that locked the same tempo",
+                               static_cast<double> (bpm));
+                expect (sane, "every network run at this tempo followed the record, "
+                              "published hypotheses throughout and had a part playing");
+                // A publication-synchronised run can still settle a few
+                // thousandths of a BPM either side of the same regime. Require
+                // a majority of directly comparable pairs; every run remains
+                // covered by the absolute and full-distribution gates below.
+                expect (matched >= 2, "at least two of three publication-synchronised "
+                                      "pairs locked the same tempo");
+                // Synchronising publication removes the old 8.6 ms minority
+                // mode. A residual one-callback placement mode of 1.336 ms was
+                // still measured at 120 BPM, so the per-pair distribution gate
+                // is 2 ms rather than pretending the network is bit-exact.
+                expect (worstDelta < 2.0f, name);
+                expect (std::fabs (onMed - offMed) < 1.0f,
+                        "and the median reports the same coupling result");
+                expect (everyRunInPhase,
+                        "every individual run, not only its median, sits within 8 ms");
+                expect (onSpread < 2.0f && offSpread < 2.0f,
+                        "the repeated-run distribution has no hidden second phase mode");
+
+                // One traced pair per tempo: the analysis chain itself, block by
+                // block, under the real network.
+                const size_t blocks = std::min (on[0].trace.size(), off[0].trace.size());
+                long long diff = blocks >= 1500 ? -1LL : -2LL;
+                for (size_t k = 0; k < blocks && diff == -1; ++k)
+                    if (on[0].trace[k].inPeak != off[0].trace[k].inPeak
+                        || on[0].trace[k].remain != off[0].trace[k].remain
+                        || on[0].trace[k].gain != off[0].trace[k].gain
+                        || on[0].trace[k].anaPeak != off[0].trace[k].anaPeak
+                        || on[0].trace[k].restarts != off[0].trace[k].restarts)
+                        diff = static_cast<long long> (k);
+                std::printf ("makeup-chain %5.1f BPM  blocks=%zu  first difference=%lld\n",
+                             static_cast<double> (bpm), blocks, diff);
+                std::fflush (stdout);
+                expect (diff == -1,
+                        "and the analysis chain under the network is identical on every "
+                        "block of the traced pair");
+            };
+
+            for (float bpm : { 78.0f, 100.0f, 120.0f, 138.0f, 156.0f })
+                atTempo (bpm);
+        }
+
+        // The distribution behind RED-A1's comment and the report's § "the
+        // outlier": fifteen runs a variant under the real network, every
+        // diagnostic the snapshot carries, and the per-second phase buckets that
+        // show a tempo 0.017 BPM out walking the phase across the window.
+        if (probe ("dist"))
+        {
+            constexpr double seconds = 26.0;
+            const int n = static_cast<int> (kMkSr * seconds);
+            const int kRuns = 15;
+            for (float bpm : { 78.0f, 100.0f, 120.0f })
+            {
+                std::vector<float> song (static_cast<size_t> (n), 0.0f);
+                renderClickTrack (song, bpm, kMkSr);
+                std::vector<float> on, off;
+                MakeupRun prevOn, prevOff;
+                for (int i = 0; i < kRuns; ++i)
+                {
+                    for (bool audible : { true, false })
+                    {
+                        MakeupOpts o;
+                        o.bpm = bpm;
+                        o.partAudible = audible;
+                        o.cancellation = false;
+                        o.keepTrace = true;
+                        auto r = runMakeupBench (song, o);
+                        auto firstDiff = [] (const MakeupRun& x, const MakeupRun& y)
+                        {
+                            const size_t m = std::min (x.trace.size(), y.trace.size());
+                            if (m == 0)
+                                return -2LL;
+                            for (size_t k = 0; k < m; ++k)
+                                if (x.trace[k].inPeak != y.trace[k].inPeak
+                                    || x.trace[k].remain != y.trace[k].remain
+                                    || x.trace[k].gain != y.trace[k].gain
+                                    || x.trace[k].anaPeak != y.trace[k].anaPeak
+                                    || x.trace[k].restarts != y.trace[k].restarts)
+                                    return static_cast<long long> (k);
+                            return -1LL;
+                        };
+                        const long long dPair = audible ? -2LL : firstDiff (prevOn, r);
+                        const long long dSelf = firstDiff (audible ? prevOn : prevOff, r);
+                        std::printf ("DIST %5.1f run%02d %-7s err=%+8.3f raw=%+8.3f"
+                                     " lead=%.3f n=%d pub=%u late=%d backlog=%d gaps=%d"
+                                     " rot=%d reg=%d sub=%d barLk=%d tapLk=%d trust=%.3f"
+                                     " tau=%.3f conf=%.3f bpm=%.3f nbpm=%.2f"
+                                     " follow=%.2fs rst=%d@%.3f chainVsPair=%lld"
+                                     " chainVsPrevSame=%lld outPk=%.3f gain=%.4f\n",
+                                     static_cast<double> (bpm), i,
+                                     audible ? "audible" : "muted",
+                                     static_cast<double> (r.errMs),
+                                     static_cast<double> (r.rawErrMs),
+                                     static_cast<double> (r.leadMs), r.measured,
+                                     r.published, r.lateBlocks, r.worstBacklog, r.gaps,
+                                     r.rotations, r.regime, r.sub, r.barLocked ? 1 : 0,
+                                     r.tapLock ? 1 : 0, static_cast<double> (r.trust),
+                                     static_cast<double> (r.gridTau),
+                                     static_cast<double> (r.conf),
+                                     static_cast<double> (r.bpm),
+                                     static_cast<double> (r.neuralBpm), r.followSec,
+                                     r.restarts, r.firstRestartSec, dPair, dSelf,
+                                     static_cast<double> (r.outPeak),
+                                     static_cast<double> (r.meanGain));
+                        std::printf ("DIST %5.1f run%02d %-7s buckets",
+                                     static_cast<double> (bpm), i,
+                                     audible ? "audible" : "muted");
+                        for (int b = 0; b < 16; ++b)
+                            if (r.bucketN[b] > 0)
+                                std::printf (" %+.2f", r.bucketSum[b] / r.bucketN[b]
+                                                       * (60000.0 / bpm));
+                        std::printf ("\n");
+                        std::fflush (stdout);
+                        (audible ? on : off).push_back (r.errMs);
+                        (audible ? prevOn : prevOff) = std::move (r);
+                    }
+                }
+                auto stats = [] (const char* tag, double bpm, std::vector<float> v)
+                {
+                    std::sort (v.begin(), v.end());
+                    const size_t m = v.size();
+                    double sum = 0.0;
+                    for (float x : v) sum += x;
+                    const double mean = sum / static_cast<double> (m);
+                    double var = 0.0;
+                    for (float x : v) var += (x - mean) * (x - mean);
+                    const double sd = std::sqrt (var / static_cast<double> (m));
+                    const double med = m % 2 ? v[m / 2] : 0.5 * (v[m / 2 - 1] + v[m / 2]);
+                    std::printf ("DISTSUM %5.1f %-7s n=%zu min=%+.3f p25=%+.3f"
+                                 " med=%+.3f p75=%+.3f max=%+.3f mean=%+.3f sd=%.3f"
+                                 " spread=%.3f\n",
+                                 bpm, tag, m, static_cast<double> (v.front()),
+                                 static_cast<double> (v[m / 4]), med,
+                                 static_cast<double> (v[(3 * m) / 4]),
+                                 static_cast<double> (v.back()), mean, sd,
+                                 static_cast<double> (v.back() - v.front()));
+                    return med;
+                };
+                const double mOn = stats ("audible", static_cast<double> (bpm), on);
+                const double mOff = stats ("muted", static_cast<double> (bpm), off);
+                std::printf ("DISTDELTA %5.1f medianDelta=%+.3f\n",
+                             static_cast<double> (bpm), mOn - mOff);
+                std::fflush (stdout);
+            }
+            expect (true, "distribution probe");
+        }
+
+        // -------------------------------------------------------------- RED-B
+        //
+        // The same pair again, asserting on the analysis chain itself instead of
+        // on the phase, block by block over the whole run. Exact equality, not a
+        // tolerance: on an input carrying no leak the analysis bus is a function
+        // of the input alone, and that is a statement about the code rather than
+        // about a measurement.
+        //
+        // The input is compared first. Without that this test could pass by
+        // handing the two engines different audio.
+        if (want ("b"))
+        {
+            constexpr double seconds = 26.0;
+            const int n = static_cast<int> (kMkSr * seconds);
+            std::vector<float> song (static_cast<size_t> (n), 0.0f);
+            renderClickTrack (song, 138.0f, kMkSr);
+
+            MakeupOpts on;
+            on.bpm = 138.0f;
+            on.partAudible = true;
+            MakeupOpts off = on;
+            off.partAudible = false;
+            const auto a = runMakeupBench (song, on);
+            const auto b = runMakeupBench (song, off);
+            printMakeupRun ("red-B part-audible", on, a);
+            printMakeupRun ("red-B part-muted", off, b);
+
+            const size_t blocks = std::min (a.trace.size(), b.trace.size());
+            auto firstDiff = [&] (int field)
+            {
+                for (size_t i = 0; i < blocks; ++i)
+                {
+                    const MakeupBlock& x = a.trace[i];
+                    const MakeupBlock& y = b.trace[i];
+                    const bool same = field == 0 ? x.inPeak == y.inPeak
+                                    : field == 1 ? x.remain == y.remain
+                                    : field == 2 ? x.gain == y.gain
+                                    : field == 3 ? x.anaPeak == y.anaPeak
+                                                 : x.restarts == y.restarts;
+                    if (! same)
+                        return static_cast<long long> (i);
+                }
+                return -1LL;
+            };
+            const long long dIn = firstDiff (0);
+            const long long dRemain = firstDiff (1);
+            const long long dGain = firstDiff (2);
+            const long long dPeak = firstDiff (3);
+            const long long dEpoch = firstDiff (4);
+            std::printf ("makeup-chain blocks=%zu  first difference: inPeak=%lld"
+                         "  leakRemain=%lld  analysisGain=%lld  analysisPeak=%lld"
+                         "  restarts=%lld\n",
+                         blocks, dIn, dRemain, dGain, dPeak, dEpoch);
+            std::fflush (stdout);
+
+            expect (makeupSane (a, on, 1500, 100) && makeupSane (b, off, 1500, 100)
+                        && blocks >= 1500 && a.trace.size() == b.trace.size(),
+                    "both trace runs followed the record with a part playing");
+            expect (dIn < 0 && dRemain < 0,
+                    "the two runs really were handed the same audio, block for block");
+            expect (dGain < 0 && dPeak < 0 && dEpoch < 0,
+                    "and the analysis gain, peak and epoch count are identical on every "
+                    "block: our own output level reaches the analysis nowhere");
+        }
+
+        // -------------------------------------------------------------- RED-C
+        //
+        // The case the whole level watcher exists for, with the part up. A room,
+        // then a band. The epoch must be called whether or not we are playing -
+        // it is what tells the decoder to stop counting the room as evidence.
+        if (want ("c"))
+        {
+            constexpr float bpm = 138.0f;
+            constexpr double roomSec = 8.0;
+            const int n = static_cast<int> (kMkSr * 24.0);
+            std::vector<float> song (static_cast<size_t> (n), 0.0f);
+            renderClickTrack (song, bpm, kMkSr);
+            // Forty-eight decibels down for eight seconds: an empty room, and
+            // the same waveform after it, so every notated beat stays put.
+            const int quietFor = static_cast<int> (kMkSr * roomSec);
+            for (int i = 0; i < quietFor && i < n; ++i)
+                song[static_cast<size_t> (i)] *= 0.004f;
+
+            MakeupRun runs[2];
+            for (int k = 0; k < 2; ++k)
+            {
+                MakeupOpts o;
+                o.bpm = bpm;
+                o.partAudible = k == 0;
+                o.fromSeconds = 1.0e9;      // no phase window wanted here
+                o.bandAtSeconds = roomSec;
+                runs[k] = runMakeupBench (song, o);
+                printMakeupRun (k == 0 ? "red-C step audible" : "red-C step muted",
+                                o, runs[k]);
+            }
+            const double lateOn = runs[0].firstRestartSec - roomSec;
+            const double lateOff = runs[1].firstRestartSec - roomSec;
+            std::printf ("makeup-step  band at %.2fs  restart audible=%.3fs (%+.3f)"
+                         "  muted=%.3fs (%+.3f)  hits %d/%d  bpm %.2f/%.2f\n",
+                         roomSec, runs[0].firstRestartSec, lateOn,
+                         runs[1].firstRestartSec, lateOff,
+                         runs[0].hits, runs[1].hits,
+                         static_cast<double> (runs[0].bpm),
+                         static_cast<double> (runs[1].bpm));
+            std::fflush (stdout);
+
+            MakeupOpts sane0, sane1;
+            sane0.bpm = sane1.bpm = bpm;
+            sane0.partAudible = true;
+            sane1.partAudible = false;
+            expect (makeupLive (runs[0], sane0, 50) && makeupLive (runs[1], sane1, 50),
+                    "both step runs ended up following with the part in the state asked "
+                    "for, and the analysis worker kept up");
+            expect (runs[1].restarts >= 1 && lateOff >= 0.0 && lateOff < 2.0,
+                    "with the part silent, the band starting is noticed inside two seconds");
+            expect (runs[0].restarts >= 1 && lateOn >= 0.0 && lateOn < 2.0,
+                    "and it is noticed just the same with the part audible");
+
+            // And what the missing epoch costs, which is not milliseconds. After
+            // twenty seconds of room the decoder is holding a tempo it found in
+            // the room; the restart is what throws that away.
+            {
+                constexpr double preSec = 20.0;
+                const int roomN = static_cast<int> (kMkSr * preSec) / kMkBlock * kMkBlock;
+                const int songN = static_cast<int> (kMkSr * 26.0) / kMkBlock * kMkBlock;
+                std::vector<float> body (static_cast<size_t> (songN), 0.0f);
+                renderClickTrack (body, bpm, kMkSr);
+                std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+                prependRoom (in, roomN, 0.9f);
+                std::copy (body.begin(), body.end(), in.begin() + roomN);
+
+                MakeupRun pre[2];
+                for (int k = 0; k < 2; ++k)
+                {
+                    MakeupOpts o;
+                    o.bpm = bpm;
+                    o.partAudible = k == 0;
+                    o.fromSeconds = 1.0e9;
+                    o.bandAtSeconds = preSec;
+                    pre[k] = runMakeupBench (in, o);
+                    printMakeupRun (k == 0 ? "red-C pre20 audible" : "red-C pre20 muted",
+                                    o, pre[k]);
+                }
+                std::printf ("makeup-preroll  20 s of room then the band:"
+                             "  settles audible=%.2fs muted=%.2fs  restarts %d/%d\n",
+                             pre[0].settleSec, pre[1].settleSec,
+                             pre[0].restarts, pre[1].restarts);
+                std::fflush (stdout);
+
+                MakeupOpts live0, live1;
+                live0.bpm = live1.bpm = bpm;
+                live0.partAudible = true;
+                live1.partAudible = false;
+                expect (makeupLive (pre[0], live0, 50) && makeupLive (pre[1], live1, 50),
+                        "both pre-roll runs ended up following with the part as asked, "
+                        "and the analysis worker kept up");
+                expect (pre[1].settleSec >= 0.0 && pre[1].settleSec < 12.0,
+                        "after twenty seconds of room the tempo is found promptly with the "
+                        "part silent");
+                expect (pre[0].settleSec >= 0.0 && pre[0].settleSec < 12.0
+                            && pre[0].settleSec <= pre[1].settleSec + 1.0,
+                        "and playing does not cost the app seconds of that");
+            }
+        }
+
+        // -------------------------------------------------------------- RED-D
+        //
+        // The other half, and the reason the own-output exception has to stay.
+        // A real return: 0.6 of our own output arrives on the input 150 ms
+        // later, so the part genuinely raises the analysis level. That is not a
+        // band starting and must not be called one.
+        if (want ("d"))
+        {
+            constexpr float bpm = 138.0f;
+            const int n = static_cast<int> (kMkSr * 30.0);
+            std::vector<float> song (static_cast<size_t> (n), 0.0f);
+            renderClickTrack (song, bpm, kMkSr);
+            // Undo the renderer's quiet lead-in. With no quiet-to-loud edge on
+            // the input anywhere, every epoch this fixture could call is a false
+            // one, so the assertion has no legitimate restart to confuse.
+            const int lead = std::min (n, static_cast<int> (kMkSr));
+            for (int i = 0; i < lead; ++i)
+                song[static_cast<size_t> (i)] *= 50.0f;
+
+            for (bool cancellation : { false, true })
+            {
+                MakeupOpts o;
+                o.bpm = bpm;
+                o.partAudible = true;
+                o.cancellation = cancellation;
+                o.leakGain = 0.6f;
+                o.keepTrace = false;
+                const auto r = runMakeupBench (song, o);
+                printMakeupRun (cancellation ? "red-D steady cancel-on"
+                                             : "red-D steady cancel-off", o, r);
+                expect (r.hits > 100 && r.outPeak > 0.02f && r.echoPeak > 0.05f
+                            && r.following,
+                        cancellation
+                            ? "the steady-band run really did carry our part back (cancel on)"
+                            : "the steady-band run really did carry our part back (cancel off)");
+                expect (r.restarts == 0,
+                        cancellation
+                            ? "our own part coming in over a steady band is not a band "
+                              "starting (cancel on)"
+                            : "our own part coming in over a steady band is not a band "
+                              "starting (cancel off)");
+            }
+
+            // Harder: the part is released before the band by FISSO, so for ten
+            // seconds our own return is the only thing raising the level over a
+            // quiet room. Nothing before the band, and the band still found -
+            // and found at the same moment the same room and the same band are
+            // found with the fader down, which is the part that makes this a
+            // statement about our own output rather than about the fixture.
+            {
+                constexpr double roomSec = 10.0;
+                const int roomN = static_cast<int> (kMkSr * roomSec) / kMkBlock * kMkBlock;
+                const int songN = static_cast<int> (kMkSr * 20.0) / kMkBlock * kMkBlock;
+                std::vector<float> body (static_cast<size_t> (songN), 0.0f);
+                renderClickTrack (body, bpm, kMkSr);
+                std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+                prependRoom (in, roomN, 0.9f, 0.0075f);
+                std::copy (body.begin(), body.end(), in.begin() + roomN);
+
+                MakeupRun runs[2];
+                for (int k = 0; k < 2; ++k)
+                {
+                    MakeupOpts o;
+                    o.bpm = bpm;
+                    o.partAudible = k == 0;
+                    // The mixer return: 0.6 of our output back on the input one
+                    // device round trip later, which is the path the canceller is
+                    // told about and can therefore find. The margin this leaves
+                    // to the "properly quiet" test, over both cancellable paths
+                    // and every room level and return gain, is measured by the
+                    // sweep below; the deliberately unremovable 150 ms return is
+                    // out of that envelope and is characterised there too.
+                    o.leakGain = k == 0 ? 0.6f : 0.0f;
+                    o.leakDelayMs = 8.0f;
+                    o.cancellation = true;
+                    o.scripted = true;
+                    o.fixedBpm = bpm;
+                    o.fromSeconds = 1.0e9;
+                    o.bandAtSeconds = roomSec;
+                    o.keepTrace = false;
+                    runs[k] = runMakeupBench (in, o);
+                    printMakeupRun (k == 0 ? "red-D fisso quiet-room"
+                                           : "red-D fisso control", o, runs[k]);
+                }
+                const double late = runs[0].firstRestartSec - roomSec;
+                const double lateOff = runs[1].firstRestartSec - roomSec;
+                std::printf ("makeup-fisso  part over a quiet room, band at %.2fs:"
+                             "  first restart %.3fs (%+.3f)  muted %.3fs (%+.3f)"
+                             "  restarts=%d/%d hits=%d/%d echoPk=%.3f\n",
+                             roomSec, runs[0].firstRestartSec, late,
+                             runs[1].firstRestartSec, lateOff,
+                             runs[0].restarts, runs[1].restarts,
+                             runs[0].hits, runs[1].hits,
+                             static_cast<double> (runs[0].echoPeak));
+                std::fflush (stdout);
+
+                MakeupOpts live0, live1;
+                live0.bpm = live1.bpm = bpm;
+                live0.partAudible = true;
+                live1.partAudible = false;
+                expect (makeupLive (runs[0], live0, 100) && runs[0].echoPeak > 0.05f
+                            && makeupLive (runs[1], live1, 100),
+                        "the quiet-room run had a part playing and carried it back, and "
+                        "its control had the fader down");
+                expect (runs[0].firstRestartSec < 0.0 || late >= 0.0,
+                        "our own part over a quiet room does not restart the analysis "
+                        "before the band arrives");
+                expect (runs[0].restarts >= 1 && late >= 0.0 && late < 3.0,
+                        "and the band arriving is still noticed within three seconds");
+                expect (std::fabs (late - lateOff) < 0.5,
+                        "at the same moment as with the part muted, to half a second");
+            }
+
+            // ------------------------------------------------------------ RED-D3
+            //
+            // The margin, which is the thing that was asked for. Everything
+            // above is one point in a space; this is the space. Our own return
+            // at 0.6, 0.8 and 1.0 of the output, over a room floor at the
+            // fixture's own level and 6 and 12 dB under it, on both of the paths
+            // the canceller can actually find - the iPad's speaker, whose
+            // acoustic hop it searches for, and the mixer round trip it is told.
+            //
+            // What decides a false epoch is one number: how far our own return,
+            // *after* cancellation, sits above the room it is heard over.
+            // `wasQuiet` needs the reference 24.08 dB (kQuietFraction) under the
+            // loudest thing in the last minute, so a return that clears that
+            // over the room reads exactly like a band starting - there is
+            // nothing left in the signal to tell the two apart. The canceller is
+            // what keeps it under: measured here, the residual sits 6.5 to
+            // 21.9 dB below the bar across all eighteen rows, and no row calls
+            // an epoch before the band.
+            //
+            // Out of that envelope - a return the canceller cannot find, either
+            // because it arrives 150 ms late or because the app is in mixer mode
+            // and the acoustic hop is not searched for - the residual is 1.8 to
+            // 16.3 dB *over* the bar, and then whether an epoch is called comes
+            // down to whether our return was already in the analysis when the
+            // watcher primed its reference in the first half second. Those rows
+            // are in the `sweep` probe with their numbers. What they cost is
+            // one epoch during the stretch when nothing but the room and our own
+            // part is on the input; RED-D above is the case that matters, and no
+            // configuration calls one while a band is playing.
+            //
+            // The true input is a sustained full-scale tone rather than the
+            // phase bench's sparse click. A click that exists only where our
+            // own strokes land is deliberately ambiguous to the causal veto;
+            // the tone gives the level watcher an unbroken, deterministic
+            // external edge for the full three-second acceptance window.
+            {
+                // Eighteen rows, so each one is only as long as the question:
+                // eight seconds of room with the part over it - long enough for
+                // the blame to lapse and for a step to be held for its third of
+                // a second several times over - and four seconds of band, which
+                // is where an epoch called before the band stops being possible.
+                // When the band is *noticed* is RED-D above.
+                constexpr double roomSec = 8.0;
+                const int roomN = static_cast<int> (kMkSr * roomSec) / kMkBlock * kMkBlock;
+                const int songN = static_cast<int> (kMkSr * 4.0) / kMkBlock * kMkBlock;
+                std::vector<float> body (static_cast<size_t> (songN), 0.0f);
+                for (int i = 0; i < songN; ++i)
+                    body[static_cast<size_t> (i)] = 0.90f * std::sin (
+                        2.0 * juce::MathConstants<double>::pi * 997.0
+                        * static_cast<double> (i) / kMkSr);
+
+                // `levelFast` as updateAnalysisEpoch computes it, replayed from
+                // the trace: 50 ms up, 1.5 s down. The median of the block peaks
+                // is not the quantity the watcher compares - a shaker is mostly
+                // gaps - so the margin has to be measured on the envelope the
+                // watcher actually sees.
+                const double dt = static_cast<double> (kMkBlock) / kMkSr;
+                auto windowLevel = [dt] (const MakeupRun& r, double t0, double t1)
+                {
+                    const float att = 1.0f - std::exp (-static_cast<float> (kMkBlock)
+                                                       / static_cast<float> (kMkSr * 0.05));
+                    const float rel = 1.0f - std::exp (-static_cast<float> (kMkBlock)
+                                                       / static_cast<float> (kMkSr * 1.5));
+                    float fast = 0.0f;
+                    std::vector<float> v;
+                    for (size_t i = 0; i < r.trace.size(); ++i)
+                    {
+                        const float p = r.trace[i].remain;
+                        fast += (p - fast) * (p > fast ? att : rel);
+                        const double t = static_cast<double> (i) * dt;
+                        if (t >= t0 && t < t1)
+                            v.push_back (fast);
+                    }
+                    if (v.empty())
+                        return 0.0f;
+                    std::sort (v.begin(), v.end());
+                    return v[v.size() / 2];
+                };
+                auto epochsBefore = [dt] (const MakeupRun& r, double t)
+                {
+                    if (r.trace.empty())
+                        return 1;   // no trace is not a pass
+                    const size_t i = std::min (r.trace.size() - 1,
+                                               static_cast<size_t> (t / dt));
+                    return r.trace[i].restarts;
+                };
+
+                // kQuietFraction as decibels: 20*log10(1/0.0625).
+                constexpr double kQuietDb = 24.0824;
+                double worstMargin = 1.0e9;
+                int rows = 0, falseEpochs = 0, thin = 0, insane = 0;
+                // The other half of the sweep is whether the band that does
+                // start is still noticed over us, and the gate for it is a
+                // count rather than a threshold. The band's level over the
+                // pre-band level is printed because it is the right order of
+                // magnitude to think in, but it is *not* the quantity the
+                // watcher compares - it compares a slow reference against the
+                // loudest block of the last minute, and two rows here call the
+                // epoch at +16.91 dB of it while none of the eighteen reach
+                // +27 dB. Predicting the decision from a median envelope was
+                // tried and it disagreed with the engine on those two rows;
+                // what reproduces the decision exactly is the block-by-block
+                // replay in the `epoch` probe.
+                //
+                // Every row must now hear that persistent edge. This remains
+                // separate from the removed-ratchet gate: RED-C is the bench
+                // that discriminates the ratchet itself.
+                int noticedRows = 0;
+                struct Path { const char* tag; float delayMs; bool speaker; };
+                for (Path path : { Path { "speaker30", 30.0f, true },
+                                   Path { "mixer8", 8.0f, false } })
+                    for (float roomFrac : { 0.03f, 0.015f, 0.0075f })
+                    {
+                        std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+                        prependRoom (in, roomN, 0.9f, roomFrac);
+                        std::copy (body.begin(), body.end(), in.begin() + roomN);
+
+                        for (float g : { 0.6f, 0.8f, 1.0f })
+                        {
+                            MakeupOpts o;
+                            o.bpm = bpm;
+                            o.partAudible = true;
+                            // A normal monitor setting leaves enough acoustic
+                            // headroom for a full-scale external input to clear
+                            // the watcher's intentional 24 dB quiet criterion,
+                            // even when return gain is one.
+                            o.partVolume = 0.45f;
+                            o.cancellation = true;
+                            o.leakGain = g;
+                            o.leakDelayMs = path.delayMs;
+                            o.speakerSource = path.speaker;
+                            o.scripted = true;
+                            o.fixedBpm = bpm;
+                            o.fromSeconds = 1.0e9;
+                            o.bandAtSeconds = roomSec;
+                            o.keepTrace = true;
+                            const auto r = runMakeupBench (in, o);
+
+                            const float roomLvl = windowLevel (r, 0.0, 0.35);
+                            const float partLvl = windowLevel (r, roomSec - 3.0, roomSec);
+                            const double over = roomLvl > 0.0f && partLvl > 0.0f
+                                                    ? 20.0 * std::log10 (
+                                                          static_cast<double> (partLvl
+                                                                               / roomLvl))
+                                                    : -99.0;
+                            const double margin = kQuietDb - over;
+                            const int before = epochsBefore (r, roomSec);
+                            ++rows;
+                            worstMargin = std::min (worstMargin, margin);
+                            if (before != 0)
+                                ++falseEpochs;
+                            if (margin < 4.0)
+                                ++thin;
+                            MakeupOpts sane = o;
+                            if (! (makeupLive (r, sane, 60, 200) && r.echoPeak > 0.05f
+                                   && r.trace.size() > 2000))
+                                ++insane;
+
+                            // The notice side: the band over what the reference
+                            // has settled at while we were the only thing on
+                            // the input.
+                            const float bandLvl = windowLevel (r, roomSec, roomSec + 3.0);
+                            const double band = partLvl > 0.0f && bandLvl > 0.0f
+                                                    ? 20.0 * std::log10 (
+                                                          static_cast<double> (bandLvl
+                                                                               / partLvl))
+                                                    : -99.0;
+                            const bool noticed = r.firstRestartSec >= roomSec - 0.001
+                                                 && r.firstRestartSec <= roomSec + 3.0;
+                            if (noticed)
+                                ++noticedRows;
+                            std::printf ("makeup-veto %-10s room=%.4f leak=%.1f"
+                                         "  room=%.5f part=%.5f  part/room=%+.2fdB"
+                                         "  margin to the quiet bar %+.2fdB"
+                                         "  epochs before the band %d  first %.3fs"
+                                         "  band/part=%+.2fdB %-12s"
+                                         "  hits=%d echoPk=%.3f late=%d/%d\n",
+                                         path.tag, static_cast<double> (roomFrac),
+                                         static_cast<double> (g),
+                                         static_cast<double> (roomLvl),
+                                         static_cast<double> (partLvl), over, margin,
+                                         before, r.firstRestartSec, band,
+                                         noticed ? "band heard" : "band unheard",
+                                         r.hits, static_cast<double> (r.echoPeak),
+                                         r.lateBlocks, r.blocks);
+                            std::fflush (stdout);
+                        }
+                    }
+                std::printf ("makeup-veto  %d rows, %d with an epoch before the band,"
+                             " worst margin %+.2fdB;  %d rows heard the band within"
+                             " three seconds\n",
+                             rows, falseEpochs, worstMargin, noticedRows);
+                std::fflush (stdout);
+
+                expect (rows == 18 && insane == 0,
+                        "every row of the veto sweep ran: a part playing, a return on "
+                        "the input, the record followed and the worker keeping up");
+                expect (falseEpochs == 0,
+                        "our own return, on a path the canceller can find, never reads "
+                        "as a band starting - at any return gain, over any room");
+                expect (thin == 0 && worstMargin > 4.0,
+                        "and it does not get close: the residual stays at least four "
+                        "decibels under the level that would");
+                expect (noticedRows == rows,
+                        "and the real input is called within three seconds in every "
+                        "gain, room and return-path combination");
+            }
+        }
+
+        // updateAnalysisEpoch replayed from the trace, block by block, so its
+        // scalars can be read. The replay reproduces the engine's epoch times
+        // exactly - which is what makes the trajectories it prints evidence
+        // about the engine rather than about a second implementation.
+        if (probe ("epoch"))
+        {
+            constexpr float bpm = 138.0f;
+            constexpr double roomSec = 10.0;
+            const int roomN = static_cast<int> (kMkSr * roomSec) / kMkBlock * kMkBlock;
+            const int songN = static_cast<int> (kMkSr * 20.0) / kMkBlock * kMkBlock;
+            std::vector<float> body (static_cast<size_t> (songN), 0.0f);
+            renderClickTrack (body, bpm, kMkSr);
+
+            struct Row { const char* tag; float delayMs; bool speaker; float room; float g; };
+            for (Row row : { Row { "blind150", 150.0f, false, 0.03f, 1.0f },
+                             Row { "mixerAcoustic30", 30.0f, false, 0.03f, 1.0f },
+                             Row { "blind150", 150.0f, false, 0.0075f, 0.6f },
+                             Row { "mixerAcoustic30", 30.0f, false, 0.0075f, 0.6f } })
+            {
+                std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+                prependRoom (in, roomN, 0.9f, row.room);
+                std::copy (body.begin(), body.end(), in.begin() + roomN);
+
+                MakeupOpts o;
+                o.bpm = bpm;
+                o.partAudible = true;
+                o.cancellation = true;
+                o.leakGain = row.g;
+                o.leakDelayMs = row.delayMs;
+                o.speakerSource = row.speaker;
+                o.scripted = true;
+                o.fixedBpm = bpm;
+                o.fromSeconds = 1.0e9;
+                o.bandAtSeconds = roomSec;
+                o.keepTrace = true;
+                const auto r = runMakeupBench (in, o);
+
+                const float N = static_cast<float> (kMkBlock);
+                const float sr = static_cast<float> (kMkSr);
+                const float att = 1.0f - std::exp (-N / (sr * 0.05f));
+                const float rel = 1.0f - std::exp (-N / (sr * 1.5f));
+                const float loudDecay = 1.0f - std::exp (-N / (sr * 60.0f));
+                constexpr float floorLvl = 0.0004f;
+                float levelFast = 0.0f, levelRef = 0.0f, levelLoud = 0.0f;
+                float ownFast = 0.0f, ownRef = 0.0f;
+                int prime = 0, ownStep = 0, step = 0, epochs = 0;
+                double firstEpoch = -1.0;
+                std::printf ("EPOCH %s room=%.4f leak=%.1f  engine first=%.3fs"
+                             " total=%d\n", row.tag, static_cast<double> (row.room),
+                             static_cast<double> (row.g), r.firstRestartSec, r.restarts);
+                for (size_t i = 0; i < r.trace.size(); ++i)
+                {
+                    const float raw = r.trace[i].remain;
+                    const float own = i > 0 ? r.trace[i - 1].own : 0.0f;
+                    const double t = static_cast<double> (i) * static_cast<double> (kMkBlock)
+                                     / kMkSr;
+                    bool quiet = false;
+                    bool primed = true;
+                    if (levelRef <= 0.0f)
+                    {
+                        levelFast = raw;
+                        levelRef = std::max (raw, floorLvl);
+                        levelLoud = levelRef;
+                        prime = static_cast<int> (kMkSr * 0.5);
+                        primed = false;
+                    }
+                    else
+                    {
+                        levelFast += (raw - levelFast) * (raw > levelFast ? att : rel);
+                        if (prime > 0)
+                        {
+                            prime -= kMkBlock;
+                            levelRef = std::max (levelRef, levelFast);
+                            levelLoud = std::max (levelLoud, levelFast);
+                            primed = false;
+                        }
+                        else
+                        {
+                            ownFast += (own - ownFast) * (own > ownFast ? att : rel);
+                            if (ownFast > std::max (ownRef, 1.0e-5f) * 8.0f)
+                                ownStep = static_cast<int> (kMkSr * 0.75);
+                            else
+                                ownStep = std::max (0, ownStep - kMkBlock);
+                            ownRef = std::max (1.0e-6f, ownRef + (ownFast - ownRef) * rel);
+                            if (ownStep > 0)
+                            {
+                                step = 0;
+                            }
+                            else
+                            {
+                                levelLoud = std::max (levelFast,
+                                                      levelLoud + (levelFast - levelLoud)
+                                                                      * loudDecay);
+                                quiet = levelRef < levelLoud * 0.0625f;
+                                if (quiet && levelFast > levelRef * 8.0f)
+                                    step += kMkBlock;
+                                else
+                                    step = 0;
+                                if (step > static_cast<int> (kMkSr * 0.30))
+                                {
+                                    levelRef = std::max (levelFast, floorLvl);
+                                    step = 0;
+                                    ++epochs;
+                                    if (firstEpoch < 0.0)
+                                        firstEpoch = t;
+                                }
+                                else if (levelFast < levelRef)
+                                {
+                                    levelRef = std::max (floorLvl,
+                                                         levelRef + (levelFast - levelRef)
+                                                                        * rel);
+                                }
+                            }
+                        }
+                    }
+                    const bool show = (t >= 1.0 && t <= 4.0 && i % 12 == 0)
+                                      || (t >= roomSec - 0.2 && t <= roomSec + 3.0
+                                          && i % 12 == 0);
+                    if (show)
+                        std::printf ("  t=%6.3f raw=%.5f own=%.5f fast=%.5f ref=%.5f"
+                                     " loud=%.5f ownFast=%.5f ownRef=%.5f blame=%5d"
+                                     " quiet=%d step=%5d ep=%d%s\n",
+                                     t, static_cast<double> (raw),
+                                     static_cast<double> (own),
+                                     static_cast<double> (levelFast),
+                                     static_cast<double> (levelRef),
+                                     static_cast<double> (levelLoud),
+                                     static_cast<double> (ownFast),
+                                     static_cast<double> (ownRef), ownStep,
+                                     quiet ? 1 : 0, step, epochs,
+                                     primed ? "" : " (prime)");
+                }
+                std::printf ("EPOCH %s room=%.4f leak=%.1f  replay first=%.3fs total=%d\n",
+                             row.tag, static_cast<double> (row.room),
+                             static_cast<double> (row.g), firstEpoch, epochs);
+                std::fflush (stdout);
+            }
+            expect (true, "epoch replay probe");
+        }
+
+        // The rest of the veto-margin space: the two paths the canceller cannot
+        // find, the cancellation switch on and off, and the muted control for
+        // every room level. RED-D3 above is the part of this that production can
+        // be held to; this is where the numbers outside that envelope come from.
+        if (probe ("sweep"))
+        {
+            constexpr float bpm = 138.0f;
+            constexpr double roomSec = 10.0;
+            const int roomN = static_cast<int> (kMkSr * roomSec) / kMkBlock * kMkBlock;
+            const int songN = static_cast<int> (kMkSr * 20.0) / kMkBlock * kMkBlock;
+            std::vector<float> body (static_cast<size_t> (songN), 0.0f);
+            renderClickTrack (body, bpm, kMkSr);
+
+            const double dt = static_cast<double> (kMkBlock) / kMkSr;
+            // `levelFast` as updateAnalysisEpoch computes it, replayed from the
+            // trace: 50 ms up, 1.5 s down. The median of the block peaks is not
+            // the quantity the watcher compares - a shaker is mostly gaps - so
+            // the margin has to be measured on the envelope the watcher sees.
+            auto windowLevel = [dt] (const MakeupRun& r, double t0, double t1)
+            {
+                const float att = 1.0f - std::exp (-static_cast<float> (kMkBlock)
+                                                   / static_cast<float> (kMkSr * 0.05));
+                const float rel = 1.0f - std::exp (-static_cast<float> (kMkBlock)
+                                                   / static_cast<float> (kMkSr * 1.5));
+                float fast = 0.0f;
+                std::vector<float> v;
+                for (size_t i = 0; i < r.trace.size(); ++i)
+                {
+                    const float p = r.trace[i].remain;
+                    fast += (p - fast) * (p > fast ? att : rel);
+                    const double t = static_cast<double> (i) * dt;
+                    if (t >= t0 && t < t1)
+                        v.push_back (fast);
+                }
+                if (v.empty())
+                    return 0.0f;
+                std::sort (v.begin(), v.end());
+                return v[v.size() / 2];
+            };
+            auto epochsBefore = [dt] (const MakeupRun& r, double t)
+            {
+                if (r.trace.empty())
+                    return 0;
+                const size_t i = std::min (r.trace.size() - 1,
+                                           static_cast<size_t> (t / dt));
+                return r.trace[i].restarts;
+            };
+            auto dB = [] (float a, float b)
+            {
+                return b > 0.0f && a > 0.0f
+                           ? 20.0 * std::log10 (static_cast<double> (a / b)) : -99.0;
+            };
+
+            struct Path { const char* tag; float delayMs; bool speaker; };
+            for (float roomFrac : { 0.03f, 0.015f, 0.0075f })
+            {
+                std::vector<float> in (static_cast<size_t> (roomN + songN), 0.0f);
+                prependRoom (in, roomN, 0.9f, roomFrac);
+                std::copy (body.begin(), body.end(), in.begin() + roomN);
+
+                // The control: the same input with our own output muted, so the
+                // room and the band are all the epoch watcher ever sees. Any row
+                // that matches this one has not been changed by our part.
+                {
+                    MakeupOpts o;
+                    o.bpm = bpm;
+                    o.partAudible = false;
+                    o.cancellation = true;
+                    o.scripted = true;
+                    o.fixedBpm = bpm;
+                    o.fromSeconds = 1.0e9;
+                    o.bandAtSeconds = roomSec;
+                    o.keepTrace = true;
+                    const auto r = runMakeupBench (in, o);
+                    const float roomLvl = windowLevel (r, 0.0, 0.35);
+                    const float bandLvl = windowLevel (r, roomSec + 2.0, roomSec + 5.0);
+                    std::printf ("SWEEP %-16s room=%.4f leak=%.1f cancel=%d aud=0 |"
+                                 " roomLvl=%.5f partLvl=%.5f bandLvl=%.5f |"
+                                 " part/room=%+.2fdB margin=%+.2f band/room=%+.2fdB |"
+                                 " before=%d first=%.3fs late=%+.3f total=%d |"
+                                 " hits=%d outPk=%.3f echoPk=%.3f late=%d/%d\n",
+                                 "MUTED", static_cast<double> (roomFrac), 0.0, 1,
+                                 static_cast<double> (roomLvl), 0.0,
+                                 static_cast<double> (bandLvl),
+                                 -99.0, 0.0, dB (bandLvl, roomLvl),
+                                 epochsBefore (r, roomSec), r.firstRestartSec,
+                                 r.firstRestartSec - roomSec, r.restarts, r.hits,
+                                 static_cast<double> (r.outPeak),
+                                 static_cast<double> (r.echoPeak),
+                                 r.lateBlocks, r.blocks);
+                    std::fflush (stdout);
+                }
+
+                for (Path path : { Path { "blind150", 150.0f, false },
+                                   Path { "mixerAcoustic30", 30.0f, false },
+                                   Path { "speaker30", 30.0f, true },
+                                   Path { "mixer8", 8.0f, false } })
+                    for (float g : { 0.6f, 0.8f, 1.0f })
+                        for (bool cancel : { true, false })
+                        {
+                            MakeupOpts o;
+                            o.bpm = bpm;
+                            o.partAudible = true;
+                            o.cancellation = cancel;
+                            o.leakGain = g;
+                            o.leakDelayMs = path.delayMs;
+                            o.speakerSource = path.speaker;
+                            o.scripted = true;
+                            o.fixedBpm = bpm;
+                            o.fromSeconds = 1.0e9;
+                            o.bandAtSeconds = roomSec;
+                            o.keepTrace = true;
+                            const auto r = runMakeupBench (in, o);
+                            const float roomLvl = windowLevel (r, 0.0, 0.35);
+                            const float partLvl = windowLevel (r, roomSec - 3.0, roomSec);
+                            const float bandLvl = windowLevel (r, roomSec + 2.0,
+                                                               roomSec + 5.0);
+                            std::printf ("SWEEP %-16s room=%.4f leak=%.1f cancel=%d"
+                                         " aud=1 | roomLvl=%.5f partLvl=%.5f"
+                                         " bandLvl=%.5f | part/room=%+.2fdB"
+                                         " margin=%+.2f band/room=%+.2fdB |"
+                                         " before=%d first=%.3fs late=%+.3f total=%d |"
+                                         " hits=%d outPk=%.3f echoPk=%.3f late=%d/%d\n",
+                                         path.tag, static_cast<double> (roomFrac),
+                                         static_cast<double> (g), cancel ? 1 : 0,
+                                         static_cast<double> (roomLvl),
+                                         static_cast<double> (partLvl),
+                                         static_cast<double> (bandLvl),
+                                         dB (partLvl, roomLvl),
+                                         24.08 - dB (partLvl, roomLvl),
+                                         dB (bandLvl, roomLvl),
+                                         epochsBefore (r, roomSec), r.firstRestartSec,
+                                         r.firstRestartSec - roomSec, r.restarts,
+                                         r.hits, static_cast<double> (r.outPeak),
+                                         static_cast<double> (r.echoPeak),
+                                         r.lateBlocks, r.blocks);
+                            std::fflush (stdout);
+                        }
+            }
+            expect (true, "veto margin sweep");
+        }
+    }
+
+    // -------------------------------------------------------------- RED-E
+    //
+    // A new audio-device session is a new input at a new level. `reset()` has
+    // always cleared the make-up and epoch state; `prepare()` cleared none of
+    // it, although it zeroes the buffers that state was measured against and
+    // already drops the leak canceller's evidence for exactly this reason.
+    //
+    // No model needed: this is about what the first block of a session is
+    // analysed at.
+    if (want ("e"))
+    {
+        // Session one: a quiet second, then a line-level source. The step is
+        // there so the session leaves an epoch count behind as well as an
+        // envelope - both are state the next session inherits.
+        const int oneSec = static_cast<int> (kMkSr);
+        std::vector<float> first (static_cast<size_t> (oneSec * 4), 0.0f);
+        steadyNoise (first, 0, oneSec, 0.010f, 0x51ede5u);
+        steadyNoise (first, oneSec, oneSec * 4, 0.500f, 0xb00b5u);
+
+        // Session two is the same room forty decibels down - a mixer return
+        // swapped for a microphone, which is the change of route this state is
+        // wrong across. A fresh engine primes on it and glides to the gain the
+        // network wants; an engine still holding the last session's envelope
+        // sees a level drop instead and analyses it far too quietly.
+        std::vector<float> second (static_cast<size_t> (oneSec * 3), 0.0f);
+        steadyNoise (second, 0, oneSec * 3, 0.010f, 0x51ede5u);
+        constexpr int kBlocks = 400;
+
+        auto sessionOne = [] (vp::VirtualPercussionEngine& eng, double sr)
+        {
+            eng.prepare (sr, kMkBlock, 1);
+            eng.settings().masterVolume.store (0.0f);
+            eng.setLeakCancellationEnabledForTest (false);
+            eng.start();
+        };
+
+        // A fresh engine at each rate. The 44.1 kHz control is not a formality:
+        // the make-up envelope's time constants are in seconds, so 400 blocks
+        // is 1.16 s of it there against 1.07 s at 48 kHz, and the gain a new
+        // engine has reached differs by 0.4% for that reason alone. The claim is
+        // that a re-`prepare()` lands where a new engine at that rate lands.
+        auto freshAt = [&] (double sr)
+        {
+            vp::VirtualPercussionEngine eng;
+            sessionOne (eng, sr);
+            return feedForGain (eng, second, kBlocks);
+        };
+        const SessionGain fresh = freshAt (kMkSr);
+        const SessionGain fresh44 = freshAt (44100.0);
+
+        // 0 = prepare at the same rate, 1 = prepare at a new rate, 2 = reset,
+        // which has always cleared this and is the control.
+        auto secondSession = [&] (int what)
+        {
+            vp::VirtualPercussionEngine eng;
+            sessionOne (eng, kMkSr);
+            const auto one = feedForGain (eng, first, 100000);
+            if (what == 0)
+                eng.prepare (kMkSr, kMkBlock, 1);
+            else if (what == 1)
+                eng.prepare (44100.0, kMkBlock, 1);
+            else
+                eng.reset();
+            eng.start();
+            return std::make_pair (one, feedForGain (eng, second, kBlocks));
+        };
+
+        const auto same = secondSession (0);
+        const auto rate = secondSession (1);
+        const auto cleared = secondSession (2);
+
+        std::printf ("makeup-lifecycle  first session gain=%.4f peak=%.4f"
+                     " restarts=%d | fresh next first=%.4f after=%.4f restarts=%d"
+                     " | fresh 44k1 %.4f / %.4f restarts=%d"
+                     " | prepare(same) %.4f / %.4f restarts=%d"
+                     " | prepare(44k1) %.4f / %.4f restarts=%d"
+                     " | reset() %.4f / %.4f restarts=%d\n",
+                     static_cast<double> (same.first.after),
+                     static_cast<double> (same.first.peak), same.first.restartsEnd,
+                     static_cast<double> (fresh.first), static_cast<double> (fresh.after),
+                     fresh.restarts,
+                     static_cast<double> (fresh44.first),
+                     static_cast<double> (fresh44.after), fresh44.restarts,
+                     static_cast<double> (same.second.first),
+                     static_cast<double> (same.second.after), same.second.restarts,
+                     static_cast<double> (rate.second.first),
+                     static_cast<double> (rate.second.after), rate.second.restarts,
+                     static_cast<double> (cleared.second.first),
+                     static_cast<double> (cleared.second.after), cleared.second.restarts);
+        std::fflush (stdout);
+
+        auto within1pc = [] (float x, float ref)
+        {
+            return std::fabs (x - ref) <= std::fabs (ref) * 0.01f;
+        };
+        auto matches = [&] (const SessionGain& g, const SessionGain& ref)
+        {
+            return within1pc (g.first, ref.first) && within1pc (g.after, ref.after)
+                   && g.restarts == ref.restarts;
+        };
+        auto matchesFresh = [&] (const SessionGain& g) { return matches (g, fresh); };
+        // Without this the test could pass by there being nothing to carry: a
+        // first session that ran at line level and called one epoch, and a
+        // second source that genuinely needs several times the gain.
+        expect (same.first.peak > 0.4f && same.first.restartsEnd >= 1
+                    && fresh.after > 5.0f && std::isfinite (fresh.after),
+                "the first session really did leave a level and an epoch count behind, "
+                "and the next source really does need a different gain");
+        expect (matchesFresh (cleared.second),
+                "reset() starts the next session at the level the input actually arrives at");
+        expect (matchesFresh (same.second),
+                "and so does prepare(), at the same sample rate");
+        expect (matches (rate.second, fresh44),
+                "and with the sample rate changed, which is the route change that "
+                "reaches this");
+    }
+
+    // -------------------------------------------------------------- RED-F
+    //
+    // The same lifecycle boundary, seen from outside. RED-E is about what the
+    // next session is *analysed* at; this is about what the app *says* it is
+    // analysing between `prepare()` and the first callback.
+    //
+    // `lastRestarts`, `lastAnalysisGain` and `lastAnalysisPeak` are the public
+    // mirrors of state that `prepare()` now clears. They are only written from
+    // the audio callback, so until the first block of the new session arrives a
+    // reader - the UI, a probe, a test - is handed the *old* session's epoch
+    // count, gain and peak. `prepare()` already clears its neighbours in the
+    // same snapshot (`hypValid`, the tempo-transition group) for this reason.
+    if (want ("f"))
+    {
+        // A session that leaves all three mirrors holding something no new
+        // session reports: a very quiet second, then twenty-five times that for
+        // four - which is an epoch, and a level the make-up holds at four times
+        // gain against the 1.24 a first block on the next source shows.
+        const int oneSec = static_cast<int> (kMkSr);
+        std::vector<float> played (static_cast<size_t> (oneSec * 5), 0.0f);
+        steadyNoise (played, 0, oneSec, 0.002f, 0x51ede5u);
+        steadyNoise (played, oneSec, oneSec * 5, 0.050f, 0xb00b5u);
+        std::vector<float> quiet (static_cast<size_t> (oneSec * 2), 0.0f);
+        steadyNoise (quiet, 0, oneSec * 2, 0.010f, 0x51ede5u);
+
+        auto openSession = [] (vp::VirtualPercussionEngine& eng)
+        {
+            eng.prepare (kMkSr, kMkBlock, 1);
+            eng.settings().masterVolume.store (0.0f);
+            eng.setLeakCancellationEnabledForTest (false);
+            eng.start();
+        };
+
+        // What a session that has never been played looks like.
+        vp::VirtualPercussionEngine virgin;
+        openSession (virgin);
+        const auto blank = virgin.snapshot();
+        (void) feedForGain (virgin, quiet, 1);
+        const auto blankFirst = virgin.snapshot();
+
+        // 0 = prepare at the same rate, 1 = prepare at a new rate, 2 = reset.
+        auto reopen = [&] (int what)
+        {
+            vp::VirtualPercussionEngine eng;
+            openSession (eng);
+            (void) feedForGain (eng, played, 100000);
+            const auto ended = eng.snapshot();
+            if (what == 0)
+                eng.prepare (kMkSr, kMkBlock, 1);
+            else if (what == 1)
+                eng.prepare (44100.0, kMkBlock, 1);
+            else
+                eng.reset();
+            const auto opened = eng.snapshot();
+            eng.start();
+            (void) feedForGain (eng, quiet, 1);
+            return std::make_tuple (ended, opened, eng.snapshot());
+        };
+        const auto same = reopen (0);
+        const auto rate = reopen (1);
+        const auto cleared = reopen (2);
+
+        auto show = [] (const char* tag, const vp::EngineSnapshot& s)
+        {
+            std::printf ("  %-26s restarts=%d gain=%.4f peak=%.4f\n", tag,
+                         s.analysisRestarts, static_cast<double> (s.analysisGain),
+                         static_cast<double> (s.analysisPeak));
+        };
+        show ("mirrors: never played", blank);
+        show ("mirrors: first block", blankFirst);
+        show ("mirrors: session one ended", std::get<0> (same));
+        show ("mirrors: after prepare(same)", std::get<1> (same));
+        show ("mirrors: first block after", std::get<2> (same));
+        show ("mirrors: after prepare(44k1)", std::get<1> (rate));
+        show ("mirrors: after reset()", std::get<1> (cleared));
+        std::fflush (stdout);
+
+        const auto& ended = std::get<0> (same);
+        expect (ended.analysisRestarts >= 1 && ended.analysisGain > 3.0f
+                    && ended.analysisPeak > 0.1f
+                    && ended.analysisRestarts != blankFirst.analysisRestarts
+                    && ended.analysisGain != blankFirst.analysisGain
+                    && ended.analysisPeak != blankFirst.analysisPeak,
+                "the session being closed really did leave an epoch count, a gain and "
+                "a peak in the public snapshot, none of them what a new session reads");
+        expect (blank.analysisRestarts == 0 && blank.analysisGain == 1.0f
+                    && blank.analysisPeak == 0.0f,
+                "an engine that has never been played reports no epochs, unity gain and "
+                "no peak");
+        auto isBlank = [&] (const vp::EngineSnapshot& s)
+        {
+            return s.analysisRestarts == blank.analysisRestarts
+                   && s.analysisGain == blank.analysisGain
+                   && s.analysisPeak == blank.analysisPeak;
+        };
+        expect (isBlank (std::get<1> (cleared)),
+                "reset() leaves the public analysis mirrors describing the new session");
+        expect (isBlank (std::get<1> (same)),
+                "and so does prepare() at the same sample rate: no reader sees the last "
+                "session's epoch count, gain or peak");
+        expect (isBlank (std::get<1> (rate)),
+                "and with the sample rate changed");
+        // And the first callback of the new session agrees with a fresh engine's,
+        // so clearing the mirrors did not simply blank a live reading.
+        auto near1pc = [] (float x, float ref)
+        {
+            return std::fabs (x - ref) <= std::fabs (ref) * 0.01f;
+        };
+        expect (blankFirst.analysisPeak > 0.0f && blankFirst.analysisGain > 0.0f,
+                "a first block does report a gain and a peak");
+        expect (std::get<2> (same).analysisRestarts == blankFirst.analysisRestarts
+                    && near1pc (std::get<2> (same).analysisGain, blankFirst.analysisGain)
+                    && near1pc (std::get<2> (same).analysisPeak, blankFirst.analysisPeak),
+                "and after the first block of the re-prepared session it reads what a "
+                "fresh engine reads");
+    }
 }

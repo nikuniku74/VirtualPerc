@@ -29,6 +29,13 @@ public:
     void reset() noexcept;
 
     void setTargetTempo (float bpm, float confidence) noexcept;
+    /** Adopt a decoder-confirmed rate immediately without moving the grid.
+
+        The bounded window protects that measured rate from the stale ordinary
+        fit published beside the transition, and temporarily opens only the
+        phase steering needed to catch the new spacing. */
+    void beginTempoTransition (float bpm) noexcept;
+    bool tempoTransitionActive() const noexcept { return transitionSamplesRemaining > 0; }
     void forceTempo (float bpm) noexcept;
     void setFollowStrength (FollowStrength s) noexcept { follow = s; }
     void setLocked (bool on) noexcept { locked = on; }
@@ -96,6 +103,8 @@ public:
     int  getPulsesPerBeat() const noexcept { return pulsesPerBeat; }
 
 private:
+    ClockTick advanceSegment (int numSamples) noexcept;
+
     double sampleRate = 48000.0;
     double phase = 0.0;
     float tempo = 120.0f;
@@ -135,6 +144,7 @@ private:
     bool tempoTrimEnabled = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */
     float tempoTrust = 1.0f;
+    int transitionSamplesRemaining = 0;
     FollowStrength follow = FollowStrength::medium;
 };
 

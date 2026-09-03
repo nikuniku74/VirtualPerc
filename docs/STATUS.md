@@ -1694,7 +1694,7 @@ quattro erano intestabili.
 | **AUTO / MARCHA / ROCK / DANCE / POP** | la parte che suona. AUTO lascia scegliere allo `StyleDetector`; premere una parte a mano spegne AUTO |
 | **SHAKER / CONGAS** | accendono e spengono i due strumenti separatamente |
 | **SOURCE (IPAD / MIXER)** | microfono in stanza contro mic ravvicinato |
-| **1/4 · 1/8 · 1/16** | griglia dello shaker |
+| **1/4 · 1/8 · 1/16** | densità di shaker e congas sintetiche: quarti, ottavi o figura completa; AUTO usa 1/8 |
 | **SWING** | 0 = dritto, 1 = terzinato. Da alzare sugli shuffle |
 | **ENERGIA** | quanto forte suona il percussionista |
 | **REVERB** | ambiente |

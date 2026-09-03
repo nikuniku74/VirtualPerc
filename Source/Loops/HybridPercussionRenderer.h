@@ -17,19 +17,18 @@ namespace vp
     There are two, and they are good at different things. The recording carries
     the groove: the microtiming, the way one stroke leans on the next, the sound
     of two hands on a drum in a room - none of which is reachable by scheduling
-    single samples on a grid. The single-stroke engine carries everything that
-    has to be *decided* while the song is happening: coming in and going out,
-    the section changing, the band dropping, and above all a tempo that is
-    genuinely moving, where a recording has to be stretched further every bar
-    and a scheduled stroke simply lands where the clock says.
+    single samples on a grid. LoopPlayer follows the same causal clock as the
+    single-stroke engine, including a tempo that is genuinely moving. The
+    single-stroke engine remains the safe answer while the clock has not made
+    the part audible or when the recorded library has no compatible material.
 
     So the rule is the regime the decoder already publishes:
 
       | regime  | who plays        | why                                        |
       |---------|------------------|--------------------------------------------|
       | fixed   | the recording    | a click track: only drift needs correcting |
-      | live    | single strokes   | the tempo is moving; strokes follow it free |
-      | unknown | single strokes   | today's engine, until the tempo settles     |
+      | live    | the recording    | stretch follows the causal live clock      |
+      | unknown | follows `audible`| regime classification may lag behind lock  |
 
     The handover is a musical event, not a switch: it happens on a quarter,
     preferably on a bar line, over a short crossfade, and it never touches the

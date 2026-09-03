@@ -20,9 +20,12 @@ namespace
 
     /** How the recording's read position is corrected in each regime.
         `fixed` is a click track: the only error there is drift, and closing it
-        over ten seconds is inaudible where closing it over one is not. */
+        slowly is inaudible. A live band can move, so residual phase error must
+        be closed sooner; the changing clock still supplies the main rate. */
     constexpr float kTauFixedSec = 8.0f;
     constexpr float kPullFixed = 0.012f;
+    constexpr float kTauLiveSec = 2.0f;
+    constexpr float kPullLive = 0.030f;
 } // namespace
 
 void HybridPercussionRenderer::prepare (double sr, int maxBlk) noexcept
@@ -173,15 +176,29 @@ int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL,
     }
 
     const LoopBank* bank = congas.bank();
-    const bool haveBank = enabled && prepared && bank != nullptr && ! bank->empty();
+    // The first bank and all its sample markers are authored at 48 kHz. Until
+    // this path owns an explicit sample-rate converter, using those frames at
+    // another device rate changes timing and can drive correction into audible
+    // failure. Refuse it cleanly and leave the proven pattern renderer audible.
+    const bool rateCompatible = bank != nullptr
+                                && std::fabs (bank->sampleRate() - sampleRate) < 1.0;
+    const bool haveBank = enabled && prepared && bank != nullptr && ! bank->empty()
+                          && rateCompatible;
 
     // --- what the music is asking for --------------------------------------
     //
-    // The regime the decoder already publishes, and nothing new invented on top
-    // of it. `fixed` is a tempo that has held still long enough to be a click
-    // track, which is exactly the condition under which a recording can be
-    // stretched by a fraction of a percent and left alone.
-    wantRecorded = haveBank && in.audible && in.regime == TempoRegime::fixed;
+    // `audible` is the clock's real go/no-go decision: the original pattern
+    // engine is already playing from that exact signal. The fixed/live regime
+    // classification deliberately needs more history and can still be unknown
+    // for several seconds after the beat grid is usable. Gating on it therefore
+    // made LOOP lag behind PATTERN for no musical reason.
+    wantRecorded = haveBank && in.audible;
+
+    const bool fixedTempo = in.regime == TempoRegime::fixed;
+    const float correctionTau = fixedTempo ? kTauFixedSec : kTauLiveSec;
+    const float correctionPull = fixedTempo ? kPullFixed : kPullLive;
+    congas.setCorrection (correctionTau, correctionPull);
+    shaker.setCorrection (correctionTau, correctionPull);
 
     if (haveBank && in.audible)
     {

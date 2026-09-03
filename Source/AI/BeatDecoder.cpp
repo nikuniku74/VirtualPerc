@@ -219,6 +219,106 @@ namespace
     constexpr float kFastAcquireMarginLine = 0.55f;
     constexpr float kFastAcquireMarginRoom = 0.90f;
     constexpr float kFastAcquireMaxLevelError = 0.20f; // octaves
+
+    // The abrupt-change detector.
+    //
+    // Everything above answers the question "where is this tempo going" over
+    // tens of beats, which is what it has to be to tell a record from a band,
+    // and it means a step of five to ten percent - a band coming out of a
+    // chorus - is not described until most of an eight-beat fit is at the new
+    // tempo. Two causal intervals is the earliest anything can say it: one is
+    // also what a fill, a flam or a beat the mix swallowed produces.
+    //
+    // So the smallest change worth suspecting is one BPM, expressed against
+    // whatever tempo is committed, or three times the scatter the intervals are
+    // already showing, whichever is larger. The second term is the one that
+    // does the work: a fifth of a percent on a line feed and three percent
+    // through a microphone are both an unchanged tempo, and a fixed threshold
+    // either misses the first or fires constantly on the second.
+    constexpr float kTransitionMinBpmDelta = 1.0f;
+
+    // And the largest. Beyond a quarter the candidate is not this tempo moving,
+    // it is another metrical level or a missed beat - both of which arrive as
+    // exact ratios and are the business of the octave machinery above, which
+    // has the whole buffer to decide with instead of two intervals.
+    constexpr float kTransitionMaxRelativeDelta = 0.25f;
+
+    // How closely the two intervals have to agree before they are one tempo
+    // rather than two accidents. A line feed places its peaks to a couple of
+    // milliseconds; a microphone in a room does not, and asking a room for line
+    // precision means never confirming anything through one.
+    constexpr float kTransitionLineCoherence = 0.010f;
+    constexpr float kTransitionRoomCoherence = 0.020f;
+
+    // How long a confirmed change stays published. Accepted beats close it at
+    // this boundary, while decoder frame time enforces the same maximum through
+    // silence, rejected peaks and dropout-like activations. It exists so a
+    // consumer can treat these beats differently, and two beats is how long
+    // that is worth doing: a longer window would be a second path to the clock
+    // running beside the one that is measured.
+    constexpr int kTransitionRapidLifetimeBeats = 2;
+
+    // A suspicion nothing follows up. If no eligible peak arrives within this
+    // many of the candidate's own periods the evidence is stale - the fill
+    // stopped, the input went away - and it is dropped rather than left to be
+    // completed by whatever happens next.
+    constexpr double kTransitionCandidateStaleBeats = 2.5;
+
+    // The floor under the measured jitter, by source. It is what the estimate
+    // cannot go below once it *is* an estimate: a synthetic-clean run must not
+    // lower the bar to the point where its own peak-interpolation error becomes
+    // a tempo change.
+    constexpr float kTransitionJitterFloorLine = 0.005f;
+    constexpr float kTransitionJitterFloorRoom = 0.010f;
+    constexpr int   kTransitionJitterIntervals = 8;
+
+    // The smallest step this exists for. A band coming out of a chorus moves
+    // five to ten percent; below five percent the ordinary live fit is inside a
+    // beat or two of right anyway, and nothing here would be worth its risk.
+    //
+    // It is also the ceiling on how unsteady the material may be. The threshold
+    // to suspect anything is three times the measured scatter, so once that
+    // exceeds the smallest step worth claiming, every candidate the detector
+    // could still start is one it has no business being confident about - and
+    // the consequence of being wrong is a moved grid, which is heard. Measured
+    // on the 22 ms-scatter bench the intervals run at 6.7% and this stands the
+    // detector down completely; a step there costs what it cost before, which
+    // is the ordinary five-second path.
+    constexpr float kTransitionSmallestStep = 0.05f;
+
+    // An abrupt change has an edge: its first new interval differs from the
+    // interval immediately before it. A ramp can drift far enough away from a
+    // fixed committed BPM to clear the candidate delta while each adjacent
+    // interval changed only a fraction of a percent; treating that accumulated
+    // gap as a step bypasses the live fit and re-anchors a grid that never
+    // jumped. Three percent stays below the smallest 5% step this path exists
+    // to catch and above the adjacent-interval movement measured on the 4 s and
+    // 12 s accelerando controls.
+    constexpr float kTransitionAbruptEdge = 0.03f;
+
+    // And how many intervals it takes before there is an estimate at all.
+    //
+    // This is a gate on the detector, not only on the number. Two intervals can
+    // only be called a tempo change relative to how much the intervals were
+    // already moving, and below this there is no measurement of that - the
+    // floor stands in for one, and the floor is the cleanest material there is.
+    // Measured on the 22 ms-scatter bench, the intervals really run at sixteen
+    // percent, at which nothing this detector can say is worth hearing; it read
+    // the one-percent floor instead, on the beats just after a history clear,
+    // and confirmed a tempo change that was three dropped beats.
+    //
+    // Standing down when the scatter is genuinely large needs no separate rule:
+    // three times sixteen percent is past the quarter that bounds a candidate,
+    // so no interval can qualify.
+    constexpr int kTransitionJitterMinIntervals = 4;
+
+    // How loud a candidate peak has to be beside the beats around it, through a
+    // microphone, and over how many of them that is judged. Seven tenths of the
+    // median admits the ordinary beat-to-beat variation of a room - a mix does
+    // not deliver every beat at the same level - and excludes the quiet local
+    // maxima a room supplies between them.
+    constexpr float kTransitionStrengthFraction = 0.70f;
+    constexpr int   kTransitionStrengthBeats = 8;
 }
 
 void BeatDecoder::prepare (double framesPerSecond)
@@ -277,6 +377,9 @@ void BeatDecoder::reset() noexcept
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
     std::fill (beatStrength, beatStrength + kBeatHistory, 0.0f);
     anchorBpm = 0.0f;
+    clearTempoTransition (TempoTransitionReason::reset);
+    transitionSerial = 0;
+    transitionReason = TempoTransitionReason::none;
     hmm.reset();
     hyp = {};
 }
@@ -313,6 +416,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     lastFitCoverage = 0.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
 }
 
@@ -456,6 +560,11 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     shortFitBpm = 0.0f;
     longWrite = 0;
     longFilled = 0;
+
+    // No interval spans the hole, so neither does any evidence of a change
+    // across it - and the splice would supply exactly the sort of odd interval
+    // this detector is built to notice.
+    clearTempoTransition (TempoTransitionReason::reset);
 }
 
 void BeatDecoder::notifyInputRestart() noexcept
@@ -499,6 +608,7 @@ void BeatDecoder::notifyInputRestart() noexcept
     provisional = false;
     intervalAcquired = false;
     provisionalStrength = 0.0f;
+    clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
 }
 
@@ -699,6 +809,7 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     // The beats behind us were the wrong ones. Keeping them would have the fit
     // pulling the grid straight back to where it was, which is the same trap
     // one level down.
+    clearTempoTransition (TempoTransitionReason::reset);
     beatWrite = 0;
     beatFilled = 0;
     longWrite = 0;
@@ -716,12 +827,362 @@ void BeatDecoder::commit (float candidateBpm, float rate) noexcept
 
 void BeatDecoder::registerBeat (double beatTimeSec, float strength) noexcept
 {
+    storeBeatForFit (beatTimeSec, strength);
+    ++beatSerial;
+}
+
+void BeatDecoder::storeBeatForFit (double beatTimeSec, float strength) noexcept
+{
     beatTime[beatWrite] = beatTimeSec;
     beatStrength[beatWrite] = strength;
     beatWrite = (beatWrite + 1) % kBeatHistory;
     if (beatFilled < kBeatHistory)
         ++beatFilled;
-    ++beatSerial;
+    if (transitionRefitBeats > 0)
+        --transitionRefitBeats;
+}
+
+void BeatDecoder::dropTransitionCandidate (TempoTransitionReason reason) noexcept
+{
+    transitionState = TempoTransitionState::stable;
+    transitionReason = reason;
+    transitionFirstSec = -1.0;
+    transitionLastSec = -1.0;
+    transitionFirstStrength = 0.0f;
+    transitionLastStrength = 0.0f;
+    transitionPeriodSec = 0.0f;
+    transitionConfidence = 0.0f;
+    transitionIntervals = 0;
+    transitionRapidBeats = 0;
+    transitionRapidDeadlineSec = -1.0;
+}
+
+void BeatDecoder::clearTempoTransition (TempoTransitionReason reason) noexcept
+{
+    dropTransitionCandidate (reason);
+    // The reference an interval would be measured from as well. At every
+    // boundary this is called from, the peak before it and the peak after it
+    // are not two ends of one interval.
+    transitionPrevEventSec = -1.0;
+    transitionPrevStrength = 0.0f;
+    // The beats this was waiting for are gone with everything else, and the
+    // fold is the right thing to acquire a tempo from again.
+    transitionRefitBeats = 0;
+}
+
+float BeatDecoder::recentIntervalJitter() const noexcept
+{
+    const float floorJitter = lineFeed ? kTransitionJitterFloorLine
+                                       : kTransitionJitterFloorRoom;
+    const int n = std::min (beatFilled - 1, kTransitionJitterIntervals);
+    if (n < kTransitionJitterMinIntervals)
+        return floorJitter;
+
+    float ioi[kTransitionJitterIntervals];
+    for (int k = 0; k < n; ++k)
+    {
+        const int newer = (beatWrite - 1 - k + kBeatHistory) % kBeatHistory;
+        const int older = (beatWrite - 2 - k + kBeatHistory) % kBeatHistory;
+        const float raw = static_cast<float> (beatTime[newer] - beatTime[older]);
+        if (raw <= 0.0f)
+            return floorJitter;
+        ioi[k] = raw;
+    }
+
+    // Both the centre and the spread are medians, and the centre is the half of
+    // that which is easy to miss.
+    //
+    // One beat the mix swallowed makes one interval twice the others. Taking the
+    // median of the deviations already stops *that* interval from being the
+    // answer - but if the deviations are measured from the mean, the doubled
+    // interval has moved the mean, so every ordinary interval is now 11% away
+    // from it and the median deviation is 11% rather than nothing. Three times
+    // that is past `kTransitionSmallestStep`, so a single swallowed beat stood
+    // the detector down for the whole eight-interval window: measured on a
+    // 120-to-132 step four beats later it was not detected within its two-beat
+    // budget at all, and arrived 3.2 s late.
+    //
+    // A median centre does not move for one outlier, so the ordinary intervals
+    // deviate from it by nothing and the swallowed beat is what it is: one
+    // interval out of eight.
+    float sorted[kTransitionJitterIntervals];
+    std::copy (ioi, ioi + n, sorted);
+    std::sort (sorted, sorted + n);
+    const float centre = sorted[n / 2];
+    if (centre <= 0.0f)
+        return floorJitter;
+
+    float dev[kTransitionJitterIntervals];
+    for (int k = 0; k < n; ++k)
+        dev[k] = std::fabs (ioi[k] - centre) / centre;
+    std::sort (dev, dev + n);
+    return std::max (floorJitter, dev[n / 2]);
+}
+
+float BeatDecoder::recentBeatStrengthMedian() const noexcept
+{
+    const int n = std::min (beatFilled, kTransitionStrengthBeats);
+    if (n < kTransitionJitterMinIntervals)
+        return 0.0f;
+
+    float s[kTransitionStrengthBeats];
+    for (int k = 0; k < n; ++k)
+        s[k] = beatStrength[(beatWrite - 1 - k + kBeatHistory) % kBeatHistory];
+    std::sort (s, s + n);
+    return s[n / 2];
+}
+
+bool BeatDecoder::transitionCandidateAllowed (float candidatePeriodSec) const noexcept
+{
+    if (candidatePeriodSec <= 0.0f)
+        return false;
+    const float candidateBpm = applyUserOctave (60.0f / candidatePeriodSec);
+    if (candidateBpm < kMinBpm || candidateBpm > kMaxBpm)
+        return false;
+    // Inside the metrical level in use. A period that is not is a subdivision
+    // or a missed beat wearing a tempo's clothes, and the octave machinery -
+    // which has the whole fold buffer rather than two intervals - owns that
+    // question.
+    return bpm >= kMinBpm
+           && std::fabs (std::log2 (candidateBpm / bpm)) <= kOctaveThreshold;
+}
+
+bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
+                                          bool acceptedByCurrentGrid) noexcept
+{
+    const double prevEvent = transitionPrevEventSec;
+    const float prevStrength = transitionPrevStrength;
+
+    // A change already confirmed is not re-argued; it is spent, on the beats
+    // that follow it, and then it is over.
+    if (transitionState == TempoTransitionState::rapid)
+    {
+        if (acceptedByCurrentGrid
+            && ++transitionRapidBeats >= kTransitionRapidLifetimeBeats)
+            dropTransitionCandidate (TempoTransitionReason::expired);
+        return false;
+    }
+
+    // Nor is it re-argued in the beats after that, until the ordinary fits have
+    // actually re-formed at the tempo it moved to.
+    //
+    // `rapid` is two beats because that is how long a *consumer* should treat
+    // the tempo as in flight. It is not how long the decoder needs, and closing
+    // this window with it produced a second confirmation of the same target on
+    // every line-feed step measured: confirming forces the live regime and
+    // empties the fit history down to the two peaks that measured the change, so
+    // for the next several beats the fold - whose buffer is seconds long and
+    // still describes the tempo that was left - is the strongest thing naming a
+    // tempo. It pulls the committed BPM back, the next interval at the new tempo
+    // reads as a fresh change against it, and the detector confirms 132 a second
+    // time having just confirmed 132. Both name the right tempo, so nothing
+    // sounded wrong, but `transitionSerial` moved twice for one musical event
+    // and a follower keyed off the serial re-adopts on each.
+    //
+    // A short fit is eight beats, so eight accepted beats is what is owed. By
+    // then the fits carry the new tempo themselves and the question the detector
+    // answers has an honest reference again.
+    if (transitionRefitBeats > 0)
+    {
+        if (transitionState == TempoTransitionState::suspected)
+            dropTransitionCandidate (TempoTransitionReason::expired);
+        return false;
+    }
+
+    // No reference interval, or no measurement of how much the intervals were
+    // already moving. The second is the important one and it is easy to get
+    // backwards: with too little history `recentIntervalJitter` answers with
+    // its floor, which is the *cleanest* material there is, so the detector
+    // would be at its most credulous exactly where it knows least - on the
+    // beats right after a grid change, a dropout or its own last decision.
+    if (prevEvent < 0.0 || eventTimeSec <= prevEvent
+        || beatFilled - 1 < kTransitionJitterMinIntervals)
+    {
+        if (transitionState == TempoTransitionState::suspected)
+            dropTransitionCandidate (TempoTransitionReason::incoherent);
+        return false;
+    }
+
+    const float interval = static_cast<float> (eventTimeSec - prevEvent);
+    const float jitter = recentIntervalJitter();
+
+    // Too unsteady to read. See kTransitionSmallestStep: past here the smallest
+    // change the detector would be willing to suspect is larger than the
+    // largest one it exists to catch, so it has nothing useful left to say and
+    // saying it anyway costs a grid move on a passage that never changed tempo.
+    if (3.0f * jitter > kTransitionSmallestStep)
+    {
+        if (transitionState == TempoTransitionState::suspected)
+            dropTransitionCandidate (TempoTransitionReason::incoherent);
+        return false;
+    }
+
+    // Second interval of a live candidate: the one that decides it.
+    if (transitionState == TempoTransitionState::suspected
+        && transitionFirstSec >= 0.0
+        && std::fabs (prevEvent - transitionLastSec) < 1.0e-9)
+    {
+        const float first = static_cast<float> (transitionLastSec - transitionFirstSec);
+        const float mean = 0.5f * (first + interval);
+        const float tolerance = std::max (lineFeed ? kTransitionLineCoherence
+                                                   : kTransitionRoomCoherence,
+                                          2.0f * jitter);
+        const float deviation = mean > 0.0f
+                                    ? 0.5f * std::fabs (first - interval) / mean
+                                    : 1.0f;
+
+        // Through a microphone, also insist the peaks were really peaks.
+        //
+        // A room supplies quiet local maxima all the time - a chair, a
+        // reflection, the tail of the last stroke - and two of those happening
+        // to be evenly spaced is the one way this detector can be talked into a
+        // tempo nobody played. A line feed has no such supply and is not charged
+        // for it.
+        //
+        // Measuring that against `beatThresh` alone, as this first did, tested
+        // nothing: a peak only reaches here by clearing `beatThresh` in the
+        // local-maximum gate, so the condition could not fail. What separates a
+        // reflection from a beat is not that it clears an absolute floor - it
+        // does - but how loud it is beside the beats around it, so the level is
+        // relative to the median of the recent accepted ones and the absolute
+        // floor is only the lower bound on it.
+        const float strengthFloor = std::max (beatThresh,
+                                              kTransitionStrengthFraction
+                                                  * recentBeatStrengthMedian());
+        const bool strongEnough = lineFeed
+                                  || (strength >= strengthFloor
+                                      && prevStrength >= strengthFloor
+                                      && transitionFirstStrength >= strengthFloor);
+
+        // And the change has to survive being measured properly. What opened
+        // the candidate was one interval against the committed period, which is
+        // the noisiest estimate available: an interval is a single beat's timing
+        // error away from the truth, so on ordinary material it clears a 3%
+        // threshold regularly without the band having done anything. `mean` is
+        // that estimate averaged over both intervals of the candidate and is
+        // the better one, so it is asked the same question again before any of
+        // this is acted on.
+        //
+        // Without this the detector confirms its own jitter. Measured on the
+        // 168 BPM song in the octave sweep it declared a change to 169.9 - 1.1%,
+        // a third of the threshold that started it - and the confirmation puts
+        // the decoder into `live`, which is what had been holding that song at
+        // the level it is played. Two seconds later it was reading 84.
+        const float meanBpm = applyUserOctave (60.0f / std::max (1.0e-6f, mean));
+        const float meanDelta = std::fabs (meanBpm - bpm) / std::max (kMinBpm, bpm);
+        const float meanNeeded = std::max (kTransitionMinBpmDelta / std::max (kMinBpm, bpm),
+                                           3.0f * jitter);
+
+        if (deviation <= tolerance && strongEnough && meanDelta >= meanNeeded
+            && transitionCandidateAllowed (mean))
+        {
+            // The two peaks that measured this are behind us and the fits would
+            // otherwise have to re-form over eight beats of the tempo just
+            // left. They go into the history; the beat *event* for the current
+            // peak is still `registerBeat`'s to announce, so nothing downstream
+            // is handed a stroke for a beat that already sounded.
+            beatWrite = 0;
+            beatFilled = 0;
+            longWrite = 0;
+            longFilled = 0;
+            storeBeatForFit (transitionFirstSec, transitionFirstStrength);
+            storeBeatForFit (transitionLastSec, transitionLastStrength);
+
+            bpm = std::clamp (applyUserOctave (60.0f / mean), kMinBpm, kMaxBpm);
+            gridAnchorSec = eventTimeSec;
+            // The phase evidence behind us describes the old spacing, and the
+            // old-grid vote does too.
+            foldPhaseBeats = 0;
+            fastDriftBeats = 0;
+            fastDriftLargeBeats = 0;
+            fastDriftSign = 0;
+            enterRegime (TempoRegime::live);
+
+            transitionState = TempoTransitionState::rapid;
+            transitionReason = TempoTransitionReason::confirmed;
+            // Published in the tempo the rest of the hypothesis is reported in,
+            // half/double request included, so a consumer can hand it straight
+            // to a clock. `mean` is a measured interval and is not that.
+            transitionPeriodSec = 60.0f / bpm;
+            transitionIntervals = 2;
+            transitionConfidence = tolerance > 0.0f
+                                       ? std::clamp (1.0f - deviation / tolerance, 0.0f, 1.0f)
+                                       : 0.0f;
+            transitionRapidBeats = 0;
+            const float reportedBpm = transitionPeriodSec > 0.0f
+                                          ? 60.0f / transitionPeriodSec
+                                          : 0.0f;
+            transitionRapidDeadlineSec =
+                std::isfinite (reportedBpm)
+                    && reportedBpm >= kMinBpm && reportedBpm <= kMaxBpm
+                    && std::isfinite (transitionPeriodSec)
+                ? timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
+                                * static_cast<double> (transitionPeriodSec)
+                : timeSec;
+            // Set after the two retained peaks above, so they do not spend the
+            // budget they are part of paying off.
+            transitionRefitBeats = kShortFit;
+            transitionLastSec = eventTimeSec;
+            transitionLastStrength = strength;
+            ++transitionSerial;
+            return true;
+        }
+
+        // Not one tempo. The interval just measured may still be the start of a
+        // better candidate, so fall through rather than waiting a beat.
+        dropTransitionCandidate (TempoTransitionReason::incoherent);
+    }
+
+    // Start (or restart) a candidate.
+    //
+    // Measured in tempo rather than in period, because `bpm` carries the
+    // listener's half/double request and a measured interval does not. Compared
+    // raw, a listener on double time would see every ordinary interval as a
+    // hundred percent change and this detector would be switched off for them.
+    const float candidateBpm = applyUserOctave (60.0f / interval);
+    const float delta = std::fabs (candidateBpm - bpm) / std::max (kMinBpm, bpm);
+    const float needed = std::max (kTransitionMinBpmDelta / std::max (kMinBpm, bpm),
+                                   3.0f * jitter);
+    if (delta < needed)
+    {
+        if (transitionState == TempoTransitionState::suspected)
+            dropTransitionCandidate (TempoTransitionReason::incoherent);
+        return false;
+    }
+    if (beatFilled >= 2)
+    {
+        const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+        const int previous = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+        const float priorInterval =
+            static_cast<float> (beatTime[newest] - beatTime[previous]);
+        const float edgeDelta = priorInterval > 0.0f
+                                  ? std::fabs (interval - priorInterval) / priorInterval
+                                  : 0.0f;
+        if (edgeDelta < kTransitionAbruptEdge)
+            return false;
+    }
+    if (delta > kTransitionMaxRelativeDelta)
+    {
+        dropTransitionCandidate (TempoTransitionReason::outsideRange);
+        return false;
+    }
+    if (! transitionCandidateAllowed (interval))
+    {
+        dropTransitionCandidate (TempoTransitionReason::metricalConflict);
+        return false;
+    }
+
+    transitionState = TempoTransitionState::suspected;
+    transitionReason = TempoTransitionReason::candidateStarted;
+    transitionFirstSec = prevEvent;
+    transitionLastSec = eventTimeSec;
+    transitionFirstStrength = prevStrength;
+    transitionLastStrength = strength;
+    transitionPeriodSec = 60.0f / candidateBpm;
+    transitionIntervals = 1;
+    transitionConfidence = 0.0f;
+    transitionRapidBeats = 0;
+    return false;
 }
 
 bool BeatDecoder::tryFastAcquire() noexcept
@@ -1018,6 +1479,7 @@ void BeatDecoder::updateTempo() noexcept
         // noisier than no fit at all - 0.9 BPM of steady-state spread became
         // 1.7 on the same material.
         ++gridSerial;
+        clearTempoTransition (TempoTransitionReason::reset);
         beatWrite = 0;
         beatFilled = 0;
         intervalAcquired = false;
@@ -1107,9 +1569,19 @@ void BeatDecoder::updateTempo() noexcept
         // interval: before the fold has examined the slower octave, pulling the
         // exact first-quarter measurement towards it recreates the multi-second
         // acquisition this path exists to remove.
+        //
+        // And not across a change that has just been confirmed. The fold's
+        // buffer is seconds long, so for the first beats after a step it is
+        // still describing the tempo that has been left - measured on a 120 to
+        // 132 step it names 120 for several seconds - and pulling seven tenths
+        // of the way towards it every beat would undo the measurement that has
+        // just been made from the two intervals that actually carry the change.
+        // The window closes no later than two reported periods, even if silence
+        // or off-grid peaks mean no accepted beat arrives to close it sooner.
         const bool foldMayPull = ! provisional || ! intervalAcquired
                                  || tempo.levelSettled();
-        if (combReady && foldMayPull && tempoRegime != TempoRegime::fixed)
+        if (combReady && foldMayPull && tempoRegime != TempoRegime::fixed
+            && transitionState != TempoTransitionState::rapid)
             commit (combBpm, kRateAcquiring);
         return;
     }
@@ -1391,6 +1863,16 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     timeSec += hopSec;
     ++frame;
 
+    // This is deliberately independent of peak eligibility. A confirmed
+    // transition must publish for the confirmation frame so the audio thread
+    // can consume its serial once, then become stable no later than two periods
+    // of the reported (user-octaved) tempo even through complete silence.
+    if (transitionState == TempoTransitionState::rapid
+        && std::isfinite (transitionRapidDeadlineSec)
+        && transitionRapidDeadlineSec >= 0.0
+        && timeSec >= transitionRapidDeadlineSec)
+        dropTransitionCandidate (TempoTransitionReason::expired);
+
     if (refractoryFrames > 0)
         --refractoryFrames;
 
@@ -1444,16 +1926,53 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
         }
     }
 
-    bool peak = localMaximum && refractoryFrames == 0
-                && (lastBeatSec < 0.0
-                    || (eventTimeSec - lastBeatSec) >= 0.4 * static_cast<double> (period));
+    // A completed causal maximum that is far enough from the last beat to be a
+    // separate event. This is everything the analysis knows about; what the
+    // grid then makes of it is a second question, and the abrupt-change
+    // detector has to be asked the first one - on a step large enough to
+    // matter, every peak carrying the evidence is one the grid rejects.
+    const bool eligiblePeak = localMaximum && refractoryFrames == 0
+                              && (lastBeatSec < 0.0
+                                  || (eventTimeSec - lastBeatSec)
+                                         >= 0.4 * static_cast<double> (period));
 
-    if (peak && established && lastBeatSec >= 0.0)
+    bool acceptedByCurrentGrid = eligiblePeak;
+    if (acceptedByCurrentGrid && established && lastBeatSec >= 0.0)
     {
         const double beats = (eventTimeSec - lastBeatSec) / static_cast<double> (period);
         if (std::fabs (beats - std::round (beats)) > kOnGridTolerance && beats < kGridStaleBeats)
-            peak = false;
+            acceptedByCurrentGrid = false;
     }
+
+    // A change is a change *from* something, so the grid has to be one. While
+    // it is still provisional the committed tempo is a state-space reading with
+    // whole-frame periods - about 2% sharp - and the first accurate intervals
+    // legitimately disagree with it by more than this detector's threshold.
+    // Measured on a 128 BPM line feed it confirmed a "change" to 128 at 1.42 s,
+    // which is the acquisition path being reported as a tempo step. Acquisition
+    // is the ordinary machinery's job and it is already fast.
+    const bool confirmedTransition =
+        eligiblePeak && established && ! provisional
+        && observeTempoTransition (eventTimeSec, prevPulse, acceptedByCurrentGrid);
+
+    if (eligiblePeak)
+    {
+        transitionPrevEventSec = eventTimeSec;
+        transitionPrevStrength = prevPulse;
+    }
+    else if (transitionState == TempoTransitionState::suspected
+             && transitionLastSec >= 0.0
+             && transitionPeriodSec > 0.0f
+             && timeSec - transitionLastSec
+                    > kTransitionCandidateStaleBeats * static_cast<double> (transitionPeriodSec))
+    {
+        // Nothing came to finish the argument. One changed interval on its own
+        // is what a fill leaves behind, and it does not get to wait for whatever
+        // happens next to complete it.
+        dropTransitionCandidate (TempoTransitionReason::expired);
+    }
+
+    const bool peak = acceptedByCurrentGrid || confirmedTransition;
 
     if (peak)
     {
@@ -1508,6 +2027,12 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.levelSettled = tempo.levelSettled();
     hyp.fitResidual = lastFitResidual;
     hyp.fitCoverage = lastFitCoverage;
+    hyp.transitionState = transitionState;
+    hyp.transitionReason = transitionReason;
+    hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;
+    hyp.transitionConfidence = transitionConfidence;
+    hyp.transitionIntervals = transitionIntervals;
+    hyp.transitionSerial = transitionSerial;
     hyp.confidence = scoreConfidence();
     hyp.valid = established;
 

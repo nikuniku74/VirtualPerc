@@ -18,6 +18,46 @@ Data: 24 agosto 2026. Albero: `claude/core-timing-audit-78xiel`.
 
 ---
 
+## Risultato misurato — 2 settembre 2026
+
+Il banco finale del passaggio rapido è
+`/tmp/virtualperc-vpalign-after.txt`, rigenerato dal `VPAlign` corrente in
+Release con quattro seed fissi per caso. Il confronto semantico con
+`/tmp/virtualperc-vpalign-before.txt` dà
+`protected-pre-tempo-identical=True` e
+`protected-post-tempo-identical=True`: aggancio, jitter, livello metrico,
+deriva, buco, fase sulle rampe e ricalibrazione protetti sono invariati. Solo
+l'autocontrollo dell'aggregatore e la sezione dedicata ai cambi di tempo sono
+nuovi.
+
+I numeri “prima” non hanno lo stesso criterio dei numeri finali: misuravano il
+primo ingresso entro il 2 % che poi restava dentro; i finali misurano il primo
+ingresso entro ±1 BPM e riportano il peggiore dei quattro seed. Non vanno
+presentati come un confronto percentuale diretto:
+
+- 118→124: prima 5,68 s (entro 2 % e stabile); finale 0,98 s (±1 BPM),
+  fase al terzo battito 23,3 ms.
+- 118→128: prima 6,81 s; finale 0,96 s, fase 23,9 ms.
+- 128→120: prima 5,22 s; finale 1,02 s, fase 24,4 ms.
+- 76→82 e 168→156 non erano misurati nel banco prima; nel finale sono
+  rispettivamente 1,47 s / 23,7 ms e 0,78 s / 23,7 ms.
+
+Tutti e cinque i gradini richiesti, fra 5,1 % e 7,9 %, hanno `resp ok 4/4`,
+`fase ok 4/4`, una sola transizione per seed (`trans ok 4/4`), zero violazioni
+degli impulsi e clock monotono `4/4`. L'adozione avviene al primo frame in cui
+il secondo picco completa causalmente il secondo intervallo cambiato: non usa
+frame futuri.
+
+Il gradino di stress 100→140 è fuori da quell'inviluppo. Prima misurava
+16,66 s col criterio del 2 %; il finale misura 26,70 s col criterio ±1 BPM e
+57,1 ms al terzo battito, con zero transizioni rapide. Non è un miglioramento
+misurato. Le rampe 118→126 in 4 s e 12 s restano fuori dal percorso rapido
+(`trans ok 4/4` con zero transizioni attese), senza violazioni d'impulso e con
+clock monotono; i loro valori finali visibili sono 0,00 s a ±1 BPM e
+20,8 / 8,0 ms al terzo battito.
+
+---
+
 ## In breve
 
 | # | Cosa | Gravità | Stato |

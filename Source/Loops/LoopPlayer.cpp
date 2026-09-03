@@ -138,8 +138,13 @@ void LoopPlayer::request (const LoopQuery& q) noexcept
         return;
     }
 
+    // This request arrives every audio callback. Avoiding the current take here
+    // therefore asked for the other take every block and committed a freshly
+    // primed stretcher almost every quarter, for both stems. On iPad that is a
+    // periodic real-time CPU spike and presents as crackling. Keep the chosen
+    // take stable; rotation belongs at a phrase boundary, not at callback rate.
     LoopQuery asked = q;
-    asked.avoidIndex = voices[cur].active ? voices[cur].index : -1;
+    asked.avoidIndex = -1;
     const LoopSelection sel = loops->select (asked);
     miss = sel.miss;
     if (! sel.ok())

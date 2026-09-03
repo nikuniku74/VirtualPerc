@@ -451,6 +451,65 @@ void vpRunLoopTests (int& passed, int& failed)
                 "wav: a truncated file is refused, not half decoded");
     }
 
+    // --- 2b. embedded bank loading ----------------------------------------
+    {
+        const char* text =
+            "version 1\n"
+            "bank embedded\n\n"
+            "[loop]\n"
+            "id embedded_120\n"
+            "file embedded.wav\n"
+            "style dance\n"
+            "role grooveA\n"
+            "stem congas\n"
+            "bpm 120\n"
+            "bars 2\n"
+            "meter 4/4\n"
+            "firstBeatSample 0\n"
+            "frames 192000\n"
+            "channels 2\n"
+            "sampleRate 48000\n"
+            "intensity 0.5\n"
+            "swing 0\n"
+            "take 1\n";
+
+        vp::LoopBank embedded;
+        std::string error;
+        int calls = 0;
+        const bool ok = embedded.loadWithAudioLoader (
+            text,
+            [&calls] (const std::string& name, vp::WavAudio& audio, std::string& why)
+            {
+                ++calls;
+                if (name != "embedded.wav")
+                {
+                    why = "wrong embedded resource name";
+                    return false;
+                }
+                audio.frames = 192000;
+                audio.channels = 2;
+                audio.sampleRate = 48000.0;
+                audio.left.assign (192000, 0.0f);
+                audio.right.assign (192000, 0.0f);
+                return true;
+            },
+            error);
+        expect (ok && calls == 1 && embedded.size() == 1,
+                "bank: an embedded WAV loads through the same validation path as a disk bank");
+
+        vp::LoopBank missing;
+        const bool refused = ! missing.loadWithAudioLoader (
+            text,
+            [] (const std::string&, vp::WavAudio&, std::string& why)
+            {
+                why = "embedded WAV missing";
+                return false;
+            },
+            error);
+        expect (refused && missing.empty(),
+                "bank: a missing embedded WAV leaves no half-loaded bank behind");
+    }
+
     // --- 3. choosing a recording ------------------------------------------
     {
         vp::LoopBank bank;
@@ -947,7 +1006,11 @@ void vpRunLoopTests (int& passed, int& failed)
     {
         vp::LoopBank bank;
         addClickLoop (bank, "a120", 120.0f, 8, vp::LoopRole::grooveA, vp::LoopStem::congas);
+        addClickLoop (bank, "a120-t2", 120.0f, 8, vp::LoopRole::grooveA,
+                      vp::LoopStem::congas, 0.0f, 0.5f, 2);
         addClickLoop (bank, "sh120", 120.0f, 8, vp::LoopRole::grooveA, vp::LoopStem::shaker);
+        addClickLoop (bank, "sh120-t2", 120.0f, 8, vp::LoopRole::grooveA,
+                      vp::LoopStem::shaker, 0.0f, 0.5f, 2);
 
         vp::HybridPercussionRenderer hybrid;
         hybrid.prepare (kSr, 256);
@@ -995,20 +1058,55 @@ void vpRunLoopTests (int& passed, int& failed)
             }
         };
 
+        in.audible = false;
         runFor (400, vp::TempoRegime::unknown);
         expect (! hybrid.loopIsPlaying(),
-                "hybrid: with the tempo not yet decided, today's engine keeps the part");
+                "hybrid: before the clock makes the part audible, the loop stays silent");
+
+        in.audible = true;
+        runFor (900, vp::TempoRegime::unknown);
+        expect (hybrid.loopIsPlaying(),
+                "hybrid: an audible clock starts the loop before regime classification catches up");
 
         runFor (900, vp::TempoRegime::fixed);
         expect (hybrid.loopIsPlaying(),
-                "hybrid: a tempo that has held still hands the part to the recording");
+                "hybrid: a tempo that has held still keeps the recording playing");
         const int afterFixed = hybrid.handovers();
 
         runFor (900, vp::TempoRegime::live);
+        expect (hybrid.loopIsPlaying(),
+                "hybrid: a moving live tempo keeps the recording on the causal clock");
+        expect (hybrid.handovers() == afterFixed,
+                "hybrid: fixed/live classification changes do not cause a handover");
+        expect (hybrid.player().changes() == 0 && hybrid.shakerPlayer().changes() == 0,
+                "hybrid: two available takes do not re-prime stretchers every quarter");
+
+        vp::HybridPercussionRenderer wrongRate;
+        wrongRate.prepare (44100.0, 256);
+        wrongRate.setBank (&bank);
+        wrongRate.setEnabled (true);
+        wrongRate.start();
+        vp::TempoFollower wrongClock;
+        wrongClock.prepare (44100.0);
+        wrongClock.setPulsesPerBeat (4);
+        wrongClock.forceTempo (120.0f);
+        wrongClock.setTargetTempo (120.0f, 1.0f);
+        wrongClock.setLocked (true);
+        wrongClock.snapPhase (0.0f);
+        auto wrongInput = in;
+        for (int i = 0; i < 900; ++i)
+        {
+            wrongInput.tick = wrongClock.advance (256);
+            wrongRate.render (percussion, l.data(), r.data(), 256, wrongInput);
+        }
+        expect (! wrongRate.loopIsPlaying() && ! wrongRate.wantsRecorded(),
+                "hybrid: a 48 kHz bank at 44.1 kHz falls back cleanly instead of distorting");
+
+        in.audible = false;
+        runFor (900, vp::TempoRegime::unknown);
         expect (! hybrid.loopIsPlaying(),
-                "hybrid: a tempo that is moving hands it straight back to single strokes");
-        expect (hybrid.handovers() == afterFixed + 1,
-                "hybrid: and that is one handover, not a flicker between the two");
+                "hybrid: losing the audible clock returns safely to single strokes");
+        in.audible = true;
 
         expect (! fadedIntoSilence,
                 "hybrid: the strokes are never faded down before the recording is sounding");

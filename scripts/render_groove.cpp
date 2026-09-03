@@ -127,7 +127,7 @@ int main (int argc, char** argv)
     perc.setSeed (0x5EED17u);
     perc.setGrooveStyle (style);
     perc.setGroove (static_cast<float> (bpm), 4);
-    perc.setShakerSubdivision (vp::Subdivision::eighth);
+    perc.setSubdivision (vp::Subdivision::eighth);
     perc.setHumanization (humanize);
     perc.setSwing (swing);
     perc.setIntensity (intensity);

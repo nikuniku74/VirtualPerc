@@ -2,11 +2,30 @@
 #include "Platform/IosMicPermission.h"
 
 #include <cmath>
+#include <cstring>
 #include <functional>
+
+#if defined (VP_HAS_LOOP_BANK) && VP_HAS_LOOP_BANK
+ #include "VpLoopBankData.h"
+#endif
 
 namespace
 {
     bool gDarkMode = true;
+
+#if defined (VP_HAS_LOOP_BANK) && VP_HAS_LOOP_BANK
+    const char* embeddedLoopResource (const std::string& originalName, int& size)
+    {
+        for (int i = 0; i < VpLoopBankData::namedResourceListSize; ++i)
+        {
+            if (originalName == VpLoopBankData::originalFilenames[i])
+                return VpLoopBankData::getNamedResource (
+                    VpLoopBankData::namedResourceList[i], size);
+        }
+        size = 0;
+        return nullptr;
+    }
+#endif
 
     juce::Colour bg()      { return gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6); }
     juce::Colour panel()   { return gDarkMode ? juce::Colour (0xff0c0c0e) : juce::Colour (0xffffffff); }
@@ -344,21 +363,11 @@ MainComponent::MainComponent()
     setupBtn (styleTwoOne, ink());
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
-    setupBtn (halveButton, ink());
-    setupBtn (doubleButton, ink());
     setupBtn (barButton, ink());
 
     // Where beat one is cannot be read reliably from what the network gives us,
-    // so this moves it on by one. Same answer as the octave pair: a measurement
-    // that will not come out is offered to the listener instead of guessed at.
-    //
-    // And having moved it, the listener owns it: the button lights and the
-    // automatic alignment stops touching the count. Four taps take the one all
-    // the way round the bar and back to where it started; the fifth hands it
-    // back to the app. That is the octave pair's idiom on one button - the
-    // button that turned the automatic answer off is the button that turns it
-    // on - and it is the only shape that fits, because this button also has to
-    // stay free to nudge two or three times in a row.
+    // so this moves it on by one. Four taps take the one all the way round the
+    // bar and back to where it started; the fifth hands it back to the app.
     barButton.onClick = [this]
     {
         auto& s = engine.settings();
@@ -374,29 +383,6 @@ MainComponent::MainComponent()
             ++barTapsSinceLock;
         }
         refreshBarButton();
-    };
-
-
-    // Half and double. The one part of the metrical level the signal does not
-    // decide - full eighths under a slow tempo read as well at the double - is
-    // decided here instead, by the person listening, in one tap.
-    // Lit means "the listener chose this". Pressing the lit one hands the
-    // choice back rather than parking on "as measured": with AUTO in the middle
-    // there is no third state to reach otherwise, and the button that turned it
-    // off has to be the button that turns it on.
-    halveButton.onClick = [this]
-    {
-        const bool mine = ! engine.settings().tempoOctaveAuto.load()
-                          && engine.settings().tempoOctave.load() < 0;
-        if (mine) applyTempoOctaveAuto();
-        else      applyTempoOctave (-1);
-    };
-    doubleButton.onClick = [this]
-    {
-        const bool mine = ! engine.settings().tempoOctaveAuto.load()
-                          && engine.settings().tempoOctave.load() > 0;
-        if (mine) applyTempoOctaveAuto();
-        else      applyTempoOctave (1);
     };
     setupBtn (sub4, ink());
     setupBtn (sub8, ink());
@@ -626,6 +612,7 @@ MainComponent::MainComponent()
     setupPageBtn (kickButton, ink());
     setupPageBtn (latencyButton, ink());
     setupPageBtn (procButton, ink());
+    setupPageBtn (loopModeButton, ink());
     for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
                      &bufAuto, &buf64, &buf128, &buf256, &buf512 })
         setupPageBtn (*b, ink());
@@ -646,8 +633,36 @@ MainComponent::MainComponent()
     buf512.onClick  = [this] { applyBufferChoice (512); };
 
     procButton.onClick = [this] { applyInputProcessingChoice (! inputProcessing); };
+    loopModeButton.onClick = [this]
+    {
+        if (! loopBankReady)
+            return;
+        const bool enable = ! engine.recordedLoopsEnabled();
+        if (enable)
+        {
+            // The bundled recordings and their markers are 48 kHz. A 256-frame
+            // callback leaves safe headroom for both stereo loop stretchers on
+            // iPad; 64/128 remain expert low-latency choices for PATTERN.
+            clockHz = 48000;
+            if (bufferChoice == 0 || bufferChoice < 256)
+                bufferChoice = 256;
+            refreshClockButtons();
+            refreshBufferButtons();
+        }
+        engine.setRecordedLoopsEnabled (enable);
+        refreshLoopModeButton();
+        savePrefs (true);
+        if (enable && audioOpened)
+            applyAudioSetup (false);
+        repaint();
+    };
     trackLoadButton.onClick = [this] { chooseInternalTrack(); };
     trackPlayButton.onClick = [this] { toggleInternalTrack(); };
+
+    // Above the settings overlay when a track is loaded: main-stage scrub bar, or
+    // the INGRESSO card when SETUP is open.
+    addAndMakeVisible (trackWaveform);
+    trackWaveform.setVisible (false);
 
    #if JUCE_IOS
     engine.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
@@ -669,6 +684,11 @@ MainComponent::MainComponent()
     shakerButton.setToggleState (true, juce::dontSendNotification);
     congasButton.setToggleState (true, juce::dontSendNotification);
 
+    // No disk paths on iPad: the manifest and its WAVs are part of the app and
+    // are decoded before the audio device is opened. A failed bank leaves the
+    // old pattern engine intact and the settings switch disabled.
+    loopBankReady = loadBundledLoopBank();
+
     // Before the device is opened: the stored clock is what it has to be opened
     // at, and asking for it after the fact is the reconfiguration this change
     // exists to remove.
@@ -677,6 +697,7 @@ MainComponent::MainComponent()
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
+    refreshLoopModeButton();
     refreshThemeColours();
 
     startTimerHz (15);
@@ -742,9 +763,9 @@ void MainComponent::refreshThemeColours()
         &subAuto, &sub4, &sub8,
         &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
         &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &styleTwoOne, &dynamicsButton, &halveButton, &doubleButton,
-        &barButton,
+        &styleBossa, &styleTwoOne, &dynamicsButton, &barButton,
         &settingsButton, &settingsClose, &procButton,
+        &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
     };
@@ -774,13 +795,13 @@ void MainComponent::refreshThemeColours()
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
-    refreshOctaveButtons();
     refreshBarButton();
     refreshTempoModeButtons();
     refreshClockButtons();
     refreshBufferButtons();
     refreshSourceButton();
     refreshProcButton();
+    refreshLoopModeButton();
 }
 
 void MainComponent::startPressed()
@@ -1121,7 +1142,8 @@ namespace
             "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
             "microfono che sente la stanza. BRANO legge un file e lo manda sia "
             "all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il "
-            "file e PLAY lo mette in pausa. In IPAD l'app toglie shaker e congas "
+            "file; l'onda sotto (o sul palco) si trascina per saltare. PLAY "
+            "mette in pausa. In IPAD l'app toglie shaker e congas "
             "da quello che ascolta. MIC regola quanto sente l'analisi. "
             "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
             "vuole l'analisi."));
@@ -1140,7 +1162,7 @@ namespace
         return juce::roundToInt (f.getHeight() * 1.28f) * lines;
     }
 
-    constexpr int kStatusLines = 8;
+    constexpr int kStatusLines = 9;
 }
 
 void MainComponent::refreshClockButtons()
@@ -1261,9 +1283,133 @@ void MainComponent::loadInternalTrack (juce::URL url)
                               reader->sampleRate, 2);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
     trackName = trackUrl.getFileName();
+    buildTrackWaveform();
     selectFollowSource (vp::FollowSource::internalPlayer);
     trackTransport.start();
     refreshInternalTrackButtons();
+    relayoutSettings();
+    if (settingsOverlay.isVisible())
+        repaint();
+}
+
+void MainComponent::relayoutSettings()
+{
+    if (settingsOverlay.getWidth() > 0 && settingsOverlay.getHeight() > 0)
+        layoutSettings (settingsOverlay.getLocalBounds());
+
+    layoutTrackWaveform();
+}
+
+void MainComponent::layoutTrackWaveform()
+{
+    if (trackReader == nullptr)
+    {
+        trackWaveform.setVisible (false);
+        return;
+    }
+
+    juce::Rectangle<int> bounds;
+    if (settingsOverlay.isVisible() && ! settingsRows.trackWave.isEmpty())
+        bounds = getLocalArea (&settingsOverlay, settingsRows.trackWave);
+    else
+    {
+        const auto rows = stageRows (stageArea());
+        bounds = rows.trackWave.isEmpty() ? juce::Rectangle<int>{} : rows.trackWave.reduced (2, 4);
+    }
+
+    if (bounds.isEmpty())
+    {
+        trackWaveform.setVisible (false);
+        return;
+    }
+
+    trackWaveform.setBounds (bounds);
+    trackWaveform.setVisible (true);
+    trackWaveform.toFront (false);
+}
+
+int MainComponent::trackWaveformHeight() const noexcept
+{
+    return trackReader != nullptr ? 72 : 0;
+}
+
+void MainComponent::clearTrackWaveform()
+{
+    trackWavePeaks.clearQuick();
+    trackWaveLengthSec = 0.0;
+    trackWavePreview = -1.0;
+    trackWaveform.setVisible (false);
+    trackWaveform.repaint();
+}
+
+void MainComponent::buildTrackWaveform()
+{
+    clearTrackWaveform();
+    if (trackReader == nullptr)
+        return;
+
+    auto* reader = trackReader->getAudioFormatReader();
+    if (reader == nullptr || reader->lengthInSamples <= 0)
+        return;
+
+    constexpr int kCols = 1024;
+    trackWavePeaks.resize (kCols);
+    trackWavePeaks.fill (0.0f);
+
+    const int64_t total = reader->lengthInSamples;
+    const int numCh = juce::jmax (1, (int) reader->numChannels);
+    const int block = 65536;
+    juce::AudioBuffer<float> buf (numCh, block);
+
+    for (int64_t pos = 0; pos < total;)
+    {
+        const int n = (int) juce::jmin<int64_t> (block, total - pos);
+        if (! reader->read (&buf, 0, n, pos, true, true))
+            break;
+
+        for (int i = 0; i < n; ++i)
+        {
+            const int64_t sampleIdx = pos + i;
+            const int col = (int) juce::jlimit<int64_t> (0, kCols - 1, (sampleIdx * kCols) / total);
+            float peak = 0.0f;
+            for (int c = 0; c < numCh; ++c)
+                peak = juce::jmax (peak, std::abs (buf.getSample (c, i)));
+            trackWavePeaks.set (col, juce::jmax (trackWavePeaks.getReference (col), peak));
+        }
+        pos += n;
+    }
+
+    float maxPeak = 0.0f;
+    for (float p : trackWavePeaks)
+        maxPeak = juce::jmax (maxPeak, p);
+    if (maxPeak > 1.0e-9f)
+        for (float& p : trackWavePeaks)
+            p /= maxPeak;
+
+    trackWaveLengthSec = static_cast<double> (total) / reader->sampleRate;
+    trackWaveform.setVisible (true);
+    relayoutSettings();
+    trackWaveform.repaint();
+}
+
+void MainComponent::seekInternalTrack (double proportion)
+{
+    if (trackReader == nullptr || trackWaveLengthSec <= 0.0)
+        return;
+
+    proportion = juce::jlimit (0.0, 1.0, proportion);
+    trackTransport.setPosition (proportion * trackWaveLengthSec);
+    engine.notifyTrackSeek();
+
+    if (! internalTrackSelected())
+        selectFollowSource (vp::FollowSource::internalPlayer);
+
+    if (! trackTransport.isPlaying())
+        trackTransport.start();
+
+    trackWavePreview = -1.0;
+    refreshInternalTrackButtons();
+    trackWaveform.repaint();
 }
 
 void MainComponent::toggleInternalTrack()
@@ -1322,7 +1468,11 @@ void MainComponent::setSettingsOpen (bool open)
     {
         settingsOverlay.toFront (false);
         settingsOverlay.setBounds (getLocalBounds());
+        relayoutSettings();
     }
+    else
+        layoutTrackWaveform();
+
     repaint();
 }
 
@@ -1399,14 +1549,22 @@ void MainComponent::loadPrefs()
     engine.settings().dynamicsFollow.store (
         prefs->getBoolValue ("dynamicsFollow", engine.settings().dynamicsFollow.load()));
 
-    const int oct = prefs->getIntValue ("tempoOctave",
-                                        engine.settings().tempoOctave.load());
-    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, oct));
-
     engine.settings().shakerEnabled.store (
         prefs->getBoolValue ("shakerEnabled", engine.settings().shakerEnabled.load()));
     engine.settings().congasEnabled.store (
         prefs->getBoolValue ("congasEnabled", engine.settings().congasEnabled.load()));
+
+    const bool recordedLoops = loopBankReady
+                               && prefs->getBoolValue ("recordedLoops", true);
+    engine.setRecordedLoopsEnabled (recordedLoops);
+    if (recordedLoops)
+    {
+        // Safe migration for installs which saved AUTO, another sample rate or
+        // a very short buffer before the recorded bank was bundled.
+        clockHz = 48000;
+        if (bufferChoice == 0 || bufferChoice < 256)
+            bufferChoice = 256;
+    }
 
     const float mix = clamp01 (prefs->getDoubleValue ("instrumentMix", 0.50), 0.50);
     engine.settings().instrumentMix.store (mix);
@@ -1445,6 +1603,56 @@ void MainComponent::loadPrefs()
 
     const bool congasOn = engine.settings().congasEnabled.load();
     congasButton.setToggleState (congasOn, juce::dontSendNotification);
+    refreshLoopModeButton();
+}
+
+bool MainComponent::loadBundledLoopBank()
+{
+#if defined (VP_HAS_LOOP_BANK) && VP_HAS_LOOP_BANK
+    int manifestBytes = 0;
+    const char* manifest = embeddedLoopResource ("bank.vploops", manifestBytes);
+    if (manifest == nullptr || manifestBytes <= 0)
+    {
+        loopBankError = "manifest incorporato mancante";
+        engine.setRecordedLoopsEnabled (false);
+        return false;
+    }
+
+    std::string error;
+    const bool ok = engine.loadLoopBankFromMemory (
+        std::string (manifest, static_cast<size_t> (manifestBytes)),
+        [] (const std::string& filename, vp::WavAudio& audio, std::string& why)
+        {
+            int bytes = 0;
+            const char* data = embeddedLoopResource (filename, bytes);
+            if (data == nullptr || bytes <= 0)
+            {
+                why = "embedded WAV not found: " + filename;
+                return false;
+            }
+            return vp::decodeWav (reinterpret_cast<const unsigned char*> (data),
+                                  static_cast<size_t> (bytes), audio, why);
+        },
+        error);
+
+    loopBankError = ok ? juce::String() : juce::String (error);
+    if (! ok)
+        engine.setRecordedLoopsEnabled (false);
+    return ok;
+#else
+    loopBankError = "banco non incluso in questa build";
+    engine.setRecordedLoopsEnabled (false);
+    return false;
+#endif
+}
+
+void MainComponent::refreshLoopModeButton()
+{
+    const bool loops = loopBankReady && engine.recordedLoopsEnabled();
+    loopModeButton.setEnabled (loopBankReady);
+    loopModeButton.setButtonText (loopBankReady ? (loops ? "LOOP" : "PATTERN")
+                                                : "LOOP N/D");
+    paintChoice (loopModeButton, loops);
 }
 
 void MainComponent::savePrefs (bool flush)
@@ -1463,9 +1671,9 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
     prefs->setValue ("grooveAuto", engine.settings().grooveAuto.load());
     prefs->setValue ("dynamicsFollow", engine.settings().dynamicsFollow.load());
-    prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());
     prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
+    prefs->setValue ("recordedLoops", engine.recordedLoopsEnabled());
     prefs->setValue ("instrumentMix",
                      static_cast<double> (engine.settings().instrumentMix.load()));
     prefs->setValue ("inputGain",
@@ -1512,39 +1720,6 @@ void MainComponent::applyStyle (vp::GrooveStyle s)
     engine.settings().grooveStyle.store (static_cast<int> (s));
     refreshStyleButtons();
     savePrefs();
-}
-
-void MainComponent::applyTempoOctave (int octaves)
-{
-    engine.settings().tempoOctaveAuto.store (false);
-    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, octaves));
-    refreshOctaveButtons();
-    savePrefs();
-    repaint();
-}
-
-void MainComponent::applyTempoOctaveAuto()
-{
-    engine.settings().tempoOctaveAuto.store (true);
-    refreshOctaveButtons();
-    repaint();
-}
-
-void MainComponent::refreshOctaveButtons()
-{
-    // Only a level the listener picked lights the button. Under AUTO the level
-    // may well be halved, and the tempo line says so - but a filled button
-    // means "you asked for this", and the way back is to press it again.
-    const bool mine = ! engine.settings().tempoOctaveAuto.load();
-    const int oct = engine.settings().tempoOctave.load();
-    auto paint = [] (juce::TextButton& b, bool on)
-    {
-        b.setToggleState (on, juce::dontSendNotification);
-        b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
-        b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
-    };
-    paint (halveButton, mine && oct < 0);
-    paint (doubleButton, mine && oct > 0);
 }
 
 void MainComponent::applyStyleAuto (bool on)
@@ -1791,6 +1966,8 @@ void MainComponent::timerCallback()
     }
     if (tapFlash > 0)
         --tapFlash;
+    if (trackReader != nullptr)
+        trackWaveform.repaint();
     refreshStartButton();
     refreshTempoModeButtons();
     if (engine.settings().grooveAuto.load())
@@ -1885,9 +2062,10 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     const bool follow = engine.settings().tempoFollow.load();
     // SEGUI/FISSO live on the status row now, so the old 36-point mode row is
     // only kept for the ± BPM nudge that appears under FISSO.
+    const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
     const int natural = 18 + 6 + 36 + 6 + naturalBpm + 16
                         + (follow ? 0 : 28) + 18 + 10
-                        + naturalBeats + 20 + 10 + 10 + 18;
+                        + naturalBeats + 20 + trackExtra + 10 + 10 + 18;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
                           : 1.0f;
@@ -1915,13 +2093,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     area.removeFromTop (px (6));
     s.bpm = area.removeFromTop (bpmH);
     {
-        // A bounded block, centred. Wider than this and the two octave buttons
-        // sit so far from the number that they read as unrelated; narrower and
-        // the number has nowhere to go.
-        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 430), bpmH);
-        const int octW = juce::jlimit (48, 78, block.getWidth() / 6);
-        s.octaveDown = block.removeFromLeft (octW).reduced (0, bpmH / 5);
-        s.octaveUp = block.removeFromRight (octW).reduced (0, bpmH / 5);
+        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 320), bpmH);
         s.bpmNumber = block.reduced (8, 0);
     }
     s.bpmLabel = area.removeFromTop (px (16));
@@ -1933,6 +2105,11 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // Beside the dots, because that is what it moves.
     s.barShift = s.beats.removeFromRight (juce::jmin (96, s.beats.getWidth() / 4))
                         .reduced (2, beatsH / 4);
+    if (trackReader != nullptr)
+    {
+        area.removeFromTop (px (6));
+        s.trackWave = area.removeFromTop (px (trackWaveformHeight()));
+    }
     s.part = area.removeFromTop (px (20));
     area.removeFromTop (px (10));
     s.meter = area.removeFromTop (px (10)).reduced (juce::jmax (0, area.getWidth() / 6), 2);
@@ -2066,17 +2243,15 @@ void MainComponent::resized()
     r.removeFromTop (8);
 
     settingsOverlay.setBounds (getLocalBounds());
+    if (settingsOverlay.isVisible())
+        layoutSettings (settingsOverlay.getLocalBounds());
 
     if (isLandscape())
         r.removeFromLeft (stage.getWidth() + 16);
     else
         r.removeFromTop (stage.getHeight() + 14);
 
-    // The halve/double pair flanks the number it applies to, close enough to
-    // read as belonging to it and never overlapping it.
     const auto rows = stageRows (stage);
-    halveButton.setBounds (rows.octaveDown);
-    doubleButton.setBounds (rows.octaveUp);
     barButton.setBounds (rows.barShift);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
@@ -2104,6 +2279,7 @@ void MainComponent::resized()
     }
 
     layoutConsole (r);
+    layoutTrackWaveform();
 }
 
 
@@ -2245,9 +2421,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         {
             tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0
                                                                   ? "  \xc2\xb7  a met\xc3\xa0"
-                                                                  : "  \xc2\xb7  doppio"));
-            if (snap.tempoOctaveAuto)
-                tempoLine += " (auto)";
+                                                                  : "  \xc2\xb7  doppio"))
+                          + " (auto)";
         }
         g.drawFittedText (tempoLine, rows.tempoLine, juce::Justification::centred, 1);
     }
@@ -2420,7 +2595,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     int h[kCards] = {
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
-        chrome + rowH + noteGap + noteHeight (inputNote(), bodyW),
+        chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0)
+            + noteGap + noteHeight (inputNote(), bodyW),
         chrome + rowH,
         chrome + juce::roundToInt (fontUi (12.0f, false).getHeight() * 1.32f) * kStatusLines
     };
@@ -2481,16 +2657,25 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
                    { &sourceButton, &trackLoadButton, &trackPlayButton,
                      &procButton, &kickButton });
+        if (trackWaveformHeight() > 0)
+        {
+            const int waveH = juce::jmin (trackWaveformHeight(), juce::jmax (40, body.getHeight() - noteGap - 24));
+            settingsRows.trackWave = body.removeFromTop (waveH).reduced (2, 4);
+        }
+        else
+            settingsRows.trackWave = {};
+
         settingsRows.inputNote = body.withTrimmedTop (noteGap);
     }
 
-    buttonRow (card (take (h[kTests]), "PROVE"),
-               { &themeButton, &clickButton, &latencyButton, &debugButton });
+    buttonRow (card (take (h[kTests]), "PERCUSSIONI / PROVE"),
+               { &loopModeButton, &themeButton, &clickButton, &latencyButton, &debugButton });
 
     // The numbers are the point of the page: a clock the listener chose and a
     // clock the hardware gave are not the same thing, and only one of them is
     // what the engine is running at.
     settingsRows.status = card (take (h[kStatus]), "STATO");
+    layoutTrackWaveform();
 }
 
 void MainComponent::paintSettings (juce::Graphics& g)
@@ -2557,6 +2742,21 @@ void MainComponent::paintSettings (juce::Graphics& g)
                    + (vp::otherAudioPlaying() ? "in riproduzione" : "ferme"));
         lines.add (juce::String ("motore     ")
                    + (snap.aiOnnx ? "ONNX BeatNet" : "AI STUB"));
+        juce::String partStatus;
+        if (! loopBankReady)
+            partStatus = "PATTERN  (banco non disponibile)";
+        else if (! engine.recordedLoopsEnabled())
+            partStatus = "PATTERN";
+        else if (snap.sampleRate > 1000.0 && std::fabs (snap.sampleRate - 48000.0) >= 1.0)
+            partStatus = "LOOP  (serve 48 kHz)";
+        else if (engine.settings().swing.load (std::memory_order_relaxed) > 0.18f)
+            partStatus = "LOOP  (swing massimo 18%)";
+        else if (snap.bpm > 1.0f && (snap.bpm < 98.0f || snap.bpm > 155.0f))
+            partStatus = "LOOP  (BPM fuori banco)";
+        else
+            partStatus = snap.loopPlaying ? "LOOP  (in riproduzione)"
+                                          : "LOOP  (attesa clock)";
+        lines.add ("parte      " + partStatus);
         // A rig that needs this is a rig with a problem the app is papering
         // over, so the number is on the page rather than in a log nobody reads.
         lines.add (juce::String ("riavvii    ") + juce::String (deviceRebuilds)
@@ -2649,7 +2849,13 @@ void MainComponent::paint (juce::Graphics& g)
         lines.add ("prove " + juce::String (snap.evidenceTrust, 2)
                    + "  tau " + juce::String (snap.gridTauSec, 2) + " s"
                    + "  fit " + juce::String (snap.fitResidual, 3)
-                   + "/" + juce::String (snap.fitCoverage, 2));
+                   + "/" + juce::String (snap.fitCoverage, 2)
+                   + "  cambio "
+                   + juce::String (static_cast<int> (snap.tempoTransitionState))
+                   + "/" + juce::String (static_cast<int> (snap.tempoTransitionReason))
+                   + " " + juce::String (snap.tempoTransitionBpm, 1)
+                   + "@" + juce::String (snap.tempoTransitionConfidence, 2)
+                   + " x" + juce::String (snap.tempoTransitionIntervals));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
                    + juce::String (snap.leadMs, 1) + " ms");
@@ -2672,4 +2878,111 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  occ " + juce::String (snap.styleOccupancy, 2));
         g.drawFittedText (lines.joinIntoString ("\n"), dbg.reduced (16), juce::Justification::topLeft, 16);
     }
+}
+
+double MainComponent::TrackWaveform::proportionFromX (float x) const
+{
+    const float w = static_cast<float> (getWidth());
+    if (w <= 1.0f)
+        return 0.0;
+    return juce::jlimit (0.0, 1.0, static_cast<double> (x) / static_cast<double> (w));
+}
+
+void MainComponent::TrackWaveform::drawPlayhead (juce::Graphics& g, juce::Rectangle<float> wave,
+                                                 double proportion, juce::Colour col,
+                                                 bool handle) const
+{
+    if (proportion < 0.0 || proportion > 1.0 || wave.isEmpty())
+        return;
+
+    const float x = wave.getX() + static_cast<float> (proportion) * wave.getWidth();
+    g.setColour (col);
+    g.drawLine (x, wave.getY(), x, wave.getBottom(), handle ? 2.5f : 1.5f);
+
+    if (handle)
+    {
+        const float r = 9.0f;
+        const float cy = wave.getCentreY();
+        g.setColour (col.withAlpha (0.35f));
+        g.fillEllipse (x - r - 2.0f, cy - r - 2.0f, (r + 2.0f) * 2.0f, (r + 2.0f) * 2.0f);
+        g.setColour (col);
+        g.fillEllipse (x - r, cy - r, r * 2.0f, r * 2.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.95f));
+        g.drawEllipse (x - r, cy - r, r * 2.0f, r * 2.0f, 2.0f);
+    }
+}
+
+void MainComponent::TrackWaveform::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    if (bounds.isEmpty())
+        return;
+
+    g.setColour (ink());
+    g.fillRoundedRectangle (bounds, 6.0f);
+    g.setColour (text().withAlpha (0.10f));
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.0f);
+
+    const auto& peaks = owner.trackWavePeaks;
+    const auto wave = bounds.reduced (6.0f, 10.0f);
+
+    if (peaks.isEmpty() || owner.trackWaveLengthSec <= 0.0)
+    {
+        g.setColour (mute());
+        g.setFont (fontUi (11.0f, false));
+        g.drawFittedText ("Onda in caricamento\u2026", bounds.toNearestInt(),
+                          juce::Justification::centred, 1);
+        return;
+    }
+
+    const float midY = wave.getCentreY();
+    const float halfH = wave.getHeight() * 0.40f;
+    const int w = juce::jmax (1, (int) wave.getWidth());
+
+    g.setColour (fuchsia().withAlpha (0.70f));
+    for (int x = 0; x < w; ++x)
+    {
+        const int idx = (x * peaks.size()) / w;
+        const float amp = peaks[juce::jlimit (0, peaks.size() - 1, idx)];
+        const float barH = juce::jmax (1.0f, amp * halfH * 2.0f);
+        const float px = wave.getX() + static_cast<float> (x);
+        g.fillRect (px, midY - barH * 0.5f, 1.0f, barH);
+    }
+
+    const double play = owner.trackWaveLengthSec > 0.0
+                            ? owner.trackTransport.getCurrentPosition() / owner.trackWaveLengthSec
+                            : 0.0;
+    drawPlayhead (g, wave, play, fuchsia(), true);
+
+    if (owner.trackWavePreview >= 0.0)
+        drawPlayhead (g, wave, owner.trackWavePreview, text().withAlpha (0.75f), true);
+}
+
+void MainComponent::TrackWaveform::mouseEnter (const juce::MouseEvent&)
+{
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void MainComponent::TrackWaveform::mouseExit (const juce::MouseEvent&)
+{
+    setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+void MainComponent::TrackWaveform::mouseDown (const juce::MouseEvent& e)
+{
+    owner.trackWavePreview = proportionFromX (static_cast<float> (e.position.x));
+    repaint();
+    owner.repaint();
+}
+
+void MainComponent::TrackWaveform::mouseDrag (const juce::MouseEvent& e)
+{
+    owner.trackWavePreview = proportionFromX (static_cast<float> (e.position.x));
+    repaint();
+    owner.repaint();
+}
+
+void MainComponent::TrackWaveform::mouseUp (const juce::MouseEvent& e)
+{
+    owner.seekInternalTrack (proportionFromX (static_cast<float> (e.position.x)));
 }

@@ -97,6 +97,23 @@ struct BeatHypothesis
         otherwise - the estimator lives on the worker thread. */
     float    combBpm     = 0.0f;
     bool     levelSettled = false;
+
+    /** The abrupt-change decision and the evidence under it. `transitionBpm` is
+        the candidate tempo the two coherent intervals measured, which is not
+        `bpm` until the change has been confirmed; `transitionIntervals` is how
+        many of them there are, so a consumer can see the difference between a
+        suspicion and a decision without inferring it from the state.
+
+        `transitionSerial` is the counter a consumer must compare against: a
+        confirmed transition is published for as long as it lasts, at fifty
+        frames a second, and acting on the state rather than on the serial
+        would adopt the same change dozens of times. */
+    TempoTransitionState  transitionState  = TempoTransitionState::stable;
+    TempoTransitionReason transitionReason = TempoTransitionReason::none;
+    float    transitionBpm        = 0.0f;
+    float    transitionConfidence = 0.0f;
+    int      transitionIntervals  = 0;
+    uint32_t transitionSerial     = 0;
 };
 
 /**
@@ -162,6 +179,30 @@ public:
             }
         }
         return false;
+    }
+
+    /** A generation that advances only after a complete payload publication.
+        While the writer owns the slot its odd sequence maps to the preceding
+        completed generation, so observers never mistake a partial copy for
+        progress. */
+    uint32_t completedSequence() const noexcept
+    {
+        return seq.load (std::memory_order_acquire) & ~uint32_t { 1 };
+    }
+
+    /** Lifecycle-thread single-writer exception. NeuralBeatTracker calls this
+        only after its worker has been joined and marked unarmed. The odd marker
+        keeps concurrent readers from accepting staging words while they are
+        cleared; publishing remains worker-only whenever the tracker is live. */
+    void clearWhenWriterStopped() noexcept
+    {
+        const uint32_t s = seq.load (std::memory_order_relaxed);
+        seq.store (s | 1u, std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        for (auto& word : words)
+            word.store (0, std::memory_order_relaxed);
+        std::atomic_thread_fence (std::memory_order_release);
+        seq.store (0, std::memory_order_relaxed);
     }
 
 private:

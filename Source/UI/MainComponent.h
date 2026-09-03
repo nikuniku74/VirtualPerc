@@ -65,11 +65,19 @@ private:
     void refreshSourceButton();
     void chooseInternalTrack();
     void loadInternalTrack (juce::URL url);
+    void seekInternalTrack (double proportion);
+    void buildTrackWaveform();
+    void clearTrackWaveform();
+    void relayoutSettings();
+    void layoutTrackWaveform();
+    int  trackWaveformHeight() const noexcept;
     void toggleInternalTrack();
     void selectFollowSource (vp::FollowSource source);
     bool internalTrackSelected() const noexcept;
     void refreshInternalTrackButtons();
     void refreshProcButton();
+    void refreshLoopModeButton();
+    bool loadBundledLoopBank();
     void refreshMixLabels();
 
     void setSettingsOpen (bool open);
@@ -85,9 +93,6 @@ private:
     void refreshStyleButtons();
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
-    void applyTempoOctave (int octaves);
-    void applyTempoOctaveAuto();
-    void refreshOctaveButtons();
     void refreshBarButton();
 
     /** The margin every full-screen page starts from: what the design wants,
@@ -136,21 +141,16 @@ private:
         stage rows are: a caption cannot drift away from the row it explains. */
     struct SettingsRows
     {
-        juce::Rectangle<int> title, clockNote, bufferNote, inputNote, status;
+        juce::Rectangle<int> title, clockNote, bufferNote, inputNote, trackWave, status;
     };
     SettingsRows settingsRows;
 
-    /** The stage laid out row by row. Both resized() and paint() ask for it, so
-        the halve/double buttons cannot end up somewhere other than beside the
-        number they apply to. */
+    /** The stage laid out row by row. Both resized() and paint() ask for it. */
     struct StageRows
     {
         juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoNudge,
-                             tempoLine, beats, part, meter, mic;
-        /** The three columns the tempo row is divided into. The number gets the
-            middle one and nothing else: given the whole row it grew until it
-            ran under the two buttons and out of the column. */
-        juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
+                             tempoLine, beats, trackWave, part, meter, mic;
+        juce::Rectangle<int> bpmNumber;
         juce::Rectangle<int> barShift;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
@@ -200,12 +200,32 @@ private:
         MainComponent& owner;
     };
 
+    /** Seekable overview of the loaded backing track. Lives on the settings
+        page under CARICA / PLAY; drag previews, release seeks and plays. */
+    struct TrackWaveform final : juce::Component
+    {
+        explicit TrackWaveform (MainComponent& o) : owner (o)
+        {
+            setOpaque (false);
+            setInterceptsMouseClicks (true, true);
+        }
+        void paint (juce::Graphics& g) override;
+        void mouseDown (const juce::MouseEvent& e) override;
+        void mouseDrag (const juce::MouseEvent& e) override;
+        void mouseUp (const juce::MouseEvent& e) override;
+        void mouseEnter (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+    private:
+        double proportionFromX (float x) const;
+        void drawPlayhead (juce::Graphics& g, juce::Rectangle<float> wave,
+                           double proportion, juce::Colour col, bool handle) const;
+        MainComponent& owner;
+    };
+
     AppLookAndFeel appLaf;
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 
-    juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
-    juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
     /** Presses since the count became the listener's. Four is all the way round
         the bar, and the one after that hands it back to the app. */
@@ -231,6 +251,9 @@ private:
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };
     juce::TextButton buf256 { "256" }, buf512 { "512" };
     juce::TextButton procButton { "ELAB.  OFF" };
+    /** Runtime choice: the original stroke-by-stroke engine, or the recorded
+        bank with the original engine as its compatibility fallback. */
+    juce::TextButton loopModeButton { "LOOP" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton congasButton { "CONGAS" };
     juce::TextButton styleAuto { "AUTO" };
@@ -280,6 +303,11 @@ private:
     juce::Rectangle<int> beatStrip;
     juce::Rectangle<int> tapStrip;
     TapZone tapZone { *this };
+    TrackWaveform trackWaveform { *this };
+
+    juce::Array<float> trackWavePeaks;
+    double trackWaveLengthSec = 0.0;
+    double trackWavePreview = -1.0;
 
     std::unique_ptr<juce::PropertiesFile> prefs;
 
@@ -299,6 +327,8 @@ private:
     int  clockHz = 0;
     int  bufferChoice = 0;
     bool inputProcessing = false;
+    bool loopBankReady = false;
+    juce::String loopBankError;
 
     /** Blocks the audio callback has run, and the value the last timer tick saw.
         The device can stop calling us without telling anyone - a media server

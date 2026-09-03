@@ -130,10 +130,11 @@ Three rules:
    two beats and answers it over the next two. These used to be four identical
    beats written out four times; however musical the numbers were, nothing in
    the bar told you where you were in it, so it read as a machine.
-3. **`setShakerSubdivision` thins, never adds.** `quarter` keeps `step % 4 == 0`,
-   `eighth` keeps `step % 2 == 0`, `autoDetect` means eighths - which is what a
-   shaker mostly plays. A style that does not want sixteenths does not get them
-   because the user asked for a busy shaker.
+3. **`setSubdivision` thins, never adds.** `quarter` keeps steps 0/4/8/12,
+   `eighth` keeps even steps, `sixteenth` keeps all steps, and `autoDetect`
+   means eighths. The same predicate gates shaker, written congas, fills and
+   conga ghosts. The no-conga-on-step-0 guard still wins. Recorded WAV loop
+   stems do not pass through this event filter.
 
 `spec.accent[4]` scales by quarter and belongs to the **style**: marcha and pop
 lean on the one (1.00, 0.86, 0.93, 0.88), rock leans on 2 and 4 with the drummer
@@ -301,6 +302,8 @@ Always also run `./scripts/run-tests.sh`.
 - `Source/Loops/` + `docs/RECORDED_LOOPS.md` - the recorded-loop percussionist,
   behind `VP_ENABLE_RECORDED_LOOPS` (off by default). The clock is never the
   loop's: the loop is pulled onto the grid, corrected by rate, never by a jump.
+  Loop stems are not thinned by `setSubdivision`; only synthesized
+  `GrooveEngine` events are.
 - `docs/SMART_PERCUSSION.md` - gap analysis and the plan this came from.
 - `docs/AUDIO_ENGINE.md` - the signal path around all of this.
 - For anything about *when* a stroke happens rather than *what* it is, use the

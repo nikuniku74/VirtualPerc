@@ -19,7 +19,9 @@ Non-negotiables it spells out:
 - The shaker is two strokes - `shakerDown` on the pulse, `shakerUp` on the
   return - and each style's `shaker[16]` is a **bar-long** figure, not one beat
   repeated four times.
-- `setShakerSubdivision` thins the style's pattern; it never adds to it.
+- `setSubdivision` thins the style's pattern; it never adds to it. The same
+  predicate gates shaker, written congas, fills and conga ghosts (see
+  `.claude/skills/percussion-patterns/SKILL.md`).
 - Dynamics make the part play **less**, not just quieter: `v_survives` thins
   from the bottom against `kThinCeiling = 0.72`, so the skeleton always survives.
 - Each of the nine styles has its own conga figure, its own shaker weighting and

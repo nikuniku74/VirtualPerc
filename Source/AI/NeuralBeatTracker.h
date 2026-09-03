@@ -52,7 +52,13 @@ public:
     {
         inputEpoch.store (epoch, std::memory_order_relaxed);
     }
-    bool tryLoad (BeatHypothesis& out) const noexcept { return slot.load (out); }
+
+    /** Reject publications describing audio older than the input position at
+        this call. This is reader-side freshness only: it does not touch the
+        FIFO, model, feature extractor, decoder, or worker timeline. */
+    void invalidatePublicationsBeforeNow() noexcept;
+    bool tryLoad (BeatHypothesis& out) const noexcept;
+    uint32_t publicationSequence() const noexcept { return slot.completedSequence(); }
 
     bool running() const noexcept { return armed.load (std::memory_order_relaxed); }
     bool usingOnnx() const noexcept { return onnxFlag.load (std::memory_order_relaxed); }
@@ -81,6 +87,14 @@ public:
         one run to the next. */
     int backlog() const noexcept { return fifo.available(); }
 
+    /** Device-input samples for which the worker has completed feature
+        extraction, inference and publication. Tests use this completion
+        condition instead of mistaking an empty FIFO for finished work. */
+    int64_t completedSamples() const noexcept
+    {
+        return completedTotal.load (std::memory_order_acquire);
+    }
+
 private:
     void workerLoop();
     int64_t analysisSampleFor (uint64_t frameIndex) noexcept;
@@ -99,11 +113,13 @@ private:
     std::atomic<bool> armed { false };
     std::atomic<bool> onnxFlag { false };
     std::atomic<int64_t> fedTotal { 0 };
+    std::atomic<int64_t> completedTotal { 0 };
     std::atomic<int64_t> gapCount { 0 };
     std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
     std::atomic<bool> wantedLineFeed { false };
     std::atomic<uint32_t> inputEpoch { 0 };
+    std::atomic<int64_t> minimumAnalysisSample { 0 };
     uint32_t seenInputEpoch = 0;
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across

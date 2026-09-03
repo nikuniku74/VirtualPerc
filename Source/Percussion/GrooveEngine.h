@@ -111,9 +111,10 @@ public:
     void setShakerEnabled (bool on) noexcept { shakerOn = on; }
     void setCongasEnabled (bool on) noexcept { congasOn = on; }
 
-    /** How dense the shaker is. `autoDetect` means eighths, which is what a
-        shaker mostly plays. */
-    void setShakerSubdivision (Subdivision s) noexcept;
+    /** How dense the synthesized shaker and conga parts are. `autoDetect`
+        means eighths. The setting only thins authored events; it never adds
+        or moves them. */
+    void setSubdivision (Subdivision s) noexcept;
 
     /** Strokes falling on one sixteenth of one bar. `barIndex` counts bars
         since the part started and selects the phrase; `step` is 0..15.
@@ -142,7 +143,7 @@ private:
     float dynamics = 1.0f;
     bool  shakerOn = true;
     bool  congasOn = true;
-    Subdivision shakerGrid = Subdivision::eighth;
+    Subdivision subdivisionGrid = Subdivision::eighth;
 };
 
 } // namespace vp

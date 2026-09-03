@@ -1,0 +1,219 @@
+# VirtualPerc loop bank - see docs/RECORDED_LOOPS.md
+version 1
+bank dance
+
+[loop]
+id dance_grooveA_110_straight_congas_t1
+file dance_grooveA_110_straight_congas_t1.wav
+style dance
+role grooveA
+stem congas
+bpm 110.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 210415
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 27142 53324 79505 105687 131869 158051 184233
+
+[loop]
+id dance_grooveA_110_straight_congas_t2
+file dance_grooveA_110_straight_congas_t2.wav
+style dance
+role grooveA
+stem congas
+bpm 110.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 210415
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 27142 53324 79505 105687 131869 158051 184233
+
+[loop]
+id dance_grooveA_124_straight_congas_t1
+file dance_grooveA_124_straight_congas_t1.wav
+style dance
+role grooveA
+stem congas
+bpm 124.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 186766
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 24186 47412 70637 93863 117089 140315 163541
+
+[loop]
+id dance_grooveA_124_straight_congas_t2
+file dance_grooveA_124_straight_congas_t2.wav
+style dance
+role grooveA
+stem congas
+bpm 124.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 186766
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 24186 47412 70637 93863 117089 140315 163541
+
+[loop]
+id dance_grooveA_138_straight_congas_t1
+file dance_grooveA_138_straight_congas_t1.wav
+style dance
+role grooveA
+stem congas
+bpm 138.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 167917
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 21830 42699 63569 84438 105308 126177 147047
+
+[loop]
+id dance_grooveA_138_straight_congas_t2
+file dance_grooveA_138_straight_congas_t2.wav
+style dance
+role grooveA
+stem congas
+bpm 138.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 167917
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 21830 42699 63569 84438 105308 126177 147047
+
+[loop]
+id dance_grooveA_110_straight_shaker_t1
+file dance_grooveA_110_straight_shaker_t1.wav
+style dance
+role grooveA
+stem shaker
+bpm 110.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 210415
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 27142 53324 79505 105687 131869 158051 184233
+
+[loop]
+id dance_grooveA_110_straight_shaker_t2
+file dance_grooveA_110_straight_shaker_t2.wav
+style dance
+role grooveA
+stem shaker
+bpm 110.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 210415
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 27142 53324 79505 105687 131869 158051 184233
+
+[loop]
+id dance_grooveA_124_straight_shaker_t1
+file dance_grooveA_124_straight_shaker_t1.wav
+style dance
+role grooveA
+stem shaker
+bpm 124.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 186766
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 24186 47412 70637 93863 117089 140315 163541
+
+[loop]
+id dance_grooveA_124_straight_shaker_t2
+file dance_grooveA_124_straight_shaker_t2.wav
+style dance
+role grooveA
+stem shaker
+bpm 124.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 186766
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 24186 47412 70637 93863 117089 140315 163541
+
+[loop]
+id dance_grooveA_138_straight_shaker_t1
+file dance_grooveA_138_straight_shaker_t1.wav
+style dance
+role grooveA
+stem shaker
+bpm 138.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 167917
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 1
+beats 960 21830 42699 63569 84438 105308 126177 147047
+
+[loop]
+id dance_grooveA_138_straight_shaker_t2
+file dance_grooveA_138_straight_shaker_t2.wav
+style dance
+role grooveA
+stem shaker
+bpm 138.0000
+bars 2
+meter 4/4
+firstBeatSample 960
+frames 167917
+channels 2
+sampleRate 48000
+intensity 0.500
+swing 0.000
+take 2
+beats 960 21830 42699 63569 84438 105308 126177 147047

@@ -184,6 +184,59 @@ A record cut to a click does not change tempo; a band on stage does. `BeatDecode
 
 `fixed` is deliberately stubborn: it is released by three recent intervals agreeing on a direction, which arrives well before the eight-beat fit notices, and it is what keeps a drum fill from dragging the tempo. It cannot be entered while `TempoEstimator` still names a different level, so a bad first guess cannot make itself permanent.
 
+#### Abrupt 5–10 % changes: two intervals, no look-ahead
+
+The ordinary short and long fits are intentionally too slow to answer an abrupt
+change within a couple of beats. A separate bounded path uses exactly two
+**changed intervals**. The first interval only publishes `suspected`: it never
+changes the clock, because one odd interval may be a fill, a flam or a missed
+beat. Adoption occurs on the first 50 Hz frame where the peak ending the second
+changed interval has been causally finalized by the following lower activation
+frame — in short: two changed intervals, with adoption at the first frame where
+the second peak is causally finalized. No future frame and no look-ahead is
+used.
+
+When those two intervals agree, their BPM is adopted immediately as a **rate**
+while clock phase, beat count, bar count and pulse position remain continuous.
+For one beat at the adopted tempo, phase steering uses the current raw phase
+error and the time remaining in that beat to request only the rate needed to
+enter the 25 ms band. The request is clamped to ±25 %, so the clock remains
+monotonic; if a callback crosses the one-beat boundary it is processed as an
+exact rapid segment followed by the ordinary controller.
+
+One transition serial is consumed once. The decoder then waits for its
+eight-beat short fit to reform before it can confirm another change; this avoids
+confirming the same target twice, but a genuine second step inside those eight
+beats must use the ordinary fit. Candidate gates reject disagreement, weak
+room reflections, octave conflicts and changes outside the bounded range.
+Adjacent-interval edge checking keeps 4 s and 12 s ramps on the live-fit path;
+fills and single displaced events cannot supply two coherent intervals, and
+dropout/input/reset boundaries clear unfinished evidence.
+
+The confirmed `rapid` publication ends on the second subsequently accepted beat
+at the latest. It also carries a causal decoder-frame deadline of two periods at
+the confirmed reported tempo (including the listener's octave choice), so it
+expires as `stable/expired` even under complete silence or when every later peak
+is off the committed grid. Expiry does not change the transition serial, BPM,
+grid or phase, and it does not remove the separate eight-accepted-beat refit
+lockout.
+
+Manual tempo remains authoritative. TAP and FISSO consume a published serial
+without adopting it, so releasing the manual owner cannot replay a stale neural
+change. The optional CASSA channel is also unchanged and defaults off
+(`kickChannel == -1`): when explicitly assigned and trusted it refines phase
+from sample-timed kick onsets; it does not decide or adopt transition BPM.
+
+Final `VPAlign` results on 2 September 2026 use four fixed seeds per row. All
+five required steps (118→124, 118→128, 128→120, 76→82 and 168→156; 5.1–7.9 %)
+reached ±1 BPM in 0.78–1.47 s, measured 23.3–24.4 ms at the third beat, emitted
+exactly one rapid transition per seed, had zero pulse-count violations and
+never moved backward. This result is only for the required 5–10 % envelope.
+The 100→140 stress step published no rapid transition, reached ±1 BPM in
+26.70 s and measured 57.1 ms at the third beat; it remains a documented
+ordinary-path limitation, not evidence of improvement. Both ramps published
+zero rapid transitions.
+
 ### Two things that read as "it is not following the beat"
 
 Both were real and both are guarded now:
@@ -220,6 +273,8 @@ No causal system can infer a period or the first quarter from one isolated sound
 Every measurement above starts the music at sample zero, and that is the one case a device is never in: the app has been listening since it was opened, so by the time anybody plays, the analysis has been running for minutes on an empty room — and the guards inside `TempoEstimator` counted *frames*. Measured on the real network, forty seconds of room noise is enough for it to name a tempo with a salience of 0.29 and call the level **settled** a tenth of a second after the first beat, having examined none of it. `BeatHmm` is poisoned the same way: at the downbeat it already sits at 107 or 136 BPM with a margin of 2.7–8.0, and having a change penalty it then defends that against the music. End to end, a 128 BPM track behind twenty seconds of room locked at 150 BPM in the *fixed* regime and took 27 s to find 128, against 5.7 s from a cold start.
 
 The make-up gain is what hides this from everything downstream — it exists to hold the analysis at one level — so the moment has to be found before it, on the level of the analysis bus itself. `VirtualPercussionEngine::updateAnalysisEpoch` counts a restart when that level rises by 18 dB **out of a state that was properly quiet** (24 dB below the loudest this input reaches, remembered for a minute). Both halves are needed: a rise on its own cannot tell a band starting from a chorus arriving or a breakdown ending. It is upwards only — a level that falls is a song ending or a quiet verse — and a rise our own part caused is excluded, because what we play comes back on the microphone and the canceller does not always find it.
+
+That exclusion is a **freeze veto**: for the three quarters of a second blamed on our own output it refuses the epoch and returns before the ordinary level-reference maintenance. It used to ratchet that reference upward first, to the very level it was vetoing; the bar then stood at the band's own level for the rest of the session, so once the part had been audible the real band start was never noticed again. The shipped fix removes that ratchet but deliberately keeps the early-return freeze. On an input carrying no leak at all the master fader had moved the heard beat by 2.96 ms at 138 BPM and cost 4.35 s of the time to settle after twenty seconds of room. The retained freeze has a measured price: a band start landing inside the blame window is called a second later with the part audible (+1.56 s against +0.557 s), while a twenty-second pre-roll settles at 10.41 s either way. The veto itself is load-bearing and stayed — our part returning at 0.6 over a steady band still calls zero restarts, with the canceller on or off, and over eighteen rows of return gain against room level on both cancellable paths the residual stays 6.2–21.9 dB under the level that would read as a band. `VPTests --makeup`, and `.superpowers/sdd/makeup-phase-fix-report.md`.
 
 The counter reaches the worker as `NeuralBeatTracker::setInputEpoch`, and `BeatDecoder::notifyInputRestart` starts the evidence again: the fold's counter, the state space, the beat history, the regime and `established`. The committed tempo is kept only as a number to move from. At the same moment the make-up gain is re-primed at the new level instead of gliding to it over its 0.8 s attack, and the network's recurrent state is reset — a cold start begins with it zeroed, and that is the condition every figure here was measured in.
 

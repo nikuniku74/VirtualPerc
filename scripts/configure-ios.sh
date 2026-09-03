@@ -22,6 +22,11 @@ ARGS=(
   -DCMAKE_SYSTEM_NAME=iOS
   -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
   -DCMAKE_OSX_ARCHITECTURES=arm64
+  -DVP_ENABLE_RECORDED_LOOPS=ON
+  # Signalsmith's first seek primes two stereo stretchers inside the real-time
+  # callback and can overrun an iPad buffer as LOOP enters. The built-in WSOLA
+  # has bounded, allocation-free priming and passes the same timing suite.
+  -DVP_USE_SIGNALSMITH=OFF
 )
 if [[ -n "$TEAM" ]]; then
   ARGS+=(-DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM="$TEAM")

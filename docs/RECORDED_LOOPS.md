@@ -4,9 +4,12 @@ Documento operativo per il nuovo motore a loop registrati. Dice cosa c'è nel
 codice, com'è fatto il formato, e — la parte che serve a te — **quali loop
 vanno registrati e come vanno consegnati**.
 
-Stato: motore completo e testato, **libreria audio assente**. Il flag di build è
-`VP_ENABLE_RECORDED_LOOPS` ed è **spento**. Con il flag spento l'app è
-esattamente quella di prima: suona `PercussionEngine` e nient'altro.
+Stato: motore completo e testato, con il primo banco **DANCE** incorporato. Il
+flag di build `VP_ENABLE_RECORDED_LOOPS` è acceso nelle build normali e rimane
+un kill switch (`-DVP_ENABLE_RECORDED_LOOPS=OFF`). Nelle Impostazioni il
+pulsante **LOOP / PATTERN** sceglie il motore a runtime. Con il flag spento o
+con PATTERN selezionato l'app è esattamente quella di prima: suona
+`PercussionEngine` e nient'altro.
 
 ---
 
@@ -62,8 +65,8 @@ il fallback sempre disponibile.
 | Regime (dal decoder) | Chi suona | Perché |
 |---|---|---|
 | `fixed` | la registrazione | è un click: va corretta solo la deriva, molto lentamente |
-| `live` | colpi singoli | il tempo si muove: i colpi lo seguono liberamente |
-| `unknown` | colpi singoli | il motore attuale, finché il tempo non si assesta |
+| `live` | la registrazione | segue in modo causale il clock che accelera o rallenta |
+| `unknown` | dipende dal clock udibile | la classificazione può arrivare dopo un aggancio già valido |
 
 Il passaggio avviene **solo su un quarto**, di preferenza a inizio battuta, con
 un crossfade di 45 ms, e **non tocca né l'orologio né la frase**. Il regime deve
@@ -170,6 +173,10 @@ Poi, e solo poi, gli altri stili con la stessa griglia.
 - **WAV, 48 000 Hz.** Non 44,1: ogni marker del manifest è una posizione in
   campioni, e un file a 44,1 descritto a 48 mette ogni quarto all'8,8 % di
   distanza da dove dice di essere. Il caricatore lo rifiuta, non lo converte.
+- La prima banca viene riprodotta solo con il dispositivo a **48 kHz**. Lo
+  switch LOOP imposta automaticamente 48 kHz e un buffer di almeno 256
+  campioni; se l'hardware non accetta il clock, il renderer resta sui pattern
+  invece di tentare una riproduzione distorta.
 - 24 bit va benissimo (anche 16 o float 32).
 - Mono o stereo. Stereo è meglio per le congas.
 - **Loop tagliati esatti.** La lunghezza del corpo deve essere esattamente
@@ -208,7 +215,9 @@ loop tagliati esatti l'assunzione equispaziata è corretta.
 cmake -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release -DVP_ENABLE_RECORDED_LOOPS=ON
 ```
 
-e dal codice, a dispositivo chiuso:
+Il prodotto incorpora `Assets/Loops/dance/bank.vploops` e i WAV tramite JUCE
+BinaryData e li carica in memoria prima di aprire il dispositivo. Per un banco
+esterno o per un tool host resta disponibile, a dispositivo chiuso:
 
 ```cpp
 std::string error;
@@ -221,8 +230,10 @@ if (! engine.loadLoopBank ("Assets/Loops/dance/bank.vploops", error))
 succedendo.
 
 Signalsmith Stretch è vendorizzato come submodule (MIT, insieme a
-`signalsmith-linear`). Un albero senza submodule compila lo stesso e usa il
-WSOLA interno, che **non è il suono di produzione**: è un pavimento.
+`signalsmith-linear`). Il build iPadOS usa temporaneamente il WSOLA interno:
+il suo priming è deterministico e limitato e non esegue il pesante `seek`
+iniziale di due stretcher stereo nel callback audio. Signalsmith resta per il
+confronto host finché quel priming non sarà spostato fuori dal thread real-time.
 
 ```bash
 git submodule update --init --recursive
@@ -244,7 +255,11 @@ passare tutti e due.
 | cambi loop senza colpi doppi o mancanti | `a change of recording neither doubles nor drops a stroke` |
 | errore di fase udibile < 5 ms | `every stroke lands within 5 ms of the quarter` — misurato a **2,35 ms** |
 | continuità con piccole variazioni di BPM | `a slow tempo drift is followed` — **3,35 ms** su 3 BPM di deriva |
-| fallback automatico durante variazioni live | `a tempo that is moving hands it straight back to single strokes` |
+| continuità durante variazioni live | `a moving live tempo keeps the recording on the causal clock` |
+| nessun cambio take a ogni quarto | `two available takes do not re-prime stretchers every quarter` |
+| mismatch 48/44,1 sicuro | `a 48 kHz bank at 44.1 kHz falls back cleanly instead of distorting` |
+| ingresso prima della classificazione | `an audible clock starts the loop before regime classification catches up` |
+| fallback se si perde il clock | `losing the audible clock returns safely to single strokes` |
 | STOP immediato | `STOP is immediate - not the next quarter, not the next bar` |
 | cambio parte/swing senza STOP | `the part changed recording without a STOP`, più i test di swing |
 | build macOS e iPadOS Release | CMake: il flag è ortogonale, il target iOS non cambia |

@@ -15,6 +15,9 @@ constexpr float kGridTauHolding = 0.90f;
 /** While still acquiring, being wrong quickly beats being wrong slowly. */
 constexpr float kGridTauAcquire = 0.25f;
 
+/** A confirmed tempo step gets one beat of faster phase convergence. */
+constexpr float kGridTauRapid = 0.10f;
+
 /** However bad the evidence gets, the clock still has to be able to follow a
     band. Two and a fifth seconds is four bars at 110 BPM. */
 constexpr float kGridTauMax = 2.20f;

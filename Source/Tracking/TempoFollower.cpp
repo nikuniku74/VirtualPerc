@@ -136,6 +136,7 @@ void TempoFollower::reset() noexcept
     havePhaseObservation = false;
     tempoTrimEnabled = false;
     tempoTrust = 1.0f;
+    transitionSamplesRemaining = 0;
 }
 
 void TempoFollower::resetClock() noexcept
@@ -156,6 +157,7 @@ void TempoFollower::resetClock() noexcept
     samplesSinceObservation = 0;
     samplesSincePulse = static_cast<int> (sampleRate * 30.0);
     havePhaseObservation = false;
+    transitionSamplesRemaining = 0;
     reanchor = true;
 }
 
@@ -180,6 +182,16 @@ void TempoFollower::setTempoTrimEnabled (bool on) noexcept
 
 void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
 {
+    conf = clamp01 (confidence);
+
+    // A confirmed transition and the ordinary fit are published together. The
+    // fit still describes the tempo being left on the first confirmed frame;
+    // accepting it here would undo beginTempoTransition in the very next call.
+    // The guard lasts one adopted beat, after which the ordinary glide is
+    // exactly the path it was before.
+    if (tempoTransitionActive())
+        return;
+
     if (bpm > 40.0f && bpm < 220.0f)
     {
         // A step of more than a few BPM is a different tempo, not a drift, so
@@ -208,7 +220,20 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
         }
         target = bpm;
     }
-    conf = clamp01 (confidence);
+}
+
+void TempoFollower::beginTempoTransition (float bpm) noexcept
+{
+    if (! std::isfinite (bpm) || bpm <= 40.0f || bpm >= 220.0f)
+        return;
+
+    tempo = bpm;
+    target = bpm;
+    tempoTrim = 0.0f;
+    lastDrift = 0.0f;
+    driftSameWay = 0;
+    transitionSamplesRemaining =
+        std::max (1, static_cast<int> (std::lround (sampleRate * 60.0 / bpm)));
 }
 
 void TempoFollower::forceTempo (float bpm) noexcept
@@ -223,6 +248,7 @@ void TempoFollower::forceTempo (float bpm) noexcept
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
+    transitionSamplesRemaining = 0;
 }
 
 void TempoFollower::setGridPhase (float targetPhase, float tauSeconds) noexcept
@@ -397,7 +423,53 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
 
 ClockTick TempoFollower::advance (int numSamples) noexcept
 {
+    if (numSamples <= 0)
+    {
+        ClockTick tick;
+        tick.tempoBpm = tempo;
+        return tick;
+    }
+
+    // A transition boundary is a real rate boundary inside this callback.
+    // Process it as two bounded segments so pulse times, controller state and
+    // every other observable are identical to two explicit audio callbacks.
+    // `advanceSegment` never calls back here, so this split is depth one.
+    if (transitionSamplesRemaining > 0
+        && numSamples > transitionSamplesRemaining)
+    {
+        const int rapidSamples = transitionSamplesRemaining;
+        ClockTick merged = advanceSegment (rapidSamples);
+        const ClockTick ordinary =
+            advanceSegment (numSamples - rapidSamples);
+
+        merged.reanchored = merged.reanchored || ordinary.reanchored;
+        merged.wrappedBeat = merged.wrappedBeat || ordinary.wrappedBeat;
+        merged.wrappedBar = merged.wrappedBar || ordinary.wrappedBar;
+        merged.tempoBpm = ordinary.tempoBpm;
+
+        // Both segment ticks are chronological. If their combined pulse count
+        // exceeds ClockTick's fixed capacity, retain the first eight exactly as
+        // the former single-block loop did.
+        for (int i = 0; i < ordinary.pulsesFired && merged.pulsesFired < 8; ++i)
+        {
+            const int out = merged.pulsesFired++;
+            merged.pulseIndex[out] = ordinary.pulseIndex[i];
+            merged.pulseOffset[out] =
+                rapidSamples + ordinary.pulseOffset[i];
+            merged.pulseBeatInBar[out] = ordinary.pulseBeatInBar[i];
+            merged.barPulse[out] = ordinary.barPulse[i];
+            merged.pulsePhaseError[out] = ordinary.pulsePhaseError[i];
+        }
+        return merged;
+    }
+
+    return advanceSegment (numSamples);
+}
+
+ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
+{
     ClockTick tick;
+    const bool rapidTransition = transitionSamplesRemaining > 0;
 
     samplesSinceObservation = std::min (samplesSinceObservation + numSamples,
                                         static_cast<int> (sampleRate * 30.0));
@@ -442,6 +514,13 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
     if (tempo < 40.0f) tempo = 40.0f;
     if (tempo > 220.0f) tempo = 220.0f;
+
+    // `setGridPhase` records the current centered clock-minus-song error. Keep
+    // this raw observation beside the filtered path: a confirmed step has only
+    // one beat to spend the offset accumulated during causal confirmation, and
+    // filtering it first hides most of the correction that is actually owed.
+    const bool haveRawGridPhaseError = havePhaseTarget;
+    const float rawGridPhaseError = phaseTarget;
 
     // The error the analysis reported this block, smoothed over real time.
     // Cleared after use: a callback that brought no observation must not
@@ -604,6 +683,50 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         steer = std::clamp (phaseErrEma * 0.08f, -0.030f, 0.030f);
     }
 
+    if (rapidTransition && haveRawGridPhaseError && numSamples > 0
+        && std::isfinite (rawGridPhaseError) && std::isfinite (tempo))
+    {
+        // Spend only the error outside the accepted 25 ms band, evenly over
+        // the transition time still available. This replaces the ordinary
+        // filtered command only for the decoder-confirmed one-beat window.
+        //
+        // A segment never straddles the transition boundary: `advance` splits
+        // such callbacks before entering here.
+        constexpr float kRapidToleranceSeconds = 0.025f;
+        // Leave a sub-millisecond numerical margin inside the public 25 ms
+        // acceptance band. The decoder phase and the audio clock are float
+        // grids sampled at different rates; targeting the inclusive boundary
+        // itself measured up to 0.16 ms outside it after conversion.
+        constexpr float kRapidToleranceGuardSeconds = 0.00025f;
+        constexpr float kRapidSteerRail = 0.25f;
+        // The observation and command both arrive at callback boundaries. When
+        // another rapid callback remains, reserve this callback from the
+        // denominator so the accepted band is reached by the next boundary,
+        // rather than one callback after the musical deadline. A callback that
+        // reaches or crosses expiry uses the exact remaining span: reserving it
+        // would create a zero denominator and an unnecessary rail command.
+        const int commandSamplesRemaining =
+            transitionSamplesRemaining > numSamples
+                ? transitionSamplesRemaining - numSamples
+                : transitionSamplesRemaining;
+        const float remainingSeconds =
+            static_cast<float> (commandSamplesRemaining)
+            / static_cast<float> (sampleRate);
+        const float toleranceBeats =
+            (kRapidToleranceSeconds - kRapidToleranceGuardSeconds) * tempo / 60.0f;
+        const float remainingBeats = tempo * remainingSeconds / 60.0f;
+        if (std::isfinite (remainingBeats) && remainingBeats > 1.0e-9f
+            && std::isfinite (toleranceBeats))
+        {
+            const float excess =
+                std::max (0.0f, std::fabs (rawGridPhaseError) - toleranceBeats);
+            const float needed = std::copysign (excess / remainingBeats,
+                                                rawGridPhaseError);
+            if (std::isfinite (needed))
+                steer = std::clamp (needed, -kRapidSteerRail, kRapidSteerRail);
+        }
+    }
+
     // Phase this block will *not* advance because of the steer. The trim
     // controller subtracts it from the drift it measures, so that the loop's own
     // correction is not read back as the song having moved; and the error
@@ -697,6 +820,8 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     }
 
     tick.tempoBpm = tempo;
+    transitionSamplesRemaining =
+        std::max (0, transitionSamplesRemaining - std::max (0, numSamples));
     return tick;
 }
 

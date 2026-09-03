@@ -56,12 +56,12 @@ set_property (CACHE VP_USE_SIGNALSMITH PROPERTY STRINGS AUTO ON OFF)
 
 # The recorded-loop percussionist. Off: the app is exactly what it was, and
 # PercussionEngine is the only thing that plays. On: HybridPercussionRenderer
-# hands the part to a recording in the fixed tempo regime and back to single
-# strokes when the tempo moves. See docs/RECORDED_LOOPS.md.
+# hands the part to a recording once the live clock is audible and back to
+# single strokes if the bank is incompatible. See docs/RECORDED_LOOPS.md.
 #
 # The classes are compiled either way, so the tests exercise them in the default
 # build and they cannot rot. What this switches is whether the engine uses them.
-option (VP_ENABLE_RECORDED_LOOPS "Let recorded loops carry the groove" OFF)
+option (VP_ENABLE_RECORDED_LOOPS "Let recorded loops carry the groove" ON)
 # Signalsmith Linear can use Apple's Accelerate for its FFT. Off by default: the
 # portable path is what every platform here has been measured on, and turning it
 # on is a change to the sound of the shipping build that wants measuring first.
@@ -206,6 +206,25 @@ if (VP_PERC_SAMPLES)
 else()
     set (VP_HAS_PERC_SAMPLES FALSE)
     message (STATUS "No Assets/Percussion/*.wav - percussion falls back to synthesis")
+endif()
+
+# The recorded bank is embedded rather than copied as loose bundle resources.
+# iOS bundle paths are platform details; loading from BinaryData gives the core
+# the same bytes on iPad, simulator and the host app, before the device opens.
+set (VP_LOOP_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Loops/dance/bank.vploops")
+file (GLOB VP_LOOP_WAVS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Loops/dance/*.wav")
+if (VP_ENABLE_RECORDED_LOOPS AND EXISTS "${VP_LOOP_MANIFEST}" AND VP_LOOP_WAVS)
+    juce_add_binary_data (VpLoopBankData
+        HEADER_NAME VpLoopBankData.h
+        NAMESPACE VpLoopBankData
+        SOURCES "${VP_LOOP_MANIFEST}" ${VP_LOOP_WAVS}
+    )
+    target_link_libraries (VirtualPercussionist PRIVATE VpLoopBankData)
+    target_compile_definitions (VirtualPercussionist PRIVATE VP_HAS_LOOP_BANK=1)
+else()
+    target_compile_definitions (VirtualPercussionist PRIVATE VP_HAS_LOOP_BANK=0)
+    message (STATUS "Recorded loop bank not embedded - the app uses patterns")
 endif()
 
 if (VP_HAS_BEAT_MODEL_FILE)

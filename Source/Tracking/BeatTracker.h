@@ -7,11 +7,66 @@
 #include "Tracking/PhaseTrust.h"
 #include "Tracking/TempoFollower.h"
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 
 namespace vp
 {
+
+/** One bounded decision shared by BeatTracker and its transition tests.
+
+    Serial identity and manual ownership have to be decided together: even a
+    transition rejected because TAP/FISSO owns the tempo is consumed, otherwise
+    releasing the control while that publication remains would replay it. */
+class TempoTransitionConsumer
+{
+public:
+    void reset() noexcept
+    {
+        lastSerial = 0;
+        seenSerial = false;
+        quarantined = true;
+    }
+
+    bool consume (const BeatHypothesis& hyp, bool tempoOwned) noexcept
+    {
+        if (! hyp.valid)
+            return false;
+
+        if (quarantined)
+        {
+            // Reset may race a publication, and a rapid state can persist over
+            // many frames. Consume every serial but expose/adopt none until a
+            // fresh accepted stable frame proves the old event has ended.
+            lastSerial = hyp.transitionSerial;
+            seenSerial = true;
+            if (hyp.transitionState == TempoTransitionState::stable)
+                quarantined = false;
+            return false;
+        }
+
+        if (hyp.transitionState != TempoTransitionState::rapid)
+            return false;
+        if (seenSerial && hyp.transitionSerial == lastSerial)
+            return false;
+
+        lastSerial = hyp.transitionSerial;
+        seenSerial = true;
+        return ! tempoOwned && std::isfinite (hyp.transitionBpm)
+               && hyp.transitionBpm > 40.0f && hyp.transitionBpm < 220.0f;
+    }
+
+    bool transitionDiagnosticsAllowed() const noexcept { return ! quarantined; }
+
+private:
+    uint32_t lastSerial = 0;
+    bool seenSerial = false;
+    bool quarantined = false;
+};
+static_assert (std::is_trivially_copyable<TempoTransitionConsumer>::value,
+               "audio-thread transition state must remain trivially copyable");
 
 class BeatTracker
 {
@@ -175,6 +230,33 @@ public:
         bool          levelSettled = false;
         float         fitResidual = 1.0f;
         float         fitCoverage = 0.0f;
+        TempoTransitionState tempoTransitionState = TempoTransitionState::stable;
+        TempoTransitionReason tempoTransitionReason = TempoTransitionReason::none;
+        float         tempoTransitionBpm = 0.0f;
+        float         tempoTransitionConfidence = 0.0f;
+        int           tempoTransitionIntervals = 0;
+
+        /** Copy only a complete, valid worker publication. The audio callback
+            calls this once per block; invalid or absent evidence clears every
+            scalar so stale transition diagnostics cannot survive a dropout. */
+        void setTempoTransitionDiagnostics (const BeatHypothesis* latest) noexcept
+        {
+            if (latest != nullptr && latest->valid)
+            {
+                tempoTransitionState = latest->transitionState;
+                tempoTransitionReason = latest->transitionReason;
+                tempoTransitionBpm = latest->transitionBpm;
+                tempoTransitionConfidence = latest->transitionConfidence;
+                tempoTransitionIntervals = latest->transitionIntervals;
+                return;
+            }
+
+            tempoTransitionState = TempoTransitionState::stable;
+            tempoTransitionReason = TempoTransitionReason::none;
+            tempoTransitionBpm = 0.0f;
+            tempoTransitionConfidence = 0.0f;
+            tempoTransitionIntervals = 0;
+        }
         /** True for a moment after a tap has declared where beat one is, so the
             UI can show that the gesture landed rather than leaving the player
             guessing whether the bar moved because of them. */
@@ -236,6 +318,14 @@ public:
         by the host's scheduler, and the same build measures differently from
         one run to the next. */
     int analysisBacklog() const noexcept { return neural.backlog(); }
+    int64_t analysisCompletedSamples() const noexcept
+    {
+        return neural.completedSamples();
+    }
+    uint32_t hypothesisPublicationSequence() const noexcept
+    {
+        return neural.publicationSequence();
+    }
 
     TrackingState state() const noexcept { return currentState; }
     bool tryLoadHypothesis (BeatHypothesis& out) const noexcept { return neural.tryLoad (out); }
@@ -283,6 +373,7 @@ private:
     uint32_t lastBeatSerial = 0;
     uint32_t lastGridSerial = 0;
     bool seenSerials = false;
+    TempoTransitionConsumer transitionConsumer;
     float lastLeadMs = 0.0f;
     int samplesSinceBeat = 0;
     int lockHoldSamples = 0;

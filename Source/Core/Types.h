@@ -123,6 +123,41 @@ enum class FollowBar : int
     paused
 };
 
+/**
+    Whether an abrupt tempo change is being argued about, and how far the
+    argument has got.
+
+    The long-term regime verdict cannot answer "did the tempo just step" inside
+    the two beats a listener notices. This state is decided only from those two
+    causal intervals: one is `suspected`, because a fill or flam can make one;
+    two agreeing intervals are `rapid`, the first point at which a misplaced
+    event can be distinguished from a new tempo.
+
+    This definition lives in Core so the worker hypothesis, audio tracker and
+    UI snapshot share one type without introducing an AI/Core dependency cycle.
+*/
+enum class TempoTransitionState : int
+{
+    stable = 0,
+    suspected,
+    rapid
+};
+
+/** Why the transition state last changed. Diagnostic only: it identifies which
+    bounded gate turned a candidate away, and nothing in the audio path acts on
+    the reason. */
+enum class TempoTransitionReason : int
+{
+    none = 0,
+    candidateStarted,
+    confirmed,
+    incoherent,
+    outsideRange,
+    metricalConflict,
+    expired,
+    reset
+};
+
 /** The tempo regime as it appears in a snapshot. Takes the int rather than the
     enum: TempoRegime belongs to the analysis layer, and this header is below
     it. 0 = not decided yet, 1 = held, 2 = following. */
@@ -263,6 +298,11 @@ struct EngineSnapshot
         fit's window they filled. Diagnostics only. */
     float fitResidual          = 1.0f;
     float fitCoverage          = 0.0f;
+    TempoTransitionState tempoTransitionState = TempoTransitionState::stable;
+    TempoTransitionReason tempoTransitionReason = TempoTransitionReason::none;
+    float tempoTransitionBpm = 0.0f;
+    float tempoTransitionConfidence = 0.0f;
+    int   tempoTransitionIntervals = 0;
     /** Half or double the measured tempo: the level actually in force, whether
         the listener asked for it or AUTO settled on it. */
     int   tempoOctave          = 0;
@@ -318,17 +358,6 @@ struct EngineSettings
     // against material whose style is known, which is no better than always
     // guessing the same style. See docs/AUDIO_ENGINE.md.
     std::atomic<bool>  grooveAuto      { false };
-    // Half or double the tempo the analysis found, when the listener disagrees
-    // with it. -1 = half, 0 = as measured, +1 = double. Not a preference the app
-    // can guess: below ~92 BPM with full eighths the level is genuinely
-    // ambiguous in the signal, so it is offered as a control instead.
-    std::atomic<int>   tempoOctave     { 0 };
-    // And whether the app picks it. On by default: the choice the analysis
-    // cannot make is at least bounded - the pulse a part is played on belongs
-    // inside the range a percussionist counts in - and a rule that keeps it
-    // there is better than leaving every track that reads at the wrong level
-    // waiting for a tap. A tap on the halve or double button takes it back.
-    std::atomic<bool>  tempoOctaveAuto { true };
     // Counter, not a position: every increment moves the bar on by one beat.
     // Where beat one is cannot be read reliably from what the network gives us
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to

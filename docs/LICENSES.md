@@ -11,7 +11,7 @@ This project is intended to become a commercial live app. Do not add dependencie
 | BeatNet BDA weights | model 1 (GTZAN) | [CC BY 4.0](https://github.com/mjhydri/BeatNet/blob/main/LICENSE) | Heydari, Cwitkowitz, Duan, ISMIR 2021. Exported to `Assets/Models/beatnet.onnx`. |
 | Signalsmith Stretch | 1.3.2 | MIT | Loop time-stretch, header-only, vendored at `third_party/signalsmith-stretch`. `VP_USE_SIGNALSMITH` is AUTO / ON / OFF; OFF falls back to the built-in WSOLA. |
 | Signalsmith Linear | — | MIT | FFT/STFT under Signalsmith Stretch, header-only, vendored at `third_party/signalsmith-linear`. |
-| Recorded loop library | — | **to be provided** | `Assets/Loops/`. Not in the repository. Whoever records it holds the rights; the manifest format is in `docs/RECORDED_LOOPS.md`. Nothing third-party may go in here without a line in this table. |
+| Dance recorded loop library | CC0 1.0 | nicpressley, Sycopation, shpira / Freesound | Embedded from `Assets/Loops/dance/`. Exact sound pages and take mapping are recorded in `Assets/Loops/dance/SOURCES.md`. |
 
 No SoundTouch (LGPL), Rubber Band (GPL), Essentia, or FFmpeg.
 

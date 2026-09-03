@@ -78,7 +78,26 @@ void LoopBank::addEntry (const LoopManifest& manifest, std::vector<float> left, 
 
 bool LoopBank::load (const std::string& manifestText, const std::string& directory, std::string& error)
 {
+    return loadWithAudioLoader (
+        manifestText,
+        [directory] (const std::string& file, WavAudio& audio, std::string& why)
+        {
+            return loadWavFile (join (directory, file), audio, why);
+        },
+        error);
+}
+
+bool LoopBank::loadWithAudioLoader (const std::string& manifestText,
+                                    const AudioLoader& loader,
+                                    std::string& error)
+{
     clear();
+
+    if (! loader)
+    {
+        error = "no audio loader was supplied";
+        return false;
+    }
 
     LoopManifestFile file;
     if (! parseLoopManifest (manifestText, file, error))
@@ -90,7 +109,7 @@ bool LoopBank::load (const std::string& manifestText, const std::string& directo
     {
         WavAudio audio;
         std::string why;
-        if (! loadWavFile (join (directory, m.file), audio, why))
+        if (! loader (m.file, audio, why))
         {
             error = "loop \"" + m.id + "\": " + why;
             clear();

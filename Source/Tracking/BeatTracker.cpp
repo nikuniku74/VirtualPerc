@@ -136,14 +136,16 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // constant in milliseconds rather than in beats, which is what identifies
     // it as a fixed pipeline offset and not a rate error.
     //
-    // Trimming the lead by 20 ms keeps the heard percussion within about 8 ms
-    // of the pulse across the same three tempi. The value is a calibration,
-    // not a derivation: it is
-    // suspiciously close to one 20 ms hop, but the geometry in
-    // NeuralBeatTracker::analysisSampleFor checks out frame by frame, so the
-    // rest is most likely the network's own response offset. It is measured on
-    // a click, so real material may sit a millisecond or two either side.
-    constexpr float kAnalysisLeadTrimSec = 0.020f;
+    // The old 20 ms value covered only 78, 100 and 138 BPM and was rounded to
+    // one hop. Extending the same muted click measurement to 120 and 156 found
+    // the real envelope at +3.44 .. -8.98 ms: the high-tempo edge was outside
+    // the unchanged 8 ms heard-phase budget even with no part playing. A 17 ms
+    // minimax calibration centres that measured envelope at about +/-6.3 ms.
+    // This remains a calibration, not a derivation: the geometry in
+    // NeuralBeatTracker::analysisSampleFor checks out frame by frame, and the
+    // tempo-dependent residue is the network/decoder response to the click.
+    // See .superpowers/sdd/phase-156-root-cause.md.
+    constexpr float kAnalysisLeadTrimSec = 0.017f;
 }
 
 void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
@@ -161,6 +163,8 @@ void BeatTracker::prepare (double sr) noexcept
 
 void BeatTracker::reset() noexcept
 {
+    neural.invalidatePublicationsBeforeNow();
+    transitionConsumer.reset();
     follower.reset();
     evidence.reset();
     kickAssigned = false;
@@ -996,6 +1000,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
 
+    if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
+        follower.beginTempoTransition (hyp.transitionBpm);
+
     if (tempoOwned)
         follower.setTargetTempo (heldBpm, 0.95f);
     else if (nnBpm > 50.0f)
@@ -1006,7 +1013,13 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // to apply is what made a real tempo change take twenty seconds to
         // arrive, because the clock refused every estimate that differed from
         // the one it was already wrong about.
-        follower.setTargetTempo (nnBpm, nnConf);
+        // Keep using the approved payload for the bounded transition window.
+        // On its first frame the ordinary fit may still report the old BPM.
+        const bool useTransitionPayload =
+            follower.tempoTransitionActive()
+            && hyp.transitionState == TempoTransitionState::rapid;
+        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : nnBpm,
+                                 useTransitionPayload ? hyp.transitionConfidence : nnConf);
     }
     else if (harmonicBpm > 50.0f && networkHasGivenUp && ! speakerFollow && tempoFollow)
     {
@@ -1034,8 +1047,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // loud strokes of a marcha sit on eighths, but the quiet half of it - the
     // heel and toe filling the gaps - is on sixteenths, and that half is what a
     // listener hears as a player rather than as a pattern. What the user's
-    // subdivision setting selects is how dense the *shaker* is, which is a
-    // question for GrooveEngine, not for the clock.
+    // subdivision setting selects is how dense the synthesized shaker and
+    // congas are, which is a question for GrooveEngine, not for the clock.
     effectiveSubdivision = userSubdivision == Subdivision::autoDetect
                                ? Subdivision::eighth
                                : userSubdivision;
@@ -1332,9 +1345,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // is what a passage without a drummer looks like from inside the
             // fit. See Tracking/PhaseTrust.h - including the shorter constant
             // for a line feed that was tried there and measured as noise.
-            follower.setGridPhase (songPhase,
-                                   gridPhaseTau (kGridTauHolding, holding,
-                                                 evidence.trust()));
+            const float phaseTau =
+                follower.tempoTransitionActive()
+                    ? kGridTauRapid
+                    : gridPhaseTau (kGridTauHolding, holding, evidence.trust());
+            follower.setGridPhase (songPhase, phaseTau);
         }
     }
 
@@ -1550,6 +1565,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.levelSettled = haveHyp && hyp.levelSettled;
     out.fitResidual = haveHyp ? hyp.fitResidual : 1.0f;
     out.fitCoverage = haveHyp ? hyp.fitCoverage : 0.0f;
+    out.setTempoTransitionDiagnostics (
+        haveHyp && transitionConsumer.transitionDiagnosticsAllowed() ? &hyp : nullptr);
     if (! armed)
         out.followBar = FollowBar::paused;
     else if (! inputIsLive && heldBpm > 40.0f

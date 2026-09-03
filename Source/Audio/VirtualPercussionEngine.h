@@ -32,6 +32,14 @@ public:
     /** Input samples fed to the analysis but not yet analysed, live. Safe from
         any thread; see BeatTracker::analysisBacklog for what it is for. */
     int analysisBacklog() const noexcept { return tracker.analysisBacklog(); }
+    int64_t analysisCompletedSamples() const noexcept
+    {
+        return tracker.analysisCompletedSamples();
+    }
+    uint32_t hypothesisPublicationSequence() const noexcept
+    {
+        return tracker.hypothesisPublicationSequence();
+    }
     void reset() noexcept;
 
     void start() noexcept;
@@ -44,6 +52,11 @@ public:
     void setTempoFollow (bool follow) noexcept;
     /** Lock a BPM and switch to FISSO. Tap and later nudges still update it. */
     void setFixedBpm (float bpm) noexcept;
+
+    /** The backing track jumped to a new position. Bumps the analysis epoch so
+        the decoder drops evidence from before the cut; see
+        BeatDecoder::notifyInputRestart. Call from the message thread on seek. */
+    void notifyTrackSeek() noexcept;
 
     EngineSettings& settings() noexcept { return cfg; }
     const EngineSettings& settings() const noexcept { return cfg; }
@@ -90,6 +103,13 @@ public:
     void setClickInjectBpm (float bpm) noexcept { clickBpm.store (bpm, std::memory_order_relaxed); }
     void setClickInjectEnabled (bool on) noexcept { clickEnabled.store (on, std::memory_order_relaxed); }
 
+    /** Test-only cancellation A/B seam. Set before processing begins; production
+        leaves this enabled. */
+    void setLeakCancellationEnabledForTest (bool on) noexcept
+    {
+        leakCancellationEnabledForTest = on;
+    }
+
     bool tryLoadNeuralHypothesis (BeatHypothesis& out) const noexcept;
 
     /** Loop-kit playback (see docs/ARCHITECTURE.md). Nothing calls these yet.
@@ -115,6 +135,12 @@ public:
         The build flag is the switch; `setRecordedLoopsEnabled` is how the app
         turns it off again at runtime once the build has turned it on. */
     bool loadLoopBank (const std::string& manifestPath, std::string& error);
+    /** The iPad build embeds the same manifest and WAV bytes in BinaryData.
+        This overload keeps JUCE out of the core while avoiding fragile bundle
+        paths. Like the file overload, call it only while the device is closed. */
+    bool loadLoopBankFromMemory (const std::string& manifestText,
+                                 const LoopBank::AudioLoader& loader,
+                                 std::string& error);
     void clearLoopBank();
     void setRecordedLoopsEnabled (bool on) noexcept { hybrid.setEnabled (on); }
     bool recordedLoopsEnabled() const noexcept { return hybrid.isEnabled(); }
@@ -128,6 +154,27 @@ private:
     void mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept;
     void maybeInjectClick (int numSamples) noexcept;
     void subtractSpeakerLeak (int numSamples, bool speaker) noexcept;
+    /** Everything the leak canceller has learned about the return path. A new
+        audio-device session is a new path - and `prepare()` clears the reference
+        ring the evidence was measured against, so keeping the evidence would
+        mean fitting a signal that is no longer there. Called from both
+        `prepare()` and `reset()`; it touches nothing that `prepare()` sets up. */
+    void resetLeakEstimate() noexcept;
+    /** The twelve scalars that say what level this input arrives at: the
+        make-up envelope and gain, the epoch watcher's level and own-output
+        trackers with their timers, and the epoch count. The same lifecycle
+        argument as `resetLeakEstimate()` above, and called from the same two
+        places for the same reason - a new session is a new input, possibly a
+        line-level feed replaced by a microphone in a room. It touches no
+        buffer and no prepared resource. */
+    void resetAnalysisLevelState() noexcept;
+    /** The public mirrors of three of those scalars - the epoch count, the
+        make-up gain and the analysis peak - which the audio callback is the only
+        writer of. Cleared at the same two lifecycle boundaries and for the same
+        reason as `lastHypValid` beside them: between `prepare()` and the first
+        block of the new session there is no live reading, and the last session's
+        is not one. */
+    void clearAnalysisLevelMirrors() noexcept;
     void updateLeakDelay (int numSamples, bool speaker) noexcept;
     void applyAnalysisHpf (int numSamples) noexcept;
     /** Store the part as it actually leaves the outputs, for the leak canceller
@@ -254,6 +301,11 @@ private:
     std::atomic<bool>  lastLevelSettled { false };
     std::atomic<float> lastFitResidual { 1.0f };
     std::atomic<float> lastFitCoverage { 0.0f };
+    std::atomic<int>   lastTempoTransitionState { 0 };
+    std::atomic<int>   lastTempoTransitionReason { 0 };
+    std::atomic<float> lastTempoTransitionBpm { 0.0f };
+    std::atomic<float> lastTempoTransitionConfidence { 0.0f };
+    std::atomic<int>   lastTempoTransitionIntervals { 0 };
     int seenBarNudge = 0;
 
     std::atomic<int>   lastStyle { 0 };
@@ -280,11 +332,24 @@ private:
     /** How much of our own output the input is carrying back, fitted per band
         and held across blocks. Two bands because the two return paths do not
         look alike: through the iPad's speaker the low end is simply not there,
-        while a mixer hands back the whole thing, congas included. Smoothed
-        because a fit over one block of 256 samples is a noisy estimate, and a
-        gain that jumps subtracts a different signal every callback. */
+        while a mixer hands back the whole thing, congas included. Signed, and
+        clamped only where it is used: see subtractSpeakerLeak. */
     float leakGainLo = 0.0f;
     float leakGainHi = 0.0f;
+    /** The normal equations that fit is solved from, accumulated over about
+        half a second of causal history instead of over the current block. A
+        block of 256 samples is a noisy estimate and a block whose reference is
+        silent is no estimate at all; both used to reach the gain anyway,
+        through a smoother that could not tell a measurement from an absence of
+        one. Five terms: our own two bands against the input, and the three
+        products among the bands themselves. */
+    double leakFitXyLo = 0.0, leakFitXyHi = 0.0;
+    double leakFitLoLo = 0.0, leakFitHiHi = 0.0, leakFitLoHi = 0.0;
+    /** The delay all of that evidence was measured at. When the accepted delay
+        moves the reference is a different signal and the cross-products stop
+        describing anything, so they are dropped. */
+    int leakFitDelay = -1;
+    bool leakCancellationEnabledForTest = true;
     float peakEnv = 0.0f;
     float makeupGain = 1.0f;
     /** Pre-make-up level, and the level the current run of analysis evidence
@@ -297,7 +362,7 @@ private:
     float levelLoud = 0.0f;
     int   levelStepSamples = 0;
     int   levelPrimeSamples = 0;
-    uint32_t analysisEpoch = 0;
+    std::atomic<uint32_t> analysisEpoch { 0 };
     /** The same envelope on our *own* output, and how long our own part is
         still answerable for a rise on the input. What we play comes back on the
         microphone, the canceller does not always find it, and a level that rose

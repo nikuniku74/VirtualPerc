@@ -74,9 +74,9 @@ See `docs/RECORDED_LOOPS.md` for the manifest format and for what has to be reco
 
 JUCE is AGPLv3 or commercial. A live/closed-source App Store app requires a JUCE commercial license before distribution. Splash is disabled because it is unacceptable on a live stage; that implies a commercial JUCE license for shipping. See `docs/LICENSES.md`.
 
-## TD-10 — Shaker grid vs subdivision
+## TD-10 — Synthesized percussion vs subdivision
 
-The shaker plays 16ths at the followed tempo unless the user thins it to 1/8 or 1/4. AUTO maps to 16ths.
+The clock always runs on sixteenths. The subdivision control only thins synthesized events: quarter keeps steps 0/4/8/12, eighth keeps every even step, and sixteenth keeps the full shaker and conga figure. The no-conga-on-step-0 rule still wins, and recorded WAV stems are not filtered. `AUTO` maps to **1/8**.
 
 ## TD-11 — Minimum iPadOS 16, iPad family, arm64
 

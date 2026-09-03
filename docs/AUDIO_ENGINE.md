@@ -10,7 +10,7 @@ getNextAudioBlock
   BeatTracker reads BeatHypothesis // seqlock
   TempoFollower.advance(numSamples)
   if armed and state in {FOLLOWING, LOW_CONFIDENCE, RECOVERING}
-      PercussionEngine.render(shaker hits on grid crossings)
+      PercussionEngine.render(shaker and conga events on grid crossings)
       // or TimeStretchEngine if a loop kit is loaded
   else
       silence
@@ -61,7 +61,7 @@ Bar phase assumes 4/4: `barPhase = (beatIndex % 4 + beatPhase) / 4`.
 
 ## What the part plays
 
-`GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is on a **sixteenth grid** even though the loud strokes sit on eighths, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting selects how dense the *shaker* is, not the clock.
+`GrooveEngine` decides the strokes; `PercussionEngine` only sounds them. Everything is authored on a **sixteenth grid**, because the quiet half of a marcha — the heel and toe filling the gaps — is what a listener hears as a player rather than as a pattern. The clock therefore always runs at sixteenths; the user's subdivision setting thins the synthesized *shaker and congas*, never the clock: quarters keep 0/4/8/12 (with the conga still absent on step 0), eighths keep the even steps, sixteenths keep the full figure, and `AUTO` means eighths. Recorded WAV stems are outside this event filter.
 
 ### The stopped strokes
 

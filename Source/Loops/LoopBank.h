@@ -1,7 +1,9 @@
 #pragma once
 
 #include "Loops/LoopManifest.h"
+#include "Loops/WavFile.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -60,6 +62,13 @@ struct LoopSelection
 class LoopBank
 {
 public:
+    /** Supplies one decoded WAV by the filename written in the manifest.
+        Used by the app for files embedded in its binary; disk banks use the
+        same path through `load`. Called only while the audio device is closed. */
+    using AudioLoader = std::function<bool (const std::string& file,
+                                            WavAudio& audio,
+                                            std::string& error)>;
+
     struct Entry
     {
         LoopManifest manifest;
@@ -79,6 +88,11 @@ public:
     /** The same, for a manifest already in memory. `directory` may be empty
         when the entries carry absolute paths. */
     bool load (const std::string& manifestText, const std::string& directory, std::string& error);
+
+    /** Load a manifest whose audio comes from something other than the file
+        system, such as JUCE BinaryData embedded in an iOS app bundle. */
+    bool loadWithAudioLoader (const std::string& manifestText, const AudioLoader& loader,
+                              std::string& error);
 
     /** Add one entry whose audio is already in memory. For the tests, and for a
         future bundled bank that arrives as binary data rather than as files. */

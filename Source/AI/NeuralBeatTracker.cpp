@@ -38,12 +38,14 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     inputSamplesPerModelSample = deviceSr / kBeatModelSampleRate;
     hopInDeviceSamples = static_cast<int> (std::ceil (kBeatModelHop * inputSamplesPerModelSample));
     fedTotal.store (0, std::memory_order_relaxed);
+    completedTotal.store (0, std::memory_order_relaxed);
     gapCount.store (0, std::memory_order_relaxed);
     wakeCount.store (0, std::memory_order_relaxed);
     seenDropped = 0;
     modelRefill = 0;
     inputEpoch.store (0, std::memory_order_relaxed);
     seenInputEpoch = 0;
+    minimumAnalysisSample.store (0, std::memory_order_relaxed);
 
     popBuf.assign (4096, 0.0f);
     resampled.assign (4096, 0.0f);
@@ -67,6 +69,9 @@ void NeuralBeatTracker::stop()
     stopFlag.store (true, std::memory_order_relaxed);
     if (worker.joinable())
         worker.join();
+    // Lifecycle-thread exception to the worker-only slot writer rule. `armed`
+    // is already false and join proves no publication can overlap this clear.
+    slot.clearWhenWriterStopped();
     fifo.reset();
 }
 
@@ -76,6 +81,28 @@ void NeuralBeatTracker::feed (const float* mono, int numSamples) noexcept
         return;
     fifo.push (mono, numSamples);
     fedTotal.fetch_add (numSamples, std::memory_order_relaxed);
+}
+
+void NeuralBeatTracker::invalidatePublicationsBeforeNow() noexcept
+{
+    minimumAnalysisSample.store (samplesFed(), std::memory_order_release);
+}
+
+bool NeuralBeatTracker::tryLoad (BeatHypothesis& out) const noexcept
+{
+    const int64_t before = minimumAnalysisSample.load (std::memory_order_acquire);
+    BeatHypothesis staging;
+    if (! slot.load (staging))
+        return false;
+
+    // A reset may race the bounded slot copy. Validate the floor on both sides
+    // so a payload accepted against the old floor cannot escape afterwards.
+    const int64_t after = minimumAnalysisSample.load (std::memory_order_acquire);
+    if (after != before || staging.analysisSample < after)
+        return false;
+
+    out = staging;
+    return true;
 }
 
 void NeuralBeatTracker::workerLoop()
@@ -142,8 +169,10 @@ void NeuralBeatTracker::workerLoop()
         // and read the splice as an onset, so they are re-primed before that
         // audio reaches them rather than after.
         const uint64_t droppedNow = fifo.droppedSamples();
+        uint64_t droppedThisPass = 0;
         if (droppedNow != seenDropped)
         {
+            droppedThisPass = droppedNow - seenDropped;
             const double lostSec = static_cast<double> (droppedNow - seenDropped) / deviceSr;
             seenDropped = droppedNow;
             resampler.reset();
@@ -170,6 +199,16 @@ void NeuralBeatTracker::workerLoop()
                 h.analysisSample = analysisSampleFor (h.frameIndex);
                 slot.publish (h);
             }
+
+            // `available() == 0` only proves that pop() took the input. This
+            // release happens after every inference and publication caused by
+            // that input, which gives deterministic probes a real completion
+            // condition. Dropped samples count as passed here because the
+            // discontinuity above has already accounted for and reset across
+            // them.
+            completedTotal.fetch_add (static_cast<int64_t> (n)
+                                      + static_cast<int64_t> (droppedThisPass),
+                                      std::memory_order_release);
         }
 
         // Wait for about as much new audio as it takes to make one more frame.
