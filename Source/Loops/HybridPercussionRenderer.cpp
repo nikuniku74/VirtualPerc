@@ -273,14 +273,13 @@ int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL,
 
     // --- render both, then mix ---------------------------------------------
     //
-    // The two stems are balanced by exactly the curve PercussionEngine uses on
-    // the synthesised bank, so moving the control does the same thing whichever
-    // percussionist is playing.
+    // The two stems take the same independent per-instrument gains
+    // PercussionEngine uses on the synthesised bank, so moving a volume does
+    // the same thing whichever percussionist is playing.
     if (loopNeeded)
     {
-        const float mix = clamp01 (in.instrumentMix);
-        const float shakerG = mix <= 0.5f ? 1.0f : 2.0f * (1.0f - mix);
-        const float congaG = mix >= 0.5f ? 1.0f : 2.0f * mix;
+        const float shakerG = clamp01 (in.shakerVolume);
+        const float congaG = clamp01 (in.congaVolume);
 
         std::fill (loopL.begin(), loopL.begin() + numSamples, 0.0f);
         std::fill (loopR.begin(), loopR.begin() + numSamples, 0.0f);

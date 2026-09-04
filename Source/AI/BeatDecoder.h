@@ -29,7 +29,15 @@ class BeatDecoder
 public:
     void prepare (double framesPerSecond);
     void reset() noexcept;
-    BeatHypothesis observe (float pBeat, float pDownbeat, float pNone) noexcept;
+    /** `lowBand` is the mean of the low bands of the same feature frame the
+        three probabilities came from - see LogSpectFeatures::lowBandEnergy. It
+        is the only thing here that can tell a kick from a hi-hat, which is what
+        the metrical level turns on; the probabilities cannot. It defaults to
+        zero for the callers that feed activations directly (tests, probes):
+        with no band energy the level test simply never fires, which is the
+        behaviour those callers had before it existed. */
+    BeatHypothesis observe (float pBeat, float pDownbeat, float pNone,
+                            float lowBand = 0.0f) noexcept;
 
     /** The audio feeding this decoder has a hole in it: the FIFO overran and the
         worker never saw `lostSeconds` of input. Every interval measured across
@@ -132,6 +140,26 @@ private:
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec, float strength) noexcept;
+    /** Use repeated downbeat spacing to distinguish a 50 BPM quarter from its
+        100 BPM hi-hat eighths: three true downbeats contain two complete
+        intervals, each eight accepted fast-grid beats long instead of four.
+        Called only on beats whose downbeat activation crosses `downThresh`.
+
+        This is what `VPTests` "a 50 BPM bar makes its 100 BPM hi-hat pulse count
+        as eighths" exercises, and it passes there. On the real network it has
+        never been measured to fire at all: the fixture gives it a clean 0.90
+        downbeat spike on the one and 0.02 everywhere else, where the real
+        network at 50 BPM crosses the threshold far too rarely and spreads its
+        downbeat mass over beat one *and* beat three. See
+        docs/HANDOFF_OCTAVE_50BPM.md before building on it. */
+    void  observeDownbeatCadence() noexcept;
+    /** Distinguish a 50 BPM quarter from its 100 BPM hi-hat eighths by how much
+        body each accepted beat has, over an assumed eight-slot bar. Neither the
+        beat curve nor the downbeat curve can make this choice - both were tried
+        and measured; docs/HANDOFF_OCTAVE_50BPM.md has the numbers and why. What
+        separates the two readings is that at the wrong level every other
+        accepted beat is a hi-hat with nothing underneath it. */
+    void  observeMetricalCadence (double eventTimeSec, float lowBand) noexcept;
     /** A beat time the fits are allowed to use, without a beat *event*.
 
         On a confirmed transition the two peaks that measured the new period are
@@ -225,6 +253,12 @@ private:
     float  downThresh = 0.40f;
     float  prevPulse = 0.0f;
     float  prevPrevPulse = 0.0f;
+    /** The low-band energy of the last two frames, so the value taken at a beat
+        can be the largest of the three around it - the same three-frame window
+        the downbeat confidence uses, and for the same reason: the peak lands
+        between frames as often as on one. */
+    float  prevLowBand = 0.0f;
+    float  prevPrevLowBand = 0.0f;
     float  prevDownbeat = 0.0f;
     float  prevPrevDownbeat = 0.0f;
     float  lastDownbeatStrength = 0.0f;
@@ -252,6 +286,38 @@ private:
     uint32_t beatSerial = 0;
     uint32_t downbeatSerial = 0;
     uint32_t gridSerial = 0;
+
+    /** Direct/file-feed bar-cadence evidence: a decayed downbeat-confidence
+        histogram over eight slots spanning an assumed bar, indexed by elapsed
+        time since `cadenceAnchorSec` divided by the current period - not by
+        counting accepted beats, because a beat the network's own gate missed
+        (measured: it happens even on a clean line feed) would then shift every
+        bin after it, permanently, for no musical reason. A grid already at the
+        right level puts its downbeat on the same two bins, four apart, forever
+        - the mod-8 index cannot tell "bar 1" from "bar 3". A grid running one
+        octave too fast (hi-hat eighths read as the beat) puts it on only one
+        of the eight, because the true bar is eight accepted beats long, not
+        four. That asymmetry, built up continuously rather than counted past a
+        threshold, is what `observeDownbeatCadence` reads the level from. */
+    float    cadenceHist[8] {};
+    /** Decayed count of accepted beats behind `cadenceHist`, in the same units
+        BeatTracker::tryAlignFrom's evidence gate uses - enough for the shares
+        above to mean something before either octave decision is trusted. */
+    float    cadenceHistBeats = 0.0f;
+    /** Where slot 0 of `cadenceHist` sits in time. Arbitrary - it is whichever
+        accepted beat happened to be first after the histogram was last reset -
+        but fixed, so the bin a given beat falls into does not depend on how
+        many beats before it were missed. */
+    double   cadenceAnchorSec = -1.0;
+    /** The downbeat-spacing counter `observeDownbeatCadence` keeps: which beat
+        the last threshold-crossing downbeat landed on, and how many consecutive
+        eight-beat bars have been seen since. Two are required, so one downbeat
+        the network missed on an ordinary track cannot move the level. */
+    uint32_t cadenceDownbeatBeatSerial = 0;
+    int      cadenceOctaveCandidate = 0;
+    int      cadenceOctaveVotes = 0;
+    int      metricalOctaveHint = 0;
+    bool     metricalOctaveHintValid = false;
 
     // Regime tracking. The question "is this a record or a band" is settled on
     // the *spread* of the long fit over a window of beats, not on a run of

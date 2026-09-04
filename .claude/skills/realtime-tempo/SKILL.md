@@ -90,10 +90,64 @@ half a beat off the beat stands at 0.73-0.77 of the beat's own, against
 was given. Moving thresholds to break that tie makes the aggregate worse,
 because the same asymmetry is what stops an ordinary rock backbeat reading as
 half-time. So: AUTO keeps the pulse inside the range a percussionist counts in
-(`BeatTracker::updateAutoOctave`, `Source/Tracking/BeatTracker.cpp:573`). The
-÷2/×2 controls were removed from the UI (item 15): the auto path is always on,
-and ambiguous levels are fixed in the tracker, not by a manual override. Do not
-try to "fix" the octave in the decoder.
+(`BeatTracker::updateAutoOctave`, `Source/Tracking/BeatTracker.cpp:573`).
+
+**But never while the part is sounding.** The level is chosen before the part
+comes in, at a stand-down or after STOP, and held for as long as it plays.
+Halving under a percussionist mid-performance is not a correction to them - it
+is the grid they are playing against moving, and the part's density and the bar
+move with it. Measured on a band drifting through the upper bound: a take at
+168 BPM reached 168.20 at 23 s and the level halved to 84 at 26 s, never
+returning (returning needs the reading to fall under `kOctaveTooSlow`). A new
+input still earns its own level - `setInputEpoch` clears it - and ÷2/×2 stays
+available while playing, which is the manual way out of a held wrong level.
+
+### For one class of material it is not "partly" unsolvable - it is undecidable
+
+The slow case is the sharp one, and it has been measured to the end: a straight
+groove at 50 BPM (kick 1 and 3, snare 2 and 4, hi-hat eighths) reads as 100 and
+will not be talked out of it. Three separate attempts to correct it from the
+analysis are documented in `docs/HANDOFF_OCTAVE_50BPM.md`, with the numbers:
+
+1. **Counting downbeats over a threshold** - never fires. At a slow tempo the
+   network crosses the downbeat threshold too rarely for a count to close.
+2. **The continuous downbeat curve**, phase-locked into an eight-slot histogram
+   - fires on the wrong evidence. The network puts comparable downbeat mass on
+   the true beat one *and* the true beat three (the same 1-vs-3 ambiguity the
+   bar alignment fights), and at the wrong octave those two land exactly four
+   slots apart: the same signature as a correct reading.
+3. **Low-band energy per beat** (`LogSpectFeatures::lowBandEnergy`, 24 bands) -
+   this one *works* on the target case, and is the interesting failure. Depth
+   of the alternation between the two interleaved slot classes, at the level the
+   grid has settled on: **0.43 when the reading is wrong against 0.85 when it is
+   right**, a clean gap, and with the line at 0.55 the 50 BPM groove reads 50
+   while 76/100/118/132/140 and the syncopated and pad styles are untouched.
+
+Number 3 was still reverted, and the reason is the thing to carry away. It
+halves half-time material - snare on three, nothing on two and four - from a
+correct 100 to a wandering 60. That is not a threshold to retune:
+
+| slot | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| straight at 50, read as 100 | kick | hat | snare | hat | kick | hat | snare | hat |
+| half-time at 100, read as 100 | kick | hat | snare | hat | kick | hat | snare | hat |
+
+Same spacing, same low end under the same slots. **They are the same sound.**
+One reading is wrong and the other is right, and nothing measurable in the audio
+distinguishes them, because there is nothing there to distinguish - which of the
+two levels a player calls "the tempo" is a convention, not an acoustic fact. The
+app implements a convention already: the reportable range (`kMinBpm = 50`, so
+50 is the floor and this case sits exactly on it) and the octave bounds in
+`updateAutoOctave`.
+
+So: **do not try to "fix" the octave in the decoder.** The test that measured
+all of this is still in `BeatDecoder::observeMetricalCadence`, switched off by
+`kCadenceCorrectionEnabled = false`, with the numbers in the comment above the
+constant - it is there to be re-measured in one command, not to be turned on.
+Deciding this case needs something from outside the audio: TAP, or a manual
+÷2/×2. Those controls were removed from the UI in item 15 as redundant with the
+auto path; this measurement says they were not redundant for this class of
+material, and the question is reopened there.
 
 ## 3. Phase: the part that is easy to get wrong
 
@@ -153,7 +207,22 @@ Summing them would hide which one answered.
 `barLocked` (SPOSTA L'1, or a tap that declares the one) stops all automatic
 rotation. It does **not** freeze the count against the grid: a `snapPhase` with
 `keepBarInStep` still carries it, which is what keeps a locked bar on the beat
-of the song it was locked to.
+of the song it was locked to. Unlocking is a tap on the lit control: that
+hands the count back without rotating. The old five-tap unlock (all the way
+round the bar, then one more) read as a button stuck on. See docs/TODO.md
+item 13.
+
+**A two-quarter cut is not a new song.** The epoch watcher needs ~4 s of quiet
+before it will restart the decoder, so a mute of two quarters never fired, and
+must not: the clock kept time, only the *count* is now on the three. A separate
+gap detector (`VirtualPercussionEngine::maybeDetectBarReentry`) looks at the
+block peak against the recent loud level - a mute clears it in one callback, a
+fill never does - and opens a four-bar coming-in window
+(`BeatTracker::notifyBarReentry`). Same window on seek (`notifyTrackSeek`),
+without bumping `analysisEpoch`. One rotation per return, 8 beats of evidence
+instead of 32, `rotateBarIndex` only. The clap reads `barTrusted` from the
+tracker (histogram names beat zero, or the listener's lock), not a time-since-
+rotation proxy. Verify with `VPTests --bar`.
 
 ## 4. The clock (`TempoFollower`)
 
@@ -522,6 +591,7 @@ cmake --build build-host --target <target>
 | target | source | question it answers |
 |---|---|---|
 | `VPTests` | `Tests/` | the TAP suite; `StubBeatModel` when no ONNX assets |
+| `VPTests --bar` | `Tests/TestAiBeat.cpp` | two-quarter cut / seek re-entry of the one (item 2) |
 | `VPTests --leak` | `Tests/TestMain.cpp` | the canceller alone in twenty seconds: 54 style x subdivision x path rows, the no-leak feed at three buffer sizes, the output A/B, the restart, three rooms |
 | `VPTests --makeup` | `Tests/TestAiBeat.cpp` | the other half of the same subject: does our own output move our own analysis. Six benches - `a` phase and the analysis chain with the fader up against down at five tempos, `b` the chain block for block, `c` a real band start with the part playing, `d` our own return not being called one plus the eighteen-row veto margin, `e`/`f` what `prepare()` clears, inside and outside. Name one to run one; naming something that is not a bench fails non-zero rather than passing nothing. `dist`, `sweep` and `epoch` are probes, assert nothing and run only when named |
 | `VPProbe` | `probe_song.cpp` | end-to-end on a full arrangement through a speaker into a room: lock time, drift, phase |

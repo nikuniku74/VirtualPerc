@@ -29,6 +29,11 @@ enum class Stroke : int
     // inside a band rather than over one.
     slapClosed,       // the crack with the hand left on the head - no ring at all
     tapado,           // the low drum stopped: a thud with the pitch taken out
+    clap,             // the backbeat, hands only - see `GrooveEngine::eventsAt`
+    // CEMBALO is the tambourine, not the cymbal the word points at in a
+    // dictionary - see Assets/Percussion/ATTRIBUTION.md.
+    cembaloDown,      // the struck hit - same job as the shaker, another sound:
+    cembaloUp,        // the shake on the return. Same table, own switch.
     count
 };
 
@@ -70,7 +75,10 @@ class GrooveEngine
 {
 public:
     static constexpr int kStepsPerBar = 16;
-    static constexpr int kMaxEvents = 4;
+    // One slot each for shaker, cembalo, clap and a conga table hit, plus one
+    // for a conga ghost note - the most that can land on a single sixteenth -
+    // with one spare.
+    static constexpr int kMaxEvents = 6;
 
     void prepare (std::uint32_t seed) noexcept;
     void reset() noexcept;
@@ -110,11 +118,35 @@ public:
 
     void setShakerEnabled (bool on) noexcept { shakerOn = on; }
     void setCongasEnabled (bool on) noexcept { congasOn = on; }
+    /** Same job as the shaker, a different sound: reuses the shaker's table,
+        thinning, accents and feel, and is switched independently. */
+    void setCembaloEnabled (bool on) noexcept { cembaloOn = on; }
+    /** The backbeat only. Also needs `setBarTrusted (true)` to actually sound -
+        see that setter. */
+    void setClapEnabled (bool on) noexcept { clapOn = on; }
+    /** Whether the app's "one" is currently trustworthy enough to put the clap
+        on it: the listener has locked the bar, or enough time has passed since
+        the last automatic rotation that a wrong guess would have been
+        corrected by now. Gates CLAP only - every other voice follows the beat
+        the app is already playing to, right or wrong, same as before. See
+        docs/TODO.md items 2 and 10: a real per-block confidence score from the
+        tracker is the proper fix; this is the best signal available until item
+        2 lands. */
+    void setBarTrusted (bool trusted) noexcept { barTrustedFlag = trusted; }
 
     /** How dense the synthesized shaker and conga parts are. `autoDetect`
         means eighths. The setting only thins authored events; it never adds
-        or moves them. */
+        or moves them. `setShakerNatural` is the exception, and only for the
+        shaker (and cembalo, which is the same part): see that setter. */
     void setSubdivision (Subdivision s) noexcept;
+
+    /** Occasional extra shaker strokes on the grid the subdivision has
+        thinned away: sixteenths on an eighths part, off-eighths on a
+        quarters part. Off by default, so 1/4 / 1/8 / 1/16 stay exact.
+        Uses the authored `shaker[16]` values the thinning had dropped, never
+        invents a busier table, and never becomes a full finer grid. Congas
+        are untouched. */
+    void setShakerNatural (bool on) noexcept { naturalOn = on; }
 
     /** Strokes falling on one sixteenth of one bar. `barIndex` counts bars
         since the part started and selects the phrase; `step` is 0..15.
@@ -128,6 +160,10 @@ private:
     float dynamicGain() const noexcept;
     /** Whether a stroke written at this velocity is still in the part. */
     bool  v_survives (float writtenVelocity) const noexcept;
+    /** Written shaker velocity that should sound on this step, or 0. Shared
+        by shaker and cembalo so an ornament is one decision, two timbres. */
+    float soundingShaker (int step, bool subdivisionAllows,
+                          const float* shakerTable) noexcept;
 
     /** The loudest written stroke that can be thinned away at the floor. Above
         this nothing is ever dropped, so the skeleton of every figure survives
@@ -143,6 +179,14 @@ private:
     float dynamics = 1.0f;
     bool  shakerOn = true;
     bool  congasOn = true;
+    // New voices, off until the listener asks for them - see item 10 in
+    // docs/TODO.md. Cembalo has no dependency and could default on; it stays
+    // off with clap so turning either on is a deliberate choice, not a change
+    // to how the app already sounds on upgrade.
+    bool  cembaloOn = false;
+    bool  clapOn = false;
+    bool  barTrustedFlag = false;
+    bool  naturalOn = false;
     Subdivision subdivisionGrid = Subdivision::eighth;
 };
 

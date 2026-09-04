@@ -350,8 +350,10 @@ int main (int argc, char** argv)
         { "niente (controllo)",     [] (vp::VirtualPercussionEngine&) {} },
         { "master 0.90 -> 0.40",    [] (auto& e) { e.settings().masterVolume.store (0.40f); } },
         { "master 0.40 -> 1.00",    [] (auto& e) { e.settings().masterVolume.store (1.00f); } },
-        { "percussione 1.0 -> 0.4", [] (auto& e) { e.settings().percussionVolume.store (0.40f); } },
-        { "percussione 0.4 -> 1.0", [] (auto& e) { e.settings().percussionVolume.store (1.00f); } },
+        { "percussione 1.0 -> 0.4", [] (auto& e) { e.settings().shakerVolume.store (0.40f);
+                                                    e.settings().congaVolume.store (0.40f); } },
+        { "percussione 0.4 -> 1.0", [] (auto& e) { e.settings().shakerVolume.store (1.00f);
+                                                    e.settings().congaVolume.store (1.00f); } },
         { "congas off",             [] (auto& e) { e.settings().congasEnabled.store (false); } },
         { "congas on",              [] (auto& e) { e.settings().congasEnabled.store (true); } },
         { "riverbero 0.3 -> 0.9",   [] (auto& e) { e.settings().reverbAmount.store (0.90f); } },

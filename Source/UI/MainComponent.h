@@ -78,7 +78,6 @@ private:
     void refreshProcButton();
     void refreshLoopModeButton();
     bool loadBundledLoopBank();
-    void refreshMixLabels();
 
     void setSettingsOpen (bool open);
     void paintSettings (juce::Graphics&);
@@ -91,6 +90,8 @@ private:
     void applyStyle (vp::GrooveStyle s);
     void applyStyleAuto (bool on);
     void refreshStyleButtons();
+    void applyShakerNatural (bool on);
+    void refreshNaturalButton();
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
     void refreshBarButton();
@@ -150,11 +151,22 @@ private:
     {
         juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoNudge,
                              tempoLine, beats, trackWave, part, meter, mic;
-        juce::Rectangle<int> bpmNumber;
+        /** The three columns the tempo row is divided into. The number gets the
+            middle one and nothing else: given the whole row it grew until it ran
+            under the two buttons and out of the column. */
+        juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
         juce::Rectangle<int> barShift;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
     juce::Rectangle<int> stageArea() const;
+
+    /** The metrical level the player picked, and the way back to AUTO. There
+        is material no automatic path can resolve - a straight groove at 50 BPM
+        and a half-time one at 100 are the same sound - so the choice has to be
+        reachable. See docs/HANDOFF_OCTAVE_50BPM.md. */
+    void applyTempoOctave (int octaves);
+    void applyTempoOctaveAuto();
+    void refreshOctaveButtons();
 
     void paintStage (juce::Graphics& g, juce::Rectangle<int> area);
     void paintCards (juce::Graphics& g);
@@ -227,9 +239,8 @@ private:
     vp::EngineSnapshot snap;
 
     juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
-    /** Presses since the count became the listener's. Four is all the way round
-        the bar, and the one after that hands it back to the app. */
-    int barTapsSinceLock = 0;
+    juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
+    juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
     juce::TextButton followButton { "SEGUI" };
@@ -255,13 +266,47 @@ private:
         bank with the original engine as its compatibility fallback. */
     juce::TextButton loopModeButton { "LOOP" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
+    juce::TextButton naturalButton { "NATURALE" };
     juce::TextButton congasButton { "CONGAS" };
-    juce::TextButton styleAuto { "AUTO" };
-    juce::TextButton styleMarcha { "MARCHA" }, styleRock { "ROCK" };
-    juce::TextButton styleDance { "DANCE" }, stylePop { "POP" };
-    juce::TextButton styleSamba { "SAMBA" }, styleFunk { "FUNK" };
-    juce::TextButton styleReggae { "REGGAE" }, styleBossa { "BOSSA" };
-    juce::TextButton styleTwoOne { "DUE-UNO" };
+    juce::TextButton cembaloButton { "CEMBALO" };
+    juce::TextButton clapButton { "CLAP" };
+
+    /** Custom PARTE select. A native ComboBox on iOS/macOS is a system picker
+        and would break the look; this paints with the same chrome as the
+        STRUMENTI buttons. AUTO is the first row; picking a style turns AUTO
+        off. DUE-UNO is manual only. See docs/TODO.md item 12. */
+    struct StyleSelect final : juce::Component
+    {
+        explicit StyleSelect (MainComponent& o) : owner (o)
+        {
+            setOpaque (true);
+            setWantsKeyboardFocus (false);
+        }
+        void paint (juce::Graphics& g) override;
+        void mouseUp (const juce::MouseEvent& e) override;
+        void refresh();
+        MainComponent& owner;
+    };
+
+    struct StyleMenuOverlay final : juce::Component
+    {
+        explicit StyleMenuOverlay (MainComponent& o);
+        void resized() override;
+        void mouseDown (const juce::MouseEvent& e) override;
+        void showBelow (juce::Rectangle<int> anchorInParent);
+        void dismiss();
+        bool isOpen() const noexcept { return isVisible(); }
+        /** AUTO plus every style, so this menu has exactly one row per
+            `GrooveStyle` plus one - never a count typed by hand that can go
+            stale against the enum. */
+        static constexpr int kCount = 1 + static_cast<int> (vp::GrooveStyle::count);
+        MainComponent& owner;
+        juce::Component list;
+        juce::TextButton items[kCount];
+    };
+
+    StyleSelect styleSelect { *this };
+    StyleMenuOverlay styleMenu { *this };
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { "CASSA NO" };
     /** Measures this rig's round trip instead of taking the device's word for
@@ -278,9 +323,18 @@ private:
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
-    juce::Slider mixSlider;
-    juce::Label  mixLabel { {}, "SHAKER" };
-    juce::Label  mixValue { {}, "CONGAS" };
+    juce::Slider shakerVolSlider;
+    juce::Label  shakerVolLabel { {}, "SHAKER" };
+    juce::Label  shakerVolValue { {}, "100%" };
+    juce::Slider congaVolSlider;
+    juce::Label  congaVolLabel { {}, "CONGAS" };
+    juce::Label  congaVolValue { {}, "100%" };
+    juce::Slider cembaloVolSlider;
+    juce::Label  cembaloVolLabel { {}, "CEMBALO" };
+    juce::Label  cembaloVolValue { {}, "100%" };
+    juce::Slider clapVolSlider;
+    juce::Label  clapVolLabel { {}, "CLAP" };
+    juce::Label  clapVolValue { {}, "100%" };
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

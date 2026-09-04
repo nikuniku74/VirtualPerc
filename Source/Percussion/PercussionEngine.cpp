@@ -133,6 +133,10 @@ namespace
             // weight of the low drum and loses its note.
             case Stroke::slapClosed: return { 360.0f * kTune, 0.60f, 90.0f, 0.05f,  0.30f };
             case Stroke::tapado:     return {  95.0f * kTune, 0.34f, 70.0f, 0.05f, -0.26f };
+            // Two hands, no membrane: almost all noise, gone in under a tenth
+            // of a second. The nominal pitch below only shapes the sliver that
+            // is not noise; it is not meant to be heard as a note.
+            case Stroke::clap:  return { 1500.0f, 0.90f, 55.0f, 0.09f,  0.0f };
             default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
@@ -246,6 +250,52 @@ void PercussionEngine::synthesizeShaker (Sample& s, Stroke stroke, int layer, st
     }
 
     normalise (s.left, s.right, 0.92f);
+    fadeTail (s.left, s.right, sampleRate);
+}
+
+void PercussionEngine::synthesizeCymbal (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept
+{
+    // The stand-in for the tambourine when Assets/Percussion is missing - a
+    // bright metallic wash rather than jingles, which is as close as bandpass
+    // noise gets without a recording. What normally sounds is the recorded
+    // bank; see Assets/Percussion/ATTRIBUTION.md. Down rings longest, up is a
+    // shorter choke, mirroring the shaker's down/up pair so one table can
+    // drive both.
+    const bool down = stroke == Stroke::cembaloDown;
+    const float force = 0.55f + 0.45f * (static_cast<float> (layer) / static_cast<float> (kLayers - 1));
+
+    const double seconds = down ? 0.24 : 0.10;
+    const int length = std::max (256, static_cast<int> (sampleRate * seconds));
+    const float sr = static_cast<float> (sampleRate);
+
+    s.left.assign (static_cast<size_t> (length), 0.0f);
+    s.right.assign (static_cast<size_t> (length), 0.0f);
+    DeterministicRng local (seed);
+
+    const float fHigh = (down ? 8200.0f : 7200.0f) * (0.85f + 0.30f * force) / sr;
+    const float fMid  = 4600.0f / sr;
+    const float fBody = 2100.0f / sr;
+    const float decay = (down ? 5.0f : 13.0f) * (1.05f - 0.15f * force);
+    const float snap  = (down ? 260.0f : 420.0f) * (0.7f + 0.6f * force);
+
+    Svf hiL, hiR, midL, midR, bodyL, bodyR;
+    for (int n = 0; n < length; ++n)
+    {
+        const float t = static_cast<float> (n) / sr;
+        const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * snap));
+        const float nL = local.nextSigned();
+        const float nR = local.nextSigned();
+        const float hiLv = hiL.bandpass (nL, fHigh, 0.15f);
+        const float hiRv = hiR.bandpass (nR, fHigh, 0.15f);
+        const float midLv = midL.bandpass (nL, fMid, 0.22f);
+        const float midRv = midR.bandpass (nR, fMid, 0.22f);
+        const float bodyLv = bodyL.bandpass (nL, fBody, 0.30f);
+        const float bodyRv = bodyR.bandpass (nR, fBody, 0.30f);
+        s.left[static_cast<size_t> (n)]  = (hiLv * 0.50f + midLv * 0.32f + bodyLv * 0.18f) * env;
+        s.right[static_cast<size_t> (n)] = (hiRv * 0.50f + midRv * 0.32f + bodyRv * 0.18f) * env;
+    }
+
+    normalise (s.left, s.right, 0.90f);
     fadeTail (s.left, s.right, sampleRate);
 }
 
@@ -493,12 +543,14 @@ void PercussionEngine::buildBank() noexcept
     static_assert (static_cast<int> (Stroke::shakerDown) == 0
                    && static_cast<int> (Stroke::muff) == 7
                    && static_cast<int> (Stroke::tapado) == 9
-                   && kStrokes == 10);
+                   && static_cast<int> (Stroke::cembaloUp) == 12
+                   && kStrokes == 13);
     // Which articulations have a recording of their own. The rest are derived
     // from one of those - see `fromOpen` and `fromSlap` below.
     static const char* kStem[kStrokes] = {
         "shaker_down", "shaker_up", "tumba", "open", "slap",
-        nullptr, nullptr, nullptr, nullptr, nullptr
+        nullptr, nullptr, nullptr, nullptr, nullptr,
+        "clap", "cembalo_down", "cembalo_up"
     };
 
     for (int st = 0; st < kStrokes; ++st)
@@ -550,6 +602,8 @@ void PercussionEngine::buildBank() noexcept
                 {
                     if (stroke == Stroke::shakerDown || stroke == Stroke::shakerUp)
                         synthesizeShaker (s, stroke, layer, seed);
+                    else if (stroke == Stroke::cembaloDown || stroke == Stroke::cembaloUp)
+                        synthesizeCymbal (s, stroke, layer, seed);
                     else
                         synthesizeDrum (s, stroke, layer, seed);
                     continue;
@@ -907,11 +961,6 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
 
     int active = 0;
     int releasing = 0;
-    // Centre: both sit at full. Past the centre the quieter side falls
-    // linearly to silence; the louder side stays at one, so moving the mix
-    // never makes the instrument you are turning toward quieter.
-    const float shakerG = instrumentMix <= 0.5f ? 1.0f : 2.0f * (1.0f - instrumentMix);
-    const float congaG  = instrumentMix >= 0.5f ? 1.0f : 2.0f * instrumentMix;
     for (auto& v : voices)
     {
         if (! v.active || v.sample == nullptr)
@@ -920,7 +969,11 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         if (v.fadeStep > 0.0f)
             ++releasing;
         const bool shaker = v.stroke == Stroke::shakerDown || v.stroke == Stroke::shakerUp;
-        const float g = volume * (shaker ? shakerG : congaG);
+        const bool cembalo = v.stroke == Stroke::cembaloDown || v.stroke == Stroke::cembaloUp;
+        const float g = shaker ? shakerVolume
+                       : cembalo ? cembaloVolume
+                       : v.stroke == Stroke::clap ? clapVolume
+                       : congaVolume;
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));

@@ -16,6 +16,20 @@ public:
     LogSpectFeatures();
     ~LogSpectFeatures();
 
+    /** How many of the low bands count as "kick and snare body". The filterbank
+        is logarithmic from 30 Hz, but at the bottom the madmom FFT grid is
+        coarser than 1/24 octave and neighbouring centres collapse onto the same
+        bin, so this is a count of filters rather than a frequency - see
+        docs/HANDOFF_OCTAVE_50BPM.md for the sweep that chose it. */
+    static constexpr int kLowBands = 24;
+
+    /** Mean of those bands in a frame from `popFrame`. Kick and snare have body
+        down there; a hi-hat has almost none, and since the bands are
+        log10(mag + 1) an empty low end reads as very nearly zero rather than as
+        a small negative number. What the metrical-level test in BeatDecoder is
+        built on: see observeMetricalCadence. */
+    static float lowBandEnergy (const float* frame) noexcept;
+
     void prepare (double sampleRate, int hopLength);
     void reset() noexcept;
     void process (const float* mono, int numSamples) noexcept;

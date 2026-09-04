@@ -36,6 +36,29 @@ namespace
     constexpr float kMakeupFloor = 0.0004f;
     constexpr float kMakeupMaxGain = 24.0f;
 
+    // This stage was boost-only - clamped to a floor of 1.0 - so an input that
+    // already arrives hotter than the target peak (a line-level feed, or the
+    // user's own input-gain trim turned up) was never brought back down. Full
+    // symmetry with the target above (attenuating anything over 0.20 back down
+    // to it) was tried and reverted: it measurably helps a hot input, but it
+    // also touches material that used to pass through this stage at gain 1.0
+    // untouched, and the octave/level state space downstream is not uniformly
+    // indifferent to that - the octave-sweep bench in TestAiBeat.cpp (168 BPM)
+    // reads its half the moment this stage moves it from 1.0 to 0.8 - a two
+    // decibel move. That bench sits at a peak of ~0.25, already close to the
+    // target, which is exactly the regime the boost-only floor used to leave
+    // alone - undoing that costs more than it buys until this is revalidated
+    // the way the target above was, across the same spread of songs and
+    // styles, not just this one bench.
+    //
+    // So this only catches the case boost-only cannot help at all: a signal
+    // already near clipping, which no amount of downstream gain can undo once
+    // it happens. Below this peak, gain stays exactly as it was - 1.0, no
+    // attenuation - so every song this file's tables were measured against
+    // keeps the analysis level it was validated at.
+    constexpr float kMakeupClipGuardPeak = 0.90f;
+    constexpr float kMakeupMinGain = 1.0f / kMakeupMaxGain;
+
     // Seconds. Slow in both directions on purpose: this sets the network's
     // operating point, so it must not follow the music's dynamics. The gain
     // then follows the envelope quickly - the slowness belongs in one place,
@@ -169,6 +192,9 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     levelStepSamples = 0;
     levelPrimeSamples = 0;
     analysisEpoch.store (0, std::memory_order_relaxed);
+    barReentryPending.store (false, std::memory_order_relaxed);
+    musicGapSamples = 0;
+    musicGapArmed = false;
     ownPeakLast = 0.0f;
     ownFast = 0.0f;
     ownRef = 0.0f;
@@ -336,7 +362,9 @@ void VirtualPercussionEngine::setFixedBpm (float bpm) noexcept
 
 void VirtualPercussionEngine::notifyTrackSeek() noexcept
 {
-    analysisEpoch.fetch_add (1, std::memory_order_relaxed);
+    // A seek is a cut, not a new song. Restarting the decoder here was
+    // throwing away a tempo that is still right; the one is what moved.
+    barReentryPending.store (true, std::memory_order_relaxed);
 }
 
 void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept
@@ -828,8 +856,13 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         peakEnv += (rawPeak - peakEnv) * (rawPeak > peakEnv ? attack : release);
 
     float wanted = 1.0f;
-    if (peakEnv >= kMakeupFloor)
-        wanted = std::clamp (kMakeupTargetPeak / std::max (peakEnv, 1.0e-5f), 1.0f, kMakeupMaxGain);
+    if (peakEnv < kMakeupTargetPeak)
+    {
+        if (peakEnv >= kMakeupFloor)
+            wanted = std::clamp (kMakeupTargetPeak / peakEnv, 1.0f, kMakeupMaxGain);
+    }
+    else if (peakEnv > kMakeupClipGuardPeak)
+        wanted = std::clamp (kMakeupClipGuardPeak / peakEnv, kMakeupMinGain, 1.0f);
 
     const float smooth = 1.0f - std::exp (-static_cast<float> (numSamples)
                                           / std::max (1.0f, static_cast<float> (sampleRate * kMakeupGlideSec)));
@@ -843,7 +876,11 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         makeupGain = wanted;
     else
         makeupGain += (wanted - makeupGain) * smooth;
-    if (from <= 1.0001f && makeupGain <= 1.0001f)
+    // Was `from <= 1.0001f && makeupGain <= 1.0001f`, back when this stage only
+    // ever boosted: unity was the one value meaning "nothing to do". Now it can
+    // also attenuate, so "nothing to do" is unity in either direction, not "at
+    // or below" it - that old test would have skipped every attenuating block.
+    if (std::fabs (from - 1.0f) < 1.0e-4f && std::fabs (makeupGain - 1.0f) < 1.0e-4f)
         return;
 
     // Ramp within the block: a gain that steps between callbacks puts an edge
@@ -979,6 +1016,47 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     return false;
 }
 
+void VirtualPercussionEngine::maybeDetectBarReentry (int numSamples, float rawPeak) noexcept
+{
+    // The epoch watcher needs ~4 s of quiet (levelRef decaying 24 dB) before
+    // it will call a new input. A two-quarter cut is a second, so it never
+    // fires, and must not: restarting the decoder is exactly what would
+    // lose the tempo through the hole. This looks at the block peak against
+    // the recent loud level instead, which a mute clears in one callback
+    // and a fill never does.
+    const auto st = static_cast<TrackingState> (lastState.load (std::memory_order_relaxed));
+    const bool following = st == TrackingState::following
+                        || st == TrackingState::lowConfidence
+                        || st == TrackingState::recovering;
+    if (! following || levelLoud < 0.02f)
+    {
+        musicGapSamples = 0;
+        musicGapArmed = false;
+        return;
+    }
+
+    const float bpm = lastBpm.load (std::memory_order_relaxed);
+    const float bpmForGap = bpm > 40.0f ? bpm : 120.0f;
+    const int twoQuarters = static_cast<int> (sampleRate * 2.0 * 60.0
+                                              / static_cast<double> (bpmForGap));
+    const bool quietBlock = rawPeak < std::max (levelLoud * 0.08f, 1.0e-4f);
+    const bool loudBlock = rawPeak > std::max (levelLoud * 0.12f, 0.02f);
+
+    if (quietBlock)
+    {
+        musicGapSamples += numSamples;
+        if (musicGapSamples >= twoQuarters)
+            musicGapArmed = true;
+        return;
+    }
+
+    if (loudBlock && musicGapArmed)
+        tracker.notifyBarReentry();
+
+    musicGapSamples = 0;
+    musicGapArmed = false;
+}
+
 void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master) noexcept
 {
     // The part as the speaker emits it, not as it was rendered.
@@ -1076,7 +1154,14 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     tracker.setFollowStrength (static_cast<FollowStrength> (cfg.followStrength.load (std::memory_order_relaxed)));
     tracker.setSubdivisionOverride (static_cast<Subdivision> (cfg.subdivision.load (std::memory_order_relaxed)));
-    tracker.setTempoOctaveAuto (true);
+    // AUTO unless the player has said otherwise. This came back with the ÷2/×2
+    // controls (TODO item 15, reopened 2026-09-04): there is a class of
+    // material - a straight groove at 50 against a half-time one at 100 - that
+    // is the *same sound* at two metrical levels, so no automatic path can
+    // decide it and the player has to be able to. See
+    // docs/HANDOFF_OCTAVE_50BPM.md.
+    tracker.setTempoOctaveAuto (cfg.tempoOctaveAuto.load (std::memory_order_relaxed));
+    tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
     {
         const bool follow = cfg.tempoFollow.load (std::memory_order_relaxed);
         tracker.setTempoFollow (follow);
@@ -1121,17 +1206,24 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                                           : latencyMs.load (std::memory_order_relaxed));
     tracker.setReportedLatencyMs (roundTrip + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
-    percussion.setVolume (cfg.percussionVolume.load (std::memory_order_relaxed));
-    percussion.setInstrumentMix (cfg.instrumentMix.load (std::memory_order_relaxed));
+    percussion.setShakerVolume (cfg.shakerVolume.load (std::memory_order_relaxed));
+    percussion.setCongaVolume (cfg.congaVolume.load (std::memory_order_relaxed));
+    percussion.setClapVolume (cfg.clapVolume.load (std::memory_order_relaxed));
+    percussion.setCembaloVolume (cfg.cembaloVolume.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
-    // The two instruments switch independently. `setEnabled` is the master
-    // gate, so it may only come off once both are off - otherwise turning the
-    // shaker off would take the congas with it.
+    // The four voices switch independently. `setEnabled` is the master gate,
+    // so it may only come off once all four are off - otherwise turning the
+    // shaker off would take the rest with it.
     const bool shakerOn = cfg.shakerEnabled.load (std::memory_order_relaxed);
     const bool congasOn = cfg.congasEnabled.load (std::memory_order_relaxed);
+    const bool cembaloOn = cfg.cembaloEnabled.load (std::memory_order_relaxed);
+    const bool clapOn = cfg.clapEnabled.load (std::memory_order_relaxed);
     percussion.setShakerEnabled (shakerOn);
     percussion.setCongasEnabled (congasOn);
-    percussion.setEnabled (shakerOn || congasOn);
+    percussion.setCembaloEnabled (cembaloOn);
+    percussion.setClapEnabled (clapOn);
+    percussion.setEnabled (shakerOn || congasOn || cembaloOn || clapOn);
+    percussion.setShakerNatural (cfg.shakerNatural.load (std::memory_order_relaxed));
     percussion.setSwing (cfg.swing.load (std::memory_order_relaxed));
     percussion.setIntensity (cfg.intensity.load (std::memory_order_relaxed));
     // The manual setting is the override; on auto the music decides.
@@ -1211,6 +1303,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     bandDynamics.observe (postPeak, numSamples);
 
     const bool levelJumped = updateAnalysisEpoch (numSamples, postPeak);
+    if (barReentryPending.exchange (false, std::memory_order_relaxed))
+        tracker.notifyBarReentry();
+    else if (! levelJumped)
+        maybeDetectBarReentry (numSamples, postPeak);
     applyAnalysisMakeup (numSamples, postPeak, levelJumped);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
@@ -1244,6 +1340,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed));
     const auto tr = tracker.process (mono.data(), numSamples);
+
+    percussion.setBarTrusted (tr.barTrusted);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
         cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
     // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
@@ -1341,7 +1439,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         hin.dynamics = followDynamics ? bandDynamics.level() : 1.0f;
         hin.congasEnabled = cfg.congasEnabled.load (std::memory_order_relaxed);
         hin.shakerEnabled = cfg.shakerEnabled.load (std::memory_order_relaxed);
-        hin.instrumentMix = cfg.instrumentMix.load (std::memory_order_relaxed);
+        hin.shakerVolume = cfg.shakerVolume.load (std::memory_order_relaxed);
+        hin.congaVolume = cfg.congaVolume.load (std::memory_order_relaxed);
         hin.sectionChanged = sectionJustChanged;
         hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
 #else
@@ -1390,6 +1489,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     cfg.barLocked.store (tr.barLocked, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
     lastBarRotations.store (tr.barRotations, std::memory_order_relaxed);
+    lastBarTrusted.store (tr.barTrusted, std::memory_order_relaxed);
+    lastBarReentry.store (tr.barReentry, std::memory_order_relaxed);
     lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
     lastKickTrusted.store (tr.kickTrusted, std::memory_order_relaxed);
     lastDrumsOut.store (tr.drumsOut, std::memory_order_relaxed);
@@ -1484,6 +1585,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.barPhase = lastBar.load (std::memory_order_relaxed);
     s.barDeclared = lastBarDeclared.load (std::memory_order_relaxed);
     s.barLocked = lastBarLocked.load (std::memory_order_relaxed);
+    s.barRotations = lastBarRotations.load (std::memory_order_relaxed);
+    s.barTrusted = lastBarTrusted.load (std::memory_order_relaxed);
+    s.barReentry = lastBarReentry.load (std::memory_order_relaxed);
     s.latencyMs = latencyMs.load (std::memory_order_relaxed);
     s.inputPeak = lastPeak.load (std::memory_order_relaxed);
     s.callbackMs = lastCallbackMs.load (std::memory_order_relaxed);
@@ -1507,7 +1611,6 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
-    s.barRotations = lastBarRotations.load (std::memory_order_relaxed);
     s.kickChannel = lastKickChannel.load (std::memory_order_relaxed);
     s.kickLevel = lastKickLevel.load (std::memory_order_relaxed);
     s.kickQuietSec = lastKickQuiet.load (std::memory_order_relaxed);
@@ -1545,7 +1648,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
         lastTempoTransitionIntervals.load (std::memory_order_relaxed);
     // The level in force, which under AUTO is not the one in the settings.
     s.tempoOctave = lastOctave.load (std::memory_order_relaxed);
-    s.tempoOctaveAuto = true;
+    s.tempoOctaveAuto = cfg.tempoOctaveAuto.load (std::memory_order_relaxed);
     s.tempoFollow = cfg.tempoFollow.load (std::memory_order_relaxed);
 
     s.loopPlaying = lastLoopPlaying.load (std::memory_order_relaxed);

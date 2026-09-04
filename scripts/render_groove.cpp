@@ -79,9 +79,18 @@ int main (int argc, char** argv)
     double bpm = 124.0;
     int bars = 8;
     float humanize = 0.35f, swing = 0.0f, intensity = 0.5f;
-    float mix = 0.5f, reverb = 0.30f;
+    float reverb = 0.30f;
+    // One gain each - no balance knob any more, see EngineSettings::
+    // shakerVolume / congaVolume / cembaloVolume / clapVolume (item 9). 0.90
+    // is the same headroom the old single `setVolume` asked for.
+    float shakerVol = 0.90f, congaVol = 0.90f, cembaloVol = 0.90f, clapVol = 0.90f;
     bool click = false;
     bool congas = true, shaker = true;
+    // Off by default in the app (item 10); opt in here too so an unqualified
+    // render still sounds like what most listeners hear.
+    bool cembalo = false, clap = false;
+    bool natural = false;
+    vp::Subdivision subdivision = vp::Subdivision::eighth;
     float dynamics = 1.0f;
     bool arc = false;
 
@@ -96,19 +105,40 @@ int main (int argc, char** argv)
         else if (a == "--humanize")  humanize = std::stof (next());
         else if (a == "--swing")     swing = std::stof (next());
         else if (a == "--intensity") intensity = std::stof (next());
-        else if (a == "--mix")       mix = std::stof (next());
+        else if (a == "--shaker-vol")  shakerVol = std::stof (next());
+        else if (a == "--conga-vol")   congaVol = std::stof (next());
+        else if (a == "--cembalo-vol") cembaloVol = std::stof (next());
+        else if (a == "--clap-vol")    clapVol = std::stof (next());
         else if (a == "--reverb")    reverb = std::stof (next());
         else if (a == "--click")     click = true;
         else if (a == "--dynamics")  dynamics = std::stof (next());
         else if (a == "--arc")       arc = true;
         else if (a == "--no-congas") congas = false;
         else if (a == "--no-shaker") shaker = false;
+        else if (a == "--cembalo")   cembalo = true;
+        else if (a == "--clap")      clap = true;
+        else if (a == "--natural")   natural = true;
+        else if (a == "--sub")
+        {
+            const std::string v = next();
+            if (v == "4" || v == "1/4")       subdivision = vp::Subdivision::quarter;
+            else if (v == "8" || v == "1/8")  subdivision = vp::Subdivision::eighth;
+            else if (v == "16" || v == "1/16") subdivision = vp::Subdivision::sixteenth;
+            else
+            {
+                std::printf ("--sub vuole 4, 8 o 16\n");
+                return 1;
+            }
+        }
         else
         {
             std::printf ("uso: VPRender [--style marcha|rock|dance|pop|samba|funk|reggae|bossa]\n"
                          "              [--bpm 124] [--bars 8] [--out file.wav] [--click]\n"
                          "              [--humanize 0.35] [--swing 0] [--intensity 0.5]\n"
-                         "              [--mix 0.5] [--reverb 0.30] [--no-congas] [--no-shaker]\n"
+                         "              [--shaker-vol 0.9] [--conga-vol 0.9] [--reverb 0.30]\n"
+                         "              [--no-congas] [--no-shaker] [--cembalo] [--clap]\n"
+                         "              [--cembalo-vol 0.9] [--clap-vol 0.9]\n"
+                         "              [--sub 4|8|16] [--natural]\n"
                          "              [--dynamics 1.0] [--arc]\n");
             return 1;
         }
@@ -127,17 +157,26 @@ int main (int argc, char** argv)
     perc.setSeed (0x5EED17u);
     perc.setGrooveStyle (style);
     perc.setGroove (static_cast<float> (bpm), 4);
-    perc.setSubdivision (vp::Subdivision::eighth);
+    perc.setSubdivision (subdivision);
+    perc.setShakerNatural (natural);
     perc.setHumanization (humanize);
     perc.setSwing (swing);
     perc.setIntensity (intensity);
-    perc.setInstrumentMix (mix);
+    perc.setShakerVolume (shakerVol);
+    perc.setCongaVolume (congaVol);
+    perc.setCembaloVolume (cembaloVol);
+    perc.setClapVolume (clapVol);
     perc.setDynamics (dynamics);
     perc.setReverbAmount (reverb);
     perc.setCongasEnabled (congas);
     perc.setShakerEnabled (shaker);
-    perc.setEnabled (congas || shaker);
-    perc.setVolume (0.90f);
+    perc.setCembaloEnabled (cembalo);
+    perc.setClapEnabled (clap);
+    // This render has no ambiguity to be wrong about: bar 0 is beat one by
+    // construction, so the clap's trust gate (item 10, real app only via
+    // BeatTracker - see docs/TODO.md items 2 and 10) is simply true here.
+    perc.setBarTrusted (true);
+    perc.setEnabled (congas || shaker || cembalo || clap);
 
     vp::TempoFollower clock;
     clock.prepare (kSr);

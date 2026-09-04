@@ -97,6 +97,60 @@ namespace
     // A fixed tempo may only be refined, never dragged.
     constexpr float kFixedMaxStep = 0.015f;
 
+    // The bar-cadence octave corrector's histogram: how much it forgets per
+    // accepted beat, and how much decayed evidence it needs before the shares
+    // below mean anything. Same decay as BeatTracker.cpp's kVoteDecay and the
+    // same reasoning: recent evidence must be able to overrule stale evidence
+    // within one section of a song, not carry the whole take, and sixteen
+    // accepted beats is the two-consecutive-bar span the discrete version of
+    // this corrector used to require before it acts.
+    constexpr float kCadenceDecay = 0.982f;
+    constexpr float kCadenceBeatsToDecide = 16.0f;
+
+    // How empty the weaker half of the histogram has to be before the grid is
+    // called one octave too fast. The two interleaved sets of four slots hold
+    // the two alternating classes of accepted beat; at the wrong level one of
+    // them is hi-hat eighths, which have next to nothing in the low bands,
+    // while at the right level both are real quarters - a kick set and a snare
+    // set, and a snare has body. So the test is the depth of that alternation,
+    // not its presence: presence alone cannot tell the two apart.
+    //
+    // Measured on the probe bench, mixer feed, steady state:
+    //
+    //     low bands   6      12     24
+    //     50 BPM      0.53   0.50   0.43   <- the reading that is wrong
+    //     100 BPM     0.60   0.73   0.85   <- the reading that is right
+    //
+    // Twenty-four bands is what opens the gap, and it opens it for a reason:
+    // six bands reach only the kick fundamental, where a snare looks nearly as
+    // empty as a hi-hat and the two readings converge. Twenty-four reach the
+    // snare's body, so at the right level both halves are full and the depth
+    // goes to nearly one, while a hi-hat still has little to put there.
+    //
+    // At 0.55 the bench does exactly what it should: the 50 BPM groove reads 50
+    // instead of 100, and 76, 100, 118, 132, 140 and the syncopated and pad
+    // styles are all untouched.
+    //
+    // And it is still wrong, which is why it is off. Half-time material at 100
+    // BPM - snare on three, nothing on two and four - builds the same
+    // histogram: the slots between the hits are as empty as hi-hat slots, so
+    // the test halves a correct 100 into a wandering 60. That is not a
+    // threshold that needs moving. A straight groove at 50 and a half-time
+    // groove at 100 are the *same sound* - kick, hat, snare, hat, at the same
+    // spacing, with the same low end under the same slots - so nothing measured
+    // from the audio can separate them. Which of the two a listener calls "the
+    // tempo" is a convention, and this app already implements one: the reported
+    // range here and the octave bounds in BeatTracker.cpp. Deciding it the
+    // other way needs something from outside the audio - a tap, or a control
+    // the player can flip.
+    //
+    // Left in place, switched off, with the machinery that measured it: the
+    // question is open (docs/TODO.md item 1) and this is the bench that answers
+    // it in one command. Do not turn it on without reading
+    // docs/HANDOFF_OCTAVE_50BPM.md first.
+    constexpr bool  kCadenceCorrectionEnabled = false;
+    constexpr float kCadenceHatDepth = 0.55f;
+
     // Below this the committed tempo is not moved at all. A fixed tempo that
     // keeps taking hundredth-of-a-BPM steps is a number that never stops
     // changing on screen and a clock that never stops being nudged, for a
@@ -356,6 +410,14 @@ void BeatDecoder::reset() noexcept
     beatSerial = 0;
     downbeatSerial = 0;
     gridSerial = 0;
+    std::fill (cadenceHist, cadenceHist + 8, 0.0f);
+    cadenceHistBeats = 0.0f;
+    cadenceAnchorSec = -1.0;
+    cadenceDownbeatBeatSerial = 0;
+    cadenceOctaveCandidate = octaveShift;
+    cadenceOctaveVotes = 0;
+    metricalOctaveHint = 0;
+    metricalOctaveHintValid = false;
     tempoRegime = TempoRegime::unknown;
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
@@ -390,6 +452,11 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     if (wanted == octaveShift)
         return;
 
+    const bool cadenceCorrection = metricalOctaveHintValid
+                                   && wanted == metricalOctaveHint
+                                   && wanted < octaveShift
+                                   && lastDownbeatSec >= 0.0;
+
     // Move the committed tempo with it and start the grid again. Everything
     // measured about the level just left describes a different grid: the beat
     // times are now offbeats (or half of the beats are missing), the fits would
@@ -401,10 +468,33 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     if (bpm >= kMinBpm)
         bpm = std::clamp (bpm * scale, kMinBpm, kMaxBpm);
 
+    // The bar cadence did more than identify the level: it identified a true
+    // quarter-grid anchor. Reusing the most recent fast-grid beat here can put
+    // the new 50 BPM grid on a hi-hat offbeat, after which the on-grid gate
+    // faithfully rejects every quarter. Only the cadence-backed path has this
+    // stronger phase evidence; manual and range-based octave changes keep the
+    // established generic behaviour below.
+    if (cadenceCorrection)
+    {
+        gridAnchorSec = lastDownbeatSec;
+        lastBeatSec = lastDownbeatSec;
+        beatsInBar = 0;
+    }
+
     beatWrite = 0;
     beatFilled = 0;
     longWrite = 0;
     longFilled = 0;
+    // Every bin of the low-band histogram describes a phase mod eight accepted
+    // beats *of the grid that just left*. Carrying it into the new grid would
+    // fit a pattern against beats that are no longer where it measured them -
+    // offbeats now, if the level just went up, or beats that no longer exist as
+    // separate events if it went down. The downbeat-spacing counter and the
+    // hint itself are deliberately *not* cleared here: the hint is what the
+    // caller is acting on as it calls this, and the caller reads it back.
+    std::fill (cadenceHist, cadenceHist + 8, 0.0f);
+    cadenceHistBeats = 0.0f;
+    cadenceAnchorSec = -1.0;
     // The anchor is still a beat time going up an octave and may be an offbeat
     // going down one; either way the fold settles it inside three beats, which
     // is sooner than a fit could be rebuilt to argue about it.
@@ -418,6 +508,133 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     shortFitBpm = 0.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
+}
+
+void BeatDecoder::observeDownbeatCadence() noexcept
+{
+    // A microphone in a room scatters the downbeat curve too widely for this
+    // count to mean what it says. The reported failure is the loaded-track and
+    // mixer path; there the model sees a stable direct signal and a repeated
+    // bar interval is independent evidence about the metrical level.
+    if (! useAnchor || ! lineFeed)
+        return;
+
+    if (cadenceDownbeatBeatSerial == 0)
+    {
+        cadenceDownbeatBeatSerial = beatSerial;
+        return;
+    }
+
+    const uint32_t gap = beatSerial - cadenceDownbeatBeatSerial;
+    cadenceDownbeatBeatSerial = beatSerial;
+
+    // At the correct level a 4/4 bar is four accepted beats. If hi-hat eighths
+    // have become the beat it is eight. Require two complete, consecutive bars:
+    // a single downbeat the network missed on an ordinary 100 BPM record also
+    // makes an eight, but two misses in exactly the same place are not a level
+    // decision worth moving the clock for.
+    if (gap >= 7u && gap <= 9u && octaveShift > -2
+        && bpm * 0.5f >= kMinBpm)
+    {
+        const int candidate = octaveShift - 1;
+        if (candidate == cadenceOctaveCandidate)
+            ++cadenceOctaveVotes;
+        else
+        {
+            cadenceOctaveCandidate = candidate;
+            cadenceOctaveVotes = 1;
+        }
+
+        if (cadenceOctaveVotes >= 2)
+        {
+            metricalOctaveHint = candidate;
+            metricalOctaveHintValid = true;
+        }
+    }
+    else
+    {
+        cadenceOctaveCandidate = octaveShift;
+        cadenceOctaveVotes = 0;
+    }
+}
+
+void BeatDecoder::observeMetricalCadence (double eventTimeSec, float lowBand) noexcept
+{
+    // A microphone in a room smears the low end - the app's own part is in it,
+    // the room is in it - so this histogram would not mean what it says there.
+    // The reported failure is the loaded-track and mixer path, where the band
+    // energy arrives as the record has it.
+    if (! useAnchor || ! lineFeed)
+        return;
+
+    if (cadenceAnchorSec < 0.0)
+        cadenceAnchorSec = eventTimeSec;
+
+    const float period = 60.0f / std::max (kMinBpm, bpm);
+
+    // Which of the eight slots this beat falls in, from elapsed time divided
+    // by the current period - not from counting accepted beats. A beat the
+    // network's own gate missed (it happens, even on a clean line feed: two
+    // consecutive events almost exactly 2x the usual spacing apart, measured
+    // on this bench) would otherwise shift every bin after it by one, forever,
+    // desynchronising the histogram from the metrical grid for no musical
+    // reason. Rounding elapsed time to the nearest slot absorbs a miss the way
+    // the on-grid gate elsewhere in this file already absorbs one for the
+    // tempo fit.
+    const double slots = (eventTimeSec - cadenceAnchorSec) / static_cast<double> (period);
+    const int bin = ((static_cast<int> (std::llround (slots)) % 8) + 8) % 8;
+
+    for (float& v : cadenceHist)
+        v *= kCadenceDecay;
+    cadenceHistBeats = cadenceHistBeats * kCadenceDecay + 1.0f;
+    cadenceHist[bin] += std::max (0.0f, lowBand);
+
+    // Not enough behind the histogram yet for a share of it to mean anything,
+    // or an octave down would leave nothing (or go somewhere the caller cannot
+    // use): say so and stop, rather than act on a stale reading from before
+    // the input changed.
+    if (cadenceHistBeats < kCadenceBeatsToDecide || octaveShift <= -2
+        || bpm * 0.5f < kMinBpm)
+    {
+        if (kCadenceCorrectionEnabled)
+            metricalOctaveHintValid = false;
+        return;
+    }
+
+    // The two interleaved sets of four slots. If the grid is one octave too
+    // fast, one set is the real quarters - kick and snare, body in the low
+    // bands - and the other is the hi-hat eighths between them, which have
+    // almost none. If the grid is already right, both sets are real quarters
+    // and neither is anywhere near empty.
+    float even = 0.0f, odd = 0.0f;
+    for (int i = 0; i < 8; i += 2)
+    {
+        even += cadenceHist[i];
+        odd  += cadenceHist[i + 1];
+    }
+    const float strong = std::max (even, odd);
+    const float weak   = std::min (even, odd);
+    if (strong < 1.0e-6f)
+    {
+        if (kCadenceCorrectionEnabled)
+            metricalOctaveHintValid = false;
+        return;
+    }
+
+    const float depth = weak / strong;
+
+    if (! kCadenceCorrectionEnabled)
+        return;   // measuring only; the counting path above owns the hint
+
+    if (depth < kCadenceHatDepth)
+    {
+        metricalOctaveHint = octaveShift - 1;
+        metricalOctaveHintValid = true;
+    }
+    else
+    {
+        metricalOctaveHintValid = false;
+    }
 }
 
 float BeatDecoder::foldToAnchor (float bpmValue) const noexcept
@@ -578,6 +795,14 @@ void BeatDecoder::notifyInputRestart() noexcept
     hmm.reset();
     anchorBpm = 0.0f;
     anchorStrength = 0.0f;
+    std::fill (cadenceHist, cadenceHist + 8, 0.0f);
+    cadenceHistBeats = 0.0f;
+    cadenceAnchorSec = -1.0;
+    cadenceDownbeatBeatSerial = 0;
+    cadenceOctaveCandidate = octaveShift;
+    cadenceOctaveVotes = 0;
+    metricalOctaveHint = 0;
+    metricalOctaveHintValid = false;
 
     // The grid and everything fitted to it. The next peak re-anchors, because
     // with no last beat the on-grid gate has nothing to reject against.
@@ -1856,7 +2081,8 @@ float BeatDecoder::scoreConfidence() const noexcept
     return std::clamp (score, 0.0f, 1.0f);
 }
 
-BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) noexcept
+BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
+                                     float lowBand) noexcept
 {
     (void) pNone;
     const double hopSec = 1.0 / fps;
@@ -1989,12 +2215,20 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
         // still well inside the shortest beat this ever runs at.
         lastBeatDownbeat = std::max (prevDownbeat,
                                      std::max (prevPrevDownbeat, pDownbeat));
+        // And how much body this beat had, over the same three-frame window and
+        // for the same reason. This is what says "kick or snare" rather than
+        // "hi-hat", which is the one question the metrical level turns on and
+        // the one the probabilities above cannot answer.
+        const float beatLowBand = std::max (prevLowBand,
+                                            std::max (prevPrevLowBand, lowBand));
+        observeMetricalCadence (eventTimeSec, beatLowBand);
         if (prevDownbeat > downThresh)
         {
             lastDownbeatStrength = prevDownbeat;
             lastDownbeatSec = eventTimeSec;
             beatsInBar = 0;
             ++downbeatSerial;
+            observeDownbeatCadence();
         }
         updateTempo();
     }
@@ -2025,6 +2259,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
+    hyp.metricalOctaveHint = metricalOctaveHint;
+    hyp.metricalOctaveHintValid = metricalOctaveHintValid;
     hyp.fitResidual = lastFitResidual;
     hyp.fitCoverage = lastFitCoverage;
     hyp.transitionState = transitionState;
@@ -2040,6 +2276,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone) 
     prevPulse = pulseActivation;
     prevPrevDownbeat = prevDownbeat;
     prevDownbeat = pDownbeat;
+    prevPrevLowBand = prevLowBand;
+    prevLowBand = lowBand;
     return hyp;
 }
 

@@ -250,6 +250,9 @@ struct EngineSnapshot
         song (1 down to 0.3), with the constant the clock is therefore
         averaging its phase over. Diagnostics. */
     int   barRotations         = 0;
+    /** Whether the one is believed enough for the clap (item 2 / 10). */
+    bool  barTrusted           = false;
+    bool  barReentry           = false;
     float evidenceTrust        = 1.0f;
     float gridTauSec           = 0.0f;
     /** The kick channel, when one is assigned: which channel, its envelope, how
@@ -330,10 +333,12 @@ struct EngineSnapshot
 struct EngineSettings
 {
     std::atomic<float> masterVolume    { 0.90f };
-    std::atomic<float> percussionVolume{ 1.00f };
-    /** Balance between the two instruments. 0 is shaker at full and congas
-        silent, 0.5 is both at full, 1 is congas at full and shaker silent. */
-    std::atomic<float> instrumentMix   { 0.50f };
+    /** Independent output level for each instrument, not a balance: both can
+        be loud, both can be silent, or anywhere between. */
+    std::atomic<float> shakerVolume    { 1.00f };
+    std::atomic<float> congaVolume     { 1.00f };
+    std::atomic<float> clapVolume      { 1.00f };
+    std::atomic<float> cembaloVolume   { 1.00f };
     /** Linear gain on the mixed input, before leak subtraction and makeup.
         0 silences the tracker; 2 is +6 dB. Does not touch the output. */
     std::atomic<float> inputGain       { 1.00f };
@@ -345,8 +350,31 @@ struct EngineSettings
     std::atomic<float> intensity       { 0.50f };
     std::atomic<int>   followStrength  { static_cast<int> (FollowStrength::high) };
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
+    // Half or double the tempo the analysis found, when the listener disagrees
+    // with it. -1 = half, 0 = as measured, +1 = double. Not a preference the app
+    // can guess, and not for want of trying: a straight groove at 50 BPM and a
+    // half-time one at 100 are the *same sound*, so no measurement on the audio
+    // can choose between them - only the player can. Measured and written up in
+    // docs/HANDOFF_OCTAVE_50BPM.md.
+    std::atomic<int>   tempoOctave     { 0 };
+    // And whether the app picks it. On by default: the choice the analysis
+    // cannot make is at least bounded - the pulse a part is played on belongs
+    // inside the range a percussionist counts in - and a rule that keeps it
+    // there is better than leaving every track that reads at the wrong level
+    // waiting for a tap. A tap on the halve or double button takes it back.
+    std::atomic<bool>  tempoOctaveAuto { true };
     std::atomic<bool>  shakerEnabled   { true };
     std::atomic<bool>  congasEnabled   { true };
+    // Occasional extra sixteenths (or eighths, on a quarter grid) on top of
+    // the chosen subdivision. Off by default: the 1/4 / 1/8 / 1/16 buttons
+    // stay exact grids, and NATURALE is a separate choice. See docs/TODO.md
+    // item 11.
+    std::atomic<bool>  shakerNatural   { false };
+    // Two more voices, each its own enable and volume - see item 10 in
+    // docs/TODO.md. Off by default: turning either on is a choice, not a
+    // change to how the app already sounds on upgrade.
+    std::atomic<bool>  cembaloEnabled  { false };
+    std::atomic<bool>  clapEnabled     { false };
     // Whether the part follows the band's dynamics: quieter and thinner when
     // the band comes down, silent in a passage that does not want it. On by
     // default - it is the difference between a part that is correct and a
@@ -369,11 +397,13 @@ struct EngineSettings
     // bar the listener has just placed by hand. Locked, nothing moves the count
     // but the listener: not the vote, not a new song, not a section change.
     //
-    // Set by moving the one and by a tap that declares it, cleared by taking
-    // the on-screen control all the way round the bar. It does not stop the
-    // count from *following the grid* when the clock re-places it - that is
-    // what keeps a locked bar on the same beat of the song rather than letting
-    // it drift a quarter away. See TempoFollower::snapPhase.
+    // Set by moving the one and by a tap that declares it. Cleared by tapping
+    // the on-screen control while it is already lit: that unlocks without
+    // rotating again. (It used to take five taps to hand the count back, which
+    // read as a button stuck on.) It does not stop the count from *following
+    // the grid* when the clock re-places it - that is what keeps a locked bar
+    // on the same beat of the song rather than letting it drift a quarter away.
+    // See TempoFollower::snapPhase and docs/TODO.md item 13.
     std::atomic<bool>  barLocked       { false };
     // SEGUI (true, default) lets BeatNet / tap-follow / mixer analysis drive
     // the clock. FISSO freezes a BPM and ignores neural tempo updates; tap

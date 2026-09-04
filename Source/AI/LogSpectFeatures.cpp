@@ -209,6 +209,20 @@ bool LogSpectFeatures::popFrame (float* dest272) noexcept
     return true;
 }
 
+float LogSpectFeatures::lowBandEnergy (const float* frame) noexcept
+{
+    if (frame == nullptr)
+        return 0.0f;
+    // The magnitude half of the frame only. The second half is the positive
+    // first difference, which answers "did this band just get louder" - a
+    // different question from "is there a kick under this beat", and one that
+    // fires on the hi-hat too.
+    float acc = 0.0f;
+    for (int b = 0; b < kLowBands; ++b)
+        acc += frame[b];
+    return acc / static_cast<float> (kLowBands);
+}
+
 void LinearResampler::prepare (double srcRate, double dstRate)
 {
     const double src = srcRate > 1.0 ? srcRate : 48000.0;

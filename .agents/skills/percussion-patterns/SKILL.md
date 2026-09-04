@@ -45,6 +45,9 @@ most of what makes a pattern read as a marcha rather than as a list of hits.
 | `muff` | muted tone, no ring |
 | `slapClosed` | the crack with the hand left on the head - **no ring at all** |
 | `tapado` | the low drum stopped: a thud with the pitch taken out |
+| `clap` | the backbeat - hands only, no drum. See section 7. |
+| `cembaloDown` | tambourine, struck hit - the shaker's job, another sound |
+| `cembaloUp` | tambourine shake - the jingles on the return, mirroring `shakerUp` |
 
 `slapClosed` and `tapado` are the *stopped* strokes. Before they existed every
 loud articulation rang, and a part built only out of ringing strokes sits *over*
@@ -130,10 +133,21 @@ Three rules:
    two beats and answers it over the next two. These used to be four identical
    beats written out four times; however musical the numbers were, nothing in
    the bar told you where you were in it, so it read as a machine.
-3. **`setShakerSubdivision` thins, never adds.** `quarter` keeps `step % 4 == 0`,
-   `eighth` keeps `step % 2 == 0`, `autoDetect` means eighths - which is what a
-   shaker mostly plays. A style that does not want sixteenths does not get them
-   because the user asked for a busy shaker.
+3. **`setSubdivision` thins, never adds.** `quarter` keeps steps 0/4/8/12,
+   `eighth` keeps even steps, `sixteenth` keeps all steps, and `autoDetect`
+   means eighths. The same predicate gates shaker, written congas, fills and
+   conga ghosts. The no-conga-on-step-0 guard still wins. Recorded WAV loop
+   stems do not pass through this event filter.
+4. **`setShakerNatural` is the one exception, and only for the shaker (and
+   cembalo, which is the same part).** Off by default: 1/4 / 1/8 / 1/16 stay
+   exact grids. On, it lets through authored `shaker[16]` values the
+   subdivision had dropped - sixteenths on an eighths part, off-eighths on a
+   quarters part - with chance `0.22` / `0.30` scaled by intensity and
+   dynamics (`kNaturalEighthChance` / `kNaturalQuarterChance` in
+   `GrooveEngine.cpp`). It uses the table, never invents a busier one, and
+   the test asserts it does not become a full finer grid. Congas are
+   untouched. NATURALE is its own toggle in STRUMENTI, not a fifth
+   subdivision. See docs/TODO.md item 11.
 
 `spec.accent[4]` scales by quarter and belongs to the **style**: marcha and pop
 lean on the one (1.00, 0.86, 0.93, 0.88), rock leans on 2 and 4 with the drummer
@@ -141,7 +155,55 @@ lean on the one (1.00, 0.86, 0.93, 0.88), rock leans on 2 and 4 with the drummer
 0.95, 0.97, 0.95). A single global contour favouring beat one silently cancelled
 the rock backbeat, which is why this is per style.
 
-## 7. Feel: swing, humanize, ghosts
+## 7. Cembalo and clap: two more voices
+
+Two more strokes (`Stroke::cembaloDown`/`cembaloUp`, `Stroke::clap`), each with
+its own enable (`EngineSettings::cembaloEnabled` / `clapEnabled`) and volume
+(`cembaloVolume` / `clapVolume`), both **off by default** - turning either on
+is the listener's choice, not a change to how an existing install already
+sounds. See `docs/TODO.md` item 10.
+
+**Cembalo is the shaker's job with a different sound**, not a new pattern.
+`GrooveEngine::eventsAt` (`GrooveEngine.cpp`, right after the shaker block)
+reads the *same* `spec.shaker[step]` table, the same `subdivisionAllowsStep`
+thinning, the same `accent[4]`, the same swing/humanize/dynamics helpers - the
+only difference from the shaker block is which `Stroke` it writes and which
+`bool` switches it (`cembaloOn` vs `shakerOn`). Shaker and cembalo can both be
+on at once (two timbres on one part), just one, or neither; the
+no-conga-on-step-0 invariant (section 3) does **not** apply to it, same as the
+shaker - a cembalo on the pulse is meant to be there. **Cembalo here means the
+tambourine**, not the cymbal the word points at in a dictionary: it sounds from
+the VCSL *Tambourine* takes (`cembalo_down*.wav` / `cembalo_up*.wav`), down the
+struck hit and up the shake, which is how the instrument is played in eighths -
+hand on the pulse, jingles on the return. Cut to 0.26 s and 0.16 s so a stroke
+cannot ring over the next eighth. `PercussionEngine::synthesizeCymbal` is the
+fallback for a build without `Assets/Percussion/`, not what you normally hear.
+The shakes need the shaker cutting path, not the struck-sample one - see
+`Assets/Percussion/ATTRIBUTION.md`, which also records what was tried and
+measured before.
+
+**Clap does not follow the shaker's table at all.** It is a fixed pattern -
+steps 4 and 12, the backbeat quarters (2 and 4) - written directly in
+`eventsAt`, not looked up per style. It also carries a second gate no other
+voice has: `clapOn && barTrustedFlag`. `barTrustedFlag`
+(`GrooveEngine::setBarTrusted`) is set once per block from
+`BeatTracker::Output::barTrusted`: the listener's lock is trusted outright;
+during a post-cut re-entry window the clap is muted; otherwise the downbeat
+histogram has to name beat zero with a coming-in margin. A wrong automatic
+guess therefore cannot put the clap on the song's 1 and 3. `step` is already
+the app's believed position, so once the rotation is right the clap is right
+for free. See `docs/TODO.md` item 2.
+
+Both voices' output gain is looked up by stroke identity in
+`PercussionEngine::render`'s voice-mixing loop, next to `shakerVolume` /
+`congaVolume` (see item 9): `shakerDown`/`shakerUp` → `shakerVolume`,
+`cembaloDown`/`cembaloUp` → `cembaloVolume`, `clap` → `clapVolume`, anything
+else → `congaVolume`.
+
+`GrooveEngine::kMaxEvents` is 6, not 4: a single sixteenth can now carry
+shaker + cembalo + clap + a conga table hit + a conga ghost, with one spare.
+
+## 8. Feel: swing, humanize, ghosts
 
 **Swing** (`humanDelay`, `GrooveEngine.cpp:711`) is a **warp of the beat**, not a
 late off-eighth. At full amount the "&" sits two thirds of the way through the
@@ -169,7 +231,7 @@ breathes and one that is merely correct, and they must stay quiet enough that
 you notice them only when they stop. They are also the **first thing to go** as
 the band comes down - note the squared `dynamics`.
 
-## 8. Dynamics: playing *less*, not just quieter
+## 9. Dynamics: playing *less*, not just quieter
 
 `setDynamics(0..1)` from `Percussion/BandDynamics.h`. The point is the second
 half of this: any fader can play quieter; only a player plays **less**.
@@ -200,7 +262,7 @@ before you try to improve it:
   alone, -0.9 dB once density voted. Density is still used for naming the style
   (`StyleDetector`). Do not re-add it as a dynamics input.
 
-## 9. Choosing the style from the music
+## 10. Choosing the style from the music
 
 `Source/Percussion/StyleDetector.h` - deliberately **not** genre classification.
 Genre is a hard open problem and it is not the question: the parts differ by
@@ -217,7 +279,7 @@ Three one-pole filters and an accumulate per sample; no allocation after
 repeatedly better, and `confidence() < ~0.3` means keep playing whatever you
 were playing.
 
-## 10. From event to sound
+## 11. From event to sound
 
 `PercussionEngine` (`Source/Percussion/PercussionEngine.cpp`):
 
@@ -256,7 +318,7 @@ Two `render()` traps that have each cost a bug:
   than the real pulse and swallowed every second stroke. A `reanchored` tick
   discards pending (not-yet-sounded) voices; tails already begun are left alone.
 
-## 11. Editing checklist
+## 12. Editing checklist
 
 Adding or changing a style:
 
@@ -296,11 +358,13 @@ perfect clock.
 
 Always also run `./scripts/run-tests.sh`.
 
-## 12. Related
+## 13. Related
 
 - `Source/Loops/` + `docs/RECORDED_LOOPS.md` - the recorded-loop percussionist,
   behind `VP_ENABLE_RECORDED_LOOPS` (off by default). The clock is never the
   loop's: the loop is pulled onto the grid, corrected by rate, never by a jump.
+  Loop stems are not thinned by `setSubdivision`; only synthesized
+  `GrooveEngine` events are.
 - `docs/SMART_PERCUSSION.md` - gap analysis and the plan this came from.
 - `docs/AUDIO_ENGINE.md` - the signal path around all of this.
 - For anything about *when* a stroke happens rather than *what* it is, use the

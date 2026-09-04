@@ -869,6 +869,31 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--bar")
+    {
+        vpRunBarReentryTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
+    // The octave-level sweep alone: the broad synthetic boundary scan plus
+    // focused 50/100 BPM kit runs through mixer and internal-file paths. For
+    // iterating on the analysis level without paying for the full suite.
+    if (argc > 1 && std::string (argv[1]) == "--octave")
+    {
+        const char* only = argc > 2 ? argv[2] : nullptr;
+        if (only != nullptr && std::string (only) != "focused"
+            && std::string (only) != "50-mixer" && std::string (only) != "50-file"
+            && std::string (only) != "100-mixer" && std::string (only) != "100-file")
+        {
+            std::printf ("invalid --octave selector: %s\n", only);
+            return 2;
+        }
+        vpRunOctaveSweepTest (gPassed, gFailed, only);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
     // Same argument for the leak canceller bench: a hundred-odd engine runs
     // that finish in seconds, behind minutes of neural worker tests.
     if (argc > 1 && std::string (argv[1]) == "--leak")
@@ -1484,7 +1509,8 @@ int main (int argc, char** argv)
         perc.setGroove (bpm, pulses);
         perc.setSubdivision (vp::Subdivision::sixteenth);
         perc.setReverbAmount (0.0f);
-        perc.setVolume (1.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
 
         std::vector<float> l (static_cast<size_t> (block), 0.0f);
         std::vector<float> r (static_cast<size_t> (block), 0.0f);
@@ -1548,7 +1574,8 @@ int main (int argc, char** argv)
         muteCheck.prepare (sr, 256, 1);
         muteCheck.settings().inputGain.store (0.0f);
         muteCheck.settings().masterVolume.store (1.0f);
-        muteCheck.settings().percussionVolume.store (1.0f);
+        muteCheck.settings().shakerVolume.store (1.0f);
+        muteCheck.settings().congaVolume.store (1.0f);
         muteCheck.start();
         muteCheck.tapAt (0.0);
         muteCheck.tapAt (0.5);
@@ -1972,7 +1999,8 @@ int main (int argc, char** argv)
             vp::VirtualPercussionEngine eng;
             eng.prepare (sr, blk, 1);
             eng.settings().followSource.store (static_cast<int> (source));
-            eng.settings().percussionVolume.store (percVolume);
+            eng.settings().shakerVolume.store (percVolume);
+            eng.settings().congaVolume.store (percVolume);
             eng.settings().masterVolume.store (1.0f);
             eng.settings().reverbAmount.store (0.0f);
             eng.setReportedLatencyMs (12.0f);

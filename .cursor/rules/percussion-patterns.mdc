@@ -19,8 +19,10 @@ Non-negotiables it spells out:
 - The shaker is two strokes - `shakerDown` on the pulse, `shakerUp` on the
   return - and each style's `shaker[16]` is a **bar-long** figure, not one beat
   repeated four times.
-- `setSubdivision` thins the style's pattern; it never adds to it. The same
-  predicate gates shaker, written congas, fills and conga ghosts (see
+- `setSubdivision` thins the style's pattern; it never adds to it. NATURALE
+  (`setShakerNatural`) is the one exception, shaker/cembalo only, and it
+  spends authored table values rather than inventing a busier grid. The same
+  predicate still gates congas, fills and conga ghosts (see
   `.claude/skills/percussion-patterns/SKILL.md`).
 - Dynamics make the part play **less**, not just quieter: `v_survives` thins
   from the bottom against `kThinCeiling = 0.72`, so the skeleton always survives.

@@ -48,9 +48,9 @@ il fallback sempre disponibile.
   libreria: in `prepare()` un colpo secco passa per il backend a due rapporti
   diversi e si guarda dove esce. La lettura della sorgente corre avanti di
   quella quantità, altrimenti ogni colpo arriverebbe tardi di 120 ms.
-- **Congas e shaker sono due player**, uno per stem, bilanciati con la stessa
-  curva che `PercussionEngine` usa su `instrumentMix`. La parte passa alla
-  registrazione solo se *ogni* strumento acceso ne ha una: mezza parte registrata
+- **Congas e shaker sono due player**, uno per stem, con lo stesso guadagno
+  indipendente che `PercussionEngine` usa su `shakerVolume` / `congaVolume`. La
+  parte passa alla registrazione solo se *ogni* strumento acceso ne ha una: mezza parte registrata
   e mezza a colpi singoli sono due percussionisti, non uno.
 - Un loop tagliato bene, avvolto su sé stesso, **è un segnale continuo**: la
   lettura semplicemente gira, lo stretcher non vede nessuna discontinuità, e
@@ -186,8 +186,8 @@ Poi, e solo poi, gli altri stili con la stessa griglia.
   mette l'app (`EngineSettings::reverbAmount`), e una coda stampata si
   sovrappone all'inizio del giro successivo.
 - **Congas e shaker su file separati.** Un file stereo con dentro tutti e due
-  non si può più bilanciare, e il bilanciamento è dell'utente
-  (`instrumentMix`).
+  non si può più bilanciare, e il volume di ciascuno è dell'utente
+  (`shakerVolume`, `congaVolume`).
 - Niente compressione di bus, niente limiter sul master. Picco intorno a
   −6 dBFS, coerente fra i take.
 - Stessa stanza, stessa posizione microfoni, stesse mani per tutta la serie: i

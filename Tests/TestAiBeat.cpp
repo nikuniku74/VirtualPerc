@@ -595,11 +595,639 @@ namespace
     }
 }
 
+void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
+{
+    gPass = &passed;
+    gFail = &failed;
+
+    constexpr double sr = 48000.0;
+    constexpr int block = 128;
+
+    // Where the doubling starts, and whether it is the tempo that
+    // decides it or this bench's own signal.
+    //
+    // Reading one tempo cannot tell those apart: a synthetic song
+    // has edges a real recording does not, and a bench that doubles
+    // everything would send any "fix" built on it straight into the
+    // material that already works. What the documented behaviour
+    // says is that the level goes wrong below about 92 BPM and is
+    // solid above it, so that boundary is the thing to look for. If
+    // it shows up here, the bench is measuring the real effect.
+    auto slowSong = [&] (float songBpm, std::vector<float>& dst, int nSamp)
+    {
+        dst.assign (static_cast<size_t> (nSamp), 0.0f);
+        const double incS = static_cast<double> (songBpm) / 60.0 / sr;
+        double p3 = 0.0;
+        for (int i = 0; i < nSamp; ++i)
+        {
+            const double beat = p3 - std::floor (p3);
+            const int bi = static_cast<int> (std::floor (p3));
+            const float tBeat = static_cast<float> (beat) / (songBpm / 60.0f);
+            if (bi % 2 == 0)
+                dst[static_cast<size_t> (i)] +=
+                    std::sin (2.0f * 3.14159265f * 55.0f * tBeat) * std::exp (-tBeat * 22.0f);
+            if (bi % 2 == 1)
+                dst[static_cast<size_t> (i)] +=
+                    (0.35f * ((i % 17) / 17.0f - 0.5f)
+                     + 0.2f * std::sin (2.0f * 3.14159265f * 180.0f * tBeat))
+                    * std::exp (-tBeat * 18.0f);
+            dst[static_cast<size_t> (i)] +=
+                0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
+                * std::exp (-tBeat * 8.0f);
+            p3 += incS;
+        }
+    };
+
+    auto readTempo = [&] (const std::vector<float>& song, int nSamp, float& comb,
+                          float& peak, float& gain)
+    {
+        vp::VirtualPercussionEngine e;
+        e.prepare (sr, block, 1);
+        e.settings().shakerEnabled.store (false);
+        e.settings().congasEnabled.store (false);
+        e.start();
+        std::vector<float> eL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> eR (static_cast<size_t> (block), 0.0f);
+        float* eOuts[2] = { eL.data(), eR.data() };
+        vp::EngineSnapshot snap {};
+        for (int p = 0; p + block <= nSamp; p += block)
+        {
+            const float* ins[1] = { song.data() + p };
+            e.process (ins, 1, eOuts, 2, block);
+            snap = e.snapshot();
+            for (int spin = 0; spin < 400; ++spin)
+            {
+                if (e.snapshot().analysisBacklog <= 960)
+                    break;
+                std::this_thread::sleep_for (std::chrono::microseconds (50));
+            }
+        }
+        comb = snap.combBpm;
+        peak = snap.analysisPeak;
+        gain = snap.analysisGain;
+        return snap.bpm;
+    };
+
+    const int nSlow = static_cast<int> (sr * 26.0);
+    std::vector<float> song;
+    int doubledBelow = 0, doubledAbove = 0, checkedAbove = 0;
+    int midRangeRight = 0, checkedMid = 0;
+    for (float songBpm : { 60.0f, 72.0f, 96.0f, 132.0f, 168.0f, 190.0f })
+    {
+        if (only != nullptr)
+            continue;
+        slowSong (songBpm, song, nSlow);
+        float comb = 0.0f, peak = 0.0f, gain = 0.0f;
+        const float got = readTempo (song, nSlow, comb, peak, gain);
+        const bool onIt = std::fabs (got - songBpm) < 6.0f;
+        const bool doubled = std::fabs (got - songBpm * 2.0f) < 10.0f;
+        std::printf ("octave-sweep  song=%5.1f  read=%6.1f  comb=%6.1f  peak=%.4f  gain=%.3f  %s\n",
+                     static_cast<double> (songBpm), static_cast<double> (got),
+                     static_cast<double> (comb), static_cast<double> (peak),
+                     static_cast<double> (gain),
+                     onIt ? "on it" : (doubled ? "DOUBLED" : "elsewhere"));
+        if (songBpm >= 92.0f && songBpm <= 170.0f)
+        {
+            ++checkedMid;
+            midRangeRight += onIt ? 1 : 0;
+        }
+        const bool halved = std::fabs (got - songBpm * 0.5f) < 6.0f;
+        if (halved)
+            std::printf ("               (halved)\n");
+        if (songBpm < 92.0f)
+            doubledBelow += doubled ? 1 : 0;
+        else
+        {
+            ++checkedAbove;
+            doubledAbove += (doubled || halved) ? 1 : 0;
+        }
+    }
+    std::printf ("octave-sweep  wrong level below 92: %d/2   wrong above: %d/%d\n",
+                 doubledBelow, doubledAbove, checkedAbove);
+
+    // Asserted: the middle of the range, where the tracker is meant
+    // to be right and is. Reported, not asserted: the two ends.
+    //
+    // Both ends were measured here and both are the documented
+    // behaviour rather than news - 60 and 72 read as their double,
+    // 190 as its half, which is the state space being pulled toward
+    // the middle of the range at the extremes. Widening its prior
+    // from 0.40 to 0.90 octaves was tried against this bench: it
+    // fixed 72 and left 60 and 190 exactly where they were, and it
+    // broke "strong eighths are not the beat", which is the thing
+    // anchoring the level on the state space exists to guarantee.
+    // The narrow prior is load-bearing; that trade is the one the
+    // header on setLevelAnchor already describes, and this measured
+    // it rather than assuming it. Reverted.
+    if (only == nullptr)
+        expect (midRangeRight == checkedMid && checkedMid >= 3,
+                "the tracker reads ordinary tempi at the level they are played");
+
+    // The reported musical case, through the complete asynchronous engine:
+    // kick on 1/3, snare on 2/4, and a hi-hat on every eighth. The same PCM is
+    // presented as a mixer feed and as the audio supplied by the internal-file
+    // player; those paths share the direct-signal level evidence but differ in
+    // latency handling. A 100 BPM control proves that the bar evidence is not
+    // simply a blanket request to halve any regular hat pattern.
+    struct SlowKitRun
+    {
+        float bpm = 0.0f;
+        float earlyMs = 0.0f;
+        float lateMs = 0.0f;
+        double rightSinceSec = -1.0;
+        int octave = 0;
+        int hits = 0;
+        int gaps = 0;
+        int earlyN = 0;
+        int lateN = 0;
+        int gatedDownbeats = 0;
+        std::vector<float> beatDownbeats;
+        vp::TrackingState state = vp::TrackingState::idle;
+        bool drained = true;
+    };
+
+    auto runSlowKit = [&] (float trackBpm, vp::FollowSource source)
+    {
+        constexpr double seconds = 44.0;
+        const int n = static_cast<int> (sr * seconds);
+        std::vector<float> kit (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (kit, trackBpm, sr);
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (source));
+        eng.settings().shakerEnabled.store (true);
+        eng.settings().congasEnabled.store (false);
+        eng.settings().cembaloEnabled.store (false);
+        eng.settings().clapEnabled.store (false);
+        eng.start();
+
+        std::vector<float> left (static_cast<size_t> (block), 0.0f);
+        std::vector<float> right (static_cast<size_t> (block), 0.0f);
+        float* outputs[2] = { left.data(), right.data() };
+        const int hop = static_cast<int> (std::ceil (
+            vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+        const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
+
+        SlowKitRun r;
+        double earlySum = 0.0, lateSum = 0.0;
+        int pos = 0, samplesInHop = 0;
+        uint32_t lastBeatSerial = 0, lastDownbeatSerial = 0;
+        vp::EngineSnapshot last {};
+        while (pos < n)
+        {
+            const int numThisBlock = std::min ({ block, n - pos, hop - samplesInHop });
+            const float* inputs[1] = { kit.data() + pos };
+            eng.process (inputs, 1, outputs, 2, numThisBlock);
+            last = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+
+            const bool rightTempo = last.state == vp::TrackingState::following
+                                    && std::fabs (last.bpm - trackBpm) <= 1.0f;
+            if (rightTempo)
+            {
+                if (r.rightSinceSec < 0.0)
+                    r.rightSinceSec = t;
+            }
+            else
+            {
+                r.rightSinceSec = -1.0;
+            }
+
+            if (rightTempo && t >= 22.0 && t < 42.0)
+            {
+                const double truePhase = static_cast<double> (pos) * beatsPerSample;
+                const double error = static_cast<double> (vp::wrapCentered (
+                    last.beatPhase
+                    - static_cast<float> (truePhase - std::floor (truePhase))));
+                if (t < 32.0)
+                {
+                    earlySum += error;
+                    ++r.earlyN;
+                }
+                else
+                {
+                    lateSum += error;
+                    ++r.lateN;
+                }
+            }
+
+            pos += numThisBlock;
+            samplesInHop += numThisBlock;
+            if (samplesInHop == hop)
+            {
+                const auto until = std::chrono::steady_clock::now()
+                                   + std::chrono::milliseconds (400);
+                while (eng.analysisCompletedSamples() < pos
+                       && std::chrono::steady_clock::now() < until)
+                    std::this_thread::yield();
+                if (eng.analysisCompletedSamples() < pos)
+                    r.drained = false;
+                vp::BeatHypothesis h;
+                if (eng.tryLoadNeuralHypothesis (h))
+                {
+                    if (h.beatSerial != lastBeatSerial)
+                    {
+                        lastBeatSerial = h.beatSerial;
+                        r.beatDownbeats.push_back (h.beatDownbeat);
+                    }
+                    if (h.downbeatSerial != lastDownbeatSerial)
+                    {
+                        r.gatedDownbeats += static_cast<int> (h.downbeatSerial
+                                                              - lastDownbeatSerial);
+                        lastDownbeatSerial = h.downbeatSerial;
+                    }
+                }
+                samplesInHop = 0;
+            }
+        }
+
+        const float beatMs = 60000.0f / trackBpm;
+        if (r.earlyN > 0)
+            r.earlyMs = static_cast<float> (earlySum / r.earlyN) * beatMs
+                        - last.attackLeadMs;
+        if (r.lateN > 0)
+            r.lateMs = static_cast<float> (lateSum / r.lateN) * beatMs
+                       - last.attackLeadMs;
+        r.bpm = last.bpm;
+        r.octave = last.tempoOctave;
+        r.hits = eng.shakerHits();
+        r.gaps = last.analysisGaps;
+        r.state = last.state;
+        return r;
+    };
+
+    for (const auto source : { vp::FollowSource::kitMic,
+                               vp::FollowSource::internalPlayer })
+    {
+        const char* path = source == vp::FollowSource::internalPlayer ? "file" : "mixer";
+        for (const float trackBpm : { 50.0f, 100.0f })
+        {
+            if (only != nullptr && std::string (only) != "focused"
+                && std::string (only) != (std::string (trackBpm == 50.0f ? "50-" : "100-")
+                                         + path))
+                continue;
+            const SlowKitRun r = runSlowKit (trackBpm, source);
+            const double heldSec = r.rightSinceSec >= 0.0 ? 44.0 - r.rightSinceSec : 0.0;
+            std::printf ("slow-kit %-5s true=%5.1f read=%6.2f octave=%+d state=%-10s"
+                         " phase=%+6.2f -> %+6.2f ms held=%.1fs hits=%d gaps=%d drained=%s\n",
+                         path, static_cast<double> (trackBpm), static_cast<double> (r.bpm),
+                         r.octave, vp::toString (r.state), static_cast<double> (r.earlyMs),
+                         static_cast<double> (r.lateMs), heldSec, r.hits, r.gaps,
+                         r.drained ? "yes" : "no");
+            if (trackBpm == 50.0f)
+            {
+                std::printf ("          downbeats gated=%d continuous(last 24/%zu):",
+                             r.gatedDownbeats, r.beatDownbeats.size());
+                const size_t begin = r.beatDownbeats.size() > 24
+                                   ? r.beatDownbeats.size() - 24 : 0;
+                for (size_t i = begin; i < r.beatDownbeats.size(); ++i)
+                    std::printf (" %.3f", static_cast<double> (r.beatDownbeats[i]));
+                std::printf ("\n");
+            }
+
+            const int expectedOctave = trackBpm == 50.0f ? -1 : 0;
+            const bool filePath = source == vp::FollowSource::internalPlayer;
+            const char* tempoName = trackBpm == 50.0f
+                ? (filePath ? "file slow kit holds 50 BPM for 20 seconds at the quarter level"
+                            : "mixer slow kit holds 50 BPM for 20 seconds at the quarter level")
+                : (filePath ? "file 100 BPM control keeps its original metrical level"
+                            : "mixer 100 BPM control keeps its original metrical level");
+            const char* phaseName = trackBpm == 50.0f
+                ? (filePath ? "file audible 50 BPM quarter stays aligned without drift"
+                            : "mixer audible 50 BPM quarter stays aligned without drift")
+                : (filePath ? "file audible 100 BPM control stays aligned without drift"
+                            : "mixer audible 100 BPM control stays aligned without drift");
+            expect (r.drained && r.gaps == 0
+                        && r.state == vp::TrackingState::following
+                        && std::fabs (r.bpm - trackBpm) <= 1.0f
+                        && r.octave == expectedOctave && heldSec >= 20.0
+                        && r.hits >= (trackBpm == 50.0f ? 30 : 60),
+                    tempoName);
+            expect (r.earlyN >= 1000 && r.lateN >= 1000
+                        && std::fabs (r.earlyMs) < 8.0f
+                        && std::fabs (r.lateMs) < 8.0f
+                        && std::fabs (r.lateMs - r.earlyMs) < 8.0f,
+                    phaseName);
+        }
+    }
+
+    // The ÷2/×2 controls, end to end: settings -> BeatTracker -> the BPM the
+    // app reports. They were removed once (TODO item 15) and put back once it
+    // was measured that no automatic path can resolve a straight 50 against a
+    // half-time 100 - they are the only answer to that case, so the wiring is
+    // asserted rather than assumed. The engine's own path is what broke last
+    // time: the tracker kept its API while `VirtualPercussionEngine` stopped
+    // forwarding the setting, which nothing noticed.
+    {
+        constexpr double seconds = 30.0;
+        const int n = static_cast<int> (sr * seconds);
+        std::vector<float> kit (static_cast<size_t> (n), 0.0f);
+        // 104 BPM, and the number is forced: the app reports 50 to 215 BPM, so
+        // both buttons can only *both* act between 100 (below it, halving falls
+        // under the floor) and 107 (above it, doubling passes the ceiling).
+        // Outside that window one of the two is a no-op by design - measured:
+        // from 120, doubling asks for 240, which leaves the range and gets
+        // folded straight back to 120.
+        renderKitTrack (kit, 104.0f, sr);
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.start();
+
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+        auto run = [&] (int fromSample, double howLong)
+        {
+            const int end = std::min (n, fromSample + static_cast<int> (sr * howLong));
+            int pos = fromSample;
+            while (pos + block <= end)
+            {
+                const float* ins[1] = { kit.data() + pos };
+                eng.process (ins, 1, outs, 2, block);
+                for (int spin = 0; spin < 400; ++spin)
+                {
+                    if (eng.snapshot().analysisBacklog <= 960)
+                        break;
+                    std::this_thread::sleep_for (std::chrono::microseconds (50));
+                }
+                pos += block;
+            }
+            return pos;
+        };
+
+        int pos = run (0, 14.0);
+        const float autoBpm = eng.snapshot().bpm;
+
+        eng.settings().tempoOctaveAuto.store (false);
+        eng.settings().tempoOctave.store (-1);
+        pos = run (pos, 8.0);
+        const auto halved = eng.snapshot();
+
+        eng.settings().tempoOctave.store (1);
+        pos = run (pos, 8.0);
+        const auto doubled = eng.snapshot();
+
+        std::printf ("octave-control  auto=%.1f  halved=%.1f (oct %d)  doubled=%.1f (oct %d)\n",
+                     static_cast<double> (autoBpm),
+                     static_cast<double> (halved.bpm), halved.tempoOctave,
+                     static_cast<double> (doubled.bpm), doubled.tempoOctave);
+
+        expect (autoBpm > 96.0f && autoBpm < 112.0f
+                    && std::fabs (halved.bpm - autoBpm * 0.5f) < 4.0f
+                    && halved.tempoOctave == -1 && ! halved.tempoOctaveAuto,
+                "the halve button reaches the reported tempo");
+        expect (std::fabs (doubled.bpm - autoBpm * 2.0f) < 8.0f
+                    && doubled.tempoOctave == 1 && ! doubled.tempoOctaveAuto,
+                "and the double button does too");
+    }
+}
+
+void vpRunBarReentryTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nbar re-entry (item 2)\n");
+
+    class ShiftBarModel final : public vp::IBeatModel
+    {
+    public:
+        explicit ShiftBarModel (double framesPerBeat) : fpb (framesPerBeat) {}
+        bool prepare (int) override { return true; }
+        void reset() override {}
+        bool infer (const float*, int, float activations3[3]) override
+        {
+            const double beats = static_cast<double> (frame++) / fpb;
+            const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+            const int    beatNo = static_cast<int> (std::llround (beats));
+            const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                     std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+            const int shift = shifted.load (std::memory_order_relaxed) ? 2 : 0;
+            const int inBar = (((beatNo + shift) % 4) + 4) % 4;
+            activations3[0] = pulse;
+            activations3[1] = inBar == 0 ? pulse * 0.95f : 0.03f;
+            activations3[2] = 1.0f - activations3[0];
+            return true;
+        }
+        std::atomic<bool> shifted { false };
+    private:
+        double fpb;
+        long long frame = 0;
+    };
+
+    constexpr double sr = 48000.0;
+    constexpr int block = 256;
+    constexpr float trackBpm = 100.0f;
+    const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
+                                 * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+    const int twoQuarters = static_cast<int> (sr * 2.0 * 60.0 / trackBpm);
+    const double fourBarsSec = 4.0 * 4.0 * 60.0 / trackBpm;
+
+    auto silenceVoices = [] (vp::VirtualPercussionEngine& eng)
+    {
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.settings().cembaloEnabled.store (false);
+        eng.settings().clapEnabled.store (false);
+        eng.setRecordedLoopsEnabled (false);
+    };
+
+    auto pump = [] (vp::VirtualPercussionEngine& eng, const float* song, int n,
+                    int pos, int count, std::vector<float>& oL, std::vector<float>& oR)
+    {
+        float* outs[2] = { oL.data(), oR.data() };
+        int blocks = 0;
+        const int end = std::min (pos + count, n);
+        while (pos + block <= end)
+        {
+            const float* ins[1] = { song + pos };
+            eng.process (ins, 1, outs, 2, block);
+            pos += block;
+            if ((++blocks % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        }
+        return pos;
+    };
+
+    {
+        // RED: lock on the one, two quarters of silence, the band returns on
+        // the musical one which the clock now calls three. Seek-style reentry
+        // (explicit) plus a hole the level detector can see. Decoder must not
+        // restart. Within four bars the count is on zero again.
+        auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
+        auto* raw = model.get();
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::move (model));
+        eng.prepare (sr, block, 1);
+        silenceVoices (eng);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 36.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+        const int cutAt = static_cast<int> (sr * 16.0);
+        for (int i = 0; i < twoQuarters && cutAt + i < n; ++i)
+            song[static_cast<size_t> (cutAt + i)] = 0.0f;
+
+        int pos = pump (eng, song.data(), n, 0, cutAt, oL, oR);
+        auto before = eng.snapshot();
+        const int beatBefore = std::clamp (static_cast<int> (before.barPhase * 4.0f), 0, 3);
+        const int restartsBefore = before.analysisRestarts;
+        const int rotBefore = before.barRotations;
+        const bool starved = before.analysisGaps > 0;
+
+        raw->shifted.store (true, std::memory_order_relaxed);
+        pos = pump (eng, song.data(), n, pos, twoQuarters, oL, oR);
+        const bool reentryOpened = eng.snapshot().barReentry;
+        const int restartsDuring = eng.snapshot().analysisRestarts;
+
+        const int recover = static_cast<int> (sr * (fourBarsSec + 1.0));
+        pos = pump (eng, song.data(), n, pos, recover, oL, oR);
+        auto after = eng.snapshot();
+        const int beatAfter = std::clamp (static_cast<int> (after.barPhase * 4.0f), 0, 3);
+
+        std::printf ("bar-reentry    before beat=%d rot=%d  hole reentry=%d restarts %d->%d  "
+                     "after beat=%d rot=%d trusted=%d\n",
+                     beatBefore, rotBefore, reentryOpened ? 1 : 0,
+                     restartsBefore, restartsDuring,
+                     beatAfter, after.barRotations, after.barTrusted ? 1 : 0);
+
+        expect (starved || (before.state == vp::TrackingState::following && before.bpm > 40.0f),
+                "cut test is following before the hole");
+        expect (starved || restartsDuring == restartsBefore,
+                "a two-quarter hole does not restart the tempo decoder");
+        expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == 0),
+                "within two to four bars of the return the one is beat zero again");
+        expect (starved || after.barTrusted,
+                "once the window closes the clap can trust the one");
+        (void) pos;
+    }
+
+    {
+        // Fill: the network's downbeat flips by two quarters with no level
+        // hole. Playing alignment must not rotate inside the re-entry window.
+        auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
+        auto* raw = model.get();
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::move (model));
+        eng.prepare (sr, block, 1);
+        silenceVoices (eng);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 28.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+        const int flipAt = static_cast<int> (sr * 16.0);
+        int pos = pump (eng, song.data(), n, 0, flipAt, oL, oR);
+        const int rotBefore = eng.snapshot().barRotations;
+        const bool starved = eng.snapshot().analysisGaps > 0;
+        raw->shifted.store (true, std::memory_order_relaxed);
+        pos = pump (eng, song.data(), n, pos, static_cast<int> (sr * fourBarsSec), oL, oR);
+        const int rotAfter = eng.snapshot().barRotations;
+        const bool reentry = eng.snapshot().barReentry;
+
+        std::printf ("bar-fill       rot %d->%d reentry=%d\n", rotBefore, rotAfter, reentry ? 1 : 0);
+        expect (starved || ! reentry,
+                "a fill without a level hole does not open the re-entry window");
+        expect (starved || rotAfter == rotBefore,
+                "and the bar is not rotated for it inside four bars");
+        (void) pos;
+    }
+
+    {
+        // Lucchetto: same hole, lock on. Nothing rotates.
+        auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
+        auto* raw = model.get();
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::move (model));
+        eng.prepare (sr, block, 1);
+        silenceVoices (eng);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 32.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+        const int cutAt = static_cast<int> (sr * 16.0);
+        for (int i = 0; i < twoQuarters && cutAt + i < n; ++i)
+            song[static_cast<size_t> (cutAt + i)] = 0.0f;
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+        int pos = pump (eng, song.data(), n, 0, cutAt, oL, oR);
+        eng.settings().barLocked.store (true);
+        const int rotBefore = eng.snapshot().barRotations;
+        const bool starved = eng.snapshot().analysisGaps > 0;
+        raw->shifted.store (true, std::memory_order_relaxed);
+        pos = pump (eng, song.data(), n, pos, twoQuarters + static_cast<int> (sr * fourBarsSec),
+                    oL, oR);
+
+        std::printf ("bar-lock-cut   rot %d->%d locked=%d\n",
+                     rotBefore, eng.snapshot().barRotations, eng.snapshot().barLocked ? 1 : 0);
+        expect (starved || eng.snapshot().barRotations == rotBefore,
+                "locked, a two-quarter hole does not move the count");
+        expect (starved || eng.snapshot().barTrusted,
+                "locked, the clap trusts the listener's one");
+        (void) pos;
+    }
+
+    {
+        // Seek: notifyTrackSeek opens the window and does not bump the epoch.
+        auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
+        auto* raw = model.get();
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::move (model));
+        eng.prepare (sr, block, 1);
+        silenceVoices (eng);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 28.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, trackBpm, sr);
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+        const int seekAt = static_cast<int> (sr * 16.0);
+        int pos = pump (eng, song.data(), n, 0, seekAt, oL, oR);
+        const int restartsBefore = eng.snapshot().analysisRestarts;
+        const int rotBefore = eng.snapshot().barRotations;
+        const bool starved = eng.snapshot().analysisGaps > 0;
+        raw->shifted.store (true, std::memory_order_relaxed);
+        eng.notifyTrackSeek();
+        pos = pump (eng, song.data(), n, pos, static_cast<int> (sr * (fourBarsSec + 1.0)), oL, oR);
+        auto after = eng.snapshot();
+        const int beatAfter = std::clamp (static_cast<int> (after.barPhase * 4.0f), 0, 3);
+
+        const double beatSamples = 60.0 / static_cast<double> (trackBpm) * sr;
+        const int fileBeat = static_cast<int> (static_cast<double> (pos) / beatSamples);
+        const int expected = ((fileBeat - 2) % 4 + 4) % 4;
+
+        std::printf ("bar-seek       restarts %d->%d rot %d->%d beat=%d expected=%d\n",
+                     restartsBefore, after.analysisRestarts,
+                     rotBefore, after.barRotations, beatAfter, expected);
+        expect (starved || after.analysisRestarts == restartsBefore,
+                "seek does not restart the tempo decoder");
+        expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == expected),
+                "seek re-aligns the one inside the re-entry window");
+        (void) pos;
+    }
+}
+
 void vpRunAiBeatTests (int& passed, int& failed)
 {
     gPass = &passed;
     gFail = &failed;
     std::printf ("\nAI beat tracking / TSM\n");
+
+    vpRunBarReentryTests (passed, failed);
 
     {
         const vp::EngineSnapshot snap;
@@ -659,6 +1287,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (defaults.subdivision.load() == static_cast<int> (vp::Subdivision::eighth)
                     && defaults.shakerEnabled.load() && defaults.congasEnabled.load()
                     && ! defaults.grooveAuto.load()
+                    && ! defaults.shakerNatural.load()
                     && defaults.grooveStyle.load() == static_cast<int> (vp::GrooveStyle::marcha)
                     && defaultShakers == 8 && defaultCongas > 0 && defaultOdd == 0
                     && ! congaOnOne && openOnFour && openOnAndFour,
@@ -2356,6 +2985,75 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
     }
 
+    // At 50 BPM the eighth-note hi-hat is a perfectly regular 100 BPM pulse.
+    // Beat activation cannot distinguish that from a 100 BPM quarter; the bar
+    // can. Three true downbeats contain two complete intervals, each eight
+    // accepted fast-grid beats long. That repeated 8 rather than the normal 4
+    // is the causal evidence for dividing the grid, and one missed downbeat on
+    // the 100 BPM control must not be enough to do it.
+    {
+        auto runSlowLevel = [] (float trueBpm)
+        {
+            constexpr double fps = 50.0;
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLevelAnchor (true);
+            dec.setLineFeed (true);
+            const double quarter = 60.0 / static_cast<double> (trueBpm) * fps;
+            vp::BeatHypothesis h {};
+            int hintsApplied = 0;
+            for (int frame = 0; frame < static_cast<int> (fps * 32.0); ++frame)
+            {
+                const double halfGrid = quarter * 0.5;
+                const double halves = static_cast<double> (frame) / halfGrid;
+                const double nearestHalf = std::round (halves);
+                const double fromHalf = std::fabs (halves - nearestHalf) * halfGrid;
+                const bool quarterHit = (static_cast<long long> (nearestHalf) & 1LL) == 0;
+                const float height = quarterHit ? 0.95f : 0.62f;
+                const float pulse = 0.03f + (height - 0.03f)
+                    * static_cast<float> (std::exp (-0.5 * (fromHalf / 1.5)
+                                                     * (fromHalf / 1.5)));
+
+                const long long quarterNo = static_cast<long long> (
+                    std::llround (static_cast<double> (frame) / quarter));
+                const double fromQuarter = std::fabs (
+                    static_cast<double> (frame) - static_cast<double> (quarterNo) * quarter);
+                const bool onOne = (quarterNo & 3LL) == 0 && fromQuarter < 3.0;
+                const float down = onOne
+                    ? 0.90f * static_cast<float> (std::exp (-0.5 * (fromQuarter / 1.5)
+                                                               * (fromQuarter / 1.5)))
+                    : 0.02f;
+                h = dec.observe (pulse, down, 1.0f - std::max (pulse, down));
+                if (h.metricalOctaveHintValid
+                    && dec.userOctave() != h.metricalOctaveHint)
+                {
+                    dec.setUserOctave (h.metricalOctaveHint);
+                    ++hintsApplied;
+                }
+            }
+            struct Result { vp::BeatHypothesis h; int hints; };
+            return Result { h, hintsApplied };
+        };
+
+        const auto slow = runSlowLevel (50.0f);
+        const auto control = runSlowLevel (100.0f);
+        std::printf ("slow-level  50 -> %.2f hint=%d/%d;  100 -> %.2f hint=%d/%d\n",
+                     static_cast<double> (slow.h.bpm),
+                     slow.h.metricalOctaveHintValid ? 1 : 0,
+                     slow.h.metricalOctaveHint,
+                     static_cast<double> (control.h.bpm),
+                     control.h.metricalOctaveHintValid ? 1 : 0,
+                     control.h.metricalOctaveHint);
+        expect (std::fabs (slow.h.bpm - 50.0f) < 1.0f && slow.hints == 1
+                    && slow.h.metricalOctaveHintValid
+                    && slow.h.metricalOctaveHint == -1,
+                "a 50 BPM bar makes its 100 BPM hi-hat pulse count as eighths");
+        expect (std::fabs (control.h.bpm - 100.0f) < 1.0f && control.hints == 0
+                    && (! control.h.metricalOctaveHintValid
+                        || control.h.metricalOctaveHint == 0),
+                "the same evidence leaves a genuine 100 BPM track at 100");
+    }
+
     // What the percussionist plays. These are about the *musical* shape of the
     // part, which nothing used to check: the old pattern compiled, ran, and was
     // not a marcha.
@@ -2614,6 +3312,221 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && shaker16.second > 0 && shaker8.second == 0,
                 "shaker eighth thinning is unchanged and sixteenth retains authored odd strokes");
 
+        {
+            // NATURALE (item 11): thinning that *adds* exceptions, not a fifth
+            // subdivision. Off by default so the 1/8 golden stream above stays
+            // bit-identical. On an eighths grid it sprinkles authored
+            // sixteenths; on quarters, authored off-eighths. It must not fill
+            // the finer grid, must not put a conga on the one, and cembalo
+            // follows the shaker because it is the same part.
+            expect (! vp::EngineSettings{}.shakerNatural.load(),
+                    "NATURALE is off until the listener asks for it");
+
+            {
+                // Same state machine as `barButton.onClick` in MainComponent.cpp,
+                // run against real `EngineSettings` rather than a bare bool, so a
+                // future edit to the handler that breaks the sequence fails here
+                // instead of only in the app.
+                auto tap = [] (vp::EngineSettings& s)
+                {
+                    if (! s.barLocked.load())
+                    {
+                        s.barNudge.fetch_add (1);
+                        s.barLocked.store (true);
+                    }
+                    else
+                    {
+                        s.barLocked.store (false);
+                    }
+                };
+                vp::EngineSettings s;
+                const int startNudge = s.barNudge.load();
+                tap (s); // unlocked -> nudge and lock
+                const bool lockedAfterFirst = s.barLocked.load();
+                const int nudgeAfterFirst = s.barNudge.load();
+                tap (s); // locked -> unlock, no nudge
+                const bool lockedAfterSecond = s.barLocked.load();
+                const int nudgeAfterSecond = s.barNudge.load();
+                tap (s); // unlocked again -> nudge and lock, a second time
+                const int nudgeAfterThird = s.barNudge.load();
+                expect (lockedAfterFirst
+                            && nudgeAfterFirst == startNudge + 1
+                            && ! lockedAfterSecond
+                            && nudgeAfterSecond == nudgeAfterFirst
+                            && s.barLocked.load()
+                            && nudgeAfterThird == nudgeAfterFirst + 1,
+                        "SPOSTA L'1 nudges and locks; a tap on L'1 e QUI unlocks without nudging");
+            }
+
+            auto countShaker = [] (vp::Subdivision subdivision, bool natural,
+                                   int bars, bool cembalo)
+            {
+                vp::GrooveEngine groove;
+                groove.prepare (0x11A7u);
+                groove.setStyle (vp::GrooveStyle::dance);
+                groove.setHumanize (0.0f);
+                groove.setSwing (0.0f);
+                groove.setIntensity (1.0f);
+                groove.setDynamics (1.0f);
+                groove.setCongasEnabled (false);
+                groove.setShakerEnabled (! cembalo);
+                groove.setCembaloEnabled (cembalo);
+                groove.setSubdivision (subdivision);
+                groove.setShakerNatural (natural);
+                int even = 0, odd = 0, offEighth = 0, quarter = 0;
+                for (int bar = 0; bar < bars; ++bar)
+                {
+                    for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                    {
+                        vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                        const int count = groove.eventsAt (
+                            bar, step, events, vp::GrooveEngine::kMaxEvents);
+                        for (int i = 0; i < count; ++i)
+                        {
+                            const bool voice = cembalo
+                                ? (events[i].stroke == vp::Stroke::cembaloDown
+                                   || events[i].stroke == vp::Stroke::cembaloUp)
+                                : (events[i].stroke == vp::Stroke::shakerDown
+                                   || events[i].stroke == vp::Stroke::shakerUp);
+                            if (! voice)
+                                continue;
+                            if ((step % 2) == 0)
+                                ++even;
+                            else
+                                ++odd;
+                            if ((step % 4) == 0)
+                                ++quarter;
+                            else if ((step % 2) == 0)
+                                ++offEighth;
+                        }
+                    }
+                }
+                struct Counts { int even, odd, offEighth, quarter; };
+                return Counts { even, odd, offEighth, quarter };
+            };
+
+            constexpr int kBars = 32;
+            const auto eighthOff = countShaker (vp::Subdivision::eighth, false, kBars, false);
+            const auto eighthOn  = countShaker (vp::Subdivision::eighth, true,  kBars, false);
+            const auto quarterOn = countShaker (vp::Subdivision::quarter, true, kBars, false);
+            const auto quarterOff = countShaker (vp::Subdivision::quarter, false, kBars, false);
+            const auto sixteenthOff = countShaker (vp::Subdivision::sixteenth, false, kBars, false);
+            const auto sixteenthOn  = countShaker (vp::Subdivision::sixteenth, true,  kBars, false);
+            const auto cembaloOn = countShaker (vp::Subdivision::eighth, true, kBars, true);
+
+            expect (eighthOff.odd == 0 && eighthOff.even == 8 * kBars,
+                    "eighths without NATURALE stay an exact eighth grid");
+            expect (eighthOn.even == eighthOff.even
+                        && eighthOn.odd > 0
+                        && eighthOn.odd < 8 * kBars / 2,
+                    "NATURALE on eighths adds some sixteenths and does not become a 1/16 part");
+            expect (quarterOff.offEighth == 0 && quarterOff.quarter == 4 * kBars,
+                    "quarters without NATURALE stay an exact quarter grid");
+            expect (quarterOn.quarter == quarterOff.quarter
+                        && quarterOn.offEighth > 0
+                        && quarterOn.odd == 0
+                        && quarterOn.offEighth < 4 * kBars / 2,
+                    "NATURALE on quarters adds some off-eighths, never sixteenths, and does not become a 1/8 part");
+            expect (sixteenthOn.even == sixteenthOff.even
+                        && sixteenthOn.odd == sixteenthOff.odd
+                        && sixteenthOn.odd > 0,
+                    "NATURALE on sixteenths has nothing to add: the grid is already full");
+            expect (cembaloOn.even == eighthOn.even && cembaloOn.odd == eighthOn.odd,
+                    "cembalo NATURALE lands on the same extra steps as the shaker");
+
+            // The counts above come from two runs with the other voice off, so
+            // they cannot see the failure they are meant to catch: rolling the
+            // ornament twice, once per timbre, which desyncs shaker and cembalo
+            // on the same sixteenth while leaving both totals unchanged. Only a
+            // run with both voices enabled can, so this is that run.
+            vp::GrooveEngine pair;
+            pair.prepare (0x11A7u);
+            pair.setStyle (vp::GrooveStyle::dance);
+            pair.setHumanize (0.0f);
+            pair.setSwing (0.0f);
+            pair.setIntensity (1.0f);
+            pair.setDynamics (1.0f);
+            pair.setCongasEnabled (false);
+            pair.setShakerEnabled (true);
+            pair.setCembaloEnabled (true);
+            pair.setSubdivision (vp::Subdivision::eighth);
+            pair.setShakerNatural (true);
+            bool pairedOnEveryStep = true;
+            int pairedOrnaments = 0;
+            for (int bar = 0; bar < kBars; ++bar)
+            {
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                    const int count = pair.eventsAt (
+                        bar, step, events, vp::GrooveEngine::kMaxEvents);
+                    int shakerHere = 0, cembaloHere = 0;
+                    for (int i = 0; i < count; ++i)
+                    {
+                        if (events[i].stroke == vp::Stroke::shakerDown
+                            || events[i].stroke == vp::Stroke::shakerUp)
+                            ++shakerHere;
+                        else if (events[i].stroke == vp::Stroke::cembaloDown
+                                 || events[i].stroke == vp::Stroke::cembaloUp)
+                            ++cembaloHere;
+                    }
+                    if (shakerHere != cembaloHere)
+                        pairedOnEveryStep = false;
+                    // Count the ornaments so the check cannot pass by the
+                    // feature never firing.
+                    if (shakerHere > 0 && (step % 2) == 1)
+                        ++pairedOrnaments;
+                }
+            }
+            expect (pairedOnEveryStep && pairedOrnaments > 0,
+                    "shaker and cembalo share one NATURALE roll when both are on");
+
+            // The shaker has to be on and every step has to be walked, or this
+            // is vacuous twice over: NATURALE only runs when a shaker voice is
+            // enabled, and it only draws on the steps the subdivision filtered
+            // - which are never step 0. Asking for the downbeat alone with the
+            // shaker off never lets the feature run at all. `naturalOrnaments`
+            // is here so it cannot quietly go back to that.
+            vp::GrooveEngine congas;
+            congas.prepare (0x11A7u);
+            congas.setStyle (vp::GrooveStyle::marcha);
+            congas.setHumanize (0.0f);
+            congas.setSwing (0.0f);
+            congas.setIntensity (1.0f);
+            congas.setDynamics (1.0f);
+            congas.setShakerEnabled (true);
+            congas.setCongasEnabled (true);
+            congas.setSubdivision (vp::Subdivision::eighth);
+            congas.setShakerNatural (true);
+            bool congaOnOne = false;
+            int naturalOrnaments = 0;
+            for (int bar = 0; bar < kBars; ++bar)
+            {
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                    const int n = congas.eventsAt (
+                        bar, step, events, vp::GrooveEngine::kMaxEvents);
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const bool shakerVoice =
+                            events[i].stroke == vp::Stroke::shakerDown
+                            || events[i].stroke == vp::Stroke::shakerUp;
+                        if (shakerVoice)
+                        {
+                            if ((step % 2) == 1)
+                                ++naturalOrnaments;
+                            continue;
+                        }
+                        if (step == 0)
+                            congaOnOne = true;
+                    }
+                }
+            }
+            expect (! congaOnOne && naturalOrnaments > 0,
+                    "NATURALE never puts a conga on the first quarter's down-stroke");
+        }
+
         // Conga thinning must be inaudible to the deterministic player state:
         // the old path generated odd-step events before deciding not to expose
         // them, so their random draws still belong to every later allowed hit.
@@ -2804,6 +3717,87 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (shakerMatchesGolden
                     && goldenIndex == static_cast<int> (std::size (shakerGolden)),
                 "eighth shaker preserves the pre-feature stroke velocity delay stream bit-for-bit");
+    }
+
+    {
+        // CEMBALO (item 10): same job as the shaker - same table, same
+        // subdivision thinning, same down/up split - just a different Stroke,
+        // independently switched.
+        auto strokeSteps = [] (bool cembalo, vp::Subdivision subdivision)
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0x51BD1u);
+            groove.setStyle (vp::GrooveStyle::marcha);
+            groove.setHumanize (0.0f);
+            groove.setSwing (0.0f);
+            groove.setIntensity (0.0f);
+            groove.setDynamics (1.0f);
+            groove.setCongasEnabled (false);
+            groove.setShakerEnabled (! cembalo);
+            groove.setCembaloEnabled (cembalo);
+            groove.setSubdivision (subdivision);
+            std::vector<int> steps;
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                const int count = groove.eventsAt (0, step, events,
+                                                   vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < count; ++i)
+                    steps.push_back (step);
+            }
+            return steps;
+        };
+
+        for (auto sub : { vp::Subdivision::quarter, vp::Subdivision::eighth,
+                          vp::Subdivision::sixteenth })
+            expect (strokeSteps (false, sub) == strokeSteps (true, sub),
+                    "cembalo lands on exactly the same subdivision-thinned steps as the shaker");
+
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0x51BD1u);
+            groove.setStyle (vp::GrooveStyle::marcha);
+            groove.setCongasEnabled (false);
+            groove.setShakerEnabled (false);
+            groove.setCembaloEnabled (true);
+            groove.setSubdivision (vp::Subdivision::sixteenth);
+            vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+            const int count = groove.eventsAt (0, 0, events, vp::GrooveEngine::kMaxEvents);
+            bool sawDown = count > 0 && events[0].stroke == vp::Stroke::cembaloDown;
+            expect (sawDown,
+                    "cembalo plays the accented down-stroke on the pulse, like the shaker");
+        }
+
+        // CLAP (item 10): the backbeat only - steps 4 and 12 - and only once
+        // the bar is trustworthy. `eventsAt` trusts whatever `step` it is
+        // given (see `PercussionEngine::render`, which derives it from the
+        // clock's own, possibly-rotated `beatInBar`), so a correct rotation
+        // upstream is a correct clap for free; what this tests is the part
+        // this file owns: the fixed backbeat pattern and the trust gate.
+        auto clapSteps = [] (bool trusted)
+        {
+            vp::GrooveEngine groove;
+            groove.prepare (0x51BD1u);
+            groove.setStyle (vp::GrooveStyle::marcha);
+            groove.setShakerEnabled (false);
+            groove.setCongasEnabled (false);
+            groove.setClapEnabled (true);
+            groove.setBarTrusted (trusted);
+            std::vector<int> steps;
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+                const int count = groove.eventsAt (0, step, events,
+                                                   vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < count; ++i)
+                    steps.push_back (step);
+            }
+            return steps;
+        };
+        expect (clapSteps (true) == std::vector<int> ({ 4, 12 }),
+                "clap plays only the backbeat - quarters 2 and 4 - once the bar is trusted");
+        expect (clapSteps (false).empty(),
+                "clap stays silent until the bar is trusted, whatever style or step");
     }
 
     {
@@ -3256,7 +4250,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         vp::PercussionEngine perc;
         perc.prepare (sr);
         perc.setReverbAmount (0.0f);
-        perc.setVolume (1.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
         perc.setHumanization (0.0f);
         perc.setIntensity (0.0f);
         perc.setSwing (1.0f);
@@ -3326,7 +4321,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         vp::PercussionEngine perc;
         perc.prepare (48000.0);
         perc.setReverbAmount (0.0f);
-        perc.setVolume (1.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
         perc.setHumanization (0.0f);
 
         auto renderOne = [&perc] (int barPulse, std::vector<float>& into)
@@ -3380,14 +4376,13 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
-        // One balance, not two volumes. At the centre both instruments sit at
-        // full; past it the quieter side falls and the louder side stays.
+        // Two independent volumes, not one balance: either can go to zero
+        // without touching the other.
         constexpr double sr = 48000.0;
         vp::PercussionEngine perc;
         perc.prepare (sr);
         perc.setReverbAmount (0.0f);
         perc.setHumanization (0.0f);
-        perc.setVolume (1.0f);
 
         auto energyOf = [&perc, sr] (vp::Stroke s) -> double
         {
@@ -3403,26 +4398,77 @@ void vpRunAiBeatTests (int& passed, int& failed)
             return e;
         };
 
-        perc.setInstrumentMix (0.5f);
-        const double shMid = energyOf (vp::Stroke::shakerDown);
-        const double cgMid = energyOf (vp::Stroke::tumba);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
+        const double shBoth = energyOf (vp::Stroke::shakerDown);
+        const double cgBoth = energyOf (vp::Stroke::tumba);
 
-        perc.setInstrumentMix (1.0f);
-        const double shCongas = energyOf (vp::Stroke::shakerDown);
-        const double cgCongas = energyOf (vp::Stroke::tumba);
+        perc.setShakerVolume (0.0f);
+        const double shMuted = energyOf (vp::Stroke::shakerDown);
+        const double cgWithShakerMuted = energyOf (vp::Stroke::tumba);
 
-        perc.setInstrumentMix (0.0f);
-        const double shShaker = energyOf (vp::Stroke::shakerDown);
-        const double cgShaker = energyOf (vp::Stroke::tumba);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (0.0f);
+        const double cgMuted = energyOf (vp::Stroke::tumba);
+        const double shWithCongaMuted = energyOf (vp::Stroke::shakerDown);
 
-        std::printf ("instrument-mix  mid sh=%.4f cg=%.4f  congas sh=%.4f cg=%.4f  shaker sh=%.4f cg=%.4f\n",
-                     shMid, cgMid, shCongas, cgCongas, shShaker, cgShaker);
-        expect (shMid > 1.0e-6 && cgMid > 1.0e-6,
-                "at the centre both instruments still sound");
-        expect (shCongas < shMid * 0.05 && cgCongas > cgMid * 0.80,
-                "full congas silences the shaker and leaves the drums");
-        expect (cgShaker < cgMid * 0.05 && shShaker > shMid * 0.80,
-                "full shaker silences the drums and leaves the shaker");
+        std::printf ("voice-volume  both sh=%.4f cg=%.4f  sh=0 sh=%.4f cg=%.4f  cg=0 cg=%.4f sh=%.4f\n",
+                     shBoth, cgBoth, shMuted, cgWithShakerMuted, cgMuted, shWithCongaMuted);
+        expect (shBoth > 1.0e-6 && cgBoth > 1.0e-6,
+                "both instruments sound at full volume");
+        expect (shMuted < shBoth * 0.001f && cgWithShakerMuted > cgBoth * 0.95f,
+                "shaker at zero silences only the shaker");
+        expect (cgMuted < cgBoth * 0.001f && shWithCongaMuted > shBoth * 0.95f,
+                "conga at zero silences only the congas");
+    }
+
+    {
+        // CLAP and CEMBALO (item 10) through the full render + synthesis-bank
+        // pipeline, not just GrooveEngine::eventsAt: this also catches a
+        // synthesis fallback that silently produced an empty buffer.
+        constexpr double sr = 48000.0;
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+
+        auto energyOf = [&perc, sr] (vp::Stroke s) -> double
+        {
+            perc.clearVoices();
+            const int n = static_cast<int> (sr * 0.4);
+            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+            vp::ClockTick silent;
+            perc.triggerForTest (s, 0.9f, 0);
+            perc.render (l.data(), r.data(), n, silent, true);
+            double e = 0.0;
+            for (float x : l)
+                e += static_cast<double> (x) * x;
+            return e;
+        };
+
+        perc.setClapVolume (1.0f);
+        perc.setCembaloVolume (1.0f);
+        const double clapBoth = energyOf (vp::Stroke::clap);
+        const double cembaloBoth = energyOf (vp::Stroke::cembaloDown);
+
+        perc.setClapVolume (0.0f);
+        const double clapMuted = energyOf (vp::Stroke::clap);
+        const double cembaloWithClapMuted = energyOf (vp::Stroke::cembaloDown);
+
+        perc.setClapVolume (1.0f);
+        perc.setCembaloVolume (0.0f);
+        const double cembaloMuted = energyOf (vp::Stroke::cembaloDown);
+        const double clapWithCembaloMuted = energyOf (vp::Stroke::clap);
+
+        std::printf ("clap-cembalo  both cl=%.4f ce=%.4f  cl=0 cl=%.4f ce=%.4f  ce=0 ce=%.4f cl=%.4f\n",
+                     clapBoth, cembaloBoth, clapMuted, cembaloWithClapMuted,
+                     cembaloMuted, clapWithCembaloMuted);
+        expect (clapBoth > 1.0e-6 && cembaloBoth > 1.0e-6,
+                "clap and cembalo both produce real audio from the synthesis fallback");
+        expect (clapMuted < clapBoth * 0.001f && cembaloWithClapMuted > cembaloBoth * 0.95f,
+                "clap at zero silences only the clap");
+        expect (cembaloMuted < cembaloBoth * 0.001f && clapWithCembaloMuted > clapBoth * 0.95f,
+                "cembalo at zero silences only the cembalo");
     }
 
     {
@@ -3479,7 +4525,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
             vp::PercussionEngine perc;
             perc.prepare (48000.0);
             perc.setReverbAmount (0.0f);
-            perc.setVolume (1.0f);
+            perc.setShakerVolume (1.0f);
+            perc.setCongaVolume (1.0f);
             perc.setGroove (120.0f, 2);
 
             vp::ClockTick hit;
@@ -4359,7 +5406,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         perc.setSeed (4242u);
         perc.setHumanization (0.0f);
         perc.setReverbAmount (0.0f);
-        perc.setVolume (1.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
         perc.setGroove (120.0f, 4);
 
         // Where each articulation is heard, measured the same way the
@@ -6964,120 +8012,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // is past the top of the reported range and gets clamped; at a slow
             // tempo double is a perfectly ordinary answer, so that is where this
             // has to be measured.
-            {
-                // Where the doubling starts, and whether it is the tempo that
-                // decides it or this bench's own signal.
-                //
-                // Reading one tempo cannot tell those apart: a synthetic song
-                // has edges a real recording does not, and a bench that doubles
-                // everything would send any "fix" built on it straight into the
-                // material that already works. What the documented behaviour
-                // says is that the level goes wrong below about 92 BPM and is
-                // solid above it, so that boundary is the thing to look for. If
-                // it shows up here, the bench is measuring the real effect.
-                auto slowSong = [&] (float songBpm, std::vector<float>& dst, int nSamp)
-                {
-                    dst.assign (static_cast<size_t> (nSamp), 0.0f);
-                    const double incS = static_cast<double> (songBpm) / 60.0 / sr;
-                    double p3 = 0.0;
-                    for (int i = 0; i < nSamp; ++i)
-                    {
-                        const double beat = p3 - std::floor (p3);
-                        const int bi = static_cast<int> (std::floor (p3));
-                        const float tBeat = static_cast<float> (beat) / (songBpm / 60.0f);
-                        if (bi % 2 == 0)
-                            dst[static_cast<size_t> (i)] +=
-                                std::sin (2.0f * 3.14159265f * 55.0f * tBeat) * std::exp (-tBeat * 22.0f);
-                        if (bi % 2 == 1)
-                            dst[static_cast<size_t> (i)] +=
-                                (0.35f * ((i % 17) / 17.0f - 0.5f)
-                                 + 0.2f * std::sin (2.0f * 3.14159265f * 180.0f * tBeat))
-                                * std::exp (-tBeat * 18.0f);
-                        dst[static_cast<size_t> (i)] +=
-                            0.25f * std::sin (2.0f * 3.14159265f * 98.0f * tBeat)
-                            * std::exp (-tBeat * 8.0f);
-                        p3 += incS;
-                    }
-                };
-
-                auto readTempo = [&] (const std::vector<float>& song, int nSamp, float& comb)
-                {
-                    vp::VirtualPercussionEngine e;
-                    e.prepare (sr, block, 1);
-                    e.settings().shakerEnabled.store (false);
-                    e.settings().congasEnabled.store (false);
-                    e.start();
-                    std::vector<float> eL (static_cast<size_t> (block), 0.0f);
-                    std::vector<float> eR (static_cast<size_t> (block), 0.0f);
-                    float* eOuts[2] = { eL.data(), eR.data() };
-                    vp::EngineSnapshot snap {};
-                    for (int p = 0; p + block <= nSamp; p += block)
-                    {
-                        const float* ins[1] = { song.data() + p };
-                        e.process (ins, 1, eOuts, 2, block);
-                        snap = e.snapshot();
-                        for (int spin = 0; spin < 400; ++spin)
-                        {
-                            if (e.snapshot().analysisBacklog <= 960)
-                                break;
-                            std::this_thread::sleep_for (std::chrono::microseconds (50));
-                        }
-                    }
-                    comb = snap.combBpm;
-                    return snap.bpm;
-                };
-
-                const int nSlow = static_cast<int> (sr * 26.0);
-                std::vector<float> song;
-                int doubledBelow = 0, doubledAbove = 0, checkedAbove = 0;
-                int midRangeRight = 0, checkedMid = 0;
-                for (float songBpm : { 60.0f, 72.0f, 96.0f, 132.0f, 168.0f, 190.0f })
-                {
-                    slowSong (songBpm, song, nSlow);
-                    float comb = 0.0f;
-                    const float got = readTempo (song, nSlow, comb);
-                    const bool onIt = std::fabs (got - songBpm) < 6.0f;
-                    const bool doubled = std::fabs (got - songBpm * 2.0f) < 10.0f;
-                    std::printf ("octave-sweep  song=%5.1f  read=%6.1f  comb=%6.1f  %s\n",
-                                 static_cast<double> (songBpm), static_cast<double> (got),
-                                 static_cast<double> (comb),
-                                 onIt ? "on it" : (doubled ? "DOUBLED" : "elsewhere"));
-                    if (songBpm >= 92.0f && songBpm <= 170.0f)
-                    {
-                        ++checkedMid;
-                        midRangeRight += onIt ? 1 : 0;
-                    }
-                    const bool halved = std::fabs (got - songBpm * 0.5f) < 6.0f;
-                    if (halved)
-                        std::printf ("               (halved)\n");
-                    if (songBpm < 92.0f)
-                        doubledBelow += doubled ? 1 : 0;
-                    else
-                    {
-                        ++checkedAbove;
-                        doubledAbove += (doubled || halved) ? 1 : 0;
-                    }
-                }
-                std::printf ("octave-sweep  wrong level below 92: %d/2   wrong above: %d/%d\n",
-                             doubledBelow, doubledAbove, checkedAbove);
-
-                // Asserted: the middle of the range, where the tracker is meant
-                // to be right and is. Reported, not asserted: the two ends.
-                //
-                // Both ends were measured here and both are the documented
-                // behaviour rather than news - 60 and 72 read as their double,
-                // 190 as its half, which is the state space being pulled toward
-                // the middle of the range at the extremes. Widening its prior
-                // from 0.40 to 0.90 octaves was tried against this bench: it
-                // fixed 72 and left 60 and 190 exactly where they were, and it
-                // broke "strong eighths are not the beat", which is the thing
-                // anchoring the level on the state space exists to guarantee.
-                // The narrow prior is load-bearing; that trade is the one the
-                // header on setLevelAnchor already describes, and this measured
-                // it rather than assuming it. Reverted.
-                expect (midRangeRight == checkedMid && checkedMid >= 3,
-                        "the tracker reads ordinary tempi at the level they are played");
-            }
+            vpRunOctaveSweepTest (passed, failed);
 
 
             std::vector<float> quiet (kit.size(), 0.0f);

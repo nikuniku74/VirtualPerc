@@ -195,7 +195,12 @@ void NeuralBeatTracker::workerLoop()
                 if (model == nullptr || ! model->infer (frame, LogSpectFeatures::kDim, act))
                     continue;
 
-                auto h = decoder.observe (act[0], act[1], act[2]);
+                // The band energy the network was handed, before it is thrown
+                // away: the decoder's three probabilities cannot tell a kick
+                // from a hi-hat, and the metrical level turns on exactly that.
+                // See docs/HANDOFF_OCTAVE_50BPM.md.
+                auto h = decoder.observe (act[0], act[1], act[2],
+                                          LogSpectFeatures::lowBandEnergy (frame));
                 h.analysisSample = analysisSampleFor (h.frameIndex);
                 slot.publish (h);
             }

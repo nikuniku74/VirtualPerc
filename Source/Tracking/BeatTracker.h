@@ -128,6 +128,15 @@ public:
     void setBarLocked (bool on) noexcept { barLocked = on; }
     bool barIsLocked() const noexcept { return barLocked; }
 
+    /** The band came back after a hole (two quarters muted, a seek in the
+        loaded track). Opens a short coming-in window so the one can be
+        rotated onto the new downbeats without waiting eight bars of playing
+        evidence, and without restarting the tempo decoder: the clock kept
+        time through the hole, only the count is two quarters off.
+
+        Audio thread. No alloc. A lock set by the listener still forbids it. */
+    void notifyBarReentry() noexcept;
+
 
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
 
@@ -188,7 +197,20 @@ public:
     void setInputEpoch (uint32_t epoch) noexcept
     {
         if (seenEpoch && epoch != lastInputEpoch)
+        {
             sawInputStart = true;
+            // A new input must earn its own metrical level. In particular, a
+            // 50 BPM file may have taught AUTO to divide the hat pulse by two;
+            // carrying that choice into an unrelated 100 BPM file would turn
+            // the fix into the same sticky-octave bug in the other direction.
+            if (octaveAuto && autoOctave != 0)
+            {
+                autoOctave = 0;
+                autoWant = 0;
+                autoHoldSamples = 0;
+                neural.setUserOctave (0);
+            }
+        }
         lastInputEpoch = epoch;
         seenEpoch = true;
         neural.setInputEpoch (epoch);
@@ -304,6 +326,13 @@ public:
             held still, and therefore the moment worth asking what else that
             hold is stopping. */
         int           barRotations = 0;
+        /** True when the one can be believed for voices that sit on a
+            specific quarter (the clap on 2 and 4). Locked is trusted
+            outright; otherwise the histogram has to name beat zero with a
+            coming-in margin, and a re-entry window has to have closed. */
+        bool          barTrusted = false;
+        /** True while the post-cut coming-in window is open. Diagnostic. */
+        bool          barReentry = false;
     };
 
     void start() noexcept;
@@ -337,7 +366,9 @@ private:
         it moved the count, so the caller can stop asking. */
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
-    void updateAutoOctave (float bpm, bool periodic, int numSamples) noexcept;
+    bool barIsTrustedNow() const noexcept;
+    void updateAutoOctave (float bpm, bool periodic, int numSamples,
+                           bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
@@ -427,6 +458,8 @@ private:
     float downbeatVotes[4] {};
     float voteBeats = 0.0f;
     int   barRotations = 0;
+    /** Samples remaining in the post-cut coming-in window. Zero is closed. */
+    int   barReentrySamples = 0;
 
     /** The bar as the harmony votes on it, one vote per chord change, decayed
         the same way the network's is. Kept apart from the network's histogram

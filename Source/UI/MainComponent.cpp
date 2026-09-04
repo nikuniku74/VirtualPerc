@@ -351,36 +351,53 @@ MainComponent::MainComponent()
     setupBtn (shakerButton, ink());
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
     setupBtn (congasButton, ink());
-    setupBtn (styleAuto, ink());
-    setupBtn (styleMarcha, ink());
-    setupBtn (styleRock, ink());
-    setupBtn (styleDance, ink());
-    setupBtn (stylePop, ink());
-    setupBtn (styleSamba, ink());
-    setupBtn (styleFunk, ink());
-    setupBtn (styleReggae, ink());
-    setupBtn (styleBossa, ink());
-    setupBtn (styleTwoOne, ink());
+    setupBtn (cembaloButton, ink());
+    setupBtn (clapButton, ink());
+    setupBtn (naturalButton, ink());
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
+    setupBtn (halveButton, ink());
+    setupBtn (doubleButton, ink());
+
+    addAndMakeVisible (styleSelect);
+    addChildComponent (styleMenu);
+
+    // Pressing the level you are already on is the way back to AUTO: the same
+    // idiom the bar button used to use, and the only way out that does not need
+    // a second control. See applyTempoOctave.
+    halveButton.onClick = [this]
+    {
+        const bool mine = ! engine.settings().tempoOctaveAuto.load()
+                          && engine.settings().tempoOctave.load() < 0;
+        if (mine) applyTempoOctaveAuto();
+        else      applyTempoOctave (-1);
+    };
+    doubleButton.onClick = [this]
+    {
+        const bool mine = ! engine.settings().tempoOctaveAuto.load()
+                          && engine.settings().tempoOctave.load() > 0;
+        if (mine) applyTempoOctaveAuto();
+        else      applyTempoOctave (1);
+    };
 
     // Where beat one is cannot be read reliably from what the network gives us,
-    // so this moves it on by one. Four taps take the one all the way round the
-    // bar and back to where it started; the fifth hands it back to the app.
+    // so this moves it on by one and locks it. Tapping again while it is lit
+    // hands the count back without rotating: the old five-tap unlock read as a
+    // button stuck on. A TAP that declares the one still locks via the tracker.
+    // See docs/TODO.md item 13.
     barButton.onClick = [this]
     {
         auto& s = engine.settings();
-        if (s.barLocked.load() && barTapsSinceLock >= 4)
-        {
-            s.barLocked.store (false);
-            barTapsSinceLock = 0;
-        }
-        else
+        const bool locked = s.barLocked.load();
+        if (! locked)
         {
             s.barNudge.fetch_add (1);
             s.barLocked.store (true);
-            ++barTapsSinceLock;
+        }
+        else
+        {
+            s.barLocked.store (false);
         }
         refreshBarButton();
     };
@@ -477,16 +494,27 @@ MainComponent::MainComponent()
         savePrefs();
     };
 
-    styleAuto.onClick   = [this] { applyStyleAuto (! engine.settings().grooveAuto.load()); };
-    styleMarcha.onClick = [this] { applyStyle (vp::GrooveStyle::marcha); };
-    styleRock.onClick   = [this] { applyStyle (vp::GrooveStyle::rock); };
-    styleDance.onClick  = [this] { applyStyle (vp::GrooveStyle::dance); };
-    stylePop.onClick    = [this] { applyStyle (vp::GrooveStyle::pop); };
-    styleSamba.onClick  = [this] { applyStyle (vp::GrooveStyle::samba); };
-    styleFunk.onClick   = [this] { applyStyle (vp::GrooveStyle::funk); };
-    styleReggae.onClick = [this] { applyStyle (vp::GrooveStyle::reggae); };
-    styleBossa.onClick  = [this] { applyStyle (vp::GrooveStyle::bossa); };
-    styleTwoOne.onClick = [this] { applyStyle (vp::GrooveStyle::twoOne); };
+    cembaloButton.onClick = [this]
+    {
+        const bool on = ! engine.settings().cembaloEnabled.load();
+        engine.settings().cembaloEnabled.store (on);
+        cembaloButton.setToggleState (on, juce::dontSendNotification);
+        savePrefs();
+    };
+
+    clapButton.onClick = [this]
+    {
+        const bool on = ! engine.settings().clapEnabled.load();
+        engine.settings().clapEnabled.store (on);
+        clapButton.setToggleState (on, juce::dontSendNotification);
+        savePrefs();
+    };
+
+    naturalButton.onClick = [this]
+    {
+        applyShakerNatural (! engine.settings().shakerNatural.load());
+    };
+
     // Not in SETUP: this one is a musical choice and belongs next to the other
     // musical choices, where it can be reached mid-song.
     dynamicsButton.onClick = [this]
@@ -545,17 +573,18 @@ MainComponent::MainComponent()
         s.onDragEnd = [this] { savePrefs(); };
     };
 
-    setupFader (mixSlider, mixLabel, mixValue, "SHAKER",
-                0.0, 1.0, 0.50, 0.50,
-                [this] (float v) { engine.settings().instrumentMix.store (v); });
-    mixValue.setText ("CONGAS", juce::dontSendNotification);
-    mixSlider.onValueChange = [this]
-    {
-        const float v = static_cast<float> (mixSlider.getValue());
-        engine.settings().instrumentMix.store (v);
-        refreshMixLabels();
-        savePrefs (false);
-    };
+    setupFader (shakerVolSlider, shakerVolLabel, shakerVolValue, "SHAKER",
+                0.0, 1.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().shakerVolume.store (v); });
+    setupFader (congaVolSlider, congaVolLabel, congaVolValue, "CONGAS",
+                0.0, 1.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().congaVolume.store (v); });
+    setupFader (cembaloVolSlider, cembaloVolLabel, cembaloVolValue, "CEMBALO",
+                0.0, 1.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().cembaloVolume.store (v); });
+    setupFader (clapVolSlider, clapVolLabel, clapVolValue, "CLAP",
+                0.0, 1.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().clapVolume.store (v); });
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 2.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().inputGain.store (v); });
@@ -676,13 +705,17 @@ MainComponent::MainComponent()
     engine.settings().intensity.store (0.50f);
     engine.settings().swing.store (0.00f);
     engine.settings().masterVolume.store (0.90f);
-    engine.settings().percussionVolume.store (1.00f);
-    engine.settings().instrumentMix.store (0.50f);
+    engine.settings().shakerVolume.store (1.00f);
+    engine.settings().congaVolume.store (1.00f);
+    engine.settings().cembaloVolume.store (1.00f);
+    engine.settings().clapVolume.store (1.00f);
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
     shakerButton.setToggleState (true, juce::dontSendNotification);
     congasButton.setToggleState (true, juce::dontSendNotification);
+    cembaloButton.setToggleState (false, juce::dontSendNotification);
+    clapButton.setToggleState (false, juce::dontSendNotification);
 
     // No disk paths on iPad: the manifest and its WAVs are part of the app and
     // are decoded before the audio device is opened. A failed bank leaves the
@@ -697,6 +730,8 @@ MainComponent::MainComponent()
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
+    refreshNaturalButton();
+    refreshOctaveButtons();
     refreshLoopModeButton();
     refreshThemeColours();
 
@@ -761,9 +796,9 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &trackLoadButton,
         &trackPlayButton, &kickButton, &latencyButton,
         &subAuto, &sub4, &sub8,
-        &sub16, &congasButton, &styleAuto, &styleMarcha, &styleRock,
-        &styleDance, &stylePop, &styleSamba, &styleFunk, &styleReggae,
-        &styleBossa, &styleTwoOne, &dynamicsButton, &barButton,
+        &sub16, &naturalButton, &congasButton, &cembaloButton, &clapButton,
+        &dynamicsButton, &halveButton, &doubleButton,
+        &barButton,
         &settingsButton, &settingsClose, &procButton,
         &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
@@ -784,7 +819,14 @@ void MainComponent::refreshThemeColours()
     swingValue.setColour (juce::Label::textColourId, fuchsia());
     intensityLabel.setColour (juce::Label::textColourId, mute());
     intensityValue.setColour (juce::Label::textColourId, fuchsia());
-    refreshMixLabels();
+    shakerVolLabel.setColour (juce::Label::textColourId, mute());
+    shakerVolValue.setColour (juce::Label::textColourId, fuchsia());
+    congaVolLabel.setColour (juce::Label::textColourId, mute());
+    congaVolValue.setColour (juce::Label::textColourId, fuchsia());
+    cembaloVolLabel.setColour (juce::Label::textColourId, mute());
+    cembaloVolValue.setColour (juce::Label::textColourId, fuchsia());
+    clapVolLabel.setColour (juce::Label::textColourId, mute());
+    clapVolValue.setColour (juce::Label::textColourId, fuchsia());
     inputGainLabel.setColour (juce::Label::textColourId, mute());
     inputGainValue.setColour (juce::Label::textColourId, fuchsia());
     bpmEdit.setColour (juce::Label::textColourId, fuchsia());
@@ -795,6 +837,7 @@ void MainComponent::refreshThemeColours()
     refreshStartButton();
     refreshStyleButtons();
     refreshSubdivisionButtons();
+    refreshNaturalButton();
     refreshBarButton();
     refreshTempoModeButtons();
     refreshClockButtons();
@@ -1444,28 +1487,13 @@ void MainComponent::refreshInternalTrackButtons()
     paintChoice (trackPlayButton, trackTransport.isPlaying() && internalTrackSelected());
 }
 
-void MainComponent::refreshMixLabels()
-{
-    mixLabel.setText ("SHAKER", juce::dontSendNotification);
-    mixValue.setText ("CONGAS", juce::dontSendNotification);
-    const float mix = static_cast<float> (mixSlider.getValue());
-    // The favoured pole takes the accent colour so the knob reads as a
-    // balance, not as a volume with a number on top.
-    mixLabel.setColour (juce::Label::textColourId, mix < 0.45f ? fuchsia() : mute());
-    mixValue.setColour (juce::Label::textColourId, mix > 0.55f ? fuchsia() : mute());
-    if (mix >= 0.45f && mix <= 0.55f)
-    {
-        mixLabel.setColour (juce::Label::textColourId, fuchsia());
-        mixValue.setColour (juce::Label::textColourId, fuchsia());
-    }
-}
-
 void MainComponent::setSettingsOpen (bool open)
 {
     settingsButton.setToggleState (open, juce::dontSendNotification);
     settingsOverlay.setVisible (open);
     if (open)
     {
+        styleMenu.dismiss();
         settingsOverlay.toFront (false);
         settingsOverlay.setBounds (getLocalBounds());
         relayoutSettings();
@@ -1539,6 +1567,16 @@ void MainComponent::loadPrefs()
         || sub == static_cast<int> (vp::Subdivision::sixteenth))
         engine.settings().subdivision.store (sub);
 
+    // The level the player last chose, and whether they chose one at all. Both
+    // are saved: a chosen level is a statement about the material, and the
+    // material is usually still the same one next time.
+    const int oct = prefs->getIntValue ("tempoOctave",
+                                        engine.settings().tempoOctave.load());
+    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, oct));
+    engine.settings().tempoOctaveAuto.store (
+        prefs->getBoolValue ("tempoOctaveAuto",
+                             engine.settings().tempoOctaveAuto.load()));
+
     const int style = prefs->getIntValue ("grooveStyle",
                                           engine.settings().grooveStyle.load());
     if (style >= 0 && style < static_cast<int> (vp::GrooveStyle::count))
@@ -1553,6 +1591,12 @@ void MainComponent::loadPrefs()
         prefs->getBoolValue ("shakerEnabled", engine.settings().shakerEnabled.load()));
     engine.settings().congasEnabled.store (
         prefs->getBoolValue ("congasEnabled", engine.settings().congasEnabled.load()));
+    engine.settings().cembaloEnabled.store (
+        prefs->getBoolValue ("cembaloEnabled", engine.settings().cembaloEnabled.load()));
+    engine.settings().clapEnabled.store (
+        prefs->getBoolValue ("clapEnabled", engine.settings().clapEnabled.load()));
+    engine.settings().shakerNatural.store (
+        prefs->getBoolValue ("shakerNatural", engine.settings().shakerNatural.load()));
 
     const bool recordedLoops = loopBankReady
                                && prefs->getBoolValue ("recordedLoops", true);
@@ -1566,10 +1610,21 @@ void MainComponent::loadPrefs()
             bufferChoice = 256;
     }
 
-    const float mix = clamp01 (prefs->getDoubleValue ("instrumentMix", 0.50), 0.50);
-    engine.settings().instrumentMix.store (mix);
-    mixSlider.setValue (static_cast<double> (mix), juce::dontSendNotification);
-    refreshMixLabels();
+    const float shakerVol = clamp01 (prefs->getDoubleValue ("shakerVolume", 1.00), 1.00);
+    engine.settings().shakerVolume.store (shakerVol);
+    setFader (shakerVolSlider, shakerVolValue, shakerVol);
+
+    const float congaVol = clamp01 (prefs->getDoubleValue ("congaVolume", 1.00), 1.00);
+    engine.settings().congaVolume.store (congaVol);
+    setFader (congaVolSlider, congaVolValue, congaVol);
+
+    const float cembaloVol = clamp01 (prefs->getDoubleValue ("cembaloVolume", 1.00), 1.00);
+    engine.settings().cembaloVolume.store (cembaloVol);
+    setFader (cembaloVolSlider, cembaloVolValue, cembaloVol);
+
+    const float clapVol = clamp01 (prefs->getDoubleValue ("clapVolume", 1.00), 1.00);
+    engine.settings().clapVolume.store (clapVol);
+    setFader (clapVolSlider, clapVolValue, clapVol);
 
     const float inGain = juce::jlimit (0.0, 2.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
@@ -1603,6 +1658,12 @@ void MainComponent::loadPrefs()
 
     const bool congasOn = engine.settings().congasEnabled.load();
     congasButton.setToggleState (congasOn, juce::dontSendNotification);
+
+    const bool cembaloOn = engine.settings().cembaloEnabled.load();
+    cembaloButton.setToggleState (cembaloOn, juce::dontSendNotification);
+
+    const bool clapOn = engine.settings().clapEnabled.load();
+    clapButton.setToggleState (clapOn, juce::dontSendNotification);
     refreshLoopModeButton();
 }
 
@@ -1668,14 +1729,25 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("measuredLatencyMs", static_cast<double> (engine.measuredLatency()));
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
     prefs->setValue ("subdivision", engine.settings().subdivision.load());
+    prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());
+    prefs->setValue ("tempoOctaveAuto", engine.settings().tempoOctaveAuto.load());
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
     prefs->setValue ("grooveAuto", engine.settings().grooveAuto.load());
     prefs->setValue ("dynamicsFollow", engine.settings().dynamicsFollow.load());
     prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
+    prefs->setValue ("cembaloEnabled", engine.settings().cembaloEnabled.load());
+    prefs->setValue ("clapEnabled", engine.settings().clapEnabled.load());
+    prefs->setValue ("shakerNatural", engine.settings().shakerNatural.load());
     prefs->setValue ("recordedLoops", engine.recordedLoopsEnabled());
-    prefs->setValue ("instrumentMix",
-                     static_cast<double> (engine.settings().instrumentMix.load()));
+    prefs->setValue ("shakerVolume",
+                     static_cast<double> (engine.settings().shakerVolume.load()));
+    prefs->setValue ("congaVolume",
+                     static_cast<double> (engine.settings().congaVolume.load()));
+    prefs->setValue ("cembaloVolume",
+                     static_cast<double> (engine.settings().cembaloVolume.load()));
+    prefs->setValue ("clapVolume",
+                     static_cast<double> (engine.settings().clapVolume.load()));
     prefs->setValue ("inputGain",
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
@@ -1687,6 +1759,40 @@ void MainComponent::savePrefs (bool flush)
 
     if (flush)
         prefs->saveIfNeeded();
+}
+
+void MainComponent::applyTempoOctave (int octaves)
+{
+    engine.settings().tempoOctaveAuto.store (false);
+    engine.settings().tempoOctave.store (juce::jlimit (-1, 1, octaves));
+    refreshOctaveButtons();
+    savePrefs();
+    repaint();
+}
+
+void MainComponent::applyTempoOctaveAuto()
+{
+    engine.settings().tempoOctaveAuto.store (true);
+    refreshOctaveButtons();
+    savePrefs();
+    repaint();
+}
+
+void MainComponent::refreshOctaveButtons()
+{
+    // Only a level the listener picked lights the button. Under AUTO the level
+    // may well be halved, and the tempo line says so - but a filled button
+    // means "you asked for this", and the way back is to press it again.
+    const bool mine = ! engine.settings().tempoOctaveAuto.load();
+    const int oct = engine.settings().tempoOctave.load();
+    auto paint = [] (juce::TextButton& b, bool on)
+    {
+        b.setToggleState (on, juce::dontSendNotification);
+        b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
+        b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
+    };
+    paint (halveButton, mine && oct < 0);
+    paint (doubleButton, mine && oct > 0);
 }
 
 void MainComponent::applySubdivision (vp::Subdivision s)
@@ -1734,9 +1840,9 @@ void MainComponent::refreshBarButton()
     // Lit means the count is the listener's. A tap on the tempo declares the one
     // as well, so this reads the engine back rather than trusting what the
     // button last asked for - press TAP and the button lights on its own.
+    // Copy: locked is a held state you tap to release, not a button that
+    // stuck on. See docs/TODO.md item 13.
     const bool locked = engine.settings().barLocked.load();
-    if (! locked)
-        barTapsSinceLock = 0;
     barButton.setButtonText (locked ? juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI"))
                                     : juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")));
     barButton.setToggleState (locked, juce::dontSendNotification);
@@ -1747,8 +1853,9 @@ void MainComponent::refreshBarButton()
 
 void MainComponent::refreshStyleButtons()
 {
-    const bool autoOn = engine.settings().grooveAuto.load();
-    const int cur = engine.settings().grooveStyle.load();
+    styleSelect.refresh();
+    if (styleMenu.isOpen())
+        styleMenu.resized();
 
     auto paint = [] (juce::TextButton& b, bool on, bool detected)
     {
@@ -1758,29 +1865,6 @@ void MainComponent::refreshStyleButtons()
                      on || detected ? fuchsia() : text());
     };
 
-    paint (styleAuto, autoOn, false);
-    // Under AUTO no button is "selected", but the one the detector has landed on
-    // is tinted, so what is actually playing is still visible.
-    paint (styleMarcha, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::marcha),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::marcha));
-    paint (styleRock, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::rock),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::rock));
-    paint (styleDance, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::dance),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::dance));
-    paint (stylePop, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::pop),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::pop));
-    paint (styleSamba, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::samba),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::samba));
-    paint (styleFunk, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::funk),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::funk));
-    paint (styleReggae, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::reggae),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::reggae));
-    paint (styleBossa, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::bossa),
-           autoOn && snap.grooveStyle == static_cast<int> (vp::GrooveStyle::bossa));
-    // Never lit by AUTO: the chooser decides between four genres and this one
-    // is not a genre. See the note on GrooveStyle::twoOne.
-    paint (styleTwoOne, ! autoOn && cur == static_cast<int> (vp::GrooveStyle::twoOne), false);
-
     // Lit while it is on; the text says what it is doing right now, because
     // "the part went quiet" is the kind of thing a player wants confirmed
     // rather than wondered about.
@@ -1789,6 +1873,21 @@ void MainComponent::refreshStyleButtons()
                                               : (snap.standingDown ? "IN ASCOLTO"
                                                                    : "DINAMICA"));
     paint (dynamicsButton, followDyn, followDyn && snap.standingDown);
+}
+
+void MainComponent::applyShakerNatural (bool on)
+{
+    engine.settings().shakerNatural.store (on);
+    refreshNaturalButton();
+    savePrefs();
+}
+
+void MainComponent::refreshNaturalButton()
+{
+    const bool on = engine.settings().shakerNatural.load();
+    naturalButton.setToggleState (on, juce::dontSendNotification);
+    naturalButton.setColour (juce::TextButton::buttonColourId, ink());
+    naturalButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
 }
 
 void MainComponent::applyLatencyFromDevice()
@@ -2093,7 +2192,13 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     area.removeFromTop (px (6));
     s.bpm = area.removeFromTop (bpmH);
     {
-        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 320), bpmH);
+        // A bounded block, centred. Wider than this and the two octave buttons
+        // sit so far from the number that they read as unrelated; narrower and
+        // the number has nowhere to go.
+        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 430), bpmH);
+        const int octW = juce::jlimit (48, 78, block.getWidth() / 6);
+        s.octaveDown = block.removeFromLeft (octW).reduced (0, bpmH / 5);
+        s.octaveUp = block.removeFromRight (octW).reduced (0, bpmH / 5);
         s.bpmNumber = block.reduced (8, 0);
     }
     s.bpmLabel = area.removeFromTop (px (16));
@@ -2161,8 +2266,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     const int n = area.getHeight();
     const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.20f);
-    const int hPart      = chrome + squareFor (9);
-    const int hInst      = chrome + squareFor (6);
+    const int hInst      = chrome + squareFor (9);
+    const int hPart      = hInst;
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
@@ -2173,24 +2278,27 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     {
         auto body = card (area.removeFromTop (hPart), "PARTE");
-        placeSquareRow (body, { &styleAuto, &styleMarcha, &styleRock, &styleDance, &stylePop,
-                                &styleSamba, &styleFunk, &styleReggae, &styleBossa,
-                                &styleTwoOne, &dynamicsButton });
+        const int side = juce::jmin (body.getHeight(),
+                                     juce::jmax (24, (body.getWidth() - btnGap) / 4));
+        auto row = body.withSizeKeepingCentre (body.getWidth(), side);
+        dynamicsButton.setBounds (row.removeFromRight (side));
+        row.removeFromRight (btnGap);
+        styleSelect.setBounds (row);
         area.removeFromTop (gap);
     }
 
     {
         auto body = card (area.removeFromTop (hInst), "STRUMENTI");
-        placeSquareRow (body, { &shakerButton, &congasButton, &subAuto, &sub4, &sub8, &sub16 });
+        placeSquareRow (body, { &shakerButton, &congasButton, &cembaloButton, &clapButton,
+                                &subAuto, &sub4, &sub8, &sub16, &naturalButton });
         area.removeFromTop (gap);
     }
 
     {
-        // Mix on the left: SHAKER / CONGAS still name the two poles, equal
-        // when the pointer is at noon. Then how loud the tracker hears the
-        // room or the aux.
+        // Each instrument gets its own independent level, then how loud the
+        // tracker hears the room or the aux.
         auto body = card (area, "FEEL");
-        const int nKnobs = 5;
+        const int nKnobs = 8;
         const int knobColW = body.getWidth() / nKnobs;
         auto placeKnob = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
         {
@@ -2199,7 +2307,10 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
             name.setBounds (col.removeFromBottom (16));
             s.setBounds (col.reduced (2, 2));
         };
-        placeKnob (mixValue, mixLabel, mixSlider);
+        placeKnob (shakerVolValue, shakerVolLabel, shakerVolSlider);
+        placeKnob (congaVolValue, congaVolLabel, congaVolSlider);
+        placeKnob (cembaloVolValue, cembaloVolLabel, cembaloVolSlider);
+        placeKnob (clapVolValue, clapVolLabel, clapVolSlider);
         placeKnob (inputGainValue, inputGainLabel, inputGainSlider);
         placeKnob (swingValue, swingLabel, swingSlider);
         placeKnob (intensityValue, intensityLabel, intensitySlider);
@@ -2215,9 +2326,18 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     reverbSlider.setVisible (true);
     reverbLabel.setVisible (true);
     reverbValue.setVisible (true);
-    mixSlider.setVisible (true);
-    mixLabel.setVisible (true);
-    mixValue.setVisible (true);
+    shakerVolSlider.setVisible (true);
+    shakerVolLabel.setVisible (true);
+    shakerVolValue.setVisible (true);
+    congaVolSlider.setVisible (true);
+    congaVolLabel.setVisible (true);
+    congaVolValue.setVisible (true);
+    cembaloVolSlider.setVisible (true);
+    cembaloVolLabel.setVisible (true);
+    cembaloVolValue.setVisible (true);
+    clapVolSlider.setVisible (true);
+    clapVolLabel.setVisible (true);
+    clapVolValue.setVisible (true);
     inputGainSlider.setVisible (true);
     inputGainLabel.setVisible (true);
     inputGainValue.setVisible (true);
@@ -2252,6 +2372,8 @@ void MainComponent::resized()
         r.removeFromTop (stage.getHeight() + 14);
 
     const auto rows = stageRows (stage);
+    halveButton.setBounds (rows.octaveDown);
+    doubleButton.setBounds (rows.octaveUp);
     barButton.setBounds (rows.barShift);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
@@ -2280,6 +2402,8 @@ void MainComponent::resized()
 
     layoutConsole (r);
     layoutTrackWaveform();
+    if (styleMenu.isOpen())
+        styleMenu.setBounds (getLocalBounds());
 }
 
 
@@ -2986,3 +3110,174 @@ void MainComponent::TrackWaveform::mouseUp (const juce::MouseEvent& e)
 {
     owner.seekInternalTrack (proportionFromX (static_cast<float> (e.position.x)));
 }
+
+namespace
+{
+    // Row 0 is AUTO; every row after it is `vp::toString (GrooveStyle (index - 1))`
+    // - one source for the label text, so a style added to the enum shows up
+    // here with its real name instead of "?".
+    const char* styleMenuLabel (int index) noexcept
+    {
+        if (index == 0)
+            return "AUTO";
+        return vp::toString (static_cast<vp::GrooveStyle> (index - 1));
+    }
+}
+
+void MainComponent::StyleSelect::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+    g.setColour (ink());
+    g.fillRect (bounds);
+    g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
+    g.drawRect (bounds.reduced (0.5f), 1.0f);
+    g.setColour (fuchsia());
+    g.fillRect (bounds.getX(), bounds.getBottom() - 3.0f, bounds.getWidth(), 3.0f);
+
+    const bool autoOn = owner.engine.settings().grooveAuto.load();
+    const auto chosen = static_cast<vp::GrooveStyle> (
+        owner.engine.settings().grooveStyle.load());
+    juce::String main = autoOn ? "AUTO" : juce::String (vp::toString (chosen));
+    juce::String hint;
+    if (autoOn)
+    {
+        // Hint the style the detector has landed on without selecting it,
+        // same job the tinted squares used to do.
+        const auto detected = static_cast<vp::GrooveStyle> (owner.snap.grooveStyle);
+        if (detected != vp::GrooveStyle::count)
+            hint = juce::String (vp::toString (detected));
+    }
+
+    auto textArea = getLocalBounds().reduced (10, 2).withTrimmedRight (22);
+    const float dim = juce::jmin ((float) getHeight(), (float) juce::jmax (1, getWidth()));
+    juce::Font f = fontUi (juce::jmax (9.0f, dim * 0.28f));
+    g.setFont (f);
+    if (hint.isNotEmpty() && hint != main)
+    {
+        const float mainW = juce::GlyphArrangement::getStringWidth (f, main + "  ");
+        g.setColour (fuchsia());
+        g.drawFittedText (main, textArea, juce::Justification::centredLeft, 1);
+        auto hintArea = textArea.withTrimmedLeft (juce::roundToInt (mainW));
+        g.setColour (mute());
+        g.drawFittedText (hint, hintArea, juce::Justification::centredLeft, 1);
+    }
+    else
+    {
+        g.setColour (fuchsia());
+        g.drawFittedText (main, textArea, juce::Justification::centredLeft, 1);
+    }
+
+    auto chev = juce::Rectangle<float> ((float) getWidth() - 18.0f,
+                                        (float) getHeight() * 0.5f - 3.0f,
+                                        8.0f, 6.0f);
+    juce::Path p;
+    p.addTriangle (chev.getX(), chev.getY(),
+                   chev.getRight(), chev.getY(),
+                   chev.getCentreX(), chev.getBottom());
+    g.setColour (text().withAlpha (0.7f));
+    g.fillPath (p);
+}
+
+void MainComponent::StyleSelect::mouseUp (const juce::MouseEvent& e)
+{
+    if (! e.mouseWasClicked() || ! getLocalBounds().contains (e.getPosition()))
+        return;
+    if (owner.styleMenu.isOpen())
+        owner.styleMenu.dismiss();
+    else
+        owner.styleMenu.showBelow (getBounds());
+}
+
+void MainComponent::StyleSelect::refresh()
+{
+    repaint();
+}
+
+MainComponent::StyleMenuOverlay::StyleMenuOverlay (MainComponent& o)
+    : owner (o)
+{
+    setVisible (false);
+    setOpaque (false);
+    setInterceptsMouseClicks (true, true);
+    addAndMakeVisible (list);
+    list.setOpaque (false);
+    for (int i = 0; i < kCount; ++i)
+    {
+        list.addAndMakeVisible (items[i]);
+        items[i].setButtonText (styleMenuLabel (i));
+        items[i].onClick = [this, i]
+        {
+            if (i == 0)
+                owner.applyStyleAuto (true);
+            else
+                owner.applyStyle (static_cast<vp::GrooveStyle> (i - 1));
+            dismiss();
+        };
+    }
+}
+
+void MainComponent::StyleMenuOverlay::showBelow (juce::Rectangle<int> /*anchorInParent*/)
+{
+    setBounds (owner.getLocalBounds());
+    setVisible (true);
+    toFront (false);
+    resized();
+}
+
+void MainComponent::StyleMenuOverlay::dismiss()
+{
+    setVisible (false);
+}
+
+void MainComponent::StyleMenuOverlay::mouseDown (const juce::MouseEvent& e)
+{
+    if (! list.getBounds().contains (e.getPosition()))
+        dismiss();
+}
+
+void MainComponent::StyleMenuOverlay::resized()
+{
+    if (! isVisible())
+        return;
+
+    auto anchor = getLocalArea (&owner.styleSelect, owner.styleSelect.getLocalBounds());
+    const int n = kCount;
+    const int gap = 0;
+    const int maxH = juce::jmax (1, getHeight() - 12);
+    const int itemH = juce::jlimit (24, juce::jmax (24, anchor.getHeight()),
+                                    maxH / n);
+    const int listH = n * itemH + gap * (n - 1);
+    const int listW = juce::jmax (anchor.getWidth(), 120);
+    int y = anchor.getBottom();
+    if (y + listH > getHeight() - 4)
+        y = juce::jmax (4, anchor.getY() - listH);
+    int x = anchor.getX();
+    if (x + listW > getWidth() - 4)
+        x = juce::jmax (4, getWidth() - listW - 4);
+
+    list.setBounds (x, y, listW, listH);
+
+    auto row = list.getLocalBounds();
+    const bool autoOn = owner.engine.settings().grooveAuto.load();
+    const int cur = owner.engine.settings().grooveStyle.load();
+    const int detected = owner.snap.grooveStyle;
+
+    for (int i = 0; i < n; ++i)
+    {
+        auto r = row.removeFromTop (itemH);
+        items[i].setBounds (r);
+        const bool on = (i == 0) ? autoOn
+                                 : (! autoOn && cur == i - 1);
+        // Under AUTO the detected style is tinted, not selected. DUE-UNO is
+        // never chosen by the detector.
+        const bool hinted = autoOn && i > 0 && i - 1 == detected
+                            && i - 1 != static_cast<int> (vp::GrooveStyle::twoOne);
+        items[i].setToggleState (on, juce::dontSendNotification);
+        items[i].setColour (juce::TextButton::buttonColourId, ink());
+        items[i].setColour (juce::TextButton::textColourOffId,
+                            on || hinted ? fuchsia() : text());
+        items[i].setColour (juce::TextButton::textColourOnId,
+                            on || hinted ? fuchsia() : text());
+    }
+}
+

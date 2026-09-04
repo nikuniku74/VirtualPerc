@@ -12,7 +12,8 @@ not lost.
 
 Recorded by Sam Gossner. The conga / tumba / quinto one-shots are the VCSL
 *Struck Membranophones / Conga* set; the shaker down- and up-strokes are VCSL
-*Shaker, Small*.
+*Shaker, Small*; the claps are VCSL *Claps* (the ensemble takes, not the
+`SoloClap` velocity ladder); the cembalo is VCSL *Tambourine 1* and *2*.
 
 ## What each file is
 
@@ -33,6 +34,39 @@ Recorded by Sam Gossner. The conga / tumba / quinto one-shots are the VCSL
 | `shaker_up.wav` | `Mid_ShakerHighFaster_Up_rr1` | shaker, return stroke |
 | `shaker_up_b.wav` | `Mid_ShakerHighFaster_Up_rr2` | shaker up — round-robin |
 | `shaker_up_med.wav` | `Mid_ShakerLowFaster_Up_rr2` | shaker up, lighter |
+| `clap.wav` | `Clap_rr1` | backbeat clap, ensemble |
+| `clap_b.wav` | `Clap_rr3` | clap — round-robin |
+| `clap_med.wav` | `Clap_rr6` | clap — third take, tightest of the set |
+| `cembalo_down.wav` | `Tamb2_Hit_v2_rr2_Mid` | tambourine, struck hit — the accent on the pulse |
+| `cembalo_down_b.wav` | `Tamb1_Hit_v2_rr1_Mid` | cembalo down — round-robin |
+| `cembalo_down_med.wav` | `Tamb2_Hit_v1_rr1_Mid` | cembalo down, medium velocity |
+| `cembalo_up.wav` | `Tamb2_Shake_rr3_Mid` | tambourine shake — the jingles on the return |
+| `cembalo_up_b.wav` | `Tamb2_Shake_rr4_Mid` | cembalo up — round-robin |
+| `cembalo_up_med.wav` | `Tamb1_Shake_rr2_Mid` | cembalo up, lighter |
+
+**CEMBALO here means the tambourine**, not the cymbal a dictionary points at.
+Down is the struck hit and up is the shake, which is how the instrument is
+played in eighths: hand on the pulse, jingles on the return.
+
+Takes that look right on the shelf and were rejected on measurement, so they
+do not get picked again by mistake:
+
+- The tambourine **shakes** cannot be cut like a struck sample. They have no
+  strike — they swell, measured 56 to 130 ms to half peak — so aligning them
+  to a peak in the first 12 ms opens the asset on the rise and lands late on
+  every offbeat. They use the shaker path instead (`shape_tau > 0`: onset at
+  35 % of peak, then an exponential), which trims 56–95 ms of swell and brings
+  them to 1.4–3.0 ms.
+- **Finger Cymbals** (`Fing_Cymb.wav`) and the **closed hi-hat** set were both
+  tried for the cembalo before the name was understood to mean tambourine. For
+  the record: the finger cymbal take is a single strike with no round robin, a
+  3.9 s ring that washes into itself at eighths, and a −37 dBFS peak whose
+  noise floor sits only 37 dB under it.
+- **Claps**: `Clap_rr1/rr3/rr6` reach half peak in 1.9 / 2.5 / 5.7 ms, where
+  the louder `rr4` and `rr5` take 4.5 ms (with 25 ms of spread) and 14.6 ms.
+  One attack compensation is measured per articulation, so a slow take is not
+  corrected for separately — it just lands late, and a backbeat that flams
+  differently every round robin reads as bad timing rather than as a player.
 
 Each was trimmed of leading silence, aligned so the strike (not the later
 ring) sits a couple of milliseconds in, high-passed to drop hall rumble,

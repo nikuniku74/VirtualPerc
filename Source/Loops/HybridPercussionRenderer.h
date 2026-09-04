@@ -57,8 +57,17 @@ public:
         float dynamics = 1.0f;
         bool  congasEnabled = true;
         bool  shakerEnabled = true;
-        /** 0 = shaker only, 0.5 = both, 1 = congas only, as `EngineSettings`. */
-        float instrumentMix = 0.5f;
+        /** Independent output level for each instrument, as `EngineSettings`. */
+        float shakerVolume = 1.0f;
+        float congaVolume = 1.0f;
+        // CLAP and CEMBALO (item 10 in docs/TODO.md) have no recorded stems -
+        // they exist only in `PercussionEngine`'s synthesised bank - so there
+        // is nothing here for them to balance against, and they fade out with
+        // the rest of the single strokes during a recorded-loop handover, same
+        // as any other accent layer. Their volumes still reach the engine via
+        // `EngineSettings::clapVolume` / `cembaloVolume` and sound normally
+        // whenever the recording is not what is playing. Loop-registered work
+        // is Standby - see docs/HANDOFF_LOOP_DEBUG.md.
         /** The band has started a new section, so the eight-bar sentence starts
             again here. Same signal `PercussionEngine::alignPhrase` gets. */
         bool  sectionChanged = false;
@@ -119,9 +128,9 @@ private:
     /** Ask one stem for a part, and say whether the library had one. */
     bool aimStem (LoopPlayer& player, LoopStem stem, const Input& in) noexcept;
 
-    /** One player per stem, because the recordings are per stem and the balance
-        between them stays the listener's - the same reason
-        `EngineSettings::instrumentMix` exists for the synthesised bank. A single
+    /** One player per stem, because the recordings are per stem and the volume
+        of each stays the listener's - the same reason `EngineSettings::
+        shakerVolume` / `congaVolume` exist for the synthesised bank. A single
         player could only ever have played one of the two. */
     LoopPlayer congas;
     LoopPlayer shaker;

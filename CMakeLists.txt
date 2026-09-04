@@ -195,8 +195,18 @@ endif()
 
 juce_generate_juce_header (VirtualPercussionist)
 
-file (GLOB VP_PERC_SAMPLES "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Percussion/*.wav")
+# CONFIGURE_DEPENDS, because without it this list is frozen at the configure
+# that first created the build directory. Adding an articulation's WAVs then
+# builds cleanly and *silently* ships the synthesis fallback for it: the stems
+# PercussionEngine asks for are simply not in the binary data, loadNamedWav
+# returns false, and the only symptom is that the new voice sounds wrong. That
+# is exactly what happened to clap and cembalo on an iOS build directory
+# configured the day before the assets landed.
+file (GLOB VP_PERC_SAMPLES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Percussion/*.wav")
 if (VP_PERC_SAMPLES)
+    list (LENGTH VP_PERC_SAMPLES VP_PERC_SAMPLE_COUNT)
+    message (STATUS "Percussion samples embedded: ${VP_PERC_SAMPLE_COUNT}")
     juce_add_binary_data (VpPercussionSamples
         HEADER_NAME VpPercussionData.h
         NAMESPACE VpPercussionData

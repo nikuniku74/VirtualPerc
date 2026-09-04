@@ -43,6 +43,41 @@ JOBS = [
     (SRC / "shaker" / "ShakerHighFaster_Up_rr1.wav",   OUT / "shaker_up.wav",      0.14, 80, 3, 0.018),
     (SRC / "shaker" / "ShakerHighFaster_Up_rr2.wav",   OUT / "shaker_up_b.wav",    0.14, 80, 3, 0.018),
     (SRC / "shaker" / "ShakerLowFaster_Up_rr2.wav",    OUT / "shaker_up_med.wav",  0.12, 80, 3, 0.018),
+    # CLAP: the VCSL ensemble claps, not the SoloClap velocity ladder - a
+    # backbeat clap is a group of hands, and the solo takes are 24-bit (which
+    # read_mono does not take) besides. All three are loud takes: the file is
+    # normalised anyway, so what the three slots buy is round-robin variety,
+    # not a dynamic ladder. 0.35 s keeps the body and the short room tail and
+    # drops the rest; 110 Hz is under the clap's thump and over the rumble.
+    #
+    # rr1/rr3/rr6 and not the louder rr4/rr5, because an ensemble clap's hands
+    # do not land together and the takes differ in how long they take to get
+    # there: measured to half peak, rr1 1.9 ms, rr3 2.5 ms, rr6 5.7 ms against
+    # rr4 4.5 ms (spread 25 ms) and rr5 14.6 ms. One compensation is measured
+    # per articulation, so a slow take does not get its own correction - it
+    # just lands late, and a backbeat that flams differently every round robin
+    # is the one place that is audible as bad timing rather than as a player.
+    (SRC / "clap" / "Clap_rr1.wav",                    OUT / "clap.wav",           0.35, 110, 2, 0.0),
+    (SRC / "clap" / "Clap_rr3.wav",                    OUT / "clap_b.wav",         0.35, 110, 2, 0.0),
+    (SRC / "clap" / "Clap_rr6.wav",                    OUT / "clap_med.wav",       0.32, 110, 2, 0.0),
+    # CEMBALO: the tambourine, which is what the name means here (VCSL
+    # *Tambourine*, not the cymbal it looks like in a dictionary). Down is the
+    # struck hit, up the shake - which is how the instrument is actually
+    # played in eighths: hit on the pulse, jingles on the return.
+    #
+    # The shakes need the shaker treatment, not the drum one. A struck sample
+    # is aligned to its peak in the first 12 ms; a shake has no strike, it
+    # swells - measured 56 to 130 ms to half peak - so aligned that way the
+    # asset would open on the swell and land audibly late on every offbeat.
+    # shape_tau > 0 switches the script to the shaker path: onset at 35 % of
+    # peak, which lands on the jingles rather than the rise, then an
+    # exponential so the later rattle cannot become a second, later peak.
+    (SRC / "tamb" / "Tamb2_Hit_v2_rr2_Mid.wav",        OUT / "cembalo_down.wav",     0.26, 200, 2, 0.0),
+    (SRC / "tamb" / "Tamb1_Hit_v2_rr1_Mid.wav",        OUT / "cembalo_down_b.wav",   0.26, 200, 2, 0.0),
+    (SRC / "tamb" / "Tamb2_Hit_v1_rr1_Mid.wav",        OUT / "cembalo_down_med.wav", 0.24, 200, 2, 0.0),
+    (SRC / "tamb" / "Tamb2_Shake_rr3_Mid.wav",         OUT / "cembalo_up.wav",       0.16, 200, 3, 0.020),
+    (SRC / "tamb" / "Tamb2_Shake_rr4_Mid.wav",         OUT / "cembalo_up_b.wav",     0.16, 200, 3, 0.020),
+    (SRC / "tamb" / "Tamb1_Shake_rr2_Mid.wav",         OUT / "cembalo_up_med.wav",   0.14, 200, 3, 0.020),
 ]
 
 
@@ -163,15 +198,21 @@ def prepare(src: Path, dst: Path, max_sec: float, hp_hz: float,
 
 
 def main() -> int:
-    missing = [str(src) for src, *_ in JOBS if not src.is_file()]
-    if missing:
-        print("Missing source recordings:", file=sys.stderr)
-        for p in missing:
-            print(" ", p, file=sys.stderr)
+    # A partial download is the normal case, not an error: /tmp gets cleared,
+    # and re-cutting one instrument must not mean re-fetching every source and
+    # rewriting assets that were fine. Jobs whose source is absent are skipped
+    # by name so a silent skip cannot be mistaken for a silent success; only a
+    # run with nothing at all to do is a failure.
+    runnable = [job for job in JOBS if job[0].is_file()]
+    skipped = [job for job in JOBS if not job[0].is_file()]
+    for src, dst, *_ in skipped:
+        print(f"skip {dst.name:22} (no {src}) - keeping the existing asset")
+    if not runnable:
+        print("No source recordings found at all.", file=sys.stderr)
         print("Download the VCSL / VSCO-2-CE one-shots into /tmp/vp-perc-src first.",
               file=sys.stderr)
         return 1
-    for job in JOBS:
+    for job in runnable:
         prepare(*job)
     return 0
 

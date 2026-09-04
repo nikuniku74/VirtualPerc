@@ -23,9 +23,9 @@ enum class LoopRole : int
 };
 
 /** Which instrument the file carries. Congas and shaker are recorded and kept
-    apart so the balance is still the listener's - the same reason
-    `EngineSettings::instrumentMix` exists for the synthesised bank. A stereo
-    file with both on it cannot be balanced afterwards. */
+    apart so each volume is still the listener's - the same reason
+    `EngineSettings::shakerVolume` / `congaVolume` exist for the synthesised
+    bank. A stereo file with both on it could not be balanced afterwards. */
 enum class LoopStem : int
 {
     congas = 0,

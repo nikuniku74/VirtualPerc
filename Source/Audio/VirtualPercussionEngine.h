@@ -53,9 +53,10 @@ public:
     /** Lock a BPM and switch to FISSO. Tap and later nudges still update it. */
     void setFixedBpm (float bpm) noexcept;
 
-    /** The backing track jumped to a new position. Bumps the analysis epoch so
-        the decoder drops evidence from before the cut; see
-        BeatDecoder::notifyInputRestart. Call from the message thread on seek. */
+    /** The backing track jumped to a new position. Opens the bar re-entry
+        window (item 2) so the one can catch the new downbeats; does *not*
+        restart the tempo decoder - the clock kept time. Call from the
+        message thread on seek. */
     void notifyTrackSeek() noexcept;
 
     EngineSettings& settings() noexcept { return cfg; }
@@ -190,6 +191,10 @@ private:
         on the block the change is called, so the make-up gain can be re-primed
         at the new level instead of gliding to it. */
     bool updateAnalysisEpoch (int numSamples, float rawPeak) noexcept;
+    /** A two-quarter (or longer) hole in the *analysis* level, then music
+        again, while already following: open the bar re-entry window. Not an
+        epoch - the decoder must not restart. Audio thread. */
+    void maybeDetectBarReentry (int numSamples, float rawPeak) noexcept;
 
     BeatTracker tracker;
     PercussionEngine percussion;
@@ -363,6 +368,13 @@ private:
     int   levelStepSamples = 0;
     int   levelPrimeSamples = 0;
     std::atomic<uint32_t> analysisEpoch { 0 };
+    /** Message-thread seek (and the audio-thread hole detector) set this;
+        process() turns it into BeatTracker::notifyBarReentry. */
+    std::atomic<bool> barReentryPending { false };
+    int   musicGapSamples = 0;
+    bool  musicGapArmed = false;
+    std::atomic<bool> lastBarTrusted { false };
+    std::atomic<bool> lastBarReentry { false };
     /** The same envelope on our *own* output, and how long our own part is
         still answerable for a rise on the input. What we play comes back on the
         microphone, the canceller does not always find it, and a level that rose

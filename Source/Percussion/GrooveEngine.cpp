@@ -490,7 +490,8 @@ namespace
     };
 
     // The shaker, as a velocity per sixteenth. Zero is silence. The subdivision
-    // setting thins this down; it never adds to it.
+    // setting thins this down; it never adds to it. NATURALE is the one
+    // exception, and it only lets through values that are already here.
     //
     // A shaker is two strokes - down on the pulse, up on the return - so which
     // one sounds follows from the step, not from the table. What the table
@@ -636,6 +637,16 @@ namespace
     constexpr float kFeelBiasBeatsAt120 = 0.004f;   // ~2 ms of natural lateness
     constexpr float kFeelSpreadBeatsAt120 = 0.006f; // ~3 ms either side
 
+    // NATURALE (docs/TODO.md item 11). Chance of letting through one authored
+    // stroke the subdivision had thinned away. Measured against the "does not
+    // become a full finer grid" test: at 1.0 intensity these land around 1-2
+    // extras per bar over 32 bars of dance, well under half the finer grid.
+    // Eighths have eight candidate sixteenths; quarters have four candidate
+    // off-eighths, so the quarter rate is a little higher to feel like the
+    // same "ogni tanto".
+    constexpr float kNaturalEighthChance  = 0.22f;
+    constexpr float kNaturalQuarterChance = 0.30f;
+
     int wrapBar (int barIndex, int period) noexcept
     {
         if (period <= 0)
@@ -712,6 +723,41 @@ bool GrooveEngine::v_survives (float writtenVelocity) const noexcept
     return writtenVelocity >= bar;
 }
 
+float GrooveEngine::soundingShaker (int step, bool subdivisionAllows,
+                                    const float* shakerTable) noexcept
+{
+    const float written = shakerTable[step];
+    if (written <= 0.0f)
+        return 0.0f;
+    if (subdivisionAllows)
+        return v_survives (written) ? written : 0.0f;
+    if (! naturalOn)
+        return 0.0f;
+
+    // Only the next-finer grid, never a jump of two. Off by default the
+    // subdivision still thins and never adds; this is the one place an
+    // exception is let back in, and it spends the authored table rather than
+    // inventing a busier one. Sixteenths already allow every step, so they
+    // never reach here.
+    const bool eighthOrnament  = subdivisionGrid == Subdivision::eighth
+                                 && (step % 2) == 1;
+    const bool quarterOrnament = subdivisionGrid == Subdivision::quarter
+                                 && (step % 4) == 2;
+    if (! eighthOrnament && ! quarterOrnament)
+        return 0.0f;
+    if (! v_survives (written))
+        return 0.0f;
+
+    const float base = eighthOrnament ? kNaturalEighthChance
+                                      : kNaturalQuarterChance;
+    // Quieter playing drops the ornaments first: they exist because there was
+    // room for them, same as the conga ghosts.
+    const float chance = base * (0.4f + 0.6f * intensity) * dynamics;
+    if (rng.nextFloat() >= chance)
+        return 0.0f;
+    return written;
+}
+
 float GrooveEngine::humanVelocity (float base) noexcept
 {
     const float spread = 0.20f * humanize;
@@ -764,21 +810,58 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     const int beat = step / 4;
     const float accent = spec.accent[beat & 3];
 
-    if (shakerOn && n < maxOut)
+    // One decision for both timbres: NATURALE is a property of the part, not
+    // of the sample. Rolling twice would desync shaker and cembalo on the
+    // same sixteenth. Skip the draw entirely when neither voice is on, so a
+    // conga-only part does not spend RNG on ornaments nobody will hear.
+    const float shakerV = (shakerOn || cembaloOn)
+                              ? soundingShaker (step, subdivisionAllowsStep, spec.shaker)
+                              : 0.0f;
+
+    if (shakerOn && n < maxOut && shakerV > 0.0f)
     {
-        // The subdivision setting thins the style's pattern; it never adds to
-        // it, so a style that does not want sixteenths does not get them just
-        // because the user asked for a busy shaker.
-        const float v = subdivisionAllowsStep && v_survives (spec.shaker[step])
-                            ? spec.shaker[step] : 0.0f;
-        if (v > 0.0f)
+        // Down on the pulse, up on the return. They are different strokes
+        // on a real shaker, not the same one twice, and playing them as the
+        // same one is what makes a shaker part sound like a click track
+        // with noise on it.
+        out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
+        out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
+        out[n].delayBeats = humanDelay (step);
+        ++n;
+    }
+
+    if (cembaloOn && n < maxOut && shakerV > 0.0f)
+    {
+        // Same table as the shaker, same thinning (and the same NATURALE
+        // exceptions), same accent, same down/up split - the only difference
+        // is the sample the two events end up pointing at. Independently
+        // switched, so shaker and cembalo can both be on (two timbres on the
+        // same part), just one, or neither.
+        out[n].stroke = (step % 4) == 0 ? Stroke::cembaloDown : Stroke::cembaloUp;
+        out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
+        out[n].delayBeats = humanDelay (step);
+        ++n;
+    }
+
+    // The clap: only the backbeat, and only once the bar it lands on is
+    // trustworthy.
+    //
+    // It does not read a style table - "2 and 4" is the whole pattern, not a
+    // figure that varies by style - and it does not follow the shaker's steps.
+    // `step` is already the app's *believed* bar position (see
+    // `PercussionEngine::render`, which folds a rotated `beatInBar` into this
+    // same grid), so a clap here already rotates with a corrected "one" for
+    // free. What it must not do is sound confidently on a "2 and 4" that turns
+    // out to be the song's actual 1 and 3 - hence the trust gate, which stays
+    // false until the listener has locked the bar or enough time has passed
+    // since the last automatic correction. See docs/TODO.md items 2 and 10.
+    if (clapOn && barTrustedFlag && n < maxOut && (step == 4 || step == 12))
+    {
+        constexpr float kClapVelocity = 0.85f;
+        if (v_survives (kClapVelocity))
         {
-            // Down on the pulse, up on the return. They are different strokes
-            // on a real shaker, not the same one twice, and playing them as the
-            // same one is what makes a shaker part sound like a click track
-            // with noise on it.
-            out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
-            out[n].velocity = humanVelocity (v * accent * dynamicGain());
+            out[n].stroke = Stroke::clap;
+            out[n].velocity = humanVelocity (kClapVelocity * accent * dynamicGain());
             out[n].delayBeats = humanDelay (step);
             ++n;
         }

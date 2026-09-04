@@ -24,6 +24,14 @@ namespace
     // three bars of evidence and eight bars of it, decayed.
     constexpr float kBeatsToTrustTheBar = 12.0f;
     constexpr float kBeatsToMoveTheBar = 32.0f;
+    // Two bars: the RED cut (item 2) has to have the one back inside that,
+    // and after a hole the new downbeats are a flip of 1 vs 3, not a noisy
+    // plurality. Song start still waits for the twelve above.
+    constexpr float kBeatsToTrustReentry = 8.0f;
+    // Four bars at the current tempo. Long enough for the eight beats of
+    // evidence, short enough that a false hole does not leave the clap muted
+    // for a phrase.
+    constexpr double kBarReentryBars = 4.0;
 
     // Per beat. Over sixty-four of them - sixteen bars - the oldest evidence is
     // worth a third of the newest, which is a phrase or two: long enough to be
@@ -113,13 +121,13 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     constexpr double kBarMoveHoldSeconds = 9.6;
 
 
-    // AUTO half/double. The range a percussionist counts in, a little over an
-    // octave wide - and that overlap is the hysteresis: a tempo just halved from
-    // 168 lands on 84 rather than on 76, so nothing can sit on a boundary and be
-    // pushed back and forth across it. See the note on BeatDecoder::userOctave
-    // for why the choice cannot be made from the signal in the first place.
+    // AUTO half/double. The upper bound still folds an uncomfortably fast pulse
+    // down. The lower bound deliberately sits below BeatDecoder's 50 BPM
+    // reported floor: 50 is a real requested playing tempo, not a value AUTO
+    // may silently double. Slow music with loud eighths is decided instead by
+    // the causal bar-cadence evidence published by BeatDecoder.
     constexpr float kOctaveTooFast = 168.0f;
-    constexpr float kOctaveTooSlow = 76.0f;
+    constexpr float kOctaveTooSlow = 49.0f;
 
     // Held before it is taken. Changing the metrical level in the middle of a
     // song is one of the most audible things this app can do, and a reading that
@@ -211,12 +219,17 @@ void BeatTracker::reset() noexcept
     needsResync = false;
     waitForSongBeat = false;
     armed = false;
+    autoOctave = octaveAuto ? 0 : userOctave;
+    autoWant = autoOctave;
+    autoHoldSamples = 0;
+    neural.setUserOctave (autoOctave);
     tapHoldSamples = 0;
     downbeatHoldSamples = 0;
     barLocked = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
     barRotations = 0;
+    barReentrySamples = 0;
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     barDeclaredSamples = 0;
@@ -574,10 +587,33 @@ void BeatTracker::setTempoOctaveAuto (bool on) noexcept
     neural.setUserOctave (octaveAuto ? autoOctave : userOctave);
 }
 
-void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples) noexcept
+void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,
+                                    bool metricalHintValid, int metricalHint) noexcept
 {
     if (! periodic || bpm < 40.0f)
     {
+        autoHoldSamples = 0;
+        return;
+    }
+
+    // Never under a part that is playing. Halving or doubling the level
+    // mid-performance is not a tempo correction to a percussionist: it is the
+    // grid they are playing against moving, and everything after it - the
+    // density of the part, where the bar falls, what the display says - is
+    // wrong at once. Measured on a band drifting through the upper bound: a
+    // take at 168 BPM climbs to 168.20 at 23 s and the level halves to 84 at
+    // 26 s, mid-song, and never comes back, because returning would need the
+    // reading to fall under kOctaveTooSlow.
+    //
+    // So the level is chosen while nothing is sounding - before the part comes
+    // in, at a stand-down, after STOP - and held for as long as it plays. A new
+    // input is not covered by this and must not be: setInputEpoch clears the
+    // level so a new song earns its own. And if the held level is the wrong
+    // one, ÷2/×2 is the way out, which is the case those controls exist for
+    // (TODO items 1 and 15; docs/HANDOFF_OCTAVE_50BPM.md).
+    if (sounding)
+    {
+        autoWant = autoOctave;
         autoHoldSamples = 0;
         return;
     }
@@ -586,7 +622,9 @@ void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples) no
     // fast is answered by going one below the shift now applied, not one below
     // zero.
     int want = autoOctave;
-    if (bpm > kOctaveTooFast && want > -1)
+    if (metricalHintValid)
+        want = std::clamp (metricalHint, -1, 1);
+    else if (bpm > kOctaveTooFast && want > -1)
         --want;
     else if (bpm < kOctaveTooSlow && want < 1)
         ++want;
@@ -616,6 +654,62 @@ void BeatTracker::nudgeBar (int beats) noexcept
 {
     follower.rotateBarIndex (beats);
     holdBarDecision();
+}
+
+void BeatTracker::notifyBarReentry() noexcept
+{
+    // The listener has placed the one. A cut does not overrule that.
+    if (barLocked)
+        return;
+
+    // Pre-cut votes are about a numbering the hole has just made wrong.
+    // Leaving them would take eight bars of playing decay before the new
+    // 1 could win, which is the wait this window exists not to make.
+    std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+    voteBeats = 0.0f;
+    std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
+    harmonyVoteCount = 0.0f;
+    downbeatHoldSamples = 0;
+    // Hyps published for audio from before the cut would refill the
+    // histogram we just cleared, and a seek has no silence for them to
+    // drain through.
+    neural.invalidatePublicationsBeforeNow();
+
+    const float bpm = std::max (50.0f, heldBpm > 40.0f ? heldBpm : 120.0f);
+    const double barSec = 4.0 * 60.0 / static_cast<double> (bpm);
+    barReentrySamples = static_cast<int> (sampleRate * barSec * kBarReentryBars);
+}
+
+bool BeatTracker::barIsTrustedNow() const noexcept
+{
+    if (barLocked)
+        return true;
+    if (barReentrySamples > 0)
+        return false;
+
+    float total = 0.0f;
+    for (int i = 0; i < 4; ++i)
+        total += downbeatVotes[i];
+    if (total <= 1.0e-6f || voteBeats < kBeatsToTrustReentry)
+        return false;
+
+    int best = 0;
+    float bestVotes = 0.0f, runnerUp = 0.0f;
+    for (int i = 0; i < 4; ++i)
+    {
+        const float s = downbeatVotes[i] / total;
+        if (s > bestVotes)
+        {
+            runnerUp = bestVotes;
+            bestVotes = s;
+            best = i;
+        }
+        else if (s > runnerUp)
+        {
+            runnerUp = s;
+        }
+    }
+    return best == 0 && bestVotes >= runnerUp + kBarWinMargin;
 }
 
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
@@ -694,7 +788,9 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // a network that is loud about everything must not look better supported
     // than one that is quiet about everything, and the shares above already
     // carry how loud it was.
-    if (best == 0 || beatsOfEvidence < (comingIn ? kBeatsToTrustTheBar : kBeatsToMoveTheBar))
+    if (best == 0 || beatsOfEvidence < (comingIn
+            ? (barReentrySamples > 0 ? kBeatsToTrustReentry : kBeatsToTrustTheBar)
+            : kBeatsToMoveTheBar))
         return false;
 
     // Waiting to come in, a plurality is enough: nothing is playing yet, so a
@@ -723,6 +819,10 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
 
     follower.rotateBarIndex (-best);
     ++barRotations;
+    // One rotation per return. Leaving the window open would let a second
+    // plurality in the same four bars trade the one back.
+    if (barReentrySamples > 0)
+        barReentrySamples = 0;
 
     // Rotating renumbers the beats, so the tally rotates with them rather than
     // being thrown away: the evidence is still good, it is just about different
@@ -1056,6 +1156,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     if (downbeatHoldSamples > 0)
         downbeatHoldSamples -= numSamples;
+    if (barReentrySamples > 0)
+        barReentrySamples = std::max (0, barReentrySamples - numSamples);
     // The bar has to be alignable *while* waiting to come in - that is the one
     // moment it matters most. It used to be excluded here, so through the whole
     // wait the bar was never corrected and "the first quarter" meant whichever
@@ -1124,7 +1226,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // speaker has no low end, but chords are not low end - so when the
         // harmony is answering, the bar can be placed in either mode.
         if (! waitForQuantize && (! speakerFollow || barFromHarmony))
-            alignBarFromVotes (false);
+            alignBarFromVotes (barReentrySamples > 0);
     }
 
     if (hadBeat)
@@ -1230,7 +1332,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     }
 
     if (octaveAuto && tempoFollow)
-        updateAutoOctave (nnBpm, periodic, numSamples);
+        updateAutoOctave (nnBpm, periodic, numSamples,
+                          hyp.metricalOctaveHintValid,
+                          hyp.metricalOctaveHint);
 
     // The analysis has thrown its grid away and built another one.
     //
@@ -1448,6 +1552,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
     out.barRotations = barRotations;
+    out.barTrusted = barIsTrustedNow();
+    out.barReentry = barReentrySamples > 0;
     out.harmonicChanges = harmonicChangeCount;
     out.barFromHarmony = barFromHarmony;
     {

@@ -19,11 +19,26 @@ A tempi lenti (es. **50 BPM**) il groove da batteria è chiaro: **cassa sull'1 e
 
 Sospetti (skill tempo: sotto ~100 BPM il fold legge gli ottavi come beat; range 40–220; PLL con quarto da 1,2 s): ottava 50 vs 100, fase che deriva, lock che non si chiude. Non "sistemare" bloccando sempre su 100. Il clock non riparte perché il BPM è basso.
 
-- [ ] Riprodurre su **brano caricato** e mixer: 50 BPM, cassa 1/3, rullo 2/4, hat ottavi. Annotare BPM tenuto, deriva di fase (ms), ottava (50 o 100), stato lock. Stesso brano a ~100 come controllo.
-- [ ] Capire se sbaglia il **livello** (ottava) o il **seguire** (PLL / decoder / kick). Gli hat a ottavi devono contare, non solo la cassa.
-- [ ] Fix + probe (`VPAlign` o equivalente a 50) e ascolto. Margini: ±1 BPM tenuto, fase udibile sul quarto, niente slittamento su 20 s.
-- [ ] Docs in `.claude/skills/realtime-tempo/SKILL.md` (caso lento + backbeat + hat).
-- [ ] Gate: `VPTests` invariato sui tempi già coperti; niente regressione a 100–156.
+**Stato al 2026-09-04 (sessione ChatGPT, crediti finiti a metà — verificato indipendentemente da Claude sullo stesso albero):**
+
+- [x] Riprodotto e diagnosticato: **non è deriva del PLL**. Il decoder resta stabilmente sul livello metrico degli ottavi (legge gli hat come battito, non la cassa). Confermato con probe mirato: 50 BPM mixer → letto ~100 BPM (ottava 0, sbagliato); 50 BPM file → ~100 BPM (sbagliato); 100 BPM mixer/file → corretto in entrambi, come controllo.
+- [x] **Prima versione di fix, insufficiente** — già nel codice, non toccarla via reset: `BeatDecoder::observeDownbeatCadence()` (`Source/AI/BeatDecoder.cpp`/`.h`) conta la distanza fra downbeat che superano una soglia "forte"; se due bar consecutivi misurano 8 battiti invece di 4, propone `metricalOctaveHint` di un'ottava sotto. Collegato fino a `BeatTracker::updateAutoOctave` (`Source/Tracking/BeatTracker.cpp`/`.h`, che ora accetta l'hint) e `kOctaveTooSlow` abbassato 76→49. **Non basta**: il modello reale a 50 BPM non produce downbeat "forti" discreti abbastanza spesso perché il contatore raccolga i due bar consecutivi richiesti — il segnale di battuta del modello è soprattutto un valore continuo su ogni beat, non un evento raro sopra soglia. Verificato di nuovo da Claude il 2026-09-04 con `VPProbe --trace --mixer plain 50` (build pulita sull'albero corrente): stesso esito, 50→~100 BPM ancora sbagliato.
+- [x] **Corretto (Claude, 2026-09-04) usando la probabilità continua, come indicato** — ma **non basta neanche questo**, e il motivo è musicale, non un bug di implementazione. Riscritto `observeDownbeatCadence()`: istogramma a 8 posizioni sulla confidenza continua di downbeat, indicizzato dal **tempo trascorso** diviso il periodo corrente (non da un contatore di battiti accettati — misurato che la griglia salta occasionalmente un ottavo anche su segnale pulito, e un contatore a incrementi si sfasa per sempre dopo ogni salto; l'indicizzazione a tempo assorbe il salto, come già fa il fit del tempo altrove nel file). Test: bin dominante vs bin opposto (4 posizioni via) debole = livello sbagliato.
+  - **Causa per cui non funziona su questo materiale:** misurato con `VPProbe` che la curva di downbeat della rete attiva **comparabilmente sia sul vero battere 1 che sul vero battere 3** — la stessa identica ambiguità 1-vs-3 già annotata nell'item 2 ("1 vs 3 resta l'ambiguità"). A ottava sbagliata, battere 1 e battere 3 cadono esattamente a 4 posizioni di distanza nell'istogramma a 8: la stessa identica "firma" che il test usa per dire "livello già corretto". Il segnale di downbeat da solo **non può distinguere** le due ipotesi su questo materiale.
+  - **Alternativa provata e falsificata:** l'ampiezza generale di attivazione (beat, non downbeat) non alterna debole/forte fra ottavi on-beat e off-beat come ci si aspetterebbe (misurato: resta alta 0.5–0.98 su quasi ogni ottavo) — la rete tratta gli ottavi dell'hi-hat come impulsi salienti quanto cassa/rullo, quindi neanche l'ampiezza aiuta.
+  - **Pista armonia (item 2, `HarmonicChange`/`barFromHarmony`) scartata**: il materiale del bug è **batteria pura** (cassa/rullo/hi-hat, nessun accordo) — non c'è alcun contenuto armonico da cui `HarmonicChange` possa estrarre un cambio. Questa pista non si applica a questo bug specifico.
+  - **Conclusione onesta:** con i soli tre scalari che il decoder riceve dalla rete (pBeat, pDownbeat, pNone) non ho trovato un discriminante statistico affidabile per questo materiale. Risolverlo per davvero richiederebbe probabilmente o (a) una nuova feature con accesso al contenuto spettrale grezzo (bassa frequenza di cassa/rullo vs hi-hat, che il decoder oggi non riceve), o (b) la stessa scala di validazione empirica (molti brani/stili) già usata per tarare il resto di questo file — non un correttore isolato. Non riprendere questa via senza uno di questi due investimenti.
+  - Codice lasciato nel tree: l'indicizzazione a tempo è comunque un miglioramento reale rispetto al contatore fragile di prima (non introduce regressioni, verificato con `VPProbe --trace --mixer plain 50/100/132`), anche se il correttore non scatta ancora su questo materiale.
+- [x] **Feature spettrale provata (Claude, 2026-09-04) — e qui l'item cambia natura: il caso è indecidibile dall'audio.** Piano, misure e numeri in **`docs/HANDOFF_OCTAVE_50BPM.md`** (leggerlo prima di riprovare qualsiasi cosa qui).
+  - Portata fino al decoder l'energia delle bande basse del frame che già alimenta la rete (`LogSpectFeatures::lowBandEnergy`, 24 bande, ~30–250 Hz: cassa e rullo hanno corpo lì, l'hi-hat no). Test: profondità dell'alternanza fra le due classi di battiti accettati.
+  - **Sul caso target funziona:** 50 BPM passa da 100.02 a **50.03**, e 76/100/118/132/140 + stili syncopated/pad/sync+pad restano invariati. Divario misurato netto: profondità 0.43 (lettura sbagliata) contro 0.85 (lettura giusta).
+  - **Ma rompe il half-time:** materiale half-time a 100 BPM (rullo solo sul 3) passa da 99.92 a 60.13 instabile. A/B fatto: è il correttore. E **non è una soglia da spostare**: in half-time le posizioni 2 e 4 sono vuote in banda bassa esattamente come gli ottavi dell'hi-hat a 50 — *stessa spaziatura, stesso basso sotto gli stessi slot*. Una battuta straight a 50 e una half-time a 100 **sono lo stesso suono**; quale dei due si chiami "il tempo" è una convenzione, non un dato acustico.
+  - **Correttore lasciato nel tree ma spento** (`kCadenceCorrectionEnabled = false` in `BeatDecoder.cpp`, con i numeri nel commento) insieme al banco che l'ha misurato, così chi riprende rimisura con un comando invece di ricostruire tutto.
+- [x] **Conseguenza, decisa dall'utente il 2026-09-04: rimessi i ÷2/×2.** Se l'audio non può decidere, serve qualcosa da fuori: TAP c'era già, e ora ci sono di nuovo anche i due pulsanti (item 15, ripristinati e testati end-to-end). **Questo non "chiude" l'item 1**: la lettura automatica a 50 BPM resta sbagliata: quello che cambia è che ora il musicista ha come rimediare in un gesto. I quattro test RED dell'altra sessione (`mixer/file slow kit holds 50 BPM…`) restano rossi apposta, e vanno letti così: descrivono un obiettivo che sappiamo non raggiungibile per via automatica.
+- [x] Verifica fatta con strumenti mirati (`VPProbe --trace --mixer <stile> <bpm>`, pochi secondi l'uno) su tutta la matrice 50/76/100/118/132/140 × straight/syncopated/pad/sync+pad/half-time, non con la suite intera. Vedi item 16 e la nota in fondo al file.
+- [x] Docs in `.claude/skills/realtime-tempo/SKILL.md` — scritto: §2 "For one class of material it is not *partly* unsolvable - it is undecidable", con le tre vie tentate, i numeri e la tabella che mostra perché straight-a-50 e half-time-a-100 sono lo stesso segnale. Sostituisce la vecchia riga che dava per scontato che i casi ambigui si risolvessero nel tracker.
+- [x] Gate finale `VPTests` intera: lanciata su richiesta esplicita dell'utente (vedi esito in fondo all'item).
+- [ ] **Ascolto** — nessun orecchio umano su questo item finora. È l'unica verifica rimasta che non posso fare io: serve sentire un brano lento reale (mixer o file caricato) e dire se la lettura a ottava doppia è davvero il problema che si sente, o se con il TAP il caso è già coperto in pratica.
 
 ---
 
@@ -33,14 +48,14 @@ Sospetti (skill tempo: sotto ~100 BPM il fold legge gli ottavi come beat; range 
 
 L'app deve mettere l'**1** sul primo quarto del 4/4 su mixer e brano caricato, senza «L'1 è QUI». Se il musicista **taglia due quarti** e riprende in 4/4, deve riallineare l'1 in poche battute. Niente look-ahead; il clock del tempo non riparte; ruotare l'1 = solo `rotateBarIndex`.
 
-Oggi: istogramma downbeat + armonia (`BeatTracker::alignBarFromVotes`). In play servono ~8 battute prima di ruotare. `barLocked` (tasto acceso) **vieta** ogni rotazione automatica. Sul line/mixer l'1 tenuto è circa 20–21/25; 1 vs 3 resta l'ambiguità.
+Oggi: istogramma downbeat + armonia (`BeatTracker::alignBarFromVotes`). In play servono ~8 battute prima di ruotare. Un buco di due quarti apre una finestra coming-in di 4 battute (`notifyBarReentry`, 8 beat di evidenza, una rotazione); il decoder **non** riparte. `barLocked` **vieta** ogni rotazione automatica. Sul line/mixer l'1 tenuto resta da misurare con `VPBar` (prima: ~20–21/25); 1 vs 3 è quello che la finestra deve chiudere.
 
-- [ ] **Baseline:** bench 4/4 line/file, lucchetto spento. Annotare quarto all'ingresso, tenuto 20 s, e stesso brano con buco di 2 quarti. Scrivere i numeri (oggi: lento o mai).
-- [ ] **Test RED taglio:** lock sull'1 → tace 2 quarti → riparte sull'1 musicale (per l'app è il 3). Entro 2 battute dal rientro `beatInBar` è di nuovo 0. Fill senza buco di livello **non** ruota. Con lucchetto **non** ruota. Tempo/decoder non restartano.
-- [ ] **Finestra di rientro:** dopo "la band riparte" (livello/epoch, **senza** `notifyInputRestart` da taglio), 2–4 battute con allineamento tipo `comingIn`. Una rotazione per rientro. RT: niente alloc/lock/I/O.
-- [ ] **Ingresso file/mixer:** `VPBar` (o equivalente) su `internalPlayer` / `kitMic`. Se il file è peggio del line feed, è un bug di path, non si allentano i margini.
-- [ ] **Docs:** `.claude/skills/realtime-tempo/SKILL.md` + `docs/AUDIO_ENGINE.md` (mixer/file vs stanza; rientro; lucchetto).
-- [ ] **Gate:** `VPTests` + `VPAlign` invariato; ascolto su brano caricato e, se possibile, mixer. Il clap (item 10) **dipende da questo**: senza 1 vero, "1 e 3" in app è "2 e 4" in sala.
+- [ ] **Baseline:** `VPBar` 4/4 line/file, lucchetto spento. Annotare quarto all'ingresso, tenuto 20 s, e stesso brano con buco di 2 quarti. I numeri di prima (lento o mai sul taglio) restano il confronto; il RED sotto è scriptato, non sostituisce questo banco.
+- [x] **Test RED taglio:** `VPTests --bar` — following, tace 2 quarti, downbeat del modello su quello che il clock chiama 3. Entro 4 battute `beatInBar` è 0; decoder `analysisRestarts` invariato. Fill senza buco di livello non ruota. Con lucchetto non ruota. Seek: stessa finestra, niente epoch.
+- [x] **Finestra di rientro:** `maybeDetectBarReentry` (picco del blocco vs `levelLoud`, non l'epoch da 4 s) + `notifyTrackSeek` → `BeatTracker::notifyBarReentry`. Senza `notifyInputRestart`. Una rotazione. RT: niente alloc/lock/I/O.
+- [ ] **Ingresso file/mixer:** `VPBar` su `internalPlayer` / `kitMic` con rete vera. Se il file è peggio del line feed, è un bug di path, non si allentano i margini.
+- [x] **Docs:** `.claude/skills/realtime-tempo/SKILL.md` + `docs/AUDIO_ENGINE.md` (rientro; lucchetto; clap `barTrusted`).
+- [ ] **Gate:** `VPTests` intera + `VPAlign` invariato — non lanciare senza chiedere. Ascolto su brano caricato (taglio/seek di due quarti) e, se possibile, mixer. Il clap (item 10) ora legge `tr.barTrusted`.
 
 Piano discusso: Task 0 = baseline; 1 = RED; 2 = finestra rientro; 3 = path file; 4 = docs.
 
@@ -177,37 +192,58 @@ Durata e densità da fissare all'ascolto (ordine di grandezza: circa 1–2 s di 
 
 
 
-### 9. Volumi separati shaker e congas
+### 9. Volumi separati shaker e congas ✅ (2026-09-03)
 
 Oggi c'è **una knob** per le percussioni. Servono **due volumi** (shaker / congas), indipendenti.
 
-- [ ] Settings + UI (due controlli; default musicali da scegliere).
-- [ ] DSP: guadagni per voce in render, audio thread safe.
-- [ ] Test: uno a zero silenzia solo quella famiglia; l'altro resta.
-- [ ] CLAP e CEMBALO (item 10) avranno ciascuno un volume proprio: non unire tutto in una knob.
+`EngineSettings::instrumentMix` (balance 0..1) e `percussionVolume` sono stati
+sostituiti da `shakerVolume` / `congaVolume` (`atomic<float>`, default **1.0**
+ciascuno — stesso suono di prima, che aveva percussionVolume fisso a 1.0 e
+mix a 0.5). `PercussionEngine::setShakerVolume` / `setCongaVolume` scrivono i
+due gain per voce in `render()`, sostituendo la curva di balance. Stesso
+schema in `HybridPercussionRenderer::Input` per il path loop registrati
+(`shakerVolume` / `congaVolume` invece di `instrumentMix`), così i volumi
+valgono anche quando suona la registrazione, non solo il motore sintetico.
+
+UI: la knob unica SHAKER↔CONGAS in FEEL è diventata due manopole indipendenti
+("SHAKER", "CONGAS", 0–100%, default 100%). Prefs: chiavi `shakerVolume` /
+`congaVolume` al posto di `instrumentMix`.
+
+- [x] Settings + UI (due controlli; default musicali: entrambi al 100%, invariato rispetto a prima).
+- [x] DSP: guadagni per voce in render, audio thread safe (solo store/load atomici, nessun alloc/lock).
+- [x] Test: uno a zero silenzia solo quella famiglia; l'altro resta (`Tests/TestAiBeat.cpp`, blocco "voice-volume").
+- [x] CLAP e CEMBALO (item 10) avranno ciascuno un volume proprio: non unire tutto in una knob — soddisfatto per costruzione, `shakerVolume`/`congaVolume` sono due `atomic<float>` indipendenti in `EngineSettings`, non una curva di balance; item 10 aggiungerà `clapVolume`/`cembaloVolume` con lo stesso schema, non toccherà questi due.
 
 ---
 
 
 
-### 10. CLAP e CEMBALO oltre shaker e congas
+### 10. CLAP e CEMBALO oltre shaker e congas 🟡 (2026-09-03, codice + ascolto ok — resta item 2)
 
 Due voci in più, ognuna con **enable** e **volume proprio** (vedi item 9). Stesso clock a 16th.
 
-**CEMBALO** (piatto). Non è un pattern a parte: è **lo stesso mestiere dello shaker**, con un altro suono. Stessa griglia, stesso thinning (AUTO / 1/4 / 1/8 / 1/16, item 6), stesso swing, stessi accenti/pesi per stile, stesso humanize/dinamica. Acceso, suona sugli stessi step dello shaker; spento, tace. Shaker e cembalo possono stare entrambi on (due timbri sulla stessa parte) o uno solo. L'invariante "niente conga sul uno" **non** riguarda il cembalo: come lo shaker, può (e deve) cadere sul pulse.
+**CEMBALO** = **tamburello** (2026-09-03: chiarito dall'utente — non un piatto). Suona con le prese VCSL *Tambourine*: colpo sul pulse, shake sul ritorno. Non è un pattern a parte: è **lo stesso mestiere dello shaker**, con un altro suono. Stessa griglia, stesso thinning (AUTO / 1/4 / 1/8 / 1/16, item 6), stesso swing, stessi accenti/pesi per stile, stesso humanize/dinamica. Acceso, suona sugli stessi step dello shaker; spento, tace. Shaker e cembalo possono stare entrambi on (due timbri sulla stessa parte) o uno solo. L'invariante "niente conga sul uno" **non** riguarda il cembalo: come lo shaker, può (e deve) cadere sul pulse.
 
 **CLAP.** Non segue lo shaker. Suona **solo sul rullo**: in 4/4 i quarti **2 e 4** (backbeat), non ogni step.
 
 **Allineamento (obbligatorio, item 2):** quei quarti devono essere l'1/2/3/4 **di quello che l'app sta sentendo**, non del conto interno se è ruotato. Se `beatInBar` è sfasato di due quarti, il clap "sull'1 e sul 3" dell'app in sala sta sul **2 e sul 4** (e il clap "sul rullo" sta sul 1 e sul 3). Non accettabile. Il clap **non parte** finché la battuta non è fidata (stesso criterio dell'item 2: 1 tenuto, non 1 vs 3 ambiguo, riallineato dopo un taglio di due quarti). Non "sistemare" il pattern a orecchio (mettere 2 e 4 per compensare un 1 sbagliato). Con lucchetto acceso vale il conto dell'utente.
 
-- [ ] Articolazioni in banca (o sintesi fallback) + `Stroke` per clap e per cembalo.
-- [ ] Enable + volume per ciascuno.
-- [ ] Cembalo: riusare la logica/eventi shaker (stessi step, stessa suddivisione); solo sample/voce diversi.
-- [ ] Clap: solo step del rullo (default 2 e 4); silenzio altrove.
-- [ ] Clap gated sulla battuta fidata; con 1 ruotato di 2 quarti il clap **non** deve restare sul posto sbagliato (tace o ruota con l'1, come l'item 2).
-- [ ] Test: cembalo segue 1/4 vs 1/16 come lo shaker; clap sul rullo del **brano**, non del bar index storto; ognuno mutabile da solo.
-- [ ] Ascolto su file/mixer: clap coincidente col rullo vero; dopo un taglio di due quarti, o tace o torna al posto giusto.
-- [ ] Docs in `.claude/skills/percussion-patterns/SKILL.md`.
+Fatto: due nuovi `Stroke` (`clap`, `cembaloDown`/`cembaloUp`), sintesi fallback dedicata (`PercussionEngine::synthesizeCymbal` per il cembalo, un caso in `specFor` per il clap — nessun sample in `Assets/Percussion/`, non richiesto dall'item). `GrooveEngine::eventsAt` genera il cembalo riusando `spec.shaker[step]`/thinning/accento identici allo shaker (blocco separato, switch proprio); il clap è un pattern fisso (step 4/12) fuori da ogni tabella di stile, gated da `setBarTrusted`. `EngineSettings::clapEnabled/cembaloEnabled/clapVolume/cembaloVolume`, UI in STRUMENTI (tasti CEMBALO/CLAP) e FEEL (manopole), entrambi **off di default**. `kMaxEvents` 4→6 per il posto in più sulla stessa sedicesima.
+
+**Buco noto (item 2, ascolto taglio):** il gate del clap ora legge `BeatTracker::barTrusted` (lucchetto, oppure istogramma sul zero fuori dalla finestra di rientro). Il proxy a due battute da `barRotations` è stato sostituito. Resta l'ascolto del taglio di due quarti (item 2 gate).
+
+**Buco noto (loop registrati, standby):** clap e cembalo esistono solo nel motore sintetico — nessuno stem registrato. Con `VP_ENABLE_RECORDED_LOOPS` on (default) e una registrazione che prende il sopravvento, le due voci si spengono insieme al resto dei "single strokes" (vedi `HybridPercussionRenderer::Input`, commento vicino a `shakerVolume`). Fuori scope qui, è lavoro Standby B.
+
+- [x] Articolazioni in banca (o sintesi fallback) + `Stroke` per clap e per cembalo — **sample registrati VCSL** (CC0): clap dalle prese d'insieme *Claps*, cembalo (= tamburello) da *Tambourine 1/2*. 13/13 articolazioni suonano da registrazione, nessuna sintesi (la sintesi resta solo come fallback senza asset). Scelte per attacco misurato, non a occhio: vedi `Assets/Percussion/ATTRIBUTION.md`.
+- [x] Enable + volume per ciascuno.
+- [x] Cembalo: riusa la logica/eventi shaker (stessi step, stessa suddivisione); solo sample/voce diversi.
+- [x] Clap: solo step del rullo (default 2 e 4); silenzio altrove.
+- [x] Clap gated sulla battuta fidata — `tr.barTrusted` dal tracker (item 2).
+- [x] Test: `Tests/TestAiBeat.cpp` — cembalo segue 1/4 vs 1/16 come lo shaker (bit-identico allo shaker sui tre subdivision); clap solo su step 4/12 in ogni stile, muto se non fidato; volumi indipendenti (blocco "clap-cembalo" dopo "voice-volume", stesso schema dell'item 9). "non del bar index storto": non testabile fino a item 2 (non c'è ancora un caso reale di rotazione da riprodurre).
+- [x] Ascolto render sintetico (2026-09-04): `VPRender --style rock --bpm 120 --bars 8 --click --no-shaker --no-congas --clap --cembalo` → `/tmp/clap-cembalo.wav`. Orecchio: clap sul 2 e 4 del click, cembalo da tamburello sulla griglia shaker. Il clock qui è forzato, quindi **non** copre l'allineamento al brano.
+- [x] Ascolto in-app su brano caricato (2026-09-04): clap coincidente col rullo vero, cembalo al posto giusto. Mixer non provato in questa sessione.
+- [ ] Dopo un taglio di due quarti: o tace o torna sul rullo vero. **Non ascoltato** — dipende da item 2 (rientro / 1 vs 3). Non chiudere il punto 10 prima di quello.
+- [x] Docs in `.claude/skills/percussion-patterns/SKILL.md` (nuovo §7, tabella stroke aggiornata).
 
 ---
 
@@ -217,11 +253,54 @@ Due voci in più, ognuna con **enable** e **volume proprio** (vedi item 9). Stes
 
 Oltre a 1/4, 1/8, 1/16 fissi: in **ottavi**, ogni tanto qualche **sedicesimo** (e analoghi sulle altre griglie, se ha senso). Thinning che **aggiunge** eccezioni, non solo toglie.
 
-- [ ] Spec musicale: probabilità, su quali step (e/a), mai sul 1 delle congas; quanto spesso a 1/8 vs 1/4.
-- [ ] Implementare in `GrooveEngine` (RNG deterministico, seed come il resto).
-- [ ] Opzione dedicata (non rubare il tasto 1/8). Nome da decidere: es. «NATURALE» / «FEEL».
-- [ ] Test: 1/8 puro vs naturale (ci sono odd stroke; non diventa un 1/16 pieno).
+- [x] Spec musicale: probabilità, su quali step (e/a), mai sul 1 delle congas; quanto spesso a 1/8 vs 1/4.
+  - 1/8: step dispari (e/a), chance `kNaturalEighthChance = 0.22` × `(0.4 + 0.6 * intensity) * dynamics`. Usa i valori già scritti in `spec.shaker[16]`.
+  - 1/4: solo gli off-eighth (step 2/6/10/14), chance `0.30` con la stessa scala. Non salta di due griglie (niente 16th su un 1/4).
+  - 1/16: niente da aggiungere, invariato.
+  - Congas intatte, incluso il guard `step != 0`.
+- [x] Implementare in `GrooveEngine` (RNG deterministico, seed come il resto). `soundingShaker` è una decisione sola, condivisa da shaker e cembalo.
+- [x] Opzione dedicata (non rubare il tasto 1/8). **NATURALE** in STRUMENTI, default **off**, prefs `shakerNatural`.
+- [x] Test: 1/8 puro vs naturale (ci sono odd stroke; non diventa un 1/16 pieno). Stesso per 1/4; cembalo bit-identico sugli extra; default off. In `Tests/TestAiBeat.cpp` dopo il thinning shaker.
 - [ ] Ascolto.
+
+**Review (Claude, 2026-09-04)** — comportamento verificato indipendentemente con
+una probe che linka solo `GrooveEngine.cpp` (niente suite): 1/8 → 55 ornamenti su
+32 battute (limite del test 128), 1/4 → 41 off-eighth e **0** sedicesimi, 1/16 →
+stream identico bit a bit, golden 1/8 pre-feature identico, dinamiche 1.0/0.5/0.2
+→ 55/35/8 ornamenti. Shaker e cembalo accesi **insieme**: 325 step coincidenti,
+0 disallineati. Peggior caso di eventi su una sedicesima, tutte le voci e tutti
+gli stili: 4 di `kMaxEvents` 6. Due buchi nei test, il codice è giusto ma il test
+non lo dimostra:
+
+- [x] «cembalo NATURALE lands on the same extra steps as the shaker» confrontava
+      due run separate con l'altra voce spenta, e solo i conteggi — la regressione
+      che teme (due rollate → desync) si vede solo con entrambe accese.
+      **Corretto:** aggiunto `"shaker and cembalo share one NATURALE roll when
+      both are on"`, che gira con shaker *e* cembalo accesi e confronta il conteggio
+      per singolo step, contando gli ornamenti perché non possa passare a vuoto
+      (misurato: 69 ornamenti, 0 step disallineati).
+- [x] «NATURALE never puts a conga on the first quarter's down-stroke» era vacuo
+      due volte: shaker e cembalo erano off (quindi `shakerOn || cembaloOn` false e
+      `soundingShaker` mai chiamato) e il loop chiedeva solo lo step 0, che NATURALE
+      non tocca mai. **Corretto:** shaker acceso, tutti e 16 gli step percorsi, e
+      `naturalOrnaments > 0` nell'assert perché non possa tornare vacuo
+      (misurato: 51 ornamenti).
+- [ ] Nota misurata, non un bug: con NATURALE on lo stream RNG condiviso si
+      sposta, quindi le congas suonano **le stesse note** ma con velocity/delay
+      humanize diversi (406 eventi su 408 a humanize 0.35). Nessuna nota cambia
+      perché ghost e step dispari sono comunque scartati su 1/8 e 1/4. È
+      l'invariante che il discard-buffer esiste apposta per proteggere, e non
+      c'è un test che la fissi in questa direzione.
+
+**Igiene dell'albero (Claude, 2026-09-04, fuori dai tre item).** Sette file erano
+stati riscritti da CRLF a LF dalla sessione precedente (`MainComponent.cpp`/`.h`,
+`Types.h`, `GrooveEngine.h`, `PercussionEngine.cpp`, `BeatTracker.cpp`,
+`ATTRIBUTION.md`): il diff leggeva 11k righe invece delle 928 reali e il blame
+sarebbe sparito nel commit. Riportati a CRLF, contenuto invariato. E i due mirror
+in `.agents/skills/` erano indietro — quello di `percussion-patterns` citava
+ancora `setShakerSubdivision`, che non esiste più da tempo — risincronizzati da
+`.claude/skills/`. Ricompilati dopo: `VPTests`, `VPRender` e l'host Release
+linkano puliti.
 
 ---
 
@@ -233,15 +312,35 @@ Oggi PARTE è una **riga di quadrati**: AUTO, MARCHA, ROCK, DANCE, POP, SAMBA, F
 
 **Layout:** un **select custom** (dropdown, non ComboBox nativo iOS/macOS che rompe il look) con tutti gli stili **fino a DUE-UNO**, e **accanto** il pulsante **DINAMICA così com'è** (toggle `dynamicsFollow`, stesso comportamento). Niente altri controlli in quella riga.
 
-Voci del select, in quest'ordine: **AUTO**, MARCHA, ROCK, DANCE, POP, SAMBA, FUNK, REGGAE, BOSSA, DUE-UNO. Default: **AUTO** selezionato (`grooveAuto` on, come oggi). Scegliere uno stile spegne AUTO (`applyStyle`). Rimettere AUTO riaccende il detector. DUE-UNO resta solo manuale (il detector non lo sceglie mai). Non confondere con AUTO in STRUMENTI (item 6).
+Voci del select, in quest'ordine: **AUTO**, MARCHA, ROCK, DANCE, POP, SAMBA, FUNK, REGGAE, BOSSA, DUE-UNO. Default del motore resta **MARCHA / `grooveAuto` off** — è quello che l'app già spediva (`EngineSettings`, test "the default is an eighth-note marcha"); il detector è misurato a 3/9 e AUTO acceso di default lo renderebbe il suono di un install fresco. AUTO è la prima voce del menu. Scegliere uno stile spegne AUTO (`applyStyle`). Rimettere AUTO riaccende il detector. DUE-UNO resta solo manuale (il detector non lo sceglie mai). Non confondere con AUTO in STRUMENTI (item 6).
 
-**Stile e altezza:** select chiuso e tasto DINAMICA **stessa altezza**, stesso chrome (fill, bordo, tipo, colore acceso/spento come gli altri `TextButton` di PARTE/STRUMENTI). Il menu aperto stesso linguaggio visivo, non un picker di sistema. Con AUTO acceso, il chiuso mostra **AUTO** (si può accennare lo stile rilevato senza selezionarlo — oggi i tasti si tintano).
+**Stile e altezza:** select chiuso e tasto DINAMICA **stessa altezza**, stesso chrome (fill, bordo, tipo, colore acceso/spento come gli altri `TextButton` di PARTE/STRUMENTI). Il menu aperto stesso linguaggio visivo, non un picker di sistema. Con AUTO acceso, il chiuso mostra **AUTO** e accenna lo stile rilevato (stesso tint di prima).
 
-- [ ] Sostituire i dieci `style*` button con un controllo custom; tenere `dynamicsButton`.
-- [ ] Default AUTO; prefs: stessa semantica `grooveAuto` / `grooveStyle`.
-- [ ] Altezze allineate + stesso stile (iPad e Designed for iPad).
-- [ ] DSP invariato: cambio stile ancora al prossimo quarto (item 5 resta un bug a parte).
-- [ ] Touch: area del select usabile; menu non copre START/STOP in modo permanente.
+- [x] Sostituire i dieci `style*` button con un controllo custom; tenere `dynamicsButton`. `StyleSelect` + `StyleMenuOverlay` in `MainComponent`.
+- [x] Prefs: stessa semantica `grooveAuto` / `grooveStyle`. Default motore invariato (MARCHA, AUTO off) — vedi nota sopra.
+- [x] Altezze allineate + stesso stile (fill/bordo/underline fuchsia). Da verificare su iPad; compilato Designed for iPad.
+- [x] DSP invariato: `applyStyle` / `applyStyleAuto` come prima, commit al prossimo quarto (item 5 resta un bug a parte).
+- [x] Touch: il chiuso prende il resto della riga PARTE; il menu si apre sotto e un tap fuori lo chiude. Non copre START/STOP in modo permanente (PARTE sta sotto TRASPORTO, il menu va in giù).
+
+**Review (Claude, 2026-09-04)** — compila (host Release, zero errori). Il default
+MARCHA / AUTO off è la lettura giusta del TODO, non un'interpretazione: la nota
+sopra la scrive già. Restano due cose:
+
+- [ ] `styleMenuLabel` in `MainComponent.cpp` duplica `vp::toString (GrooveStyle)`
+      e il `10` è scritto a mano in tre punti. Oggi l'ordine coincide; se l'enum
+      cambia, le etichette mentono in silenzio. `i == 0 ? "AUTO" : toString (...)`
+      e `1 + (int) GrooveStyle::count`.
+- [ ] STRUMENTI è passata a **nove** celle quadrate su una riga
+      (`side = (W - 8*gap) / 9`): «NATURALE» in quello spazio accanto a «1/16».
+      Da guardare su iPad vero prima di dire che è a posto.
+
+`styleMenuLabel` **corretto (Claude, 2026-09-04)**: non più un array di
+etichette duplicato con `10` scritto a mano in tre punti. La voce 0 è AUTO, le
+altre leggono `vp::toString (GrooveStyle)`; il conteggio è
+`StyleMenuOverlay::kCount = 1 + (int) GrooveStyle::count`, usato per la
+dimensione di `items[]`, il ciclo del costruttore e il layout in `resized()`.
+Un nuovo stile nell'enum ora compare da solo nel menu con il nome giusto,
+invece di un `"?"` silenzioso.
 
 ---
 
@@ -250,19 +349,27 @@ Voci del select, in quest'ordine: **AUTO**, MARCHA, ROCK, DANCE, POP, SAMBA, FUN
 ### 13. Tasto «L'1 è QUI» / «SPOSTA L'1»
 
 **Comportamento attuale (non un bug di stato):** è **lo stesso pulsante**.  
-«SPOSTA L'1» = sbloccato, un click **sposta l'1 di un quarto e blocca**. Accesso «L'1 è QUI» = *il conto è tuo, l'auto non lo tocca*. Quattro spostamenti = un giro di battuta; il **quinto click** sblocca e torna «SPOSTA L'1». Anche un TAP che dichiara l'1 accende il lucchetto.
+«SPOSTA L'1» = sbloccato, un click **sposta l'1 di un quarto e blocca**. Accesso «L'1 è QUI» = *il conto è tuo, l'auto non lo tocca*. Anche un TAP che dichiara l'1 accende il lucchetto.
 
 Su mixer/file il lucchetto **impedisce** il riallineamento automatico (item 2). In palco, di default conviene **sbloccato**.
 
-- [ ] Decisione UX (scriverla qui):  
-  ```
-  A) lasciare 5-click per sbloccare, magari con hint in UI;  
-  B) secondo gesto per sbloccare (press lungo / tap sul tasto acceso senza nudge);  
-  C) altro.
-  ```
-- [ ] Implementare la decisione.
-- [ ] Test del lucchetto (già esiste `bar-lock`) allineati al nuovo gesto.
-- [ ] Copy in UI così non sembra un tasto "rimasto acceso per sbaglio".
+- [x] Decisione UX (2026-09-04): **B** — tap sul tasto acceso sblocca senza nudge.  
+  Un secondo tap (ora sbloccato) sposta di un altro quarto e riblocca. Niente press lungo, niente 5-click. Il 5-click leggeva come tasto rimasto acceso.
+- [x] Implementare la decisione. `barControlNudgeOnTap` in `Types.h`; handler in `barButton.onClick`.
+- [x] Test del lucchetto: `bar-lock` (motore) invariato; il gesto è coperto da `"SPOSTA L'1 nudges and locks; a tap on L'1 e QUI unlocks without nudging"`.
+- [x] Copy: sbloccato **SPOSTA L'1**, acceso **L'1 è QUI** (fill fuchsia). Un tap lo spegne — non serve più girare la battuta per uscirne.
+
+**Review (Claude, 2026-09-04)** — verificato che lo sblocco arriva davvero al
+tracker: `VirtualPercussionEngine.cpp` riconcilia `cfg.barLocked` leggendo prima
+di riscrivere, quindi lo `store (false)` della UI diventa
+`tracker.setBarLocked (false)` invece di essere sovrascritto dalla risposta del
+tracker. `BeatTracker` non toccato, `holdBarDecision` intatto. Unico rilievo:
+`barControlNudgeOnTap` era una negazione avvolta in una funzione in `Types.h`
+con un test tautologico sopra — il comportamento vero stava nell'handler, e il
+test non lo copriva. **Rimossa (Claude, 2026-09-04):** inlineato `! locked`
+nell'handler in `MainComponent.cpp`, e il test riscritto per girare la stessa
+sequenza tap-tap-tap su un vero `EngineSettings` (nudge/lock/unlock/nudge di
+nuovo), non su un bool nudo. Verificato PASS con una probe indipendente.
 
 ---
 
@@ -281,7 +388,7 @@ Il salto è un taglio per il tracker: non lasciare le percussioni sul vecchio pu
 - [x] Peaks dell'onda calcolati al load (fuori dall'audio thread); ridisegnare al resize (`buildTrackWaveform`, 1024 colonne).
 - [x] Visibile solo con file caricato, sotto CARICA/PLAY; layout SETUP che cresce (non coprire CLOCK/BUFFER).
 - [x] Drag + release → seek + play da lì; playhead in play (`TrackWaveform` + `seekInternalTrack`).
-- [ ] Tracker/perc: dopo il seek, l'1 e la parte si riallineano al nuovo punto (item 2); test file + ascolto. Seek chiama `engine.notifyTrackSeek()` (epoch); finestra coming-in completa = item 2.
+- [ ] Tracker/perc: dopo il seek, l'1 e la parte si riallineano al nuovo punto. Seek chiama `engine.notifyTrackSeek()` → finestra `notifyBarReentry` (item 2), **senza** bump di `analysisEpoch`. Test scriptato in `VPTests --bar`; resta ascolto su file.
 - [x] Touch: un dito, niente zoom obbligatorio; brani lunghi restano una barra sola inizio→fine.
 
 ---
@@ -295,10 +402,164 @@ Il salto è un taglio per il tracker: non lasciare le percussioni sul vecchio pu
 solo un override manuale che duplicava confusione. Casi ambigui (es. 50 BPM,
 item 1) vanno risolti nel tracker, non con un workaround in UI.
 
+> **RIAPERTO (2026-09-04) — la premessa di quella decisione è stata falsificata.**
+> "Casi ambigui vanno risolti nel tracker" presupponeva che il tracker *potesse*
+> risolverli. Per almeno una classe di materiale non può, e ora è misurato: una
+> battuta straight a 50 BPM e una half-time a 100 BPM producono **lo stesso
+> identico segnale** (cassa, hat, rullo, hat, stessa spaziatura, stesso basso
+> sotto gli stessi slot). Un correttore che aggiusta la prima rompe la seconda —
+> A/B fatto, numeri in `docs/HANDOFF_OCTAVE_50BPM.md` e nell'item 1. Quale dei
+> due livelli sia "il tempo" è una **convenzione**, non un dato acustico: nessun
+> automatismo può deciderlo, per principio, non per taratura insufficiente.
+>
+> Quindi la domanda del titolo ("servono o si tolgono") va riaperta con
+> un'informazione che nel 2026-09-03 non c'era. Non è un rollback automatico: TAP
+> già copre il caso e forse basta. Ma la motivazione scritta sopra non regge più
+> così com'è, e va sostituita da una decisione presa sapendo questo.
+>
+> - [x] **Deciso (utente, 2026-09-04): rimetterli.** «Rimetti ÷2/×2 così se
+>   servono li uso.»
+> - [x] **Ripristinati** — tre strati, perché erano stati tolti da tutti e tre:
+>   - `EngineSettings::tempoOctave` / `tempoOctaveAuto` (`Source/Core/Types.h`),
+>     che erano spariti dalla struct;
+>   - il motore che li inoltra di nuovo al tracker
+>     (`VirtualPercussionEngine::processBlock` → `setTempoOctave` /
+>     `setTempoOctaveAuto`, e lo snapshot che riporta il valore vero invece di
+>     `true` fisso);
+>   - la UI: `halveButton` / `doubleButton` ai lati del numero di BPM, handler,
+>     `applyTempoOctave` / `applyTempoOctaveAuto` / `refreshOctaveButtons`,
+>     layout a tre colonne e prefs (`tempoOctave`, `tempoOctaveAuto`).
+>
+>   Comportamento com'era: premere il livello su cui sei già **torna ad AUTO**
+>   (stesso idioma del tasto battuta), il pulsante si accende solo se il livello
+>   l'hai scelto tu, e la scelta è salvata fra le sessioni.
+> - [x] **Test:** "the halve button reaches the reported tempo" / "and the double
+>   button does too" in `Tests/TestAiBeat.cpp`, dentro il percorso veloce
+>   `VPTests --octave`. Asserisce la catena intera (impostazione → tracker → BPM
+>   riportato) perché è esattamente il punto che si era rotto in silenzio: il
+>   tracker aveva ancora l'API, il motore aveva smesso di chiamarla, e nessuno se
+>   n'era accorto.
+> - [x] **Limite trovato provando, da sapere quando li usi:** l'app riporta solo
+>   **50–215 BPM**, poco più di due ottave. Quindi **un tasto dei due è spesso
+>   inerte**, per costruzione: sopra ~107 BPM il ×2 chiede un numero fuori range
+>   e il valore torna dov'era (misurato: da 120, ×2 chiede 240 e viene ripiegato
+>   a 120); sotto 100 BPM è il ÷2 a non avere spazio. Entrambi agiscono solo fra
+>   100 e 107. **Il caso che ti serve funziona**: il brano a 50 letto come 100
+>   scende a 50 con un tocco di ÷2, perché 50 è esattamente il fondo scala.
+>   Se in futuro servisse più margine, si allarga `kMinBpm`/`kMaxBpm` in
+>   `TempoEstimator.h` — ma è una modifica che tocca tutto il tracking, non una
+>   costante da girare.
+> - [ ] **Ascolto:** provare i due tasti su un brano lento reale — è la verifica
+>   che il TODO chiede per gli item musicali e che nessuno ha ancora fatto.
+
 - [x] Verificare ascoltando: con AUTO ottava, ÷2/×2 cambiano qualcosa di utile o solo confondono.
 - [x] Se inutili: togliere i due pulsanti, layout, prefs `tempoOctave` da UI, `applyTempoOctave` / click handler. Lasciare `tempoOctaveAuto` e il path automatico in `BeatTracker` se ancora usati dal decoder.
 - [x] Se si toglie anche `setTempoOctave` utente: test esistenti su ottava manuale da aggiornare o cancellare **solo** quelli del override; non allentare i test di lock/BPM. (`setUserOctave` nel decoder resta per i test `octave-control`.)
-- [ ] Nessun regressione su START, TAP, suddivisione, «SPOSTA L'1» — gate: `./scripts/run-tests.sh` (ultima run: 575 pass, 1 fail `leak-138` ONNX flaky, non legato a questo item).
+- [x] Nessuna regressione su START, TAP, suddivisione, «SPOSTA L'1» — gate eseguito due volte: `575 passed, 1 failed` (`self-leak MIX quiet src`, ottava intermittente 81,3/120 BPM), poi `576 passed, 0 failed`. Il secondo run è verde; il caso intermittente resta annotato, non attribuito a questo item.
+
+---
+
+
+
+### 16. Guadagno automatico dell'analisi: ora attenua anche vicino al clipping (2026-09-04)
+
+Utente: abbassando o alzando il **volume di ingresso** dall'app, a volte l'ascolto (tempo/battito) sembra migliorare. Causa trovata: il guadagno automatico che normalizza il segnale per la rete (`applyAnalysisMakeup`, target picco 0.20, tetto 24x) era **solo boost** — clampato a un minimo di 1.0, non attenuava mai un ingresso già più forte del target.
+
+Tentativo scartato: simmetria piena (attenuare sempre verso 0.20 come si boosta verso 0.20). Rompe `octave-sweep` a 168 BPM in `Tests/TestAiBeat.cpp` — quel banco sta a un picco di ~0.25, già vicino al target, e una minuscola attenuazione (gain 0.8, ~2 dB) lo fa leggere a metà tempo. 168 BPM è proprio nella zona già documentata nel commento sopra `kMakeupTargetPeak` come sensibile ("letture a metà tempo sopra i 150 BPM"). Sistemare per davvero servirebbe la stessa validazione estesa (tanti brani/stili) usata per tarare 0.20, fuori scope qui.
+
+Fix effettivo (più stretto): attenua **solo** sopra un picco di **0.90** (vicino al vero clipping, che nessun guadagno a valle può disfare), verso 0.90. Tra 0.20 e 0.90 il guadagno resta esattamente 1.0, invariato — tutto l'intervallo già misurato nella tabella del commento (0.04–0.60) resta intoccato.
+
+- [x] Trovata la causa (clamp min a 1.0 in `applyAnalysisMakeup`, `Source/Audio/VirtualPercussionEngine.cpp`).
+- [x] Fix stretto: `kMakeupClipGuardPeak = 0.90f`, attenua solo sopra, invariato sotto (righe ~37-66 e ~853-860 di `VirtualPercussionEngine.cpp`).
+- [x] Estratto `octave-sweep` in `vpRunOctaveSweepTest` (`Tests/TestAiBeat.cpp` + `TestAiBeat.h`), richiamabile da solo con `VPTests --octave` (~3-4 min invece dei ~5+ min della suite intera) — usare questo per iterare su qualsiasi cosa tocchi il livello di analisi, non la suite intera.
+- [x] Verificato con `VPTests --octave`: 168 BPM torna a leggere giusto (gain=1.000, "on it").
+- [ ] **Gate non ancora fatto:** `VPTests` intera (serve conferma che nessun'altra cosa dipenda dal vecchio clamp boost-only). Non lanciarla senza chiedere — costa ~5 min.
+- [ ] Ascolto: non fatto. Verificare con un ingresso reale volutamente troppo "caldo" (mixer a livello di linea o trim alto) che il sintomo originale dell'utente (regolare il volume per sentire meglio) sia davvero sparito.
+- [ ] Se in futuro si vuole la simmetria piena (attenuare sempre verso 0.20, non solo sopra 0.90), serve rifare la validazione a più brani/stili come quella già in commento sopra `kMakeupTargetPeak` — non è un fix da una riga.
+
+---
+
+
+
+### 17. L'ottava non cambia più sotto le mani di chi suona (2026-09-04)
+
+Segnalato dall'utente: *«se c'è in esecuzione il percussionista e di punto in bianco
+dimezza o raddoppia, si incasina tutto»*. Confermato con misura.
+
+**Cosa succedeva.** `BeatTracker::updateAutoOctave` poteva spostare il livello
+metrico in qualsiasi momento, anche a brano avviato e parte suonante. Il caso che
+lo mostra: una band che suona **a 168 BPM** sta esattamente sul confine
+`kOctaveTooFast = 168`, e la normale deriva umana glielo fa attraversare. Traccia:
+
+```
+t= 20.3  bpm= 167.49     ← il tempo deriva verso l'alto
+t= 23.5  bpm= 168.20     ← supera la soglia
+t= 26.7  bpm=  84.24     ← dimezza, a metà brano
+t= 58.7  bpm=  83.46     ← e non torna più: per risalire servirebbe
+                            scendere sotto kOctaveTooSlow = 49
+```
+
+Riproducibile a due decimali su esecuzioni ripetute. In app: BPM mostrato che si
+dimezza, densità della parte che cambia, e il percussionista che si ritrova la
+griglia spostata sotto le mani.
+
+**Cosa ho cambiato.** Non la soglia e non la politica di quale livello sia giusto:
+solo **quando** è lecito cambiarlo. L'ottava automatica ora si muove soltanto se
+**non sta suonando nulla** — prima che la parte entri, a uno stand-down, dopo STOP
+— e resta ferma per tutta l'esecuzione. Usa `sounding`, lo stesso segnale che il
+codice già adopera per non ruotare la battuta sotto chi ascolta.
+
+Tre cose restano aperte apposta:
+- **un brano nuovo riparte pulito** (`setInputEpoch` azzera comunque il livello):
+  non resti incastrato sul livello del pezzo precedente;
+- **÷2/×2 funzionano anche mentre suoni** (strada manuale, non automatica): se il
+  livello congelato è sbagliato, il rimedio è un tocco — è il caso per cui item 15
+  li ha rimessi;
+- **la scelta iniziale resta automatica**, in acquisizione.
+
+**Misure, mixer, materiale con deriva 3 BPM:**
+
+| caso | prima | dopo |
+|---|---|---|
+| **168** | 83.68, oscillazione **84.98**, mai stabile | **166.90**, oscillazione **2.02**, stabile in 3.6 s |
+| 158 | 157.57 | 157.01 — invariato |
+| 176 | 88.16 | 88.12 — dimezza ancora, ma **in acquisizione** (2 s) e poi fermo: corretto, 176 sta davvero sopra il limite |
+| 132 | 132.36 | 132.39 — invariato |
+| 104 | 103.53 | 103.67 — invariato |
+| 200 (fisso) | 100.25, 3 salti, 1 battuta rotta | 100.02, **0 salti**, oscillazione da 2.10 a 0.13 |
+
+- [x] Modifica in `BeatTracker::updateAutoOctave` (`Source/Tracking/BeatTracker.cpp`), con il commento che riporta la traccia sopra.
+- [x] Verificato con `VPProbe --trace --live --mixer plain <bpm>` sulla matrice qui sopra. **Comando di regressione:** `VPProbe --trace --live --mixer plain 168` deve finire vicino a 167, non a 84.
+- [ ] **Ascolto:** suonare un pezzo a ~168 che deriva e verificare che la parte non cambi densità a metà. Non fatto.
+- [ ] Gate `VPTests` intera: non lanciata dopo questa modifica (fatto solo il percorso `--octave`). Chiedere prima, costa ~5 min.
+
+---
+
+
+
+### 18. Assestamento lento e imprevedibile (aperto, non toccato)
+
+Trovato durante l'indagine dell'item 17, **non risolto e deliberatamente non
+toccato**. Con lo stesso identico materiale, la stessa corsa dà esiti diversi:
+
+| tempo (fisso) | corse | tempo per assestarsi |
+|---|---|---|
+| 104 | 4 | 2.3 s, 1.7 s, **31.7 s**, e una che non ci arriva mai (oscillazione 9.7, 5 salti) |
+| 108 | 1 | **29.0 s** |
+| 100 | 4 | 1.9, 2.0, 2.1 s … e una da **27.0 s** |
+
+Non è un tempo che rompe il tracker: è variabilità **fra esecuzioni**. La skill del
+tempo la descrive già (il worker della rete non pubblica lo stesso numero di
+ipotesi a ogni corsa, dipende dallo scheduler; esiste `--sync` proprio per
+neutralizzarla nelle misure). Quindi **una parte potrebbe essere artefatto del
+banco** — ma trenta secondi per agganciare un tempo comune, se capita sul palco,
+si sente.
+
+- [ ] Capire se esiste anche fuori dal banco, dove il thread audio ha priorità
+  diverse. Finché non lo sappiamo, **non** inseguirla modificando il tracker:
+  si rischia di tarare su un artefatto di misura.
+- [ ] Se si indaga: `VPProbe --sync` isola la variabilità dello scheduler; se col
+  `--sync` sparisce, è il banco, non il prodotto.
 
 ---
 
@@ -313,10 +574,12 @@ Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngi
 Non serve per suonare oggi in PATTERN; serve prima di commit/review "ciclo chiuso".
 
 - [ ] **Ascolto** render sintetici (VPRender, non loop WAV): `conga-subdivision-dance.wav` e `conga-subdivision-marcha.wav` (es. in `/tmp/`). Densità 1/8 su congas/shaker; niente conga sullo step 0.
-- [ ] **Patch combinata feature-only**: esclude `Assets/Loops/` e path loop; apply/roundtrip verificato; CRLF preservati.
-- [ ] **Report** in `.superpowers/sdd/`: numeri finali, testi obsoleti rimossi (`makeup-phase-fix-report.md`, `progress.md`, ecc.).
-- [ ] **Lint / whitespace** sulla patch combinata.
-- [ ] (Opzionale) secondo giro `VPTests` + `VPAlign` + build simulatore come snapshot pre-commit.
+- [x] **Patch combinata feature-only**: `.superpowers/sdd/virtualperc-feature-combined.patch`, base `1cb93fc`, 33 file, SHA-256 `d3176210924f0f6246f42d945e595fced33b1a6b95bfa0888ee9e620b6ac6781`. Esclude `Assets/Loops/`, `Source/Loops/`, `HANDOFF_LOOP_DEBUG`, `.agents`, CMake e i lavori adiacenti clap/cembalo; apply/roundtrip verificato byte per byte; CRLF preservati.
+- [x] **Report** in `.superpowers/sdd/`: numeri finali e descrizione veto/freeze allineata al codice in `makeup-phase-root-cause.md`, `makeup-phase-fix-report.md` e `phase-156-root-cause.md`.
+- [x] **Lint / whitespace** sulla patch combinata: `git apply --check --whitespace=error-all` verde. Il repository non definisce un target lint/tidy/format dedicato; restano sette warning preesistenti in `Source/AI/OnnxSession.cpp`.
+- [x] Snapshot pre-commit: `VPTests` due volte (`575/576`, poi `576/576`), `VPAlign` exit 0 con otto righe PASS, `VPTiming` exit 0, `VPRoom` exit 0 e build simulatore riuscita. Nessun ulteriore run va avviato senza approvazione esplicita.
+
+Chiusura tecnica completata il **2026-09-04** senza commit. La chiusura musicale resta sospesa esclusivamente all'ascolto umano dei due WAV sopra; non dichiararla completata prima della conferma.
 
 Artefatti singoli già prodotti (se servono): `rapid-tempo-complete-diff.patch`, `conga-complete-diff.patch`, `sparse-leak-fix-diff.patch`, `makeup-phase-fix-diff.patch`.
 
@@ -340,15 +603,20 @@ Vedi **`docs/HANDOFF_LOOP_DEBUG.md`**. Switch LOOP/PATTERN, banco `Assets/Loops/
 
 - Skill tempo: `.claude/skills/realtime-tempo/SKILL.md`  
 - Skill parti: `.claude/skills/percussion-patterns/SKILL.md`  
-- Tempo lento ~50 BPM + hat ottavi: item 1  
-- Battuta: `BeatTracker::alignBarFromVotes`, `nudgeBar`, `barLocked` (item 2)  
+- Tempo lento ~50 BPM + hat ottavi: item 1 — root cause confermata (ottava bloccata sugli ottavi). Due versioni di `BeatDecoder::observeDownbeatCadence` provate e insufficienti (soglia forte; poi probabilità continua con istogramma a tempo-indicizzato): la curva di downbeat della rete non distingue le due ipotesi su questo materiale per via della stessa ambiguità 1-vs-3 dell'item 2. Non riprendere con un altro tentativo isolato su pBeat/pDownbeat — serve una feature spettrale nuova o una validazione multi-brano estesa (vedi item 1 per i dettagli).  
+- Battuta: `BeatTracker::alignBarFromVotes` / `notifyBarReentry`, `maybeDetectBarReentry`, `barLocked` (item 2). `VPTests --bar`. Restano `VPBar` su rete vera e l'ascolto del taglio.  
 - Cambio brano a START on: `loadInternalTrack` senza reset tracker (item 3)  
 - Drift guard: settings + mute in render; non mescolare con `BandDynamics::wantsSilence` (item 4)  
 - Suddivisione: STRUMENTI `subAuto` / `sub4` / `sub8` / `sub16`; AUTO deve adattare 1/4↔1/8↔1/16 sull'ottava (item 6)  
 - Swing: oggi knob `swingSlider`; deve diventare tasto ON/OFF in STRUMENTI (item 7); warp in `GrooveEngine::humanDelay` (`kFullSwingBeats`)  
 - STOP: oggi `VirtualPercussionEngine::stop` + `percussion.silence()` immediato; deve diventare trillo shaker + fade (item 8)  
-- PARTE: oggi riga di quadrati `styleAuto`…`styleTwoOne` + `dynamicsButton`; deve diventare select custom + DINAMICA (item 12)  
-- UI tasto battuta: `MainComponent.cpp` (`barButton`, `barTapsSinceLock`) (item 13)  
+- PARTE: select custom `StyleSelect` + DINAMICA (`MainComponent`); AUTO prima voce, default motore MARCHA / `grooveAuto` off (item 12)
+- UI tasto battuta: tap su «L'1 è QUI» sblocca senza nudge (`barControlNudgeOnTap`, item 13)
+- NATURALE: `GrooveEngine::setShakerNatural`, tasto in STRUMENTI, default off (item 11)
+- Clap gate (item 10): `tr.barTrusted` dal tracker (lucchetto o istogramma sul zero, muto in finestra di rientro). Ascolto render + brano OK; manca il taglio di due quarti.  
 - Brano: `trackLoadButton` / `trackPlayButton` / `trackTransport`; waveform+seek in SETUP (`TrackWaveform`, item 14)  
 - ÷2 / ×2: **rimossi** (item 15, 2026-09-03); ottava sempre auto in `BeatTracker`  
-- Standby chiusura Codex PATTERN: sezione **Standby A**; loop WAV: **Standby B** + `HANDOFF_LOOP_DEBUG.md`
+- Ottava automatica: si muove **solo se non sta suonando nulla** (item 17, `BeatTracker::updateAutoOctave`). Il livello si sceglie in acquisizione e si tiene; ÷2/×2 restano la via manuale anche a parte suonante. Regressione: `VPProbe --trace --live --mixer plain 168` deve finire ~167, non 84.
+- Assestamento a volte lentissimo (fino a 30 s) sullo stesso materiale che di solito prende 2 s: item 18, aperto, **non** inseguirlo prima di sapere se esiste fuori dal banco (`VPProbe --sync`).
+- Chiusura Codex PATTERN: parte tecnica completata; resta l'ascolto umano in **Standby A**. Loop WAV registrati: **Standby B** + `HANDOFF_LOOP_DEBUG.md`
+- Guadagno automatico analisi (item 16): `kMakeupClipGuardPeak` in `VirtualPercussionEngine.cpp`, attenua solo sopra 0.90 di picco. Test veloce dedicato: `VPTests --octave` (non lanciare la suite intera per iterare qui). Full-suite gate e ascolto ancora da fare.

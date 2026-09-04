@@ -21,17 +21,23 @@ public:
     void setHumanization (float amount) noexcept;
     void setSwing (float amount) noexcept;
     void setIntensity (float amount) noexcept;
-    /** Output level of shaker and congas together. */
-    void setVolume (float v) noexcept { volume = clamp01 (v); }
-    /** Balance between the two instruments. 0 is shaker at full and congas
-        silent, 0.5 is both at full, 1 is congas at full and shaker silent. */
-    void setInstrumentMix (float mix) noexcept { instrumentMix = clamp01 (mix); }
+    /** Independent output level for each instrument. */
+    void setShakerVolume (float v) noexcept { shakerVolume = clamp01 (v); }
+    void setCongaVolume (float v) noexcept { congaVolume = clamp01 (v); }
+    void setClapVolume (float v) noexcept { clapVolume = clamp01 (v); }
+    void setCembaloVolume (float v) noexcept { cembaloVolume = clamp01 (v); }
     void setReverbAmount (float amount) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
+    void setCembaloEnabled (bool on) noexcept { groove.setCembaloEnabled (on); }
+    void setClapEnabled (bool on) noexcept { groove.setClapEnabled (on); }
+    /** See `GrooveEngine::setBarTrusted`. */
+    void setBarTrusted (bool trusted) noexcept { groove.setBarTrusted (trusted); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
     void setSubdivision (Subdivision s) noexcept { groove.setSubdivision (s); }
+    /** See `GrooveEngine::setShakerNatural`. */
+    void setShakerNatural (bool on) noexcept { groove.setShakerNatural (on); }
 
     /** How far ahead of the beat the clock must place a pulse for the stroke to
         be *heard* on it: the slowest attack in the bank. The tracker adds this
@@ -163,6 +169,7 @@ private:
     void   discardPendingVoices() noexcept;
     void   applyPendingGrooveControls() noexcept;
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    void   synthesizeCymbal (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   applyReverbParams() noexcept;
     const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
@@ -176,8 +183,10 @@ private:
     juce::Reverb reverb;
     double sampleRate = 48000.0;
     float humanization = 0.35f;
-    float volume = 0.8f;
-    float instrumentMix = 0.5f;
+    float shakerVolume = 1.0f;
+    float congaVolume = 1.0f;
+    float clapVolume = 1.0f;
+    float cembaloVolume = 1.0f;
     float reverbAmount = 0.30f;
     float requestedSwing = 0.0f;
     float appliedSwing = 0.0f;
