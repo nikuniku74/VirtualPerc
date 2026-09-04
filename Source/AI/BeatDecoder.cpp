@@ -218,6 +218,28 @@ namespace
     // How far the comb may move and still be casting the same vote.
     constexpr float kOctaveVoteHold = 0.10f;
 
+    // The stale-grid watchdog (docs/TODO.md item 19).
+    //
+    // The octave snap above is looking for a *metrical level*, so it only fires
+    // past kOctaveThreshold - roughly a fifth away. Measured on an abrupt
+    // 120 -> 160 step, the committed grid stays on 120 and the comb settles at
+    // 106.7: eleven percent out, under that bar, so nothing fires and the
+    // decoder reports 120.00 at confidence 1.00 for as long as it is left
+    // running. The grid rejects the real beats as off-grid and fits the
+    // survivors cleanly, so residual, coverage and salience all stay healthy;
+    // the comb is the only thing outside that loop and the only thing that knows.
+    //
+    // So: a lower bar than the octave snap, and a longer vote to pay for it.
+    // The threshold has to clear the wobble healthy material shows at the top of
+    // the range - measured at 1.9 per cent mean error at 170 BPM - without
+    // reaching the 17 per cent of the stuck case. Deliberately above
+    // kCombPullThreshold too: inside that band the ordinary pull owns the
+    // question and this must not race it.
+    constexpr float kStaleGridThreshold = 0.120f;   // log2, about 8.7 per cent
+    constexpr float kStaleGridRelease   = 0.060f;   // hysteresis: it must actually resolve
+    constexpr int   kStaleGridVoteBeats = 12;       // ~4.5 s at 160 BPM
+    constexpr float kStaleGridVoteHold  = 0.10f;
+
     // Once a tempo is established, a peak has to land on the grid to count as a
     // beat. Subdivisions clear the activation threshold all the time - a hi-hat
     // pattern puts one halfway between every pair of beats - and taking those as
@@ -424,6 +446,8 @@ void BeatDecoder::reset() noexcept
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
     octaveVoteBpm = 0.0f;
+    staleGridBeats = 0;
+    staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
@@ -501,6 +525,8 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     foldPhaseBeats = 0;
     octaveMismatchBeats = 0;
     octaveVoteBpm = 0.0f;
+    staleGridBeats = 0;
+    staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
@@ -771,6 +797,8 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
     octaveVoteBpm = 0.0f;
+    staleGridBeats = 0;
+    staleGridBpm = 0.0f;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
     longFitBpm = 0.0f;
@@ -822,6 +850,8 @@ void BeatDecoder::notifyInputRestart() noexcept
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
     octaveVoteBpm = 0.0f;
+    staleGridBeats = 0;
+    staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
@@ -1722,6 +1752,78 @@ void BeatDecoder::updateTempo() noexcept
         lastFitResidual = 1.0f;
         lastFitCoverage = 0.0f;
         return;
+    }
+
+    // The stale-grid watchdog. Runs only after the octave snap has declined the
+    // beat, so a real metrical disagreement is still that path's to answer.
+    //
+    // What it must not do is adopt `combBpm`. In the stuck case the comb is not
+    // right either - it reads 106.7 while the band plays 160 - because it is
+    // describing a grid that is rejecting most of the beats it should be made
+    // of. Both numbers are downstream of the same bad grid, so the only honest
+    // move is to stop defending it and measure again: drop the grid, the fits
+    // and the fold's evidence, and let the next beats re-acquire from the
+    // activation. That is what an input restart does, and it is why moving the
+    // microphone gain was the only thing that ever unstuck this.
+    if (combReady && combMayCorrect && bpm > kMinBpm && combBpm > kMinBpm)
+    {
+        const float apart = std::fabs (std::log2 (combBpm / bpm));
+        // Strictly the band *below* the octave snap. Past kOctaveThreshold the
+        // disagreement is a metrical level and that path owns it - it has the
+        // tenure, salience and vote-hold rules for exactly that argument. Taking
+        // those cases here instead was measured and is worse: on a 170 BPM bench
+        // where some runs acquire at 85, this watchdog fired on the 2:1 and
+        // re-acquired repeatedly, taking time-out from 3.1 to 6.7 per cent of the
+        // run and mean error from 1.9 to 3.7. This exists only for the gap that
+        // nothing else covers.
+        if (apart > kStaleGridThreshold && apart < kOctaveThreshold)
+        {
+            if (staleGridBpm < kMinBpm
+                || std::fabs (std::log2 (combBpm / staleGridBpm)) > kStaleGridVoteHold)
+            {
+                staleGridBpm = combBpm;
+                staleGridBeats = 1;
+            }
+            else
+            {
+                ++staleGridBeats;
+            }
+        }
+        else if (apart < kStaleGridRelease)
+        {
+            staleGridBeats = 0;
+            staleGridBpm = 0.0f;
+        }
+
+        if (staleGridBeats >= kStaleGridVoteBeats)
+        {
+            staleGridBeats = 0;
+            staleGridBpm = 0.0f;
+            tempo.restartEvidence();
+            ++gridSerial;
+            clearTempoTransition (TempoTransitionReason::reset);
+            lastBeatSec = -1.0;
+            gridAnchorSec = -1.0;
+            foldPhaseBeats = 0;
+            beatWrite = 0;
+            beatFilled = 0;
+            longWrite = 0;
+            longFilled = 0;
+            intervalAcquired = false;
+            established = false;
+            provisional = false;
+            provisionalStrength = 0.0f;
+            octaveMismatchBeats = 0;
+            octaveVoteBpm = 0.0f;
+            beatsOnLevel = 0;
+            fastDriftBeats = 0;
+            fastDriftLargeBeats = 0;
+            fastDriftSign = 0;
+            lastFitResidual = 1.0f;
+            lastFitCoverage = 0.0f;
+            enterRegime (TempoRegime::unknown);
+            return;
+        }
     }
 
     float longPeriod = 0.0f, longResidual = 0.0f, longCoverage = 0.0f;

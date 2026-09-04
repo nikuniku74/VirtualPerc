@@ -21,7 +21,12 @@ static const float  kPeak = 0.94f;
 
 struct Exc { double atSec, backSec, worstBpm; };
 
-struct Out { int n; double worstErrPct; double longestSec; double totalOutSec; };
+// Counting "runs with any excursion" cannot tell a bench that got worse from one
+// that now corrects itself, since correcting costs a transient and the count
+// charges the same for both. So measure the area, not the events: how much of
+// the run was spent away from the tempo, and the error integrated over time.
+struct Out { int n; double worstErrPct; double longestSec; double totalOutSec;
+             double errIntegral; double measuredSec; };
 
 static Out run (float nominal, double duration, float driftBpm, float jitterMs,
                 unsigned seed, bool verbose)
@@ -49,7 +54,7 @@ static Out run (float nominal, double duration, float driftBpm, float jitterMs,
     std::sort (beats.begin(), beats.end(),
                [](const auto&a,const auto&b){ return a.first < b.first; });
 
-    Out o { 0, 0.0, 0.0, 0.0 };
+    Out o { 0, 0.0, 0.0, 0.0, 0.0, 0.0 };
     bool out = false; double outStart = 0.0; double worstThis = 0.0;
     for (int f = 0; f < (int)(duration*fps); ++f) {
         const double now = (double) f / fps;
@@ -63,6 +68,9 @@ static Out run (float nominal, double duration, float driftBpm, float jitterMs,
         if (! h.valid || now < 12.0) continue;      // let it acquire first
         const double truth = bpmAt (now);
         const double errPct = std::fabs (h.bpm - truth) / truth * 100.0;
+        // Every frame contributes, in and out of an excursion alike.
+        o.errIntegral += errPct / fps;
+        o.measuredSec += 1.0 / fps;
         if (! out && errPct > 4.0) { out = true; outStart = now; worstThis = errPct; }
         else if (out) {
             worstThis = std::max (worstThis, errPct);
@@ -90,19 +98,25 @@ int main()
     const double dur = 300.0;
     printf ("Tempo COSTANTE (deriva %.0f BPM, jitter %.0f ms = impostazioni --live), %.0f s per corsa,\n", 3.0, 10.0, dur);
     printf ("10 semi diversi per tempo. \"Fuori\" = errore > 4%%, \"rientrato\" = < 2%%.\n\n");
-    printf ("%-7s %8s %10s %12s %12s\n", "BPM", "corse", "con uscite", "peggiore", "tempo fuori");
-    printf ("%s\n", "------------------------------------------------------------");
+    printf ("%-6s %8s %10s %11s %11s %13s\n",
+            "BPM", "corse", "con usc.", "tempo fuori", "err medio", "peggiore");
+    printf ("%s\n", "---------------------------------------------------------------------");
     for (float bpm : { 60.f, 75.f, 90.f, 100.f, 110.f, 120.f, 132.f, 140.f, 150.f, 160.f, 170.f }) {
-        int runsWithOut = 0, tot = 0; double worst = 0, longest = 0, outSum = 0;
+        int runsWithOut = 0, tot = 0;
+        double worst = 0, outSum = 0, errSum = 0, measSum = 0;
         for (unsigned s = 1; s <= 10; ++s) {
             Out o = run (bpm, dur, 3.0f, 10.0f, s, false);
             ++tot; if (o.n > 0) ++runsWithOut;
             worst = std::max (worst, o.worstErrPct);
-            longest = std::max (longest, o.longestSec);
             outSum += o.totalOutSec;
+            errSum += o.errIntegral;
+            measSum += o.measuredSec;
         }
-        printf ("%-7.0f %8d %10d %11.1f%% %9.1f s max\n",
-                bpm, tot, runsWithOut, worst, longest);
+        // Share of measured time spent out, and mean error over all of it.
+        const double outPct = measSum > 0.0 ? outSum / measSum * 100.0 : 0.0;
+        const double meanErr = measSum > 0.0 ? errSum / measSum : 0.0;
+        printf ("%-6.0f %8d %10d %10.1f%% %10.2f%% %12.1f%%\n",
+                bpm, tot, runsWithOut, outPct, meanErr, worst);
     }
     return 0;
 }

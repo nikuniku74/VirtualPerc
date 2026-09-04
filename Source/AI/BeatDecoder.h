@@ -341,6 +341,17 @@ private:
         worked for a minute is not overturned as cheaply as one adopted five
         seconds ago. */
     int   beatsOnLevel = 0;
+    /** A grid at the wrong *rate* is stable the same way a grid on the wrong
+        half-beat is (see checkGridPhase): the real beats fall off it and are
+        rejected, the ones that survive fit it cleanly, and residual and
+        coverage both look healthy. The comb is the one thing outside that loop,
+        and in the stuck state it sits a steady few percent away from the
+        committed tempo instead of on it - too little for the octave snap, which
+        is looking for a metrical level, and forever. See docs/TODO.md item 19. */
+    int   staleGridBeats = 0;
+    /** The comb level this staleness vote is for, same reason as
+        `octaveVoteBpm`: a comb changing its own mind is not evidence. */
+    float staleGridBpm = 0.0f;
     int   octaveShift = 0;
     bool  useAnchor = false;
     bool  lineFeed = false;

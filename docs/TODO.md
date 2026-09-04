@@ -691,14 +691,49 @@ fold, come `notifyInputRestart`.
   un'escursione passano da **4/10 a 10/10**. Verificato che *non* è la taratura
   della soglia: con la soglia a 0,24 (appena sotto quella dell'ottava) la
   regressione resta identica. È la riacquisizione stessa che costa un transitorio.
-- **Perché è stato scartato:** il metro usato ("corse con almeno un'escursione
-  >4%") non distingue «peggiorato» da «si corregge, e correggersi costa». Senza un
-  metro migliore non c'è base per dire che sia un miglioramento netto, e tarare
-  qui vorrebbe dire tarare sul rumore. Il tree è tornato a baseline.
-- **Da fare prima di riprovare:** un metro che misuri **tempo totale fuori** e
-  **errore integrato**, non il conteggio delle corse; e la validazione va fatta
-  sulla stessa ampiezza di brani/stili con cui è tarato il resto del file, non su
-  un banco sintetico solo.
+- **Perché il primo giro è stato scartato:** il metro usato ("corse con almeno
+  un'escursione >4%") non distingueva «peggiorato» da «si corregge, e correggersi
+  costa un transitorio».
+
+**Secondo giro, con il metro giusto — RIUSCITO.** `probe_steady_tempo.cpp` ora
+misura **quota di tempo passata fuori** ed **errore medio integrato** su tutti i
+frame, non gli eventi. Su quel metro la baseline a 170 BPM è 3,1% di tempo fuori
+e 1,93% di errore medio, e il primo watchdog la portava a **6,7% e 3,68%**: era
+un peggioramento vero, non il costo del correggersi.
+
+Causa di quel peggioramento, trovata: il watchdog scattava su **qualsiasi**
+disaccordo sopra la sua soglia, **relazioni d'ottava incluse**. A 170 alcuni semi
+acquisiscono a 85 (rapporto 2:1, `log2 = 1,0`): il watchdog rubava quei casi al
+salto d'ottava e li gestiva peggio, riacquisendo a ripetizione.
+
+**Correzione:** confinarlo alla banda che è davvero sua, cioè
+`kStaleGridThreshold < apart < kOctaveThreshold`. Sopra quella soglia il
+disaccordo è un livello metrico e lo possiede il salto d'ottava, che ha tenure,
+salience e vote-hold fatti apposta per quell'argomento.
+
+**Esito misurato** (`kStaleGridThreshold = 0,120`, `kStaleGridVoteBeats = 12`):
+
+| banco | baseline | con watchdog |
+|---|---|---|
+| salto 120→160 | **MAI** (>182 s a 120,00) | **22,6 s** |
+| resto della tabella salti | — | **invariata** |
+| tempo costante, ogni BPM da 60 a 170 | — | **identica alla baseline** |
+
+Cioè: chiude il blocco permanente e **non costa niente** su nessun tempo del
+banco a regime. Gli altri «MAI» rimasti (120→60, 140→75) sono relazioni d'ottava,
+lasciate al loro path apposta: sono la classe indecidibile dell'item 1.
+
+- [x] **Gate `VPTests` intera (2026-09-04): 610 passed, 7 failed — identico alla
+  baseline**, stessi sette test e stesse righe (2 leak + i 5 RED a 50 BPM
+  dell'item 1). Nessuna regressione.
+- [ ] **Validazione ancora dovuta:** il banco a tempo costante è sintetico. Prima
+  di considerarlo chiuso serve la stessa ampiezza di brani/stili con cui è tarato
+  il resto del file, e l'**ascolto** — soprattutto: quando il watchdog scatta, la
+  riacquisizione si sente come una ripresa o come un buco? Va provata dal vivo
+  facendo il salto di tempo che l'ha fatto emergere.
+- [ ] Il caso resta lento (22,6 s su 120→160). È una cassaforte, non un
+  inseguitore: accorciare ancora il voto è tarare sul banco sintetico. Se serve
+  più svelto, la strada è un segnale migliore, non una soglia più bassa.
 
 - [ ] **Decidere il rimedio.** Non toccare `kOctaveThreshold` alla cieca: regge anche la difesa dal rumore di stanza e dalle letture a ottava sbagliata, ed è tarato su misure. La direzione che sembra giusta è una **terza via proporzionata**: evidenza coerente e ripetuta su un tempo fuori soglia per N battute → riacquisizione mirata (quello che oggi fa solo `notifyInputRestart`), senza buttare la fase né la battuta.
 - [ ] Test di gradino oltre il ±19% (almeno 120→160 e 140→75), che oggi mancano del tutto.
