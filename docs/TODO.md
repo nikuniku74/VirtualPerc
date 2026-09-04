@@ -13,7 +13,7 @@ Se scopri qualcosa di nuovo, aggiungi una riga. Se un item cambia, aggiorna il t
 
 ## In corso / da fare
 
-### 1. Tempo lento (~50 BPM): cassa / rullo / charleston a ottavi
+### 1. Tempo lento (~50 BPM): cassa / rullo / charleston a ottavi 🟡 (2026-09-04, indagine chiusa: indecidibile dall'audio, mitigato con TAP e ÷2/×2 — resta ascolto)
 
 A tempi lenti (es. **50 BPM**) il groove da batteria è chiaro: **cassa sull'1 e sul 3**, **rullo sul 2 e sul 4**, **charleston (hi-hat) a ottavi**. L'app **non tiene bene il tempo**, anche se il charleston dà un pulse ogni ottavo — non è un brano "vuoto".
 
@@ -249,7 +249,7 @@ Fatto: due nuovi `Stroke` (`clap`, `cembaloDown`/`cembaloUp`), sintesi fallback 
 
 
 
-### 11. Shaker più naturale (non griglia fissa)
+### 11. Shaker più naturale (non griglia fissa) 🟡 (2026-09-04, codice + test ok — resta ascolto)
 
 Oltre a 1/4, 1/8, 1/16 fissi: in **ottavi**, ogni tanto qualche **sedicesimo** (e analoghi sulle altre griglie, se ha senso). Thinning che **aggiunge** eccezioni, non solo toglie.
 
@@ -306,7 +306,7 @@ linkano puliti.
 
 
 
-### 12. PARTE: dropdown stili (fino a DUE-UNO) + DINAMICA accanto
+### 12. PARTE: dropdown stili (fino a DUE-UNO) + DINAMICA accanto 🟡 (2026-09-04, codice ok — resta touch iPad)
 
 Oggi PARTE è una **riga di quadrati**: AUTO, MARCHA, ROCK, DANCE, POP, SAMBA, FUNK, REGGAE, BOSSA, DUE-UNO, e **DINAMICA** in fondo (`placeSquareRow` in `MainComponent.cpp`). Troppi tasti.
 
@@ -326,27 +326,23 @@ Voci del select, in quest'ordine: **AUTO**, MARCHA, ROCK, DANCE, POP, SAMBA, FUN
 MARCHA / AUTO off è la lettura giusta del TODO, non un'interpretazione: la nota
 sopra la scrive già. Restano due cose:
 
-- [ ] `styleMenuLabel` in `MainComponent.cpp` duplica `vp::toString (GrooveStyle)`
-      e il `10` è scritto a mano in tre punti. Oggi l'ordine coincide; se l'enum
-      cambia, le etichette mentono in silenzio. `i == 0 ? "AUTO" : toString (...)`
-      e `1 + (int) GrooveStyle::count`.
-- [ ] STRUMENTI è passata a **nove** celle quadrate su una riga
+- [x] `styleMenuLabel` duplicava `vp::toString (GrooveStyle)`, con il `10`
+      scritto a mano in tre punti: l'ordine coincideva, ma se l'enum cambiava le
+      etichette mentivano in silenzio. **Corretto (2026-09-04):** la voce 0 è
+      AUTO, le altre leggono `vp::toString (GrooveStyle)`, e il conteggio è
+      `StyleMenuOverlay::kCount = 1 + (int) GrooveStyle::count` — usato per la
+      dimensione di `items[]`, il ciclo del costruttore e il layout in
+      `resized()`. Uno stile nuovo nell'enum ora compare da solo nel menu con il
+      nome giusto, invece di un `"?"` silenzioso.
+- [ ] **Ascolto/touch:** STRUMENTI è passata a **nove** celle quadrate su una riga
       (`side = (W - 8*gap) / 9`): «NATURALE» in quello spazio accanto a «1/16».
-      Da guardare su iPad vero prima di dire che è a posto.
-
-`styleMenuLabel` **corretto (Claude, 2026-09-04)**: non più un array di
-etichette duplicato con `10` scritto a mano in tre punti. La voce 0 è AUTO, le
-altre leggono `vp::toString (GrooveStyle)`; il conteggio è
-`StyleMenuOverlay::kCount = 1 + (int) GrooveStyle::count`, usato per la
-dimensione di `items[]`, il ciclo del costruttore e il layout in `resized()`.
-Un nuovo stile nell'enum ora compare da solo nel menu con il nome giusto,
-invece di un `"?"` silenzioso.
+      Da guardare su iPad vero prima di dire che è a posto. Unico residuo.
 
 ---
 
 
 
-### 13. Tasto «L'1 è QUI» / «SPOSTA L'1»
+### 13. Tasto «L'1 è QUI» / «SPOSTA L'1» ✅ (2026-09-04)
 
 **Comportamento attuale (non un bug di stato):** è **lo stesso pulsante**.  
 «SPOSTA L'1» = sbloccato, un click **sposta l'1 di un quarto e blocca**. Accesso «L'1 è QUI» = *il conto è tuo, l'auto non lo tocca*. Anche un TAP che dichiara l'1 accende il lucchetto.
@@ -395,7 +391,7 @@ Il salto è un taglio per il tracker: non lasciare le percussioni sul vecchio pu
 
 
 
-### 15. Pulsanti ÷2 e ×2: servono o si tolgono
+### 15. Pulsanti ÷2 e ×2: servono o si tolgono 🟡 (2026-09-04, ripristinati e testati — resta ascolto)
 
 **Decisione (2026-09-03):** rimossi. Con `tempoOctaveAuto` sempre attivo,
 `BeatTracker::updateAutoOctave` tiene il livello metrico; i pulsanti forzavano
@@ -461,7 +457,7 @@ item 1) vanno risolti nel tracker, non con un workaround in UI.
 
 
 
-### 16. Guadagno automatico dell'analisi: ora attenua anche vicino al clipping (2026-09-04)
+### 16. Guadagno automatico dell'analisi: ora attenua anche vicino al clipping 🟡 (2026-09-04, codice + gate ok — resta ascolto)
 
 Utente: abbassando o alzando il **volume di ingresso** dall'app, a volte l'ascolto (tempo/battito) sembra migliorare. Causa trovata: il guadagno automatico che normalizza il segnale per la rete (`applyAnalysisMakeup`, target picco 0.20, tetto 24x) era **solo boost** — clampato a un minimo di 1.0, non attenuava mai un ingresso già più forte del target.
 
@@ -473,7 +469,7 @@ Fix effettivo (più stretto): attenua **solo** sopra un picco di **0.90** (vicin
 - [x] Fix stretto: `kMakeupClipGuardPeak = 0.90f`, attenua solo sopra, invariato sotto (righe ~37-66 e ~853-860 di `VirtualPercussionEngine.cpp`).
 - [x] Estratto `octave-sweep` in `vpRunOctaveSweepTest` (`Tests/TestAiBeat.cpp` + `TestAiBeat.h`), richiamabile da solo con `VPTests --octave` (~3-4 min invece dei ~5+ min della suite intera) — usare questo per iterare su qualsiasi cosa tocchi il livello di analisi, non la suite intera.
 - [x] Verificato con `VPTests --octave`: 168 BPM torna a leggere giusto (gain=1.000, "on it").
-- [ ] **Gate non ancora fatto:** `VPTests` intera (serve conferma che nessun'altra cosa dipenda dal vecchio clamp boost-only). Non lanciarla senza chiedere — costa ~5 min.
+- [x] **Gate fatto (2026-09-04):** `VPTests` intera su richiesta dell'utente — **610 passed, 7 failed**, e le 7 sono tutte preesistenti e attese: 2 leak (`no block of it is moved…`, `a leak that does not land on a whole sample…`) e i 5 RED a 50 BPM dell'item 1 (`a 50 BPM bar makes its 100 BPM hi-hat…`, `mixer/file slow kit holds 50 BPM…`, `mixer/file audible 50 BPM quarter…`), lasciati rossi apposta. **Nessuna regressione nuova**: niente dipendeva dal vecchio clamp boost-only.
 - [ ] Ascolto: non fatto. Verificare con un ingresso reale volutamente troppo "caldo" (mixer a livello di linea o trim alto) che il sintomo originale dell'utente (regolare il volume per sentire meglio) sia davvero sparito.
 - [ ] Se in futuro si vuole la simmetria piena (attenuare sempre verso 0.20, non solo sopra 0.90), serve rifare la validazione a più brani/stili come quella già in commento sopra `kMakeupTargetPeak` — non è un fix da una riga.
 
@@ -481,7 +477,7 @@ Fix effettivo (più stretto): attenua **solo** sopra un picco di **0.90** (vicin
 
 
 
-### 17. L'ottava non cambia più sotto le mani di chi suona (2026-09-04)
+### 17. L'ottava non cambia più sotto le mani di chi suona 🟡 (2026-09-04, codice + gate ok — resta ascolto)
 
 Segnalato dall'utente: *«se c'è in esecuzione il percussionista e di punto in bianco
 dimezza o raddoppia, si incasina tutto»*. Confermato con misura.
@@ -531,7 +527,7 @@ Tre cose restano aperte apposta:
 - [x] Modifica in `BeatTracker::updateAutoOctave` (`Source/Tracking/BeatTracker.cpp`), con il commento che riporta la traccia sopra.
 - [x] Verificato con `VPProbe --trace --live --mixer plain <bpm>` sulla matrice qui sopra. **Comando di regressione:** `VPProbe --trace --live --mixer plain 168` deve finire vicino a 167, non a 84.
 - [ ] **Ascolto:** suonare un pezzo a ~168 che deriva e verificare che la parte non cambi densità a metà. Non fatto.
-- [ ] Gate `VPTests` intera: non lanciata dopo questa modifica (fatto solo il percorso `--octave`). Chiedere prima, costa ~5 min.
+- [x] Gate `VPTests` intera **fatto (2026-09-04)**: 610 passed, 7 failed, tutte preesistenti (2 leak + i 5 RED a 50 BPM dell'item 1). Il congelamento dell'ottava sotto `sounding` non rompe nulla nella suite.
 
 ---
 
@@ -568,6 +564,76 @@ si sente.
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
+
+### 19. Salto di tempo: il decoder resta incastrato sul vecchio BPM (2026-09-04, APERTO — riprodotto)
+
+Segnalato dall'utente: *«se salto da una velocità all'altra sembra che non trovi
+a volte il tempo. Lo ritrova solo se muovo il volume del mic alzandolo o
+abbassandolo. Come se a volte uscisse e avesse difficoltà a rientrare nel tempo
+se non dopo numerose battute.»*
+
+**Riprodotto e quantificato** con `scripts/probe_tempo_step.cpp` (decoder puro,
+niente rete e niente real-time; la riga per compilarlo è in cima al file). Ogni
+salto è misurato due volte: normale, e con `notifyInputRestart()` al cambio —
+che è esattamente ciò che muovere il gain del mic finisce per provocare, via il
+gradino di livello che fa scattare `analysisEpoch`.
+
+| salto | delta | normale | con input-restart |
+|---|---|---|---|
+| 120 → 132 | +10% | 4.1 s | 0.5 s |
+| 120 → 150 | +25% | 17.2 s | 0.8 s |
+| **120 → 160** | +33% | **MAI** | 0.8 s |
+| 100 → 160 | +60% | 27.8 s | 0.8 s |
+| 160 → 100 | −38% | 15.6 s | 0.6 s |
+| 120 → 90 | −25% | 10.7 s | 0.7 s |
+| 90 → 120 | +33% | 34.7 s | 24.7 s |
+| **140 → 75** | −46% | **MAI** (deriva a 150) | 0.8 s |
+| 75 → 140 | +87% | 8.1 s | 0.8 s |
+
+«MAI» non è un'iperbole né lentezza: su un orizzonte di **182 secondi** dopo il
+cambio, 120→160 continua a riportare `bpm=120.00` con `confidence=1.00`. È
+certo, ed è sbagliato. La colonna di destra è il workaround dell'utente,
+misurato: quasi tutto scende a 0.5–1 s.
+
+**Causa.** Tre cancelli, tutti sulla stessa costante `kOctaveThreshold = 0.25`
+(log2, cioè **±19%**) in `Source/AI/BeatDecoder.cpp`:
+
+1. `transitionCandidateAllowed` (~riga 1172) — la strada *rapida* rifiuta un
+   candidato oltre ±19% dal `bpm` commesso: `metricalConflict`. Prima ancora,
+   `kTransitionMaxRelativeDelta = 0.25` rifiuta oltre ±25%: `outsideRange`.
+2. `pullTowardsComb` (~riga 2028) — la strada *lenta e continua* si tira
+   indietro esattamente sopra la stessa soglia («a different level entirely —
+   not this path's business»).
+3. `combDisagrees` (~riga 1631) — questo dovrebbe essere il portello di
+   sicurezza (scatta solo *sopra* la soglia), ma sui casi «MAI» non arriva mai a
+   far riancorare.
+
+Il commento di `transitionCandidateAllowed` dice che i salti fuori range sono
+«affare della macchineria dell'ottava, che ha tutto il buffer». Ma quella si
+muove solo agli estremi (`kOctaveTooFast = 168`, `kOctaveTooSlow = 49`) o su un
+hint metrico. **Un salto di media portata come 120→160 non è né un'ottava né un
+estremo: cade in un buco che non è di nessuno.**
+
+`notifyInputRestart()` funziona perché azzera tutto — `established`,
+`intervalAcquired`, la griglia, lo storico dei fit — e rientra in
+`TempoRegime::unknown`. Il suo stesso commento lo dice: *«A tempo called fixed
+on a room is the most expensive thing to keep: it is designed to be stubborn.»*
+La testardaggine è voluta (difesa dal rumore di stanza), ma **non c'è una via di
+mezzo proporzionata**: o difende 120 per sempre, o cancella tutto.
+
+**Perché non è mai stato visto:** l'unico test di gradino è **120→132, +10%**
+(`"microphone/line confirms rising tempo step within two beats"`), dentro la
+finestra. Nessun test supera il ±19%.
+
+- [x] Riprodotto, quantificato, causa isolata (2026-09-04). Probe in `scripts/probe_tempo_step.cpp`.
+- [ ] **Decidere il rimedio.** Non toccare `kOctaveThreshold` alla cieca: regge anche la difesa dal rumore di stanza e dalle letture a ottava sbagliata, ed è tarato su misure. La direzione che sembra giusta è una **terza via proporzionata**: evidenza coerente e ripetuta su un tempo fuori soglia per N battute → riacquisizione mirata (quello che oggi fa solo `notifyInputRestart`), senza buttare la fase né la battuta.
+- [ ] Test di gradino oltre il ±19% (almeno 120→160 e 140→75), che oggi mancano del tutto.
+- [ ] Verificare sul percorso vero (mixer/file con rete), non solo sul decoder: `VPProbe` non ha un `--tempo-step`, va aggiunto.
+- [ ] Ascolto.
+
+---
+
+
 
 ### A. Chiusura ciclo Codex (PATTERN, no loop registrati)
 
