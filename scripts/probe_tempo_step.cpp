@@ -22,7 +22,7 @@
 
 static const double fps = 50.0;
 static const double changeAt = 18.0;
-static const double duration = 60.0;   // long tail: we want to see IF it ever lands
+static const double duration = 150.0;  // long enough to see the stale-grid watchdog fire
 static const float  kStrongPeak = 0.94f;
 
 struct Res { double lockSec; float finalBpm; bool everLocked; };

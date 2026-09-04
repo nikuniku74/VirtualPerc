@@ -533,7 +533,7 @@ Tre cose restano aperte apposta:
 
 
 
-### 18. Assestamento lento e imprevedibile (aperto, non toccato)
+### 18. Assestamento lento e imprevedibile 🟡 (2026-09-04, misurato e circoscritto — resta il confine a 170)
 
 Trovato durante l'indagine dell'item 17, **non risolto e deliberatamente non
 toccato**. Con lo stesso identico materiale, la stessa corsa dà esiti diversi:
@@ -551,11 +551,47 @@ neutralizzarla nelle misure). Quindi **una parte potrebbe essere artefatto del
 banco** — ma trenta secondi per agganciare un tempo comune, se capita sul palco,
 si sente.
 
-- [ ] Capire se esiste anche fuori dal banco, dove il thread audio ha priorità
-  diverse. Finché non lo sappiamo, **non** inseguirla modificando il tracker:
-  si rischia di tarare su un artefatto di misura.
-- [ ] Se si indaga: `VPProbe --sync` isola la variabilità dello scheduler; se col
-  `--sync` sparisce, è il banco, non il prodotto.
+- [x] **Risposto (Claude, 2026-09-04): non è (solo) artefatto del banco.**
+  `scripts/probe_steady_tempo.cpp` gira il decoder **senza rete e senza
+  scheduler** — deterministico dato il seme — su tempo costante con deriva 3 BPM
+  e jitter 10 ms (le impostazioni `--live`), 300 s, 10 semi per tempo. La
+  variabilità resta. Quindi non serve più `--sync` per decidere: il fenomeno è
+  nel decoder, non nel worker.
+
+  | BPM | corse con uscite (su 10) | errore peggiore | fuori più a lungo |
+  |---|---|---|---|
+  | 60 | **10** | **109%** | **288 s** |
+  | 75 / 90 / 100 / 110 | 0 | — | — |
+  | 120 / 132 / 140 / 150 / 160 | 1–3 | 4–5,5% | 2–3 s |
+  | 170 | **4** | **50%** | **26,5 s** |
+
+  Letto per bene, non è "il tracker è instabile":
+  - **75–160 è sano.** I blip da 2–3 s al 4–5% sono transitori di acquisizione,
+    e il tracciamento della deriva è dentro 1–2 BPM (verificato a 132).
+  - **I guasti stanno ai bordi della gamma, e sono metà/doppio, non il tempo.**
+
+  **Attribuzione corretta (stessa giornata, dopo una seconda misura).** In una
+  prima lettura avevo dato la colpa a `kOctaveTooFast = 168`: **sbagliato**, quella
+  costante sta solo in `BeatTracker.cpp` e questa probe è a livello di decoder, che
+  non la vede nemmeno. Il fenomeno è il **livello metrico scelto in acquisizione**.
+  Misurato con 20 semi per tempo (rapporto riportato/vero alla prima risposta):
+
+  | BPM | giusto | a metà | al doppio |
+  |---|---|---|---|
+  | 50 / 60 | 2/20 | — | **18/20** |
+  | 70 | 9/20 | — | 11/20 |
+  | **80 → 160** | **20/20** | 0 | 0 |
+  | 170 / 180 | 17/20 | 0 | 0 (3 "altro") |
+  | 200 | 13/20 | **7/20** | 0 |
+
+  Cioè: **la gamma dove vive quasi tutta la musica (80–160) è già pulita**, 20 su
+  20. Quello che resta è raddoppio sotto i 70 e dimezzamento a 200 — esattamente
+  l'ambiguità metà/doppio che l'item 1 ha dimostrato **indecidibile dall'audio**,
+  non un bug da riparare. Il rimedio previsto è già in campo: TAP e ÷2/×2.
+- [x] **Non inseguire questa con modifiche al tracker.** La prima ipotesi
+  (isteresi sul confine dell'ottava) è stata scartata: il confine non è nel
+  decoder e la gamma centrale non ha il problema. Tarare qui vorrebbe dire tarare
+  sul rumore. Il lavoro che paga è l'**item 19**, che è un bug vero e riparabile.
 
 ---
 
@@ -626,6 +662,44 @@ mezzo proporzionata**: o difende 120 per sempre, o cancella tutto.
 finestra. Nessun test supera il ±19%.
 
 - [x] Riprodotto, quantificato, causa isolata (2026-09-04). Probe in `scripts/probe_tempo_step.cpp`.
+**Causa esatta trovata (2026-09-04, seconda indagine).** Strumentando il decoder
+sul caso 120→160: il comb riporta **106,67**, non 160. `log2(120/106,67) = 0,170`,
+**sotto** `kOctaveThreshold = 0,25` — quindi `combDisagrees` è falso e il portello
+di sicurezza non scatta mai. 106,67 BPM è un periodo di 0,5625 s, cioè **1,5 volte**
+quello vero: il comb sta descrivendo una griglia che rifiuta la maggior parte dei
+battiti di cui dovrebbe essere fatta.
+
+È **la stessa trappola già documentata per la fase** nel commento di
+`checkGridPhase` (`BeatDecoder.cpp`, ~riga 982): *«una griglia ancorata in levare
+non è solo sbagliata, è stabile: ogni battito vero le cade fuori e viene rifiutato
+come suddivisione, quelli che restano la fittano puliti… e non c'era niente nella
+catena che potesse accorgersene.»* Per la fase l'hanno risolta col fold, che sta
+fuori dal gate. **Per il tempo la stessa trappola è rimasta aperta**, e in quello
+stato `residual`, `coverage` e `salience` sono tutti sani: il comb è l'unico che
+sa, e sta all'11%, sotto ogni soglia.
+
+**Tentativo di fix fatto e RIPORTATO INDIETRO (stessa giornata).** Watchdog
+"stale grid": soglia più bassa del salto d'ottava ma voto molto più lungo
+(`kStaleGridThreshold` in log2, `kStaleGridVoteBeats` battiti di disaccordo che
+regge, con isteresi), e all'attivazione **non** adotta `combBpm` (che è sbagliato
+anche lui) ma fa la riacquisizione mirata: molla griglia, fit ed evidenza del
+fold, come `notifyInputRestart`.
+
+- **Funziona sul bersaglio:** 120→160 passa da **MAI** a **40,5 s** (con voto 24
+  battiti; a 48 battiti erano 79 s).
+- **Ma regredisce il banco a tempo costante:** a 170 BPM le corse con almeno
+  un'escursione passano da **4/10 a 10/10**. Verificato che *non* è la taratura
+  della soglia: con la soglia a 0,24 (appena sotto quella dell'ottava) la
+  regressione resta identica. È la riacquisizione stessa che costa un transitorio.
+- **Perché è stato scartato:** il metro usato ("corse con almeno un'escursione
+  >4%") non distingue «peggiorato» da «si corregge, e correggersi costa». Senza un
+  metro migliore non c'è base per dire che sia un miglioramento netto, e tarare
+  qui vorrebbe dire tarare sul rumore. Il tree è tornato a baseline.
+- **Da fare prima di riprovare:** un metro che misuri **tempo totale fuori** e
+  **errore integrato**, non il conteggio delle corse; e la validazione va fatta
+  sulla stessa ampiezza di brani/stili con cui è tarato il resto del file, non su
+  un banco sintetico solo.
+
 - [ ] **Decidere il rimedio.** Non toccare `kOctaveThreshold` alla cieca: regge anche la difesa dal rumore di stanza e dalle letture a ottava sbagliata, ed è tarato su misure. La direzione che sembra giusta è una **terza via proporzionata**: evidenza coerente e ripetuta su un tempo fuori soglia per N battute → riacquisizione mirata (quello che oggi fa solo `notifyInputRestart`), senza buttare la fase né la battuta.
 - [ ] Test di gradino oltre il ±19% (almeno 120→160 e 140→75), che oggi mancano del tutto.
 - [ ] Verificare sul percorso vero (mixer/file con rete), non solo sul decoder: `VPProbe` non ha un `--tempo-step`, va aggiunto.
