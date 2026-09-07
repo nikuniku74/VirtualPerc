@@ -205,10 +205,46 @@ shaker + cembalo + clap + a conga table hit + a conga ghost, with one spare.
 
 ## 8. Feel: swing, humanize, ghosts
 
-**Swing** (`humanDelay`, `GrooveEngine.cpp:711`) is a **warp of the beat**, not a
-late off-eighth. At full amount the "&" sits two thirds of the way through the
-beat (`kFullSwingBeats = 1/6`); "e" and "a" ride the same stretch, so a
-sixteenth part shuffles instead of fighting delayed eighths.
+**Swing** (`humanDelay`) is a **warp**, not a late off-eighth - and what it warps
+is *the grid being played*. The span is the **beat** on an eighths part and the
+**eighth** on a sixteenths part (`swungWithinSpan`); at full amount the span's
+halfway point moves to two thirds of it (`kFullSwingBeats = 1/6`) and everything
+either side rides the same stretch.
+
+So on eighths the "&" goes to 2/3 - a shuffle - while on sixteenths **the "&"
+does not move at all** and only the sixteenth inside each eighth goes late:
+0, 1/3, 1/2, 5/6.
+
+That distinction is measured, not assumed. Against an Afrobeats shaker reference
+at 106 BPM (24 strokes per position, cluster spread 1-8 ms) the mean error was
+20.8 ms straight, **26.6 ms warping the beat**, 7.6 ms warping the eighth: the
+eighths there sit at 0.516 and 0.484 of the beat and hold still, and only the
+sixteenth between them moves, to 57.4% and 65.7% of its eighth. Warping the beat
+fitted that music *worse than no swing at all*, because the one stroke it moves
+is the one the music holds still. If a swing change ever needs re-checking,
+`VPTests --swing` asserts all four combinations and, separately, that the
+off-eighth does not move on a sixteenths part.
+
+**In the UI it is a switch, not a knob** - SWING in STRUMENTI, off by default,
+next to NATURALE (`MainComponent::applySwing`, docs/TODO.md item 7). A
+percussionist does not play 37% of a shuffle, so there is one value and it is
+`kSwingOnAmount = 0.65`, **not** the full triplet: the reference lands its
+sixteenth at 61.6% of the eighth and 0.65 renders 63.0%, inside the reference's
+own eight-point spread, where 1.0 renders 68.9% - above all of it. The value was
+chosen by ear from three renders, and it is not a fit: the two halves of the
+reference's own bar disagree by more than the number being chased. The engine still takes a 0..1 amount
+because the warp is written in terms of it, and `setSwing` still commits on the
+next quarter like the style does - one beat can never contain two timing maps.
+
+The geometry is asserted, not argued about (`swing-grid` in `VPTests`): straight,
+every sixteenth is exactly where it is written; swung, all sixteen land on
+**0, 1/3, 2/3, 5/6** of the beat - the two eighths on the triplet and each one's
+own subdivision riding the same stretch. `delayBeats` never goes negative at any
+amount.
+
+The recorded bank has no swung takes: past `LoopBank::swingTolerance` (0.18) it
+refuses, so SWING on always falls back to the stroke engine. That is a handover,
+not a silence, and SETUP says which path is sounding.
 
 **Humanize** does two things:
 - velocity spread: `+/- 0.20 * humanize` around the written value;
@@ -302,6 +338,13 @@ were playing.
   being played.
 - **Style changes commit on the next quarter**, so one beat can never contain
   two different parts.
+- A style change does not own or restart the clock. `VPOps --style-change`
+  measures it against an untouched control pass: at 118 BPM the direct-file
+  path is sample-equivalent at the phase readout (`-0.00 ms`) and the acoustic
+  iPad path differs by 1.93 ms, below the probe's roughly 10 ms resolution.
+  If a new part *sounds* displaced while those figures hold, first compare its
+  authored accents and empty steps; a different rhythm is not a moved grid.
+  `--file`, `--mixer` and the default speaker path select the three inputs.
 - Real-time: no allocation, no locks, no I/O in `render()`.
 
 Two `render()` traps that have each cost a bug:

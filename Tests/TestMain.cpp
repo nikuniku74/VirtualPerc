@@ -175,7 +175,7 @@ namespace
         measures everything else in.
 
         The bench above hands the canceller an exact scaled copy of its own output
-        at a whole number of samples, and a converged two-band fit removes
+        at a whole number of samples, and a converged fit removes
         essentially all of it. A room is not that, and the difference matters
         enough to be measured one cause at a time. Same rig, 8 s, funk at
         eighths, `leakRemain/inputPeak`:
@@ -197,18 +197,26 @@ namespace
         **7.6%** with the full eight-tap tail (0.9150 against 0.9902).
 
         So: a return at a fractional delay is still cancelled. A return whose
-        *spectrum* has been reshaped inside each band is largely not - two gains
-        cannot follow a 260 Hz high pass through a conga - and neither is a
-        reflection that is not in the reference at any single delay. The
-        0.805-0.915 residual is where those two limits of a two-band, single-delay
-        model put the floor for this fixture; it is not a regression, and it is not
+        *spectrum* has been reshaped inside each band is largely not - a handful of
+        gains cannot follow a 260 Hz high pass through a conga, which is why one
+        band edge now sits at that roll-off and why three is still not many - and
+        neither is a reflection that is not in the reference at any single delay.
+        The residual is where those two limits of a piecewise-constant,
+        single-delay model put the floor for this fixture; it is not a regression, and it is not
         a claim that the direct arrival has been taken out of a room. The 0.0000
         above is a statement about the estimator on an exact copy, and nothing
         more. */
     enum class RoomModel { fractional, oneWall, eightWalls };
 
+    /** Which of our own voices is in the room. The two sit on opposite sides of
+        the canceller's 1.5 kHz split - measured on eight bars of marcha at
+        eighths, the shaker's energy is 9.5 dB above it and the congas' 13.6 dB
+        below - so a residual quoted for the part as a whole says nothing about
+        which half of it the tracker is still hearing. */
+    enum class Voices { shaker, congas, both };
+
     LeakRun roomLeakRun (double sr, int blk, bool cancellationEnabled, int style,
-                         RoomModel model)
+                         RoomModel model, Voices voices = Voices::both)
     {
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, blk, 1);
@@ -219,6 +227,8 @@ namespace
         eng.settings().grooveAuto.store (false);
         eng.settings().grooveStyle.store (style);
         eng.settings().dynamicsFollow.store (false);
+        eng.settings().shakerEnabled.store (voices != Voices::congas);
+        eng.settings().congasEnabled.store (voices != Voices::shaker);
         eng.setLeakCancellationEnabledForTest (cancellationEnabled);
         eng.setReportedLatencyMs (150.0f);
         eng.setFixedBpm (120.0f);
@@ -465,6 +475,122 @@ namespace
         return d;
     }
 
+    /** The swing warp's geometry, on its own. Behind `--swing` as well as in
+        the suite: it is a hundred microseconds of work behind minutes of
+        neural worker, and being able to re-measure it in one command is the
+        difference between checking a timing change and guessing at it. */
+    /** The swing warp's geometry, on its own. Behind `--swing` as well as in
+        the suite: it is a hundred microseconds of work behind minutes of
+        neural worker, and being able to re-measure it in one command is the
+        difference between checking a timing change and guessing at it. */
+    void runSwingGridTest()
+    {
+        // Swing is a switch (docs/TODO.md item 7), so what it switches to has to
+        // be the thing it claims - and what it claims depends on the grid being
+        // played, which is the part the first version of this got wrong.
+        //
+        // On eighths, swing warps the beat: the "&" goes to the triplet and the
+        // sixteenths either side ride the same stretch. That is a shuffle.
+        //
+        // On sixteenths it warps the *eighth* instead, so the "&" stays where it
+        // is and only the sixteenth inside each eighth moves late. Measured on
+        // the reference the listener brought - an Afrobeats shaker at 106 BPM,
+        // 24 strokes per position, cluster spread 1-8 ms - the eighths sit at
+        // 0.516 and 0.484 of the beat and the sixteenth inside each lands at
+        // 57.4% and 65.7% of it. Mean error against the candidates: 20.8 ms
+        // straight, 26.6 ms warping the beat, 7.6 ms warping the eighth. A beat
+        // warp fitted that music *worse than no swing at all*, because the one
+        // stroke it moves is the one the music holds still.
+        //
+        // humanize is off here: its jitter is a separate term and must not be
+        // read as swing.
+        vp::GrooveEngine groove;
+        groove.prepare (0x5117A9C1u);
+        groove.setStyle (vp::GrooveStyle::marcha);
+        groove.setHumanize (0.0f);
+        groove.setShakerEnabled (true);
+        groove.setCongasEnabled (false);
+
+        // Where a step is asked to sound, as a fraction of the beat. -1 if the
+        // table is silent there or the subdivision has thinned it away.
+        auto landingOf = [&groove] (vp::Subdivision grid, float swing, int step) -> float
+        {
+            groove.setSubdivision (grid);
+            groove.setSwing (swing);
+            vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+            const int n = groove.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
+            if (n <= 0)
+                return -1.0f;
+            return 0.25f * static_cast<float> (step % 4) + ev[0].delayBeats;
+        };
+
+        struct Case
+        {
+            const char* name;
+            vp::Subdivision grid;
+            float want[4];   // where each sixteenth of the beat must land
+        };
+        const Case cases[] = {
+            // Straight is straight on either grid.
+            { "1/16 straight", vp::Subdivision::sixteenth, { 0.0f, 0.25f, 0.5f, 0.75f } },
+            { "1/8  straight", vp::Subdivision::eighth,    { 0.0f, 0.25f, 0.5f, 0.75f } },
+            // The eighth holds still and the sixteenths move: the shape the
+            // reference actually has.
+            { "1/16 swung",    vp::Subdivision::sixteenth,
+              { 0.0f, 1.0f / 3.0f, 0.5f, 5.0f / 6.0f } },
+            // And the beat still warps when eighths are what is being played.
+            { "1/8  swung",    vp::Subdivision::eighth,
+              { 0.0f, 1.0f / 3.0f, 2.0f / 3.0f, 5.0f / 6.0f } },
+        };
+        const float swings[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+        const char* subName[4] = { "quarter", "e", "&", "a" };
+
+        bool allRight = true, neverEarly = true;
+        for (int c = 0; c < 4; ++c)
+            for (int beat = 0; beat < 4; ++beat)
+                for (int sub = 0; sub < 4; ++sub)
+                {
+                    const int step = beat * 4 + sub;
+                    const float got = landingOf (cases[c].grid, swings[c], step);
+                    if (got < 0.0f)
+                        continue;
+                    if (std::fabs (got - cases[c].want[sub]) > 1.0e-5f)
+                    {
+                        allRight = false;
+                        std::printf ("swing-grid  %s step %2d (%-7s) wanted %.4f got %.4f\n",
+                                     cases[c].name, step, subName[sub],
+                                     static_cast<double> (cases[c].want[sub]),
+                                     static_cast<double> (got));
+                    }
+                    if (got < 0.25f * static_cast<float> (sub) - 1.0e-6f)
+                        neverEarly = false;
+                }
+
+        // The property that matters most on a sixteenths part, stated on its
+        // own so a regression names itself: swinging must not move the "&".
+        float offEighthMoved = 0.0f;
+        for (int beat = 0; beat < 4; ++beat)
+        {
+            const float straight = landingOf (vp::Subdivision::sixteenth, 0.0f, beat * 4 + 2);
+            const float swung    = landingOf (vp::Subdivision::sixteenth, 1.0f, beat * 4 + 2);
+            if (straight >= 0.0f && swung >= 0.0f)
+                offEighthMoved = std::max (offEighthMoved, std::fabs (swung - straight));
+        }
+
+        std::printf ("swing-grid  grids=%s  never-early=%s  &-moved-on-16ths=%.5f beats\n",
+                     allRight ? "ok" : "WRONG", neverEarly ? "ok" : "WRONG",
+                     static_cast<double> (offEighthMoved));
+        expect (allRight,
+                "swing warps the grid being played: the eighth on a sixteenths part, "
+                "the beat on an eighths part");
+        expect (neverEarly,
+                "swing is lateness: no stroke is ever asked for before its grid "
+                "position");
+        expect (offEighthMoved < 1.0e-6f,
+                "on a sixteenths part the off-eighth does not move - that is the whole "
+                "difference between a shuffle and the sixteenth swing the reference has");
+    }
+
     void runLeakTests (double sr)
     {
         const vp::Subdivision subs[3] = { vp::Subdivision::quarter, vp::Subdivision::eighth,
@@ -494,7 +620,8 @@ namespace
         // So the bound is absolute, it is the same bound everywhere, and it is
         // asserted at the subdivision the app actually ships in. A canceller
         // that holds its estimate over silence cancels this bench to below
-        // 0.0001 on all fifty-four rows - the echo here is an exact scaled copy
+        // 0.0001 on all fifty-four rows, 0.0179 since the three-band fit's ridge
+        // - the echo here is an exact scaled copy
         // of our own output, so a converged fit removes essentially all of it,
         // and the room bench further down is where the honest figure lives -
         // which leaves 0.10 loose by three orders of magnitude and still tight
@@ -813,9 +940,9 @@ namespace
         // Finally, the same thing in a room rather than down a wire. These are the
         // numbers to quote about a real rig: through the iPad's speaker with the
         // repository's own reflection model, most of the return is either
-        // band-shaped or not in the reference at any single delay, and a two-band
-        // canceller reaches little of it - 11.5% of the return on the one-wall
-        // fixture, 7.6% with the full tail, against 90.2% when the direct
+        // band-shaped or not in the reference at any single delay, and a canceller
+        // made of a few band gains reaches little of it - 16% of the return on the
+        // one-wall fixture, 6% with the full tail, against 73% when the direct
         // component arrives spectrally unmodified. What is asserted per fixture is
         // the mean over the run, which is the only thing these three rows measure.
         {
@@ -849,6 +976,38 @@ namespace
             // above uses, and the misalignment is what sets it.
             expect (remains[0] < 0.25f,
                     "a leak that does not land on a whole sample is still subtracted");
+
+            // And the same fixture taken apart by voice, because "the congas
+            // wander and the shaker does not" is a report about one half of the
+            // part, and the mean over both halves cannot answer it. Same room,
+            // same style, same subdivision; only which of our voices is in it
+            // changes.
+            const Voices vs[3] = { Voices::shaker, Voices::congas, Voices::both };
+            const char* vnames[3] = { "shaker", "congas", "both" };
+            for (int v = 0; v < 3; ++v)
+            {
+                const auto on = roomLeakRun (sr, 1024, true,
+                                             static_cast<int> (vp::GrooveStyle::funk),
+                                             RoomModel::oneWall, vs[v]);
+                const auto off = roomLeakRun (sr, 1024, false,
+                                              static_cast<int> (vp::GrooveStyle::funk),
+                                              RoomModel::oneWall, vs[v]);
+                std::printf ("leak-voice     %-11s on=%.4f off=%.4f worst=%.4f "
+                             "removed=%.1f%% blocks=%d\n",
+                             vnames[v], static_cast<double> (on.remain),
+                             static_cast<double> (off.remain),
+                             static_cast<double> (on.worstBlock),
+                             off.remain > 0.0f
+                                 ? 100.0 * (1.0 - on.remain / off.remain) : 0.0,
+                             on.counted);
+                // Eight, not the twenty the whole-part rows use: the conga
+                // table at eighths puts an onset in about one 1024-frame block
+                // in twelve, so a conga-only run has ten loud blocks in eight
+                // seconds where the shaker has thirty-five. That is the part,
+                // not a short bench.
+                expect (on.counted >= 8 && on.remain < off.remain,
+                        "the canceller lowers our own return for this voice on its own");
+            }
         }
     }
 }
@@ -890,6 +1049,15 @@ int main (int argc, char** argv)
             return 2;
         }
         vpRunOctaveSweepTest (gPassed, gFailed, only);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
+    // The swing grid on its own: sixteen calls into GrooveEngine and no engine at
+    // all. See docs/TODO.md item 7.
+    if (argc > 1 && std::string (argv[1]) == "--swing")
+    {
+        runSwingGridTest();
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }
@@ -1760,6 +1928,8 @@ int main (int argc, char** argv)
                     && std::fabs (perc.currentSwing() - 1.0f) < 1.0e-6f,
                 "part and swing commit together on the next quarter");
     }
+
+    runSwingGridTest();
 
     // A phase snap invalidates only strokes which have not happened yet. At
     // full swing the off-eighth is queued thousands of samples ahead; keeping

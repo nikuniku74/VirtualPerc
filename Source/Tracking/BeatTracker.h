@@ -80,6 +80,10 @@ public:
     void setBeatModel (std::unique_ptr<IBeatModel> model);
 
     void prepare (double sampleRate) noexcept;
+    /** Stop the inference worker while no audio device can feed it. This is a
+        lifecycle-thread call, never an audio-thread operation. A later
+        prepare() starts a fresh analysis session. */
+    void suspendAnalysis();
     void reset() noexcept;
 
     void setFollowStrength (FollowStrength s) noexcept;

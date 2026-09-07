@@ -7086,7 +7086,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 vp::VirtualPercussionEngine eng;
                 eng.setBeatModel (std::make_unique<BeatButNoBarModel> (truePhase, sr));
                 eng.prepare (sr, block, 1);
-                eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+                // Exercise the acoustic path: it must reject the network's
+                // chance-level bar vote without also disabling the harmonic
+                // fallback that is supposed to replace it.
+                eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
                 eng.settings().dynamicsFollow.store (false);   // one thing at a time
                 eng.start();
 

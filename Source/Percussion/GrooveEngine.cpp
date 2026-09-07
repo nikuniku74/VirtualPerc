@@ -764,24 +764,58 @@ float GrooveEngine::humanVelocity (float base) noexcept
     return std::clamp (base * (1.0f + spread * rng.nextSigned()), 0.05f, 1.0f);
 }
 
+namespace
+{
+    /** Where a position inside a swung span lands. `x` and the result are
+        fractions of the span; its halfway point moves to `0.5 + d` and
+        everything either side rides the same stretch, so the subdivision
+        shuffles with the span instead of fighting it. */
+    float swungWithinSpan (float x, float d) noexcept
+    {
+        if (x <= 0.0f)
+            return 0.0f;
+        if (x < 0.5f)
+            return x * (0.5f + d) / 0.5f;
+        return (0.5f + d) + (x - 0.5f) * (0.5f - d) / 0.5f;
+    }
+}
+
 float GrooveEngine::humanDelay (int step) noexcept
 {
-    // Swing is a warp of the beat, not a late off-eighth. The "&" sits on
-    // the triplet at full amount; "e" and "a" ride the same stretch so a
-    // 16th-grid part shuffles instead of fighting the delayed 8ths.
+    // Swing is a warp, not a late off-eighth - and what it warps is *the grid
+    // being played*, which is the part this got wrong.
+    //
+    // Warping the beat puts the "&" on the triplet: that is a shuffle, and it
+    // is right when the part is on eighths. On sixteenths it is the wrong
+    // shape. Measured on the reference the listener brought (an Afrobeats
+    // shaker, 106 BPM, 24 strokes per position, cluster sd 1-8 ms): the
+    // eighths stay dead even - 0.516 and 0.484 of the beat, 9 ms off - and only
+    // the sixteenth *inside* each eighth moves late, landing at 57.4% and 65.7%
+    // of it. Against the three candidate grids the mean error was 20.8 ms
+    // straight, 26.6 ms for a beat warp, and 7.6 ms for an eighth warp. A beat
+    // warp fitted that music worse than no swing at all, because it moves the
+    // one stroke the music holds still.
+    //
+    // So the span is the beat on an eighths part and the eighth on a
+    // sixteenths part. Same warp, one level down; at full amount the
+    // sixteenths land on 0, 1/3, 1/2, 5/6 instead of 0, 1/3, 2/3, 5/6.
+    // See docs/TODO.md item 7.
     float delay = 0.0f;
     if (swing > 1.0e-6f)
     {
         const int s = ((step % 4) + 4) % 4;
         const float d = swing * kFullSwingBeats;
         const float u = 0.25f * static_cast<float> (s);
-        float t = u;
-        if (s == 0)
-            t = 0.0f;
-        else if (u < 0.5f)
-            t = u * (0.5f + d) / 0.5f;
+        float t;
+        if (subdivisionGrid == Subdivision::sixteenth)
+        {
+            const float half = u < 0.5f ? 0.0f : 0.5f;
+            t = half + 0.5f * swungWithinSpan ((u - half) * 2.0f, d);
+        }
         else
-            t = (0.5f + d) + (u - 0.5f) * (0.5f - d) / 0.5f;
+        {
+            t = swungWithinSpan (u, d);
+        }
         delay += std::max (0.0f, t - u);
     }
 

@@ -198,4 +198,10 @@ the rebuild is papering over it rather than fixing it.
 
 The category is `AVAudioSessionCategoryPlayAndRecord` with `MixWithOthers`, `DefaultToSpeaker`, `AllowBluetoothA2DP` and `AllowAirPlay`. `MixWithOthers` is what lets the track being played along to keep playing; HFP Bluetooth is deliberately absent, because that route is 8-16 kHz and makes everything mixed through it sound slow and crushed.
 
+The background-audio entitlement is for an armed live performance, not for idle
+listening forever. If iOS backgrounds the app while it is STOPped and the
+internal track is not playing, the app closes the audio device and stops the AI
+worker; it restores both on resume. An armed performance keeps running, but the
+hidden interface is not repainted at 15 Hz.
+
 Mode is `AVAudioSessionModeMeasurement` - no AGC, no noise suppression, no echo canceller between the room and the tracker. The settings page can put it back to `Default` (**INGRESSO / ELAB.**) for a route that misbehaves without iOS's processing.

@@ -70,11 +70,22 @@ struct Timeline
     double window = 6.0;
 };
 
+// Independent real-network runs wander by roughly this much on unchanged
+// input. Smaller deltas are useful to print, but not evidence that an operation
+// moved the clock (docs/STATUS.md, "Quando faccio qualcosa sfasa").
+constexpr double kResolvableOperationMs = 10.0;
+
+// Which of our own voices is in the room. The complaint this answers is that
+// the shaker stays with the song and the congas do not, and the two voices sit
+// on opposite sides of the leak canceller's 1.5 kHz split - so the part has to
+// be taken apart rather than switched on and off whole.
+enum class Voices { none, shaker, congas, both };
+
 // `only` < 0 applies every operation on its timeline; >= 0 applies just that
 // one and leaves the rest alone; a control pass applies none.
-RunResult drive (const std::vector<Op>& ops, bool applyOps, bool mixer,
+RunResult drive (const std::vector<Op>& ops, bool applyOps, bool mixer, bool directFile,
                  float leakGain, float bpm, const Timeline& tl, int only = -1,
-                 bool silentPart = false)
+                 Voices voices = Voices::both)
 {
     const double sr = 48000.0;
     const int block = 256;
@@ -95,23 +106,22 @@ RunResult drive (const std::vector<Op>& ops, bool applyOps, bool mixer,
     // The input has to *start*, or the percussion is held out by design.
     for (int i = 0; i < static_cast<int> (sr * 1.0) && i < n; ++i)
         song[static_cast<size_t> (i)] *= 0.02f;
-    if (! mixer)
+    if (! mixer && ! directFile)
         speakerRoomMic (song, sr, seed, 0.55f);
 
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
     eng.settings().followSource.store (static_cast<int> (
-        mixer ? vp::FollowSource::kitMic : vp::FollowSource::speaker));
+        directFile ? vp::FollowSource::internalPlayer
+                   : (mixer ? vp::FollowSource::kitMic : vp::FollowSource::speaker)));
     eng.settings().humanization.store (0.0f);
     eng.settings().swing.store (0.0f);
-    if (silentPart)
-    {
-        // Nothing of ours in the room, and nothing of ours for the canceller to
-        // subtract either. The difference against a run with the part playing
-        // is what the app costs the tracker by existing.
-        eng.settings().shakerEnabled.store (false);
-        eng.settings().congasEnabled.store (false);
-    }
+    // Nothing of ours in the room, and nothing of ours for the canceller to
+    // subtract either. The difference against a run with the part playing is
+    // what the app costs the tracker by existing - and, one voice at a time,
+    // which voice it costs it with.
+    eng.settings().shakerEnabled.store (voices == Voices::shaker || voices == Voices::both);
+    eng.settings().congasEnabled.store (voices == Voices::congas || voices == Voices::both);
     eng.start();
 
     // Our own output, back through the air a few milliseconds later. This is
@@ -144,7 +154,7 @@ RunResult drive (const std::vector<Op>& ops, bool applyOps, bool mixer,
         for (int i = 0; i < block; ++i)
         {
             const size_t at = static_cast<size_t> (pos + block + acoustic + i);
-            if (at < echo.size())
+            if (! directFile && at < echo.size())
                 echo[at] += leakGain * 0.5f * (oL[static_cast<size_t> (i)]
                                                + oR[static_cast<size_t> (i)]);
         }
@@ -331,22 +341,27 @@ int main (int argc, char** argv)
     float leakGain = 0.55f;
     float bpm = 118.0f;
     bool mixer = false;
+    bool directFile = false;
     bool cumulativeMode = false;
     bool silentPartMode = false;
     bool materialMode = false;
+    bool styleChangeOnly = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (argv[i], "--mixer") == 0) mixer = true;
+        else if (std::strcmp (argv[i], "--file") == 0) directFile = true;
         else if (std::strcmp (argv[i], "--cumulative") == 0) cumulativeMode = true;
-        else if (std::strcmp (argv[i], "--silentpart") == 0) silentPartMode = true;
+        else if (std::strcmp (argv[i], "--silentpart") == 0
+                 || std::strcmp (argv[i], "--voices") == 0) silentPartMode = true;
         else if (std::strcmp (argv[i], "--material") == 0) materialMode = true;
+        else if (std::strcmp (argv[i], "--style-change") == 0) styleChangeOnly = true;
         else if (std::strcmp (argv[i], "--leak") == 0 && i + 1 < argc)
             leakGain = static_cast<float> (std::atof (argv[++i]));
         else if (std::strcmp (argv[i], "--bpm") == 0 && i + 1 < argc)
             bpm = static_cast<float> (std::atof (argv[++i]));
     }
 
-    const std::vector<Op> ops = {
+    std::vector<Op> ops = {
         { "niente (controllo)",     [] (vp::VirtualPercussionEngine&) {} },
         { "master 0.90 -> 0.40",    [] (auto& e) { e.settings().masterVolume.store (0.40f); } },
         { "master 0.40 -> 1.00",    [] (auto& e) { e.settings().masterVolume.store (1.00f); } },
@@ -365,37 +380,60 @@ int main (int argc, char** argv)
         { "guadagno ingresso 1.0",  [] (auto& e) { e.settings().inputGain.store (1.0f); } },
     };
 
+    // Item 5 is one operation, not a reason to pay for fourteen independent
+    // network runs. Keep the full matrix as the default and make the focused
+    // diagnosis cheap enough to repeat after every style-control change.
+    if (styleChangeOnly)
+        ops = { ops[10] };
+
     if (materialMode)
         return material (mixer, leakGain, bpm);
 
     const Timeline tl;
     if (silentPartMode)
     {
-        // Two control passes, one with the part playing and one without, and
-        // nothing else touched. Any difference is the app disturbing its own
-        // analysis - which at leak 0 it has no honest way of doing.
-        const RunResult on = drive (ops, false, mixer, leakGain, bpm, tl, -1, false);
-        const RunResult off = drive (ops, false, mixer, leakGain, bpm, tl, -1, true);
+        // Four control passes, nothing touched in any of them: the part muted,
+        // the shaker alone, the congas alone, and both. Any difference against
+        // the muted pass is the app disturbing its own analysis - which at leak
+        // 0 it has no honest way of doing - and the difference between the two
+        // single-voice passes is the reported complaint, measured: the shaker
+        // sits above the canceller's 1.5 kHz split and the congas below it.
+        struct Pass { const char* name; Voices v; };
+        const Pass passes[4] = { { "parte muta", Voices::none },
+                                 { "solo shaker", Voices::shaker },
+                                 { "solo congas", Voices::congas },
+                                 { "shaker+congas", Voices::both } };
+        RunResult r[4];
+        for (int k = 0; k < 4; ++k)
+            r[k] = drive (ops, false, mixer, directFile, leakGain, bpm, tl, -1, passes[k].v);
+
         std::printf ("# %s, %.0f BPM, rientro %.2f\n",
-                     mixer ? "MIXER (linea)" : "IPAD (cassa -> stanza -> microfono)",
+                     directFile ? "BRANO (bus diretto)"
+                                : (mixer ? "MIXER (linea)"
+                                         : "IPAD (cassa -> stanza -> microfono)"),
                      static_cast<double> (bpm), static_cast<double> (leakGain));
-        std::printf ("# fase contro la battuta suonata, in ms, senza toccare niente\n\n");
-        std::printf ("%-10s %10s %10s | %10s %10s | %s\n",
-                     "finestra", "parte on", "peggio", "parte muta", "peggio", "differenza");
-        double sum = 0.0; int cnt = 0;
-        for (size_t k = 0; k < ops.size(); ++k)
+        std::printf ("# fase contro la battuta suonata, in ms, senza toccare niente\n");
+        std::printf ("# la colonna che conta e' la differenza contro la parte muta\n\n");
+        std::printf ("%-16s %9s %9s %9s\n", "voce", "media", "peggio", "vs muta");
+        double base = -1.0;
+        for (int k = 0; k < 4; ++k)
         {
-            const double a = on.after[k].mean(), b = off.after[k].mean();
-            if (a < 0.0 || b < 0.0) continue;
-            sum += a - b; ++cnt;
-            std::printf ("%-10zu %10.2f %10.2f | %10.2f %10.2f | %+9.2f\n",
-                         k, a, on.after[k].worstMs, b, off.after[k].worstMs, a - b);
+            double sum = 0.0, worst = 0.0; int cnt = 0;
+            for (size_t w = 0; w < ops.size(); ++w)
+            {
+                const double a = r[k].after[w].mean();
+                if (a < 0.0) continue;
+                sum += a; worst = std::max (worst, r[k].after[w].worstMs); ++cnt;
+            }
+            const double mean = cnt > 0 ? sum / cnt : -1.0;
+            if (k == 0) base = mean;
+            std::printf ("%-16s %9.2f %9.2f %+9.2f   (aggancio %.1f s)\n",
+                         passes[k].name, mean, worst, mean - base, r[k].lockedAt);
         }
-        std::printf ("\nmedia della differenza: %+.2f ms\n", cnt > 0 ? sum / cnt : 0.0);
         return 0;
     }
 
-    const RunResult without = drive (ops, false, mixer, leakGain, bpm, tl);
+    const RunResult without = drive (ops, false, mixer, directFile, leakGain, bpm, tl);
 
     // One pass per operation, each applying only its own, so a row is that
     // operation and not the pile of everything before it. Cumulative mode is
@@ -404,15 +442,17 @@ int main (int argc, char** argv)
     std::vector<RunResult> isolated;
     RunResult cumulative;
     if (cumulativeMode)
-        cumulative = drive (ops, true, mixer, leakGain, bpm, tl);
+        cumulative = drive (ops, true, mixer, directFile, leakGain, bpm, tl);
     else
         for (size_t k = 0; k < ops.size(); ++k)
-            isolated.push_back (drive (ops, true, mixer, leakGain, bpm, tl,
+            isolated.push_back (drive (ops, true, mixer, directFile, leakGain, bpm, tl,
                                        static_cast<int> (k)));
     const RunResult& with = cumulativeMode ? cumulative : isolated.front();
 
     std::printf ("# %s, %.0f BPM, rientro %.2f\n",
-                 mixer ? "MIXER (linea)" : "IPAD (cassa -> stanza -> microfono)",
+                 directFile ? "BRANO (bus diretto)"
+                            : (mixer ? "MIXER (linea)"
+                                     : "IPAD (cassa -> stanza -> microfono)"),
                  static_cast<double> (bpm), static_cast<double> (leakGain));
     std::printf ("# %s; aggancio a %.1f s, colpi %d; la colonna che conta e' l'ultima\n",
                  cumulativeMode ? "operazioni cumulative"
@@ -433,7 +473,7 @@ int main (int argc, char** argv)
         if (d > worst) { worst = d; worstName = ops[k].name; }
         std::printf ("%-26s %9.2f %9.2f | %9.2f %9.2f | %+9.2f%s\n",
                      ops[k].name, a, run.after[k].worstMs, b, without.after[k].worstMs,
-                     d, d > 3.0 ? "  <-- l'operazione sposta" : "");
+                     d, d > kResolvableOperationMs ? "  <-- l'operazione sposta" : "");
     }
     std::printf ("\npeggiore: %s, %+.2f ms\n", worstName, worst);
     if (with.gaps.back() != 0 || without.gaps.back() != 0)

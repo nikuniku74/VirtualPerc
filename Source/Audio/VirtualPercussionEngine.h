@@ -28,6 +28,9 @@ public:
     void setBeatModel (std::unique_ptr<IBeatModel> model) { tracker.setBeatModel (std::move (model)); }
 
     void prepare (double sampleRate, int maxBlock, int numInputChannels) noexcept;
+    /** Stop background analysis after the audio device has been closed.
+        prepare() starts it again when the device returns. */
+    void suspendAnalysis();
 
     /** Input samples fed to the analysis but not yet analysed, live. Safe from
         any thread; see BeatTracker::analysisBacklog for what it is for. */
@@ -149,6 +152,29 @@ public:
     bool recordedLoopPlaying() const noexcept { return hybrid.loopIsPlaying(); }
 
 private:
+    /** Bands the leak canceller fits our own output in, split at ~250 Hz and
+        ~1.4 kHz.
+        Two was not enough, and which voice it was not enough for is the point.
+        The split used to be one filter at 1.5 kHz, which puts the shaker
+        entirely in the upper band and the congas entirely in the lower one -
+        measured on eight bars of marcha, 9.5 dB above the line against 13.6 dB
+        below it. A tablet speaker has no low end, so what reaches the
+        microphone is the conga with everything under a couple of hundred hertz
+        taken out, while the reference still has all of it: one gain across
+        0-1.5 kHz cannot say "none of this and all of that", so it fits a
+        compromise that under-subtracts the body and over-subtracts the
+        fundamental. Measured on the one-wall room fixture, funk at eighths, the
+        share of our own return removed was 30.4% with the shaker alone and
+        6.0% with the congas alone, and the congas' worst block came out at
+        1.84 of the input peak - the canceller adding more than the leak it was
+        removing. A third band at the speaker's own roll-off lets the fit put
+        that gain near zero where nothing arrives and a real one where the body
+        does. See `VPTests --leak`, rows `leak-voice`.
+        Three is still a piecewise-constant approximation of a room; the honest
+        ceiling is a short adaptive FIR, and the residuals in `leak-room` say
+        how far that would have to go. */
+    static constexpr int kLeakBands = 3;
+
     void processBlock (const float* const* inputs, int numInputs,
                        float* const* outputs, int numOutputs,
                        int numSamples) noexcept;
@@ -213,8 +239,11 @@ private:
     std::vector<float> outL;
     std::vector<float> outR;
     std::vector<float> clickScratch;
-    std::vector<float> leakScratch;
-    std::vector<float> leakScratchLo;
+    /** Our own output split into bands at the accepted delay, one block long.
+        Sized in prepare(): a fixed stack buffer used to cap this at 2048
+        samples, which left the tail of a larger block un-subtracted, and the
+        step at the splice point is a textbook onset. */
+    std::vector<float> leakBand[kLeakBands];
     std::vector<float> outRing;
 
     double sampleRate = 48000.0;
@@ -329,27 +358,28 @@ private:
     std::atomic<float> clickBpm { 120.0f };
     std::atomic<bool>  clickEnabled { false };
     double clickPhase = 0.0;
+    /** The two one-poles that split our own output into kLeakBands. State, not
+        scratch: they carry across blocks, and they are deliberately *not*
+        cleared when the accepted delay moves - see subtractSpeakerLeak. */
+    float leakLpLow = 0.0f;
     float leakLp = 0.0f;
     float analysisHp = 0.0f;
     int leakDelaySamples = 0;
     int leakScanCountdown = 0;
     bool leakDelayLocked = false;
     /** How much of our own output the input is carrying back, fitted per band
-        and held across blocks. Two bands because the two return paths do not
-        look alike: through the iPad's speaker the low end is simply not there,
-        while a mixer hands back the whole thing, congas included. Signed, and
-        clamped only where it is used: see subtractSpeakerLeak. */
-    float leakGainLo = 0.0f;
-    float leakGainHi = 0.0f;
+        and held across blocks. Signed, and clamped only where it is used: see
+        subtractSpeakerLeak. */
+    float leakGain[kLeakBands] = {};
     /** The normal equations that fit is solved from, accumulated over about
         half a second of causal history instead of over the current block. A
         block of 256 samples is a noisy estimate and a block whose reference is
         silent is no estimate at all; both used to reach the gain anyway,
         through a smoother that could not tell a measurement from an absence of
-        one. Five terms: our own two bands against the input, and the three
-        products among the bands themselves. */
-    double leakFitXyLo = 0.0, leakFitXyHi = 0.0;
-    double leakFitLoLo = 0.0, leakFitHiHi = 0.0, leakFitLoHi = 0.0;
+        one. Our own bands against the input, and the Gram matrix of the bands
+        against each other. */
+    double leakFitXy[kLeakBands] = {};
+    double leakFitGram[kLeakBands][kLeakBands] = {};
     /** The delay all of that evidence was measured at. When the accepted delay
         moves the reference is a different signal and the cross-products stop
         describing anything, so they are dropped. */

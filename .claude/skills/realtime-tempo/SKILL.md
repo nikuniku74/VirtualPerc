@@ -204,6 +204,13 @@ is the *only* evidence, and measured there every single change landed on the
 downbeat - where the network through an iPad speaker is no better than a coin.
 Summing them would hide which one answered.
 
+On the acoustic speaker path, `alignBarFromVotes` is still called but skips the
+network histogram and may answer only from the gated harmony histogram. Do not
+gate the call itself on `barFromHarmony`: that flag is the result of a successful
+alignment, so doing so makes the fallback impossible to enter. The focused
+end-to-end harmony regression in `VPTests` explicitly selects
+`FollowSource::speaker`; cut/seek regressions remain in `VPTests --bar`.
+
 `barLocked` (SPOSTA L'1, or a tap that declares the one) stops all automatic
 rotation. It does **not** freeze the count against the grid: a `snapPhase` with
 `keepBarInStep` still carries it, which is what keeps a locked bar on the beat
@@ -390,9 +397,37 @@ the first block of the new one arrived.
 
 The mic hears the shaker the app is playing, so without this the tracker is
 partly following us and the loop is closed. What goes into the analysis is
-`mic - g * (our own output, delayed)`, in two bands split at ~1.5 kHz: through
-the iPad's speaker there is no low end to leak, through a mixer the return
-carries the congas too, and one band cannot describe both paths.
+`mic - g * (our own output, delayed)`, in **three** bands split at ~250 Hz and
+~1.4 kHz: through the iPad's speaker there is no low end to leak, through a
+mixer the return carries the congas too, and one band cannot describe both
+paths.
+
+Why three and not two, because the second split is the one a listener reported.
+The shaker and the congas sit on opposite sides of the 1.5 kHz line - measured
+on eight bars of marcha at eighths, 9.5 dB above it against 13.6 dB below - so
+a two-band fit gave the congas one number for everything from DC to 1.5 kHz,
+which is the range a small speaker reshapes hardest. Measured on the one-wall
+room fixture, the share of our own return removed was **30.4% with the shaker
+alone against 6.0% with the congas alone**, and the congas' worst block reached
+**1.84** of the input peak: the subtraction putting *more* onto the analysis
+than the leak it was removing, on the app's own grid, which is the one signal
+guaranteed to confirm whatever the tracker already believes. With a third band
+at the speaker's own roll-off: 33.8% and 13.4%, worst block 1.03. The rows are
+`leak-voice` in `VPTests --leak`; `roomLeakRun` takes a `Voices` argument
+because a mean over both halves of the part cannot answer a report about one of
+them.
+
+The solve is Cholesky with a ridge **relative to the trace** (`kLeakRidge`,
+1e-2), not an absolute floor. A middle band taken as the difference of two
+one-poles carries far less energy than the two either side of it, so it is the
+least determined of the three and the one a feed carrying *no* leak can push
+around: unridged, the worst audible block on the no-leak speaker bench went to
+1.111 against a 1.10 bound. The ridge costs a proportional bias - the
+fifty-four exact-copy rows go from 0.0000 to 0.0179, one order of magnitude
+inside their 0.10 bound instead of three - and buys 1.092 there plus the
+128-frame row falling from 11.40% of mean (over its own 10% bound) to 5.13%.
+0.0179 of a digitally exact return is nothing the tracker can hear; our own
+subtraction landing on a band that never leaked is.
 
 Three things about it are load-bearing, and two of them were got wrong once:
 
@@ -403,8 +438,21 @@ Three things about it are load-bearing, and two of them were got wrong once:
   coarse step jumps over it) and refines on the waveform. A candidate is only
   accepted above 0.12 correlation: a room full of music always has a largest
   correlation somewhere in the window, and "largest" is not "ours".
+  **And 0.12 is the floor for finding a path, not for leaving one.** The search
+  re-runs from scratch every fourth block and decides on that block's
+  correlation alone, where the gain fit next door accumulates half a second
+  first. On a sparse part that asymmetry bites: between two strokes the true
+  delay's own score collapses into noise while the part's own periodicity leaves
+  coincidental envelope peaks at other lags. Measured on the fractional-delay
+  room fixture, it left a correct locked 8417 for 4811 on one quiet block
+  scoring 0.1971 against the incumbent's 0.0739 - both meaningless - then
+  wandered 1.2 s through 9613, 7429, 5633, 8746, 7421, dropping the accumulators
+  at every hop because `delay != leakFitDelay` fires on each. Giving up a held
+  delay now needs `kDelaySwitchMargin` (0.15) over the incumbent: **0.2794 ->
+  0.0888** mean on that fixture, worst block 0.99 -> 0.13, and the sparsest voice
+  gains most - congas 13.4% -> 25.2% of their return removed.
 - **The gain is fitted over half a second of causal history, not over the
-  block.** The five normal-equation terms of the two-band least squares are
+  block.** The normal-equation terms of the three-band least squares are
   accumulated with `alpha = exp(-numSamples / (0.5 s * sampleRate))` and the
   coefficients solved from the accumulation. The version before it solved the
   block and smoothed the *answer* towards it at 0.12 per callback, which is not
@@ -417,7 +465,8 @@ Three things about it are load-bearing, and two of them were got wrong once:
   was cancelled. Measured across nine styles x three subdivisions x mixer and
   speaker (54 rows, `VPTests --leak`), the share of our own part still in the
   analysis: **0.07-0.18 at sixteenths, 0.29-0.46 at eighths - the shipped
-  default - 0.62-0.74 at quarters; all 54 rows now under 0.0001.** A per-callback
+  default - 0.62-0.74 at quarters; all 54 rows then under 0.0001, and under
+  0.018 since the three-band fit's ridge.** A per-callback
   constant is also a different length of time on every buffer size, the same trap
   the phase constants above were fixed for: 0.4792 at 256 frames against 0.2379
   at 4096 before, 0.0000 on 256 / 1024 / 4096 after.
@@ -473,35 +522,43 @@ places) and a longer window would only average the same correlation.
 On the same no-leak input the 138 BPM full chain moved 1.8 ms run to run before
 and 0.00 ms after - see `.superpowers/sdd/sparse-leak-fix-report.md`.
 
-**What the 0.0001 above is and is not.** That bench returns an exact scaled copy
-of our own output at a whole number of samples, so a converged two-band fit
+**What that near-zero is and is not.** That bench returns an exact scaled copy
+of our own output at a whole number of samples, so a converged fit
 removes essentially all of it; it is a statement about the estimator. A room is
 not that. Same rig, through the repository's own reflection model
 (`vp::probe::speakerRoomMic`), one cause at a time:
 
-| return path | residual |
-|---|---|
-| exact copy, integer delay | 0.0000 |
-| delay 0.373 of a sample off the grid | 0.0957 |
-| a -56 dB noise floor | 0.0045 |
-| 260 Hz/9 kHz band limiting alone | 0.8050 |
-| one wall at 7.3 ms, a second at 14.6 ms | 0.8484 |
-| all of it, one wall | 0.8755 (0.9903 with cancellation off) |
-| all of it, the full eight-tap tail | 0.9150 (0.9902 off) |
+The one-cause-at-a-time column below was taken on the two-band canceller and is
+kept because the *shape* of it is the finding - where the residual jumps is
+where the model's limit is. The `measured today` column is what `VPTests --leak`
+prints on the current three-band fit; only the three fixtures the bench still
+runs have one.
+
+| return path | residual (two-band, historical) | measured today |
+|---|---|---|
+| exact copy, integer delay | 0.0000 | 0.0179 (the ridge - see below) |
+| delay 0.373 of a sample off the grid | 0.0957 | 0.0888 (0.9800 off) |
+| a -56 dB noise floor | 0.0045 | |
+| 260 Hz/9 kHz band limiting alone | 0.8050 | |
+| one wall at 7.3 ms, a second at 14.6 ms | 0.8484 | |
+| all of it, one wall | 0.8755 (0.9903 off) | 0.8339 (0.9920 off) |
+| all of it, the full eight-tap tail | 0.9150 (0.9902 off) | 0.9323 (0.9936 off) |
 
 As a share of the return removed, against each fixture's own cancellation-off
-control: **90.2%** when the direct component reaches the mic spectrally
-unmodified at a fractional delay, **18.9%** once that same direct component is
-band-shaped by 260 Hz and 9 kHz and nothing else changes, **11.5%** on the
-complete one-wall fixture and **7.6%** with the full eight-tap tail.
+control, on the current fit: **91%** when the direct component reaches the mic
+spectrally unmodified at a fractional delay, **16%** on the complete one-wall
+fixture and **6%** with the full eight-tap tail, against historical two-band
+figures of 90.2%, 11.5% and 7.6%.
 
 A fractional delay it can still cancel. A return whose spectrum has been
-*reshaped inside each band* it largely cannot - two gains cannot follow a 260 Hz
-high pass through a conga - and neither can it reach a reflection that is not in
-the reference at any single delay. The 0.805-0.915 residual is where those two
-limits of a two-band, single-delay model put the floor for this fixture: a known
+*reshaped inside each band* it largely cannot - a handful of gains cannot follow
+a 260 Hz high pass through a conga, which is why the band at that roll-off was
+added and why three is still not many - and neither can it reach a reflection
+that is not in the reference at any single delay. The 0.83-0.93 residual is
+where those two limits of a piecewise-constant, single-delay model put the floor
+for this fixture: a known
 limitation of the model's shape, not a regression, and **not** a claim that the
-canceller takes the direct arrival out of a room. Quote 0.0000 about the
+canceller takes the direct arrival out of a room. Quote the near-zero about the
 estimator on an exact copy, never about a room.
 
 The part being audible used to move the phase about 3 ms further out on a feed
@@ -571,6 +628,17 @@ next reliable downbeat, IPAD on the next reliable beat, because a tablet speaker
 does not carry enough bass for trustworthy downbeat votes). STOP mutes and keeps
 following.
 
+That rule describes an open foreground audio session. On iOS the target carries
+the background-audio entitlement so an armed performance can continue with the
+screen locked or another app in front. If the app is backgrounded while STOPped
+and its internal track is not playing, `MainComponent::handleAppSuspended`
+closes the device and explicitly stops `NeuralBeatTracker`; closing the device
+alone is insufficient because `releaseResources()` does not own the worker
+(the real-time worker bench measures 110 loop passes per second while active).
+Returning to the foreground reopens the device, whose `prepareToPlay()` starts a
+fresh analysis session. While an armed performance continues in the background,
+the 15 Hz timer remains only for the device watchdog and skips UI repainting.
+
 ## 7. What we refuse to do
 
 - Restart the loop or clock on a BPM change.
@@ -592,6 +660,7 @@ cmake --build build-host --target <target>
 |---|---|---|
 | `VPTests` | `Tests/` | the TAP suite; `StubBeatModel` when no ONNX assets |
 | `VPTests --bar` | `Tests/TestAiBeat.cpp` | two-quarter cut / seek re-entry of the one (item 2) |
+| `VPTests --swing` | `Tests/TestMain.cpp` | the swing warp's geometry alone: straight where written, swung on 0/⅓/⅔/⅚, never early (item 7) |
 | `VPTests --leak` | `Tests/TestMain.cpp` | the canceller alone in twenty seconds: 54 style x subdivision x path rows, the no-leak feed at three buffer sizes, the output A/B, the restart, three rooms |
 | `VPTests --makeup` | `Tests/TestAiBeat.cpp` | the other half of the same subject: does our own output move our own analysis. Six benches - `a` phase and the analysis chain with the fader up against down at five tempos, `b` the chain block for block, `c` a real band start with the part playing, `d` our own return not being called one plus the eighteen-row veto margin, `e`/`f` what `prepare()` clears, inside and outside. Name one to run one; naming something that is not a bench fails non-zero rather than passing nothing. `dist`, `sweep` and `epoch` are probes, assert nothing and run only when named |
 | `VPProbe` | `probe_song.cpp` | end-to-end on a full arrangement through a speaker into a room: lock time, drift, phase |

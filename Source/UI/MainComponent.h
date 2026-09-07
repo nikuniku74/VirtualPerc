@@ -20,6 +20,12 @@ public:
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override;
     void releaseResources() override;
 
+    /** JUCE leaves application lifecycle handling to the app. When nothing is
+        playing these release the microphone, audio unit and inference worker
+        instead of keeping the background-audio entitlement busy. */
+    void handleAppSuspended();
+    void handleAppResumed();
+
 private:
     void timerCallback() override;
     void darkModeSettingChanged() override;
@@ -46,6 +52,7 @@ private:
         new one brings the sound back - which is what changing the clock by hand
         was doing. */
     void rebuildAudioDevice (const char* why);
+    void powerDownAudioForBackground();
 
     /** What the listener asked the clock to be, and what the device should
         actually be opened at. They are not the same question: the request may
@@ -92,6 +99,10 @@ private:
     void refreshStyleButtons();
     void applyShakerNatural (bool on);
     void refreshNaturalButton();
+    /** Swing is a switch, not a quantity: straight, or the triplet. See
+        docs/TODO.md item 7 and `GrooveEngine::humanDelay`. */
+    void applySwing (bool on);
+    void refreshSwingButton();
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
     void refreshBarButton();
@@ -267,6 +278,7 @@ private:
     juce::TextButton loopModeButton { "LOOP" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton naturalButton { "NATURALE" };
+    juce::TextButton swingButton { "SWING" };
     juce::TextButton congasButton { "CONGAS" };
     juce::TextButton cembaloButton { "CEMBALO" };
     juce::TextButton clapButton { "CLAP" };
@@ -317,9 +329,6 @@ private:
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Label  reverbValue { {}, "30%" };
-    juce::Slider swingSlider;
-    juce::Label  swingLabel { {}, "SWING" };
-    juce::Label  swingValue { {}, "0%" };
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
@@ -382,6 +391,8 @@ private:
     int  bufferChoice = 0;
     bool inputProcessing = false;
     bool loopBankReady = false;
+    bool appIsSuspended = false;
+    bool audioPoweredDownForBackground = false;
     juce::String loopBankError;
 
     /** Blocks the audio callback has run, and the value the last timer tick saw.

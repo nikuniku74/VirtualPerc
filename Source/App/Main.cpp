@@ -22,6 +22,20 @@ public:
         quit();
     }
 
+    void suspended() override
+    {
+        if (mainWindow != nullptr)
+            if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+                main->handleAppSuspended();
+    }
+
+    void resumed() override
+    {
+        if (mainWindow != nullptr)
+            if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+                main->handleAppResumed();
+    }
+
     class MainWindow final : public juce::DocumentWindow
     {
     public:

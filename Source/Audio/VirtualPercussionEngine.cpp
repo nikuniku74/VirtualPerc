@@ -129,8 +129,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
-    leakScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
-    leakScratchLo.assign (static_cast<size_t> (maxBlock), 0.0f);
+    for (auto& b : leakBand)
+        b.assign (static_cast<size_t> (maxBlock), 0.0f);
     outRing.assign (static_cast<size_t> (ringSize), 0.0f);
     ringWrite = 0;
     // The reference the canceller fits against has just been zeroed, so any
@@ -166,6 +166,11 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     stretch.prepare (120.0f, sampleRate);
     clickPhase = 0.0;
     lastSr.store (sampleRate, std::memory_order_relaxed);
+}
+
+void VirtualPercussionEngine::suspendAnalysis()
+{
+    tracker.suspendAnalysis();
 }
 
 void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
@@ -217,15 +222,17 @@ void VirtualPercussionEngine::clearAnalysisLevelMirrors() noexcept
 
 void VirtualPercussionEngine::resetLeakEstimate() noexcept
 {
+    leakLpLow = 0.0f;
     leakLp = 0.0f;
     analysisHp = 0.0f;
-    leakGainLo = 0.0f;
-    leakGainHi = 0.0f;
-    leakFitXyLo = 0.0;
-    leakFitXyHi = 0.0;
-    leakFitLoLo = 0.0;
-    leakFitHiHi = 0.0;
-    leakFitLoHi = 0.0;
+    for (auto& g : leakGain)
+        g = 0.0f;
+    for (int b = 0; b < kLeakBands; ++b)
+    {
+        leakFitXy[b] = 0.0;
+        for (int c = 0; c < kLeakBands; ++c)
+            leakFitGram[b][c] = 0.0;
+    }
     leakFitDelay = -1;
     leakDelaySamples = 0;
     leakScanCountdown = 0;
@@ -564,8 +571,32 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
         return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
     };
 
+    // What it costs to give up a delay already held.
+    //
+    // The search re-runs from scratch every fourth block once locked, and each
+    // run decides on *this block's* correlation alone - where the gain fit next
+    // door accumulates half a second before it believes anything. On a sparse
+    // part that is not symmetric: between two strokes the true delay's own
+    // score collapses to noise, while the part's own periodicity leaves
+    // coincidental envelope peaks at other lags across a ten-thousand-sample
+    // window. Measured on the fractional-delay room fixture, the search left a
+    // correct, locked 8417 for 4811 on one quiet block scoring 0.1971 against
+    // the incumbent's 0.0739 - both meaningless, the wrong one merely larger -
+    // and then spent 1.2 s wandering (4811, 9613, 7429, 5633, 8746, 7421) with
+    // the accumulators dropped at every hop, because `delay != leakFitDelay`
+    // fires on each one and the fit never gets to converge. That stretch is the
+    // whole difference between the residual this fixture is supposed to have
+    // and the one it had: 0.0954 against 0.2794, mean over the run, and 0.13
+    // against 0.99 on the worst block.
+    //
+    // So the acquisition floor below is what it says - the floor for finding a
+    // path from nothing. Leaving one already found needs a candidate that is
+    // better by a margin, not one that is nominally larger on a block where
+    // neither means anything.
+    constexpr double kDelaySwitchMargin = 0.15;
+    const double incumbentScore = scoreAt (leakDelaySamples);
     int best = leakDelaySamples;
-    double bestScore = scoreAt (best);
+    double bestScore = incumbentScore;
 
     if (--leakScanCountdown <= 0)
     {
@@ -621,6 +652,13 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     // A room full of unrelated music always has a largest correlation in the
     // search window; "largest" alone does not make it our return path. Keep the
     // previous estimate until the candidate actually explains the input.
+    if (leakDelayLocked && best != leakDelaySamples
+        && bestScore < incumbentScore + kDelaySwitchMargin)
+    {
+        best = leakDelaySamples;
+        bestScore = incumbentScore;
+    }
+
     if (bestScore > 0.12)
     {
         leakDelaySamples = best;
@@ -671,7 +709,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     // at 2048 samples, which left the tail of a larger block un-subtracted: the
     // step it created at the splice point is a textbook onset, and it landed
     // in the analysis signal once per callback.
-    const int n = std::min (numSamples, static_cast<int> (leakScratch.size()));
+    const int n = std::min (numSamples, static_cast<int> (leakBand[0].size()));
     if (n <= 0)
         return;
 
@@ -684,44 +722,66 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     if (delay != leakFitDelay)
     {
         leakFitDelay = delay;
-        leakFitXyLo = 0.0;
-        leakFitXyHi = 0.0;
-        leakFitLoLo = 0.0;
-        leakFitHiHi = 0.0;
-        leakFitLoHi = 0.0;
+        for (int b = 0; b < kLeakBands; ++b)
+        {
+            leakFitXy[b] = 0.0;
+            for (int c = 0; c < kLeakBands; ++c)
+                leakFitGram[b][c] = 0.0;
+        }
     }
 
-    // Split our own output in two around 1.5 kHz and fit a gain to each.
+    // Split our own output into kLeakBands and fit a gain to each.
     //
     // One band was not enough. The reference used to be the top end alone -
     // which is the right model for the iPad's own speaker, because that speaker
     // has no low end to leak - so on a mixer, where the return carries the whole
     // part, the shaker was cancelled and the congas went into the analysis
-    // untouched. Fitting both bands covers either path without having to be
-    // told which one it is: through a speaker the low gain simply fits near
-    // zero.
-    double xyLo = 0.0, xyHi = 0.0, loLo = 0.0, hiHi = 0.0, loHi = 0.0, xx = 0.0;
+    // untouched.
+    //
+    // Two were not enough either, and the second failure is the congas' own.
+    // The split at 1.5 kHz puts the whole shaker above the line and the whole
+    // conga below it, so the congas got exactly one number for everything from
+    // DC to 1.5 kHz - and that is the range a small speaker reshapes hardest,
+    // passing the body and dropping the fundamental. One gain cannot say "none
+    // of this and all of that": it fits the compromise, under-subtracting the
+    // body and over-subtracting the fundamental. Measured on the one-wall room
+    // fixture at eighths, the share of our own return removed was 30.4% with
+    // the shaker alone against 6.0% with the congas alone, and the congas'
+    // worst block reached 1.84 of the input peak - more added than removed.
+    // A third band at the speaker's own roll-off gives the fit somewhere to put
+    // the zero. See `VPTests --leak`, rows `leak-voice`.
+    //
+    // Through a mixer, where the return does carry the low end, the two lower
+    // bands simply fit near the same gain and nothing changes; the split costs
+    // one one-pole per sample and does not have to be told which path it is on.
+    double xy[kLeakBands] = {};
+    double gram[kLeakBands][kLeakBands] = {};
+    double xx = 0.0;
+    const float lowCoef = static_cast<float> (
+        1.0 - std::exp (-2.0 * 3.14159265358979 * 250.0 / sampleRate));
     for (int i = 0; i < n; ++i)
     {
         const int ri = (ringWrite - delay + i + ringSize) & (ringSize - 1);
         const float y = outRing[static_cast<size_t> (ri)];
+        leakLpLow += lowCoef * (y - leakLpLow);
         leakLp += 0.18f * (y - leakLp);
-        const float lo = leakLp;
-        const float hi = y - leakLp;
-        leakScratchLo[static_cast<size_t> (i)] = lo;
-        leakScratch[static_cast<size_t> (i)] = hi;
+        // Low, low-mid, high. The 0.18 coefficient is the original ~1.4 kHz
+        // splitter, left where it was so the shaker's band is unchanged.
+        const float band[kLeakBands] = { leakLpLow, leakLp - leakLpLow, y - leakLp };
         const float x = mono[static_cast<size_t> (i)];
-        xyLo += static_cast<double> (x) * lo;
-        xyHi += static_cast<double> (x) * hi;
-        loLo += static_cast<double> (lo) * lo;
-        hiHi += static_cast<double> (hi) * hi;
-        loHi += static_cast<double> (lo) * hi;
         xx += static_cast<double> (x) * x;
+        for (int b = 0; b < kLeakBands; ++b)
+        {
+            leakBand[b][static_cast<size_t> (i)] = band[b];
+            xy[b] += static_cast<double> (x) * band[b];
+            for (int c = b; c < kLeakBands; ++c)
+                gram[b][c] += static_cast<double> (band[b]) * band[c];
+        }
     }
 
-    // Least squares over the two together, not one each: a one-pole split does
+    // Least squares over the bands together, not one each: one-pole splits do
     // not make them orthogonal, and fitting them independently has each one
-    // claiming part of what the other explains.
+    // claiming part of what the others explain.
     //
     // And over half a second of them, not over this block. The gain used to be
     // solved from a single block and the *answer* smoothed towards it, which
@@ -735,7 +795,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     // default, and 0.62-0.74 at quarters. Accumulating the normal equations
     // instead lets a silent block contribute its honest zeros to both sides,
     // which moves the answer not at all, and the same fifty-four rows come out
-    // under 0.0001.
+    // under 0.0001 (0.0179 since the three-band ridge below).
     //
     // The forgetting factor is a length of time and not a number of callbacks.
     // kGainSmooth was per callback, so on a 4096-frame buffer it forgot sixteen
@@ -746,11 +806,15 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     constexpr double kLeakFitTauSec = 0.5;
     const double alpha = std::exp (-static_cast<double> (n)
                                    / std::max (1.0, kLeakFitTauSec * sampleRate));
-    leakFitXyLo = alpha * leakFitXyLo + xyLo;
-    leakFitXyHi = alpha * leakFitXyHi + xyHi;
-    leakFitLoLo = alpha * leakFitLoLo + loLo;
-    leakFitHiHi = alpha * leakFitHiHi + hiHi;
-    leakFitLoHi = alpha * leakFitLoHi + loHi;
+    for (int b = 0; b < kLeakBands; ++b)
+    {
+        leakFitXy[b] = alpha * leakFitXy[b] + xy[b];
+        for (int c = b; c < kLeakBands; ++c)
+        {
+            leakFitGram[b][c] = alpha * leakFitGram[b][c] + gram[b][c];
+            leakFitGram[c][b] = leakFitGram[b][c];
+        }
+    }
 
     // Signed here, clamped only where it is used, which is the whole difference
     // between cancelling a leak and inventing one. Over a block of 256 samples
@@ -766,43 +830,101 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     // replacing it with a zero. The +-2 rail is only there to stop a
     // pathological fit; the useful range is enforced at the point of use.
     //
-    // The determinant is tested *relative* to the diagonal, not against a fixed
-    // floor: these are accumulated energies, so their size depends on the level
-    // and on how long the window has been running, and a number that means
-    // "singular" at one level means "fine" at another. It is also tested for
-    // sign - a Gram determinant is non-negative, so a negative one is rounding
-    // error, and dividing by it flips both coefficients. Measured: on this
-    // repository's benches the relative test and the old `fabs(det) > 1e-12`
-    // choose the same coefficients to four decimal places on all 54 rows, both
-    // buffer sweeps, every no-leak row and every room model. It is here because
-    // it cannot be wrong, not because it moved a number.
-    const double det = leakFitLoLo * leakFitHiHi - leakFitLoHi * leakFitLoHi;
-    if (det > 1.0e-6 * leakFitLoLo * leakFitHiHi && leakFitLoLo > 1.0e-9
-        && leakFitHiHi > 1.0e-9)
+    // Solved by Cholesky with a ridge that is *relative* to the diagonal, not an
+    // absolute floor: these are accumulated energies, so their size depends on
+    // the level and on how long the window has been running, and a number that
+    // means "singular" at one level means "fine" at another. Three bands off two
+    // one-poles overlap a good deal, so a near-singular window is normal rather
+    // than exceptional - the ridge is what keeps it from being answered with two
+    // huge gains that cancel each other. If even that fails to factor, each band
+    // is fitted on its own and a band with no evidence in it keeps the gain it
+    // had.
     {
-        leakGainLo = std::clamp (
-            static_cast<float> ((leakFitXyLo * leakFitHiHi - leakFitXyHi * leakFitLoHi) / det),
-            -2.0f, 2.0f);
-        leakGainHi = std::clamp (
-            static_cast<float> ((leakFitXyHi * leakFitLoLo - leakFitXyLo * leakFitLoHi) / det),
-            -2.0f, 2.0f);
-    }
-    else
-    {
-        // The two bands are collinear over the window, or one of them carries
-        // nothing, so each is fitted on its own. A band with no evidence in it
-        // keeps the gain it had.
-        if (leakFitLoLo > 1.0e-9)
-            leakGainLo = std::clamp (static_cast<float> (leakFitXyLo / leakFitLoLo),
-                                     -2.0f, 2.0f);
-        if (leakFitHiHi > 1.0e-9)
-            leakGainHi = std::clamp (static_cast<float> (leakFitXyHi / leakFitHiHi),
-                                     -2.0f, 2.0f);
+        // How hard the ridge leans. A middle band taken as the difference of two
+        // one-poles carries far less energy than the two either side of it, so
+        // it is the least determined of the three and the one a feed with no
+        // leak on it can push around: measured on the no-leak bench through the
+        // speaker path, an unridged three-band fit raised the worst audible
+        // block to 1.111 of what arrived, against a bound of 1.10 and a two-band
+        // 1.061. At 1% of the mean band energy that block is 1.092 and the same
+        // bench's 128-frame row improves on two bands (1.013 against 1.037, and
+        // 5.1% of mean absolute against 11.4%, which was over its own bound).
+        // It is not free: a ridge biases every gain low by roughly its own size,
+        // so the fifty-four exact-copy rows go from 0.0000 to 0.0179 - one order
+        // of magnitude inside their 0.10 bound instead of three. That is the
+        // right way round. 0.0179 of a digitally exact return is nothing the
+        // tracker can hear, and the no-leak damage is our own subtraction
+        // landing on a band that never leaked.
+        constexpr double kLeakRidge = 1.0e-2;
+
+        double trace = 0.0;
+        for (int b = 0; b < kLeakBands; ++b)
+            trace += leakFitGram[b][b];
+
+        double a[kLeakBands][kLeakBands];
+        for (int b = 0; b < kLeakBands; ++b)
+            for (int c = 0; c < kLeakBands; ++c)
+                a[b][c] = leakFitGram[b][c]
+                          + (b == c ? kLeakRidge * trace / kLeakBands : 0.0);
+
+        // Cholesky in place, then forward and back substitution.
+        bool ok = trace > 1.0e-9;
+        for (int b = 0; ok && b < kLeakBands; ++b)
+        {
+            for (int c = 0; c <= b; ++c)
+            {
+                double sum = a[b][c];
+                for (int k = 0; k < c; ++k)
+                    sum -= a[b][k] * a[c][k];
+                if (c == b)
+                {
+                    if (sum <= 0.0)
+                    {
+                        ok = false;
+                        break;
+                    }
+                    a[b][b] = std::sqrt (sum);
+                }
+                else
+                {
+                    a[b][c] = sum / a[c][c];
+                }
+            }
+        }
+
+        if (ok)
+        {
+            double z[kLeakBands];
+            for (int b = 0; b < kLeakBands; ++b)
+            {
+                double sum = leakFitXy[b];
+                for (int k = 0; k < b; ++k)
+                    sum -= a[b][k] * z[k];
+                z[b] = sum / a[b][b];
+            }
+            for (int b = kLeakBands - 1; b >= 0; --b)
+            {
+                double sum = z[b];
+                for (int k = b + 1; k < kLeakBands; ++k)
+                    sum -= a[k][b] * z[k];
+                z[b] = sum / a[b][b];
+            }
+            for (int b = 0; b < kLeakBands; ++b)
+                leakGain[b] = std::clamp (static_cast<float> (z[b]), -2.0f, 2.0f);
+        }
+        else
+        {
+            for (int b = 0; b < kLeakBands; ++b)
+                if (leakFitGram[b][b] > 1.0e-9)
+                    leakGain[b] = std::clamp (
+                        static_cast<float> (leakFitXy[b] / leakFitGram[b][b]), -2.0f, 2.0f);
+        }
     }
 
     const float maxG = speaker ? 0.98f : 0.95f;
-    const float useLo = std::clamp (leakGainLo, 0.0f, maxG);
-    const float useHi = std::clamp (leakGainHi, 0.0f, maxG);
+    float use[kLeakBands];
+    for (int b = 0; b < kLeakBands; ++b)
+        use[b] = std::clamp (leakGain[b], 0.0f, maxG);
 
     // And only when our own output actually explains a share of what came in.
     // A leak is a large part of the input by definition; an accidental
@@ -814,10 +936,14 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     // part can sit under that floor even while the shaker is clearly audible.
     // Correlation against the delayed reference still names the leak, which
     // is enough to subtract without eating the song.
-    const double explained = useLo * xyLo + useHi * xyHi;
-    const double yy = loLo + hiHi;
+    double explained = 0.0, yy = 0.0;
+    for (int b = 0; b < kLeakBands; ++b)
+    {
+        explained += static_cast<double> (use[b]) * xy[b];
+        yy += gram[b][b];
+    }
     const double corr = (xx > 1.0e-12 && yy > 1.0e-12)
-                            ? (useLo * xyLo + useHi * xyHi) / std::sqrt (xx * yy)
+                            ? explained / std::sqrt (xx * yy)
                             : 0.0;
     const float minShare = speaker ? 0.008f : 0.02f;
     if (xx < 1.0e-9)
@@ -826,8 +952,12 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
         return;
 
     for (int i = 0; i < n; ++i)
-        mono[static_cast<size_t> (i)] -= useLo * leakScratchLo[static_cast<size_t> (i)]
-                                       + useHi * leakScratch[static_cast<size_t> (i)];
+    {
+        float sub = 0.0f;
+        for (int b = 0; b < kLeakBands; ++b)
+            sub += use[b] * leakBand[b][static_cast<size_t> (i)];
+        mono[static_cast<size_t> (i)] -= sub;
+    }
 }
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak,

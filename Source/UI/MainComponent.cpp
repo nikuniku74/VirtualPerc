@@ -354,6 +354,7 @@ MainComponent::MainComponent()
     setupBtn (cembaloButton, ink());
     setupBtn (clapButton, ink());
     setupBtn (naturalButton, ink());
+    setupBtn (swingButton, ink());
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
@@ -515,6 +516,11 @@ MainComponent::MainComponent()
         applyShakerNatural (! engine.settings().shakerNatural.load());
     };
 
+    swingButton.onClick = [this]
+    {
+        applySwing (engine.settings().swing.load() <= 0.5f);
+    };
+
     // Not in SETUP: this one is a musical choice and belongs next to the other
     // musical choices, where it can be reached mid-song.
     dynamicsButton.onClick = [this]
@@ -588,9 +594,6 @@ MainComponent::MainComponent()
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 2.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().inputGain.store (v); });
-    setupFader (swingSlider, swingLabel, swingValue, "SWING",
-                0.0, 1.0, 0.00, 0.0,
-                [this] (float v) { engine.settings().swing.store (v); });
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -731,6 +734,7 @@ MainComponent::MainComponent()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshNaturalButton();
+    refreshSwingButton();
     refreshOctaveButtons();
     refreshLoopModeButton();
     refreshThemeColours();
@@ -770,6 +774,60 @@ MainComponent::~MainComponent()
     shutdownAudio();
 }
 
+void MainComponent::powerDownAudioForBackground()
+{
+    if (audioPoweredDownForBackground)
+        return;
+
+    if (audioOpened)
+    {
+        // closeAudioDevice() first proves that the real-time producer has stopped;
+        // joining the worker is then safe on this lifecycle/message thread.
+        // Without the explicit stop it continues waking against an empty FIFO;
+        // the real-time worker bench measured 110 loop passes per second.
+        deviceManager.closeAudioDevice();
+        engine.suspendAnalysis();
+    }
+    audioPoweredDownForBackground = true;
+    stopTimer();
+}
+
+void MainComponent::handleAppSuspended()
+{
+    appIsSuspended = true;
+
+    // BACKGROUND_AUDIO_ENABLED is intentional for a live performance. It must
+    // not, however, turn STOP into permanent microphone + inference activity.
+    if (! userWantsArmed && ! trackTransport.isPlaying())
+        powerDownAudioForBackground();
+}
+
+void MainComponent::handleAppResumed()
+{
+    appIsSuspended = false;
+
+    if (audioPoweredDownForBackground)
+    {
+        audioPoweredDownForBackground = false;
+        vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+                                   inputProcessing });
+        deviceManager.restartLastAudioDevice();
+
+        if (deviceManager.getCurrentAudioDevice() == nullptr)
+        {
+            audioOpened = false;
+            openAudioDevice (micGranted);
+        }
+        else
+        {
+            applyInputProcessing();
+        }
+    }
+
+    startTimerHz (15);
+    repaint();
+}
+
 void MainComponent::darkModeSettingChanged()
 {
     if (themeFollowsSystem)
@@ -796,7 +854,7 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &trackLoadButton,
         &trackPlayButton, &kickButton, &latencyButton,
         &subAuto, &sub4, &sub8,
-        &sub16, &naturalButton, &congasButton, &cembaloButton, &clapButton,
+        &sub16, &naturalButton, &swingButton, &congasButton, &cembaloButton, &clapButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton,
         &settingsButton, &settingsClose, &procButton,
@@ -815,8 +873,6 @@ void MainComponent::refreshThemeColours()
 
     reverbLabel.setColour (juce::Label::textColourId, mute());
     reverbValue.setColour (juce::Label::textColourId, fuchsia());
-    swingLabel.setColour (juce::Label::textColourId, mute());
-    swingValue.setColour (juce::Label::textColourId, fuchsia());
     intensityLabel.setColour (juce::Label::textColourId, mute());
     intensityValue.setColour (juce::Label::textColourId, fuchsia());
     shakerVolLabel.setColour (juce::Label::textColourId, mute());
@@ -838,6 +894,7 @@ void MainComponent::refreshThemeColours()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshNaturalButton();
+    refreshSwingButton();
     refreshBarButton();
     refreshTempoModeButtons();
     refreshClockButtons();
@@ -983,6 +1040,16 @@ int MainComponent::deviceBufferFrames() const
 void MainComponent::openAudioDevice (bool granted)
 {
     micGranted = granted;
+
+    // Permission completion is asynchronous and can arrive after iOS has put
+    // the app in the background. Do not let that callback undo the idle power
+    // down; handleAppResumed() will perform the normal open in the foreground.
+    if (appIsSuspended && ! userWantsArmed && ! trackTransport.isPlaying())
+    {
+        audioPoweredDownForBackground = true;
+        return;
+    }
+
     const int ins = granted ? 2 : 0;
 
     if (! audioOpened)
@@ -1636,9 +1703,12 @@ void MainComponent::loadPrefs()
     engine.settings().reverbAmount.store (reverb);
     setFader (reverbSlider, reverbValue, reverb);
 
-    const float swing = clamp01 (prefs->getDoubleValue ("swing", 0.00), 0.00);
-    engine.settings().swing.store (swing);
-    setFader (swingSlider, swingValue, swing);
+    // Stored as a flag, but read through the old 0..1 double so an install that
+    // had the knob somewhere in the middle comes back as "on" rather than as a
+    // value the UI can no longer show. Anything past halfway is swing.
+    engine.settings().swing.store (
+        prefs->getDoubleValue ("swing", 0.0) > 0.5 ? 1.0f : 0.0f);
+    refreshSwingButton();
 
     const float energy = clamp01 (prefs->getDoubleValue ("intensity", 0.50), 0.50);
     engine.settings().intensity.store (energy);
@@ -1752,7 +1822,8 @@ void MainComponent::savePrefs (bool flush)
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
                      static_cast<double> (engine.settings().reverbAmount.load()));
-    prefs->setValue ("swing", static_cast<double> (engine.settings().swing.load()));
+    prefs->setValue ("swing",
+                     engine.settings().swing.load() > 0.5f ? 1.0 : 0.0);
     prefs->setValue ("intensity", static_cast<double> (engine.settings().intensity.load()));
     prefs->setValue ("tempoFollow", engine.settings().tempoFollow.load());
     prefs->setValue ("userBpm", static_cast<double> (engine.settings().userBpm.load()));
@@ -1890,6 +1961,38 @@ void MainComponent::refreshNaturalButton()
     naturalButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
 }
 
+void MainComponent::applySwing (bool on)
+{
+    // Straight or swung, and nothing between: a percussionist does not play 37%
+    // of a shuffle. The engine still takes a 0..1 amount because the warp is
+    // written in terms of it, so what the switch does is stop offering the
+    // values nobody wants - and then hold the one value that is worth having.
+    //
+    // Which is not the full triplet. Measured on the reference this was tuned
+    // against (an Afrobeats shaker at 106 BPM, `docs/TODO.md` item 7), the
+    // sixteenth inside each eighth lands at **61.6%** of it - 57.4% in one
+    // eighth and 65.7% in the other, because it is a person playing - against
+    // 50% straight and 66.7% for the triplet. 0.65 puts the written position at
+    // 60.8% and, with the default humanize on top, renders at about 63%: inside
+    // the reference's own spread, where the full triplet sits above all of it.
+    //
+    // Chasing the 61.6% to the decimal would be false precision - the two halves
+    // of the reference's own bar disagree by eight points. This is the value a
+    // listener chose with the three renders in front of them, not a fit.
+    constexpr float kSwingOnAmount = 0.65f;
+    engine.settings().swing.store (on ? kSwingOnAmount : 0.0f);
+    refreshSwingButton();
+    savePrefs();
+}
+
+void MainComponent::refreshSwingButton()
+{
+    const bool on = engine.settings().swing.load() > 0.5f;
+    swingButton.setToggleState (on, juce::dontSendNotification);
+    swingButton.setColour (juce::TextButton::buttonColourId, ink());
+    swingButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+}
+
 void MainComponent::applyLatencyFromDevice()
 {
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -1994,12 +2097,24 @@ void MainComponent::timerCallback()
     snap = engine.snapshot();
     if (trackTransport.hasStreamFinished() && trackTransport.isPlaying())
         trackTransport.stop();
-    refreshInternalTrackButtons();
-    applyLatencyFromDevice();
+
+    // A backing track can finish after the app entered the background. At that
+    // point there is no longer a reason to keep the audio session and AI alive.
+    if (appIsSuspended && ! userWantsArmed && ! trackTransport.isPlaying())
+    {
+        powerDownAudioForBackground();
+        return;
+    }
+
+    if (! appIsSuspended)
+    {
+        refreshInternalTrackButtons();
+        applyLatencyFromDevice();
+    }
 
     // The correlation is tens of millions of multiplies and has no business on
     // the audio thread, so it is done here, once, when the capture is complete.
-    if (engine.latencyMeasurementReady())
+    if (! appIsSuspended && engine.latencyMeasurementReady())
     {
         const float ms = engine.finishLatencyMeasurement();
         if (ms > 0.0f)
@@ -2018,7 +2133,7 @@ void MainComponent::timerCallback()
 
     // A tap can lock the bar without this button being touched, so the button
     // follows the engine rather than its own last press.
-    if (barButton.getToggleState() != snap.barLocked)
+    if (! appIsSuspended && barButton.getToggleState() != snap.barLocked)
         refreshBarButton();
 
     // Is the device still calling us? It can stop without saying so - iOS
@@ -2063,6 +2178,12 @@ void MainComponent::timerCallback()
                                                : "no audio device");
         }
     }
+    // Hidden controls and a full-window paint at 15 Hz buy nothing in the
+    // background. The timer remains alive only as the audio-device watchdog
+    // while a performance is intentionally continuing.
+    if (appIsSuspended)
+        return;
+
     if (tapFlash > 0)
         --tapFlash;
     if (trackReader != nullptr)
@@ -2266,7 +2387,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
     const int n = area.getHeight();
     const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.20f);
-    const int hInst      = chrome + squareFor (9);
+    const int hInst      = chrome + squareFor (10);
     const int hPart      = hInst;
 
     {
@@ -2290,7 +2411,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     {
         auto body = card (area.removeFromTop (hInst), "STRUMENTI");
         placeSquareRow (body, { &shakerButton, &congasButton, &cembaloButton, &clapButton,
-                                &subAuto, &sub4, &sub8, &sub16, &naturalButton });
+                                &subAuto, &sub4, &sub8, &sub16, &naturalButton,
+                                &swingButton });
         area.removeFromTop (gap);
     }
 
@@ -2298,7 +2420,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
         // Each instrument gets its own independent level, then how loud the
         // tracker hears the room or the aux.
         auto body = card (area, "FEEL");
-        const int nKnobs = 8;
+        const int nKnobs = 7;
         const int knobColW = body.getWidth() / nKnobs;
         auto placeKnob = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
         {
@@ -2312,14 +2434,10 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
         placeKnob (cembaloVolValue, cembaloVolLabel, cembaloVolSlider);
         placeKnob (clapVolValue, clapVolLabel, clapVolSlider);
         placeKnob (inputGainValue, inputGainLabel, inputGainSlider);
-        placeKnob (swingValue, swingLabel, swingSlider);
         placeKnob (intensityValue, intensityLabel, intensitySlider);
         placeKnob (reverbValue, reverbLabel, reverbSlider);
     }
 
-    swingSlider.setVisible (true);
-    swingLabel.setVisible (true);
-    swingValue.setVisible (true);
     intensitySlider.setVisible (true);
     intensityLabel.setVisible (true);
     intensityValue.setVisible (true);
@@ -2874,7 +2992,12 @@ void MainComponent::paintSettings (juce::Graphics& g)
         else if (snap.sampleRate > 1000.0 && std::fabs (snap.sampleRate - 48000.0) >= 1.0)
             partStatus = "LOOP  (serve 48 kHz)";
         else if (engine.settings().swing.load (std::memory_order_relaxed) > 0.18f)
-            partStatus = "LOOP  (swing massimo 18%)";
+            // SWING is a switch now, so this is not a corner any more: on, it is
+            // always past what the bank has takes for (`LoopBank::swingTolerance`),
+            // and the part falls back to the stroke engine rather than going
+            // quiet. Say so - a listener who turns SWING on with LOOP selected is
+            // owed the reason the recordings stopped. See docs/TODO.md item 7.
+            partStatus = "PATTERN  (SWING: il banco non ha prese swingate)";
         else if (snap.bpm > 1.0f && (snap.bpm < 98.0f || snap.bpm > 155.0f))
             partStatus = "LOOP  (BPM fuori banco)";
         else

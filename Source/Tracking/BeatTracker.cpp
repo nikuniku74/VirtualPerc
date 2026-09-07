@@ -169,6 +169,11 @@ void BeatTracker::prepare (double sr) noexcept
     reset();
 }
 
+void BeatTracker::suspendAnalysis()
+{
+    neural.stop();
+}
+
 void BeatTracker::reset() noexcept
 {
     neural.invalidatePublicationsBeforeNow();
@@ -733,7 +738,11 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // Neither is folded into the other. They are different quantities of
     // different quality, and adding them would hide which one answered - the
     // debug panel says `BATTUTA DALL'ARMONIA` when it was the second.
-    if (tryAlignFrom (downbeatVotes, voteBeats, comingIn, 0.0f))
+    // Through the acoustic speaker path the network's downbeat vote measured
+    // at chance. Do not let that arbitrary winner pre-empt the harmonic
+    // fallback; the latter is the only automatic bar source retained there.
+    if (! speakerFollow
+        && tryAlignFrom (downbeatVotes, voteBeats, comingIn, 0.0f))
     {
         barFromHarmony = false;
         return;
@@ -1225,7 +1234,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // different source and the speaker does not take it away - a tablet
         // speaker has no low end, but chords are not low end - so when the
         // harmony is answering, the bar can be placed in either mode.
-        if (! waitForQuantize && (! speakerFollow || barFromHarmony))
+        if (! waitForQuantize)
             alignBarFromVotes (barReentrySamples > 0);
     }
 
@@ -1627,8 +1636,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // evidence says it is. Through the iPad speaker the measured downbeat
         // vote is near chance; acting on it only replaces one arbitrary count
         // with another.
-        if (! speakerFollow || barFromHarmony)
-            alignBarFromVotes (true);
+        alignBarFromVotes (true);
 
         bool onEntryBeat = false;
         // An automatic player need not wait for the next bar line once tempo
