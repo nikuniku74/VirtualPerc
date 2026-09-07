@@ -716,6 +716,16 @@ Segnalato dall'utente su un **brano registrato dal vivo**: *«ogni tanto le
 percussioni tendono a rallentare o a velocizzare e poi ci impiegano molto a
 rientrare nel tempo»*.
 
+- [x] **Rientro quando tornano colpi puliti.** Un fill, un cambio di volume o
+  l'attivazione di un'altra percussione abbassano correttamente la fiducia e
+  limitano quanto la griglia segue quell'evidenza; quando la fiducia tornava
+  alta, però, il residuo passava ancora dal filtro lento di mantenimento. Ora il
+  fronte povero→pulito apre per mezzo beat un recupero continuo, senza snap né
+  riavvio del clock. `probe_steer --reentry`, da 0,075 beat di scarto: dentro 8
+  ms in **0,579 / 0,312 / 0,253 / 0,179 s** a 52 / 96 / 120 / 168 BPM, intervalli
+  fra impulsi **0,99–1,14x**, quindi nessun colpo doppio o saltato. Il banco
+  pulito 60 s × 8 semi resta invariato.
+
 **Non è il clock.** Prima ipotesi, misurata e scartata: `scripts/probe_steer.cpp`
 (nuovo, clock da solo, deterministico) dà una fase sbagliata di 0,25 di beat per
 **due secondi** e misura quanto ci mette la griglia a rientrare — **0,06–0,28 s**
@@ -925,6 +935,132 @@ dentro l'altro:
   a 100 e poi 200; da 200 si torna a 100 e poi 50. Regressione mirata dentro
   `VPTests --tempo-slow`: 100 resta 100 con downbeat alterni mancanti e le quattro
   transizioni 100↔50 / 100↔200 passano tutte da 100.
+
+---
+
+### 23. Il regime FISSO si congelava su una band che deriva 🟡 (2026-09-07, trovato e corretto — resta ascolto)
+
+Richiesta dell'utente: *«verifica e potenzia al massimo il riconoscimento dei bpm
+nel modo più veloce possibile, e se sta uscendo dal tempo fallo rientrare subito,
+come un perfetto percussionista capirebbe al volo»*.
+
+**Prima cosa, per chi legge dopo:** durante questa sessione HEAD si è mosso
+(commit `7292ffb` e `74fe5fc`), quindi le misure degli item 21 e 22 sono contro
+un albero più vecchio. Il tabellone qui sotto è il tree attuale.
+
+**Banco nuovo: `scripts/probe_matrix.cpp`.** Aggancio *e* stabilità, su
+dritto / swing 0,65 / swing 1,0 × 60…170 BPM × 10 semi. Genera anche l'**ottavo
+swingato**, che `probe_steady_tempo` non fa e che è la metà del problema
+dell'utente. Non è in CMake, si compila in due secondi (comando nel suo header).
+
+Stato del tree **prima** di questo item: **aggancio medio 1,78 s** su tutta la
+matrice, righe swingate già pulite, 60 BPM che non raddoppia più. Restavano **5
+uscite su 210 corse**, tutte al 4,2–4,4 %, da 1,4 a 10 secondi.
+
+**Tracciata la peggiore** (dritto 81 BPM, seme 7, 10 s fuori) e non era niente di
+quello che avevo corretto finora:
+
+```
+t=20.5  pubbl=82.09 (vero 80.87)  reg=FISSO  comb=82.08  lungo=82.20  corto=81.79
+t=23.4  pubbl=82.09 (vero 80.23)  reg=FISSO  comb=81.30  lungo=82.01  corto=80.93
+```
+
+Il pubblicato **congelato a 82,09** mentre il tempo vero scende. Comb, fit lungo
+e fit corto lo seguono giù tutti e tre: **solo il numero pubblicato non si
+muove.** Il decoder aveva deciso «disco tagliato a click» su una band che deriva
+di 3 BPM — entrando in FISSO in un tratto piatto della deriva — e poi ci è
+rimasto. Su un brano **live** è il guasto peggiore che ci sia: l'app smette di
+seguire la band.
+
+- [x] **Difetto 1: il contatore d'uscita si azzerava al primo battito buono.**
+  `if (wandered) ++fixedErrorBeats; else fixedErrorBeats = 0;` e l'uscita ne
+  vuole 6 **consecutivi**. Su una deriva l'errore oscilla attorno alla soglia,
+  quindi i sei consecutivi non arrivavano mai. È **la stessa identica lezione**
+  che lo scatto d'ottava ha già imparato duecento righe più giù, col suo
+  commento: *«un contatore che si azzerava al primo battito d'accordo non
+  arrivava da nessuna parte… è così che un livello scelto nei primi secondi
+  sopravviveva a ogni correzione.»* Ora decrementa invece di azzerare.
+- [x] **Difetto 2, quello che conta: l'uscita da FISSO guardava solo la
+  *dimensione* dell'errore, mai la *direzione*.** Tutti e quattro i termini
+  d'uscita sono «quanto ci siamo allontanati», e su una deriva la dimensione
+  arriva tardi per costruzione — l'errore parte da zero e cresce, e quando il 2 %
+  si è accumulato il musicista è fuori da secondi. Il flag `moving` («gli estremi
+  della finestra differiscono, e più della sua stessa dispersione, quindi è una
+  direzione e non rumore») era già calcolato lì sopra e **usato solo in
+  acquisizione**. Ora libera anche FISSO. Un disco a click non può produrlo; una
+  band lo produce prima che l'errore si senta.
+- [x] **Effetto:** dritto 81 BPM da **1/10 corse con uscite (10 s fuori al
+  4,3 %) a 0/10**. Totale 5 → 4 uscite, tempo fuori medio **0,06 % → 0,03 %**.
+  E le **rampe migliorano** in `VPAlign`: fase 20,8 → 18,8 ms sulla rampa da 4 s
+  e 8,0 → 6,0 ms su quella da 12 s — coerente, uscire da FISSO su un tempo che si
+  muove vuol dire seguirlo meglio.
+- [x] **La proprietà opposta è intatta, misurata apposta:** su click track vero
+  (deriva 0, jitter 0,5 e 2 ms, 81/96/120/140 BPM, 8 semi) errore medio
+  **0,004–0,023 % e zero uscite, identico a HEAD riga per riga**. `moving` non
+  scatta su un click.
+- [x] **Gate:** `probe_tempo_step` identico a HEAD su tutte e 11 le righe;
+  `VPAlign` cinque gradini protetti identici (0,78–1,47 s, 23,4–24,4 ms, zero
+  violazioni di impulsi); `--octave focused` 6/4 con le quattro RED deliberate
+  dell'item 1; `--swing` 3/0; `--leak` 49/0.
+- [ ] **Restano 4 uscite su 210**, tutte su materiale **dritto**: 60 BPM 3/10 e
+  170 BPM 1/10, al 4,2–4,4 %. Il materiale dell'utente (lento e swingato) è
+  **pulito 0/10 su tutte le righe**. Non le ho inseguite: sono ai due bordi della
+  gamma e valgono lo 0,03 % del tempo.
+- [x] **Il banco stretto dava numeri falsamente rassicuranti, e l'utente ha avuto
+  ragione a rifiutare la taratura su un brano preciso.** Chiesto esplicitamente:
+  *«non voglio venga fatto su un brano preciso, ma sempre, sia con brani caricati
+  sia in live»*. Giusto, ed è anche quello che dice il resto di questo file. Il
+  banco è stato allargato da due assi (tempo, swing) a **dodici materiali** —
+  `scripts/probe_matrix.cpp`, con densità della suddivisione, accenti per quarto,
+  jitter, battiti ingoiati dal mix e vuoti d'arrangiamento. Il quadro cambia:
+
+  | materiale | aggancio med / peg | uscite | %fuori |
+  |---|---|---|---|
+  | metronomo | 2,31 / 6,98 | 1/30 | 0,05 % |
+  | **rock a ottavi** | **7,30 / 29,80** | **9/30** | **8,30 %** |
+  | rock a sedicesimi | 2,41 / 6,98 | 1/30 | 0,03 % |
+  | backbeat secco | 4,27 / 17,36 | 9/30 | 0,42 % |
+  | **half-time** | **mai** | **30/30** | **98,95 %** |
+  | swing 8vi / shuffle 16mi / swing pieno | 2,5–4,4 | 1–3/30 | ≤0,10 % |
+  | **band larga (25 ms)** | 7,53 / 31,84 | 10/30 | 0,68 % |
+  | **mix che ingoia (18 %)** | **9,05 / 49,40** | **16/30** | 4,54 % |
+  | **con vuoti (1 battuta su 4)** | 9,61 / 35,46 | 9/30 | 2,00 % |
+  | solo accordi | 4,97 / 19,56 | 10/30 | 1,31 % |
+
+  **Aggancio medio reale 5,30 s, non 1,78.**
+- [x] **Come sbaglia, non solo quanto** (`probe_matrix --ratio`, rapporto medio
+  riportato/vero). Quasi tutto legge **1,00**, cioè il livello giusto — il che è
+  la notizia buona. Due eccezioni:
+  - **rock a ottavi a 81 BPM: 1,44.** Media fra corse giuste e corse sull'ottava
+    sbagliata. È lo **stesso caso** dello swing lento dell'item 22: tempo lento +
+    suddivisione riempita, dove il livello degli ottavi (162) è ancora dentro la
+    gamma. A 100 BPM e oltre sparisce, perché sarebbe ≥200.
+  - **half-time: 2,02 ai lenti, 0,50 ai veloci.** È l'ambiguità metà/doppio
+    dell'item 1, **e in più la fixture è ingiusta per una probe solo-decoder**:
+    la convenzione che tiene il polso nella gamma di un percussionista vive in
+    `BeatTracker::updateAutoOctave`, che questa probe non esercita. Non leggere
+    il 98,95 % come un guasto senza prima rifarlo end-to-end.
+- [x] **Le due modifiche di questo item verificate anche sul banco largo**, A/B
+  contro `git show HEAD:`: uscite totali **104 → 101**, fuori medio
+  **9,83 % → 9,70 %**, aggancio medio invariato, e **nessuna cella peggiora**
+  (metronomo 2/30→1/30, rock 16mi 2/30→1/30, mix che ingoia 17/30→16/30,
+  half-time 99,49→98,95 %). Miglioramento piccolo e pulito, non una svolta.
+- [ ] **La classifica di cosa attaccare dopo, in ordine di quanto pesa.** Tutte e
+  tre le prime sono *acquisizione*, non recupero:
+  1. **Rock a ottavi ai tempi lenti (~81 BPM): 8,30 % del tempo fuori.** È il
+     materiale più comune che esista, ed è la stessa radice dell'item 22. Il
+     discriminante c'è e non è usato: nella fixture i quarti stanno a 0,8–1,0 e
+     gli ottavi a 0,45, quindi il livello giusto ha onset sistematicamente più
+     forti. Il decoder ha già `beatStrength` e `recentBeatStrengthMedian()`, usati
+     per le transizioni ma **non** per la scelta del livello metrico.
+  2. **Mix che ingoia battiti: aggancio 9,05 s, peggiore 49,4 s.** Un missaggio
+     vero non consegna ogni battito.
+  3. **Vuoti d'arrangiamento e band larghe: 9,6 e 7,5 s.**
+- [ ] **Non tarare niente di tutto questo su un brano solo.** Il banco esiste
+  apposta; ogni modifica va misurata su tutte e dodici le righe **e** su
+  `probe_tempo_step` + `VPAlign`, come queste due.
+- [ ] **Ascolto.** È l'unica verifica che manca: rimettere lo stesso brano live
+  swingato a 81 e dire se il congelamento si sente ancora.
 
 ---
 

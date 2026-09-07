@@ -215,8 +215,96 @@ double fillRecovery (float bpm, vp::FollowStrength follow, unsigned seed)
     return back;
 }
 
+struct ReentryResult
+{
+    double recoveredSec = -1.0;
+    double shortestPulse = 10.0;
+    double longestPulse = 0.0;
+    double errorAtReturnMs = 0.0;
+    double bestErrorMs = 1000.0;
+};
+
+// A small but audible displacement held while the fit is poor, followed by
+// clean evidence returning. This is the edge produced by a fill or by changing
+// which percussion dominates the input, and was missing from the older fill
+// probe above (whose trust stays at 1 throughout).
+ReentryResult cleanEvidenceReturns (float bpm)
+{
+    constexpr double sr = 48000.0;
+    constexpr int blk = 256;
+    vp::TempoFollower clock;
+    clock.prepare (sr);
+    clock.setPulsesPerBeat (4);
+    clock.forceTempo (bpm);
+    clock.setTargetTempo (bpm, 1.0f);
+    clock.setFollowStrength (vp::FollowStrength::high);
+    clock.setLocked (true);
+    clock.resetClock();
+
+    const double dt = blk / sr;
+    const double pulseSec = 60.0 / bpm / 4.0;
+    double song = 0.0, t = 0.0, lastPulse = -1.0;
+    ReentryResult result;
+
+    for (int i = 0; i < static_cast<int> (sr * 4.0) / blk; ++i)
+    {
+        if (t >= 1.0 && t < 1.0 + dt)
+            clock.snapPhase (vp::wrap01 (static_cast<float> (song + 0.075)));
+
+        const bool poor = t >= 1.0 && t < 1.40;
+        clock.setTempoTrust (poor ? 0.30f : 1.0f);
+        clock.setGridPhase (vp::wrap01 (static_cast<float> (song)),
+                            poor ? 2.20f : 0.90f);
+        const auto tick = clock.advance (blk);
+        for (int p = 0; p < tick.pulsesFired; ++p)
+        {
+            const double at = t + tick.pulseOffset[p] / sr;
+            if (lastPulse >= 0.0 && at >= 1.40)
+            {
+                const double ratio = (at - lastPulse) / pulseSec;
+                result.shortestPulse = std::min (result.shortestPulse, ratio);
+                result.longestPulse = std::max (result.longestPulse, ratio);
+            }
+            lastPulse = at;
+        }
+
+        song += bpm / 60.0 * dt;
+        t += dt;
+        const float error = std::fabs (vp::wrapCentered (
+            clock.beatPhase() - vp::wrap01 (static_cast<float> (song))));
+        if (t >= 1.40 && t < 1.40 + dt)
+            result.errorAtReturnMs = error * 60000.0 / bpm;
+        if (t >= 1.40)
+            result.bestErrorMs = std::min (result.bestErrorMs,
+                                           static_cast<double> (error * 60000.0 / bpm));
+        const float tolerance = 0.008f * bpm / 60.0f;
+        if (t >= 1.40 && result.recoveredSec < 0.0 && error <= tolerance)
+            result.recoveredSec = t - 1.40;
+    }
+    return result;
+}
+
 int main (int argc, char** argv)
 {
+    if (argc > 1 && std::strcmp (argv[1], "--reentry") == 0)
+    {
+        bool ok = true;
+        for (float bpm : { 52.0f, 96.0f, 120.0f, 168.0f })
+        {
+            const auto r = cleanEvidenceReturns (bpm);
+            const double halfBeat = 30.0 / bpm;
+            std::printf ("phase-reentry %3.0f BPM  error=%5.1f ms  within-8ms=%5.3f s"
+                         "  best=%4.1f ms  pulse=%4.2f..%4.2f x\n",
+                         static_cast<double> (bpm), r.errorAtReturnMs,
+                         r.recoveredSec, r.bestErrorMs,
+                         r.shortestPulse, r.longestPulse);
+            ok = ok && r.recoveredSec >= 0.0
+                 && r.recoveredSec <= halfBeat + 2.0 * 256.0 / 48000.0
+                 && r.shortestPulse > 0.50 && r.longestPulse < 1.50;
+        }
+        return ok ? 0 : 1;
+    }
+
     const bool outliers = ! (argc > 1 && std::strcmp (argv[1], "--clean") == 0);
     std::printf ("# clock da solo, 60 s x 8 semi, band live (deriva ~2%%, fase +-0.04 di beat)%s\n",
                  outliers ? ", una ipotesi sbagliata da 0.22 di beat ogni 7 s" : ", nessuna ipotesi sbagliata");

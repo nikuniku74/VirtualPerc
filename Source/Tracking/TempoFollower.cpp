@@ -136,6 +136,8 @@ void TempoFollower::reset() noexcept
     havePhaseObservation = false;
     tempoTrimEnabled = false;
     tempoTrust = 1.0f;
+    poorTrustSamples = 0;
+    phaseRecoverySamplesRemaining = 0;
     transitionSamplesRemaining = 0;
 }
 
@@ -157,13 +159,35 @@ void TempoFollower::resetClock() noexcept
     samplesSinceObservation = 0;
     samplesSincePulse = static_cast<int> (sampleRate * 30.0);
     havePhaseObservation = false;
+    poorTrustSamples = 0;
+    phaseRecoverySamplesRemaining = 0;
     transitionSamplesRemaining = 0;
     reanchor = true;
 }
 
 void TempoFollower::setTempoTrust (float trust) noexcept
 {
-    tempoTrust = std::clamp (trust, kMinTempoTrust, 1.0f);
+    const float next = std::clamp (trust, kMinTempoTrust, 1.0f);
+
+    // A fill, a newly enabled percussion voice or a level change can make the
+    // fitted beats temporarily poor. While that is true the lean cap is
+    // deliberate, but once clean beats return it used to leave the residual
+    // offset to the ordinary 0.9 s target filter. The analysis had already
+    // answered "the drummer is back" and the clock still behaved as if it had
+    // not. Arm a half-beat catch-up only after at least 200 ms of genuinely poor
+    // evidence; one bad six-Hz hypothesis is shorter and cannot trigger it.
+    constexpr float kPoorBelow = 0.55f;
+    constexpr float kRecoveredAbove = 0.80f;
+    const int poorLongEnough = static_cast<int> (sampleRate * 0.20);
+    if (next >= kRecoveredAbove && poorTrustSamples >= poorLongEnough
+        && phaseRecoverySamplesRemaining <= 0)
+    {
+        phaseRecoverySamplesRemaining = std::max (
+            1, static_cast<int> (std::lround (sampleRate * 30.0
+                                              / std::max (40.0f, tempo))));
+        poorTrustSamples = 0;
+    }
+    tempoTrust = next;
 }
 
 void TempoFollower::setTempoTrimEnabled (bool on) noexcept
@@ -248,6 +272,8 @@ void TempoFollower::forceTempo (float bpm) noexcept
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
+    poorTrustSamples = 0;
+    phaseRecoverySamplesRemaining = 0;
     transitionSamplesRemaining = 0;
 }
 
@@ -475,6 +501,11 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
                                         static_cast<int> (sampleRate * 30.0));
     samplesSincePulse = std::min (samplesSincePulse + numSamples,
                                   static_cast<int> (sampleRate * 30.0));
+    if (tempoTrust < 0.55f)
+        poorTrustSamples = std::min (poorTrustSamples + numSamples,
+                                     static_cast<int> (sampleRate * 30.0));
+    else if (tempoTrust >= 0.80f && phaseRecoverySamplesRemaining <= 0)
+        poorTrustSamples = 0;
     if (samplesSinceObservation > static_cast<int> (sampleRate * 2.5))
     {
         const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
@@ -727,6 +758,39 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         }
     }
 
+    if (! rapidTransition && phaseRecoverySamplesRemaining > 0
+        && haveRawGridPhaseError && numSamples > 0
+        && std::isfinite (rawGridPhaseError) && std::isfinite (tempo))
+    {
+        // Clean beats have returned after a passage that the evidence itself
+        // marked unreliable. Land within 8 ms during this beat, updating the
+        // command from every projected phase. This is a player's fast rientro:
+        // temporarily lengthen or shorten the next interval, never restart the
+        // clock or replay/skip a grid position.
+        // Aim half a millisecond inside the public 8 ms line. The song and
+        // clock phases are float grids sampled at different instants; aiming
+        // at the inclusive boundary otherwise lands a few ulps outside it.
+        constexpr float kRecoveryToleranceSeconds = 0.0075f;
+        constexpr float kRecoverySteerRail = 0.20f;
+        const float toleranceBeats = kRecoveryToleranceSeconds * tempo / 60.0f;
+        const int commandSamples = std::max (numSamples,
+                                             phaseRecoverySamplesRemaining);
+        const float remainingBeats = tempo * static_cast<float> (commandSamples)
+                                     / (60.0f * static_cast<float> (sampleRate));
+        const float excess = std::max (0.0f, std::fabs (rawGridPhaseError)
+                                               - toleranceBeats);
+        if (remainingBeats > 1.0e-9f)
+        {
+            const float needed = std::copysign (excess / remainingBeats,
+                                                rawGridPhaseError);
+            if (std::isfinite (needed))
+                steer = std::clamp (needed, -kRecoverySteerRail,
+                                    kRecoverySteerRail);
+        }
+        if (excess <= 0.0f)
+            phaseRecoverySamplesRemaining = 0;
+    }
+
     // Phase this block will *not* advance because of the steer. The trim
     // controller subtracts it from the drift it measures, so that the loop's own
     // correction is not read back as the song having moved; and the error
@@ -822,6 +886,8 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     tick.tempoBpm = tempo;
     transitionSamplesRemaining =
         std::max (0, transitionSamplesRemaining - std::max (0, numSamples));
+    phaseRecoverySamplesRemaining =
+        std::max (0, phaseRecoverySamplesRemaining - std::max (0, numSamples));
     return tick;
 }
 

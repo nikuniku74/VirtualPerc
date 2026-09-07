@@ -144,6 +144,10 @@ private:
     bool tempoTrimEnabled = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */
     float tempoTrust = 1.0f;
+    // Poor evidence may hold the clock slightly away from the song. Once clean
+    // beats return, this bounded half-beat window spends that residue promptly.
+    int poorTrustSamples = 0;
+    int phaseRecoverySamplesRemaining = 0;
     int transitionSamplesRemaining = 0;
     FollowStrength follow = FollowStrength::medium;
 };

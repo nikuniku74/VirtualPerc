@@ -193,6 +193,31 @@ HMM tempo marginal with `BeatHmm::anchorMetricalLevel`, preserving each tempo's
 conditional phase distribution, and an HMM level that disagrees with the
 committed decoder level cannot overwrite the anchor on its own.
 
+**And measure on a bank of materials, never on one song.** `probe_matrix` runs
+twelve shapes real records have - quarters only, eighths, sixteenths, backbeat,
+half-time, swung eighths and sixteenths, a loose band at 25 ms of scatter, a mix
+that swallows 18% of its beats, bars the arrangement drops out of, and chords
+with no drums at all - across 60-165 BPM.
+
+It exists because a narrower bench (tempo x swing only) reported a **1.78 s** mean
+lock where the wide one reports **5.30 s**, and because the rows it added are
+where the failures are: rock eighths at 81 BPM spends **8.3%** of its run off the
+tempo, a swallowing mix takes 9.05 s to lock and 49.4 s at worst, arrangement
+dropouts 9.61 s. `--ratio` separates the two kinds of wrong. Nearly every cell
+reads 1.00 - the metrical *level* is right almost everywhere - with two
+exceptions: rock eighths at 81 reads **1.44**, half the runs on the octave above,
+which is the same slow-tempo-plus-filled-subdivision root as the swing case
+below; and half-time reads 2.02 slow / 0.50 fast, which is the documented
+ambiguity **plus** a fixture a decoder-only probe cannot judge, since the
+convention keeping the pulse in a percussionist's range lives in
+`BeatTracker::updateAutoOctave`, which this probe never runs.
+
+The ranked work it points at, all of it *acquisition* rather than recovery:
+rock eighths at slow tempo first (the strongest onsets are on the true beat -
+`beatStrength` and `recentBeatStrengthMedian()` already exist and are used for
+transitions but not for choosing the level), then a mix that swallows beats,
+then dropouts and loose bands.
+
 Focused deterministic measurement (`probe_steady_tempo BPM seconds seeds`, one
 impulse per beat, 3 BPM live drift, 10 ms jitter): first correct 52-BPM lock
 **~12.5 s -> 3.48 s (3.0 beats)** with the context gate above. Over 120 s x 5
@@ -410,6 +435,20 @@ closes in well under a second. Tempo is clamped 40..220 BPM and *settles*
 is closed, so the grid stays monotonic and no stroke is ever played twice or
 skipped. It is what a player does - nobody moves their hand, they lean until
 they are back with the band.
+
+**The return of clean evidence is an edge, not another holding frame.** While a
+fill, a level change or a different percussion voice makes the fitted beats
+poor, `kPoorLeanBeats` deliberately limits how far the clock may follow them.
+Before the edge was handled, the clean fit returning merely restored the normal
+0.9 s filter, leaving the small residual displacement to be paid slowly. The
+clock now remembers a poor interval only after 200 ms (longer than one bad 6 Hz
+hypothesis); when trust rises through 0.80 it spends the residue during the next
+half beat, through the same monotonic rate bend and with a 20% rail. It targets
+7.5 ms so float phase grids land inside the public 8 ms line. `probe_steer
+--reentry`, starting 0.075 beat away, measures **0.579 / 0.312 / 0.253 / 0.179
+s** at 52 / 96 / 120 / 168 BPM, all no later than half a beat. Pulse spacing is
+0.99-1.14x nominal: no duplicate or skipped stroke. The clean 60 s x 8-seed
+clock bench is unchanged because no poor-to-clean edge exists there.
 
 | | tau | steerLim | steerCeil | dGain |
 |---|---|---|---|---|
@@ -825,6 +864,7 @@ cmake --build build-host --target <target>
 
 | target | source | question it answers |
 |---|---|---|
+| `probe_matrix` | `scripts/probe_matrix.cpp` | twelve kinds of material x five tempos: time to lock, and time spent off the tempo. The bank to A/B a decoder change against - **not** one song. No CMake target; build line in its header. `--ratio` prints reported/true, so an octave error is told apart from a wobble |
 | `VPTests` | `Tests/` | the TAP suite; `StubBeatModel` when no ONNX assets |
 | `VPTests --bar` | `Tests/TestAiBeat.cpp` | two-quarter cut / seek re-entry of the one (item 2) |
 | `VPTests --swing` | `Tests/TestMain.cpp` | the swing warp's geometry alone: straight where written, swung on 0/⅓/⅔/⅚, never early (item 7) |

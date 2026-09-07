@@ -2290,10 +2290,26 @@ void BeatDecoder::updateTempo() noexcept
                                           ? (longFitBpm - fixedAnchorBpm) / fixedAnchorBpm
                                           : 0.0f;
             const bool wandered = haveLong && std::fabs (anchorError) > kLeaveFixedError;
+            // A vote over the last few bars, not a run of consecutive beats -
+            // the same lesson the octave snap below already learned, in the
+            // same file, for the same reason: "a counter that reset on the
+            // first agreeing beat never got anywhere against that, which is how
+            // a level chosen in the first seconds outlived every correction".
+            //
+            // A band that drifts does not clear this bar on every beat, it
+            // clears it on most of them, and the error wanders back under the
+            // line often enough that six *consecutive* wandered beats never
+            // arrived. Measured at 81 BPM on material drifting 3 BPM: the
+            // regime went fixed at a flat part of the drift and then held
+            // 82.09 while the truth fell to 80.23 - the comb, the long fit and
+            // the short fit all following it down and only the published number
+            // frozen - for ten seconds, reaching 4.3%. Decrementing instead
+            // lets a drift accumulate its case the way a wrong octave does.
             if (wandered)
                 ++fixedErrorBeats;
             else
-                fixedErrorBeats = 0;
+                --fixedErrorBeats;
+            fixedErrorBeats = std::clamp (fixedErrorBeats, 0, 3 * kBeatsToLeaveFixed);
 
             // The fast release has to agree with the window before it counts.
             // On its own it is a median of three intervals against a held
@@ -2334,8 +2350,27 @@ void BeatDecoder::updateTempo() noexcept
             // *step* costs about five seconds and a band that actually drifts
             // or ramps costs nothing measurable: the same bench has the clock
             // never leaving 2% of an accelerando at all.
+            // And `moving` on its own, which was computed for the acquisition
+            // branch and never asked here.
+            //
+            // Every other term above is a size: how far the tempo has already
+            // got from the anchor. On a band that drifts, the size arrives late
+            // by construction - the error starts at nothing and grows - so the
+            // regime went on holding a frozen number through the part of the
+            // drift where it was still small, and by the time 2% had
+            // accumulated the listener had been out for seconds. `moving` is
+            // not a size, it is a *direction*: the window's ends differ by more
+            // than the window's own scatter. A record cut to a click cannot
+            // produce it; a band can produce it before the error is audible at
+            // all.
+            //
+            // Measured at 81 BPM on material drifting 3 BPM: the regime fixed
+            // at a flat part of the sine and then held 82.09 while the truth
+            // fell to 80.23 - comb, long fit and short fit all following it
+            // down, only the published number frozen - for ten seconds.
             if (beatsInRegime >= kRegimeMinBeats
-                && (fixedErrorBeats >= kBeatsToLeaveFixed
+                && (moving
+                    || fixedErrorBeats >= kBeatsToLeaveFixed
                     || (fastDriftBeats >= kFastBeatsToLeaveFixed && windowAgrees)
                     || (fastDriftLargeBeats >= kFastBeatsAlone
                         && (lineFeed || windowAgrees))
