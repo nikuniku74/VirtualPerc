@@ -87,6 +87,9 @@ public:
         float shortFitRate = 0.0f;
         bool  levelSettled = false;
         int   userOctave = 0;
+        /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
+            2 on one an octave too fast. See `fitPeriod`. */
+        float fitIndexGap = 1.0f;
     };
 
     Diagnostics diagnostics() const noexcept;
@@ -220,8 +223,13 @@ private:
         fit predicts for the newest beat in its own window, which is an average
         over the whole fit where a single beat time is one measurement carrying
         that one beat's whole error. */
+    /** `indexGapOut`, when asked for, is the median step between the grid
+        indices the kept beats landed on: 1 when the committed grid is the pulse
+        the beats are actually at, 2 when it is an octave too fast. It is the
+        half of the picture `coverage` cannot supply - see the comment in the
+        body. */
     bool  fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
-                     double& anchorOut) const noexcept;
+                     double& anchorOut, float* indexGapOut = nullptr) const noexcept;
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     float scoreConfidence() const noexcept;
@@ -364,6 +372,9 @@ private:
     float anchorStrength = 0.0f;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
+    /** Median step between grid indices of the fitted beats: 1 on a grid at the
+        pulse, 2 on one an octave too fast. */
+    float lastFitIndexGap = 1.0f;
     float longFitBpm = 0.0f;
     float shortFitBpm = 0.0f;
     /** How fast the short fit is itself moving, in BPM per beat, smoothed.

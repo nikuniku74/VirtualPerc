@@ -46,7 +46,7 @@ Sospetti (skill tempo: sotto ~100 BPM il fold legge gli ottavi come beat; range 
 
 L'app deve mettere l'**1** sul primo quarto del 4/4 su mixer e brano caricato, senza «L'1 è QUI». Se il musicista **taglia due quarti** e riprende in 4/4, deve riallineare l'1 in poche battute. Niente look-ahead; il clock del tempo non riparte; ruotare l'1 = solo `rotateBarIndex`.
 
-Chiuso: istogramma downbeat + armonia (`BeatTracker::alignBarFromVotes`). In play servono ~8 battute prima di ruotare. Un buco di due quarti apre una finestra coming-in di 4 battute (`notifyBarReentry`, 8 beat di evidenza, una rotazione); il decoder **non** riparte. `barLocked` **vieta** ogni rotazione automatica. Sul percorso speaker c'era un gate circolare: l'allineamento veniva chiamato solo se `barFromHarmony` era già vero, ma quel flag può diventare vero soltanto dentro l'allineamento. Corretto chiamando sempre l'allineamento, saltando invece il solo istogramma neurale (misurato a caso sul ritorno acustico) e lasciando rispondere l'armonia. Su materiale che non contiene alcun indizio affidabile di battuta l'1 non è deducibile: in quel caso resta intenzionalmente `SPOSTA L'1`, non una rotazione casuale.
+Chiuso: istogramma downbeat + armonia (`BeatTracker::alignBarFromVotes`). In play servono **47 battiti accettati** (~12 battute a 4/4, cioè 23,6 s a 120 BPM e 47,2 s a 60) prima di ruotare — vedi la tabella nell'item 22; qui c'era scritto «~8 battute», che era sbagliato. Un buco di due quarti apre una finestra coming-in di 4 battute (`notifyBarReentry`, 8 beat di evidenza, una rotazione); il decoder **non** riparte. `barLocked` **vieta** ogni rotazione automatica. Sul percorso speaker c'era un gate circolare: l'allineamento veniva chiamato solo se `barFromHarmony` era già vero, ma quel flag può diventare vero soltanto dentro l'allineamento. Corretto chiamando sempre l'allineamento, saltando invece il solo istogramma neurale (misurato a caso sul ritorno acustico) e lasciando rispondere l'armonia. Su materiale che non contiene alcun indizio affidabile di battuta l'1 non è deducibile: in quel caso resta intenzionalmente `SPOSTA L'1`, non una rotazione casuale.
 
 - [x] **Baseline:** il banco precedente ha misurato ~20–21/25 sul line feed e voto vicino al caso sul ritorno acustico; la segnalazione d'ascolto ha esposto il percorso armonico irraggiungibile, non una soglia da allentare.
 - [x] **Test RED taglio:** `VPTests --bar` — following, tace 2 quarti, downbeat del modello su quello che il clock chiama 3. Entro 4 battute `beatInBar` è 0; decoder `analysisRestarts` invariato. Fill senza buco di livello non ruota. Con lucchetto non ruota. Seek: stessa finestra, niente epoch.
@@ -469,6 +469,12 @@ Fix effettivo (più stretto): attenua **solo** sopra un picco di **0.90** (vicin
 - [x] Estratto `octave-sweep` in `vpRunOctaveSweepTest` (`Tests/TestAiBeat.cpp` + `TestAiBeat.h`), richiamabile da solo con `VPTests --octave` (~3-4 min invece dei ~5+ min della suite intera) — usare questo per iterare su qualsiasi cosa tocchi il livello di analisi, non la suite intera.
 - [x] Verificato con `VPTests --octave`: 168 BPM torna a leggere giusto (gain=1.000, "on it").
 - [x] **Gate fatto (2026-09-04):** `VPTests` intera su richiesta dell'utente — **610 passed, 7 failed**, e le 7 sono tutte preesistenti e attese: 2 leak (`no block of it is moved…`, `a leak that does not land on a whole sample…`) e i 5 RED a 50 BPM dell'item 1 (`a 50 BPM bar makes its 100 BPM hi-hat…`, `mixer/file slow kit holds 50 BPM…`, `mixer/file audible 50 BPM quarter…`), lasciati rossi apposta. **Nessuna regressione nuova**: niente dipendeva dal vecchio clamp boost-only.
+- [x] **Il trim INPUT non riavvia più l'analisi (2026-09-07).** Le decisioni sul
+  livello fisico (`sourceAudible`, dinamica, rientro e `analysisEpoch`) usano il
+  residuo dopo canceller diviso per il trim; il make-up continua correttamente a
+  vedere il livello realmente consegnato a BeatNet. `VPOps --input-gain`: zero
+  epoch aggiuntive, delta +0,07 ms sul percorso iPad e 0,00 ms diretto. Anche
+  `--voice-toggle`: zero epoch, +1,80 ms iPad / 0,00 ms diretto.
 - [ ] Ascolto: non fatto. Verificare con un ingresso reale volutamente troppo "caldo" (mixer a livello di linea o trim alto) che il sintomo originale dell'utente (regolare il volume per sentire meglio) sia davvero sparito.
 - [ ] Se in futuro si vuole la simmetria piena (attenuare sempre verso 0.20, non solo sopra 0.90), serve rifare la validazione a più brani/stili come quella già in commento sopra `kMakeupTargetPeak` — non è un fix da una riga.
 
@@ -591,6 +597,14 @@ si sente.
   (isteresi sul confine dell'ottava) è stata scartata: il confine non è nel
   decoder e la gamma centrale non ha il problema. Tarare qui vorrebbe dire tarare
   sul rumore. Il lavoro che paga è l'**item 19**, che è un bug vero e riparabile.
+- [x] **CORRETTO il 2026-09-07: «i blip da 2–3 s a 120–160 sono transitori di
+  acquisizione» era sbagliato, ed era un bug vero.** La probe ha sempre avuto un
+  flag `verbose` che stampa *quando* avviene l'uscita, e su questa gamma non era
+  mai stato usato. Le uscite cadono a **80, 88, 155, 171, 243, 270, 282 e 295
+  secondi**: in mezzo alla corsa, non in acquisizione. Causa trovata e corretta —
+  vedi **item 21**. Quello che resta di vero in questo item è la parte sui
+  **bordi** (raddoppio sotto i 70, dimezzamento a 200): quella è davvero
+  l'ambiguità metà/doppio dell'item 1 e non si tocca.
 
 ---
 
@@ -693,6 +707,224 @@ esattamente il segnale che conferma al tracker qualunque cosa stia già credendo
 - [ ] **Gate non lanciati:** `VPTests --makeup` (l'altra metà dello stesso
   argomento: il nostro output che muove la nostra analisi) e `VPTests` intera.
   Costano minuti di worker neurale in tempo reale — chiedere prima.
+
+---
+
+### 21. Le percussioni ogni tanto rallentano o accelerano, e ci mettono a rientrare 🟡 (2026-09-07, causa trovata e corretta — resta ascolto)
+
+Segnalato dall'utente su un **brano registrato dal vivo**: *«ogni tanto le
+percussioni tendono a rallentare o a velocizzare e poi ci impiegano molto a
+rientrare nel tempo»*.
+
+**Non è il clock.** Prima ipotesi, misurata e scartata: `scripts/probe_steer.cpp`
+(nuovo, clock da solo, deterministico) dà una fase sbagliata di 0,25 di beat per
+**due secondi** e misura quanto ci mette la griglia a rientrare — **0,06–0,28 s**
+a tutte e tre le forze di inseguimento, e ALTO è la più veloce. Lo sterzo di fase
+non può produrre un rientro lento.
+
+**È il decoder, ed è il rilevatore di cambi di tempo bruschi che scatta sul
+jitter.** `probe_steady_tempo --verbose` su tempo costante, impostazioni
+`--live`, 300 s × 10 semi: **otto uscite** fra 110 e 160 BPM, tutte **4,0–5,5 %**
+per **1,8–3,0 s** — a 120 BPM è la griglia che va a 125 e torna. Tracciato il
+momento della conferma: **il comb leggeva il tempo giusto** (121,21 contro 121,48
+vero) mentre la transizione pubblicava **126,85**, e i due fit leggevano `0.00`
+perché la transizione li aveva appena buttati. Nessuno chiede al comb.
+
+Due difetti, entrambi nei termini del file stesso:
+
+1. **La soglia per aprire un candidato stava sotto il pavimento dichiarato.**
+   `needed = max(1 BPM, 3 × jitter)`; col jitter reale (~1,4 %) vale **4,2 %**,
+   mentre `kTransitionSmallestStep` dice duecento righe più su che **5 %** è «il
+   più piccolo cambio che valga la pena rivendicare». Fra i due c'era una fascia
+   di dimensioni su cui il detector agiva e che non era disposto a difendere.
+2. **La prova di coerenza era quattro volte più larga di come si legge.**
+   `deviation` è **metà** della differenza relativa e la tolleranza era **2 ×
+   jitter**: due intervalli potevano discordare di **4 × il jitter** ed essere
+   chiamati «un tempo solo». Misurato alle conferme false: coppie come
+   **0,4635 s e 0,4826 s — distanti il 4,1 % fra loro, quanto il gradino che
+   rivendicavano.** Non è un periodo misurato due volte; sono due numeri diversi
+   la cui media capita lontano dal tempo commesso.
+
+- [x] **Fix, due righe in `BeatDecoder::observeTransition`:** `needed` non scende
+  mai sotto `kTransitionSmallestStep`; la tolleranza passa da `2 × jitter` a
+  `1 × jitter` (i pavimenti assoluti restano dove sono — non erano loro a essere
+  larghi). Un gradino vero supera la barra a due volte lo scatter circa cinque
+  volte su sei, e se manca ha subito la coppia dopo: il codice ricade su un
+  nuovo candidato invece di aspettare un beat.
+- [x] **Effetto: 8 uscite → 3.** 110, 120 e 132 BPM ora **puliti su 10 corse da
+  300 s ciascuno**. Restano 144 e 160 con una a testa: le loro due coppie
+  concordano davvero entro il jitter, e passano per il pavimento assoluto
+  (`kTransitionLineCoherence`). Abbassare quello mette a rischio i gradini su
+  materiale pulito — non l'ho toccato.
+- [x] **Costo: nessuno misurato.** `probe_tempo_step` è **identico riga per riga**
+  prima e dopo (A/B contro `git show HEAD:`). `VPAlign`: i cinque gradini protetti
+  tutti **PASS**, ±1 BPM in **0,78–1,47 s**, fase **23,3–24,4 ms**, zero violazioni
+  di impulsi — gli stessi numeri che la skill documenta; le rampe restano a
+  `transizione=0`. `--octave focused` 6/4 con le quattro rosse deliberate
+  dell'item 1, `--swing` 3/0, `--leak` 49/0.
+- [ ] **Ascolto.** È l'unica verifica che non posso fare io: rimettere lo stesso
+  brano live e dire se le escursioni si sentono ancora.
+- [ ] **Aperto, misurato ma non toccato: il default spedito è ALTO.** `Types.h` e
+  `MainComponent` impostano `FollowStrength::high`, mentre la tabella della skill
+  chiama MEDIO il default. Su materiale live simulato ALTO fa escursioni **2–3
+  volte più grandi** di BASSO (peggiore 6,7 % contro 2,6 % a 144 BPM; **0,55
+  contro 0,06 secondi al minuto** oltre il 2 %) a parità di rms. Su questo banco
+  non compra niente — ma il banco non contiene un cambio di tempo vero, che è
+  l'unica cosa per cui ALTO esiste, quindi **non ho cambiato il default**. Serve
+  o un banco onesto sul recupero, o l'orecchio.
+- [ ] **Restano le 3 uscite a 144/160.** Il discriminante che manca è il comb, che
+  aveva ragione tutte le volte — ma al momento in cui il candidato si apre il comb
+  è ancora sul tempo vecchio anche su un gradino vero, quindi lì non separa. Per
+  usarlo servirebbe *confermare e poi ritrattare* se il comb non corrobora entro
+  il suo tempo di assestamento: è la stessa forma del watchdog già provato e
+  ritirato (vedi il commit 8528d4e), e non va ritentata alla cieca.
+
+---
+
+### 22. Ai tempi lenti «esce e non tiene», l'1 arriva tardi, e con lo swing l'aggancio costa 13 s 🟢 (2026-09-07, corretto — resta ascolto sul brano dell'utente)
+
+Segnalato dall'utente: *«spesso esce e non tiene, brani tipo a 60 o 80 bpm. Quelli
+più veloci sembra vadano meglio. In più il primo quarto a volte lo riconosce ma
+molto in ritardo.»*
+
+**I due sintomi sono lo stesso sintomo.** Se la griglia è a doppia velocità, la
+battuta viene contata su una griglia sbagliata e l'1 non può essere trovato.
+
+**Misurato** (`probe_steady_tempo`, decoder da solo, deterministico): a **60 BPM
+10 corse su 10** leggono il doppio e non rientrano mai; a **70 BPM 9 su 10**
+raddoppiano e rientrano dopo 0,7–16 s — è il «esce e non tiene»; **80, 90, 100
+puliti**. Nota che quella probe genera **un impulso per battito e silenzio in
+mezzo**: raddoppiare lì vuol dire mettere metà griglia sul silenzio, quindi **non
+è** il caso indecidibile dell'item 1, dove gli ottavi ci sono davvero.
+
+Tracciato: **il comb leggeva 61,29 a salienza 1,00 per tutta la corsa** mentre il
+pubblicato era 122,21, e `octaveMismatch` restava **0**. Tre difetti in fila, uno
+dentro l'altro:
+
+1. **La valvola di sfogo era bendata.** `combDisagrees` confronta `combBpm`, che è
+   `foldToAnchor (tempo.bpm())` — la lettura del comb **già ripiegata sull'ottava
+   in uso**. Il test che esiste per accorgersi di un errore d'ottava lo faceva su
+   un valore a cui l'ottava era appena stata tolta: `log2(122,2/122,6) = 0,004`
+   contro una soglia di 0,25. Nessun disaccordo, mai. È la stessa trappola che
+   `checkGridPhase` documenta per la *fase* («una griglia che si àncora sul
+   levare non è solo sbagliata, è stabile… e non c'era niente nella catena che
+   potesse accorgersene»), risolta lì mettendo il fold **fuori** dal gate; per il
+   *ritmo* il fold **era** il gate.
+2. **La guardia `unprovenSlowerOctave` usava come prova a favore una cosa che
+   dichiara priva di valore.** Il commento sopra dice: *«una griglia doppia può
+   sembrare sana perché ogni battito rilevato cade su un tick sì e uno no»* — e
+   poi usa `gridHealthy` per vietare la correzione. Il dato che manca era lì
+   accanto, gratis: `coverage = keep/n` vede una griglia **troppo lenta** (deve
+   buttare metà eventi) ma non una **troppo veloce**, che li tiene tutti. Il tell
+   sono gli **indici** su cui cadono: 0, 2, 4, 6 invece di 0, 1, 2, 3.
+3. **E anche quando lo scatto partiva, era un no-op.** `bpm = clamp (combBpm…)`
+   adottava di nuovo il valore ripiegato: buttava via la storia dei battiti e
+   ricommetteva **lo stesso tempo doppio**. E non spostava `anchorBpm`, quindi la
+   riacquisizione successiva ripiegava subito indietro.
+
+- [x] **Fatto:** `fitPeriod` restituisce il **salto mediano di indice** dei battiti
+  tenuti (1 su una griglia al polso, 2 su una raddoppiata; misurato: 2,0 esatto a
+  60 BPM con coverage 1,00 e residuo 0,030). La guardia lo richiede denso prima di
+  difendere la griglia. `combDisagrees`, il voto e lo scatto usano il comb
+  **grezzo** (`combRawBpm`); lo scatto sposta anche l'ancora. Tutto il resto
+  continua a usare il comb ancorato.
+- [x] **Effetto, `probe_steady_tempo` 300 s × 10 semi**, contro la tabella
+  dell'item 18:
+
+  | BPM | prima | ora |
+  |---|---|---|
+  | 60 | 10/10, **99,7 %** del tempo fuori | 10/10, **80,9 %** |
+  | 70 | 9/10 | **3/10**, 1,1 % |
+  | 75–140 | 120/132/140 con 1–3 corse | **0/10 tutti** |
+  | 150 / 160 | 1–3 | 1 / 2, 0,1 % |
+  | **170** | **4/10, errore 50 %, 26,5 s fuori** | **1/10, 4,4 %, 0,1 %** |
+- [x] **Nessuna regressione sui gate:** `VPAlign` cinque gradini protetti tutti
+  PASS con gli stessi numeri (0,78–1,47 s, 23,3–24,4 ms, zero violazioni), e il
+  100→140 non protetto migliora da 26,70 a 15,14. `--octave focused` 6/4 con le
+  quattro RED deliberate dell'item 1, `--swing` 3/0, `--leak` 49/0.
+  `probe_tempo_step`: 100→160 da 27,8 a 21,0 s; 75→140 da 8,1 a 10,7 s (peggio di
+  2,6 s); 60→120 da 0,0 a 7,5 s, che **non è una regressione** — prima lo zero
+  voleva dire «leggeva già 120 mentre il brano era a 60», cioè era giusto per il
+  motivo sbagliato.
+- [x] **Chiuso il feedback HMM che rendeva permanente il doppio a 52/60 BPM.**
+  La prima misura reale dell'intervallo ora raffina un'acquisizione HMM ancora
+  provvisoria; lo scatto d'ottava ricentra anche il marginale di tempo dell'HMM
+  senza perdere la sua distribuzione di fase; un HMM su un'altra ottava non può
+  più riscrivere da solo `anchorBpm`. Probe deterministica mirata (drift live 3
+  BPM, jitter 10 ms): primo lock corretto a 52 BPM **~12,5 -> 3,48 s**, cioè
+  tre quarti con il nuovo gate di contesto; su 120 s
+  x 5 semi, tempo fuori tolleranza **0,4% a 52** e **1,5% a 60**; 120/160 BPM
+  zero uscite su 3 semi. `VPTests --tempo-slow`: 7/0; dopo sei secondi senza
+  battiti, il primo ritorno a 26,56 s è sulla fase esatta (0,000 beat). Resta
+  volutamente l'ambiguità acustica dell'item 1 sui
+  brani lenti con ottavi forti: lì il test ONNX 50 BPM continua a poter leggere
+  100 e il comando ÷2 è la soluzione deterministica.
+- [x] **Lo swing ai tempi lenti è il caso specifico dell'utente, ed è molto
+  peggiore del dritto (2026-09-07).** Segnalato: *«sto ascoltando un brano live
+  con swing a circa 81 bpm… tende ad accelerare o decelerare e prima di rientrare
+  passano un bel po' di battute. Vorrei che agganciasse il più veloce
+  possibile.»* Riprodotto generando battito forte + **ottavo swingato più
+  debole** (la probe fino a qui faceva solo impulsi equidistanti):
+
+  | materiale | 81 BPM | 96 BPM | 120 BPM |
+  |---|---|---|---|
+  | dritto | **1,9 s** | 1,4 s | 1,4 s |
+  | swing 0,65 | **13,1 s** (peggio 14,4) | 13,5 s | 3,4 s |
+  | swing 1,00 | **17,7 s** (peggio 30,0) | 10,0 s | 1,5 s |
+
+  E stabilità: a 81 BPM il dritto ha 1 corsa su 10 con uscite, lo swing **7 su
+  10** con errore peggiore 64 %.
+
+  **Perché 120 è immune:** il livello degli ottavi a 120 sarebbe 240 BPM, oltre
+  `kMaxBpm = 220`, quindi non è un'ipotesi legale. A 81 sarebbe 162, dentro. Il
+  problema è **lento + swing**, non lo swing.
+
+  **Dove vanno i 13 secondi**, misurato: l'acquisizione si aggancia al livello
+  **1,5×** che lo swing implica (123 BPM su 82 veri), e poi il rientro paga due
+  attese in fila — il comb non è **pronto** prima di ~8 s a 81 BPM (gli servono
+  cinque periodi dell'ottava sotto: la skill lo dice, 7,9 s a 76 BPM) e poi
+  servono ~6 battiti di voti, altri 4,4 s. **La metà più grande è strutturale**,
+  non una soglia da stringere. Il comb intanto leggeva 82,19 a salienza 1,00 dal
+  primo istante in cui poteva parlare.
+- [x] **Fatto, piccolo ma coerente:** il bonus di pazienza `kOctaveSnapBeatsHealthy`
+  non va più a una griglia che usa un tick sì e uno no. È la stessa
+  contraddizione del punto 2 sopra, nella stessa funzione: il commento dice *«il
+  doppio del tempo vero cade su ogni picco rilevato, quindi è sempre una di
+  quelle sane»* e poi concedeva pazienza proprio per quello. Vale 19,0 → 17,7 s
+  sullo swing pieno a 81; non è il termine dominante e non pretendo che lo sia.
+- [x] **Aggancio swing risolto nel punto in cui nasce.** Il decoder ora riconosce
+  la cella causale lungo-corto: sul bus diretto bastano forte-debole-forte; sul
+  microfono serve il quarto picco, che corrobora la seconda cella e respinge una
+  coppia transiente/riflessione. Prima della griglia il refractory usa il periodo
+  più veloce legale, quindi non cancella il ritorno corto dello swing pieno; l'HMM
+  non può pubblicare una risposta senza contesto un istante prima che la cella si
+  chiuda. Probe mirata, ratio 0,60 e 2/3 a 52/81/96/120/168 BPM: primo tempo
+  corretto in **1,04–1,40 quarti sul diretto** e **1,37–2,07 sul microfono**;
+  tutti ancora corretti dopo 10 s. Il vecchio percorso da 13–18 s non parte più.
+- [x] **L'1 entro due battute.** I voti di battuta si accumulano e decadono **per battito**
+  (`kVoteDecay = 0.982`), quindi `voteBeats` satura a **55,6**. Con
+  `kBeatsToMoveTheBar = 32` servono **47 battiti accettati** prima di poter
+  spostare l'1 mentre si suona, ma la decisione d'ingresso e il rientro ora
+  attraversano la soglia al **quarto numero 8**:
+
+  | | battiti | a 60 BPM | a 80 BPM | a 120 BPM |
+  |---|---|---|---|---|
+  | in ingresso / rientro (soglia 7 con decay) | 8 | 8,0 s | 6,0 s | 4,0 s |
+  | **in play (`kBeatsToMoveTheBar = 32`)** | **47** | **47,2 s** | 35,4 s | 23,6 s |
+
+  Il margine di vittoria non è stato abbassato: entro due battute si agisce solo
+  se l'opinione è chiara. Durante il play resta la soglia prudente di 32, perché
+  cambiare il conteggio sotto una parte già udibile è un'operazione diversa.
+  `VPTests --bar`: 10/0, incluso il rientro dopo un taglio di due quarti.
+- [x] **100 non diventa più 50/200 e i pulsanti non saltano due ottave.** La
+  vecchia cadenza a soglia interpretava due downbeat mancati a distanza di otto
+  quarti come prova di una griglia doppia: su un 100 chiarissimo poteva quindi
+  pubblicare il suggerimento 50. Quel discriminante, già dimostrato ambiguo, è
+  ora davvero spento. Inoltre ÷2/×2 avanzano di un livello dal valore
+  **effettivamente visualizzato**, non impostano più −1/+1 assoluti: da 50 si va
+  a 100 e poi 200; da 200 si torna a 100 e poi 50. Regressione mirata dentro
+  `VPTests --tempo-slow`: 100 resta 100 con downbeat alterni mancanti e le quattro
+  transizioni 100↔50 / 100↔200 passano tutte da 100.
 
 ---
 

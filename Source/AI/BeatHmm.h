@@ -71,6 +71,13 @@ public:
     void setPriorWidth (float octaves) noexcept;
     /** Where the pulse a listener would tap sits, in BPM. */
     void setPriorCentre (float bpm) noexcept;
+
+    /** Accepts an independently confirmed metrical level without discarding
+        the phase evidence accumulated by the state space. The conditional
+        phase distribution of every tempo is retained, while the tempo masses
+        are re-centred tightly around `bpm`. This is used only after the long
+        comb has won a repeated octave-disagreement vote. */
+    void anchorMetricalLevel (float bpm) noexcept;
     /** How many frames at the start of a beat count as "the beat". Zero means a
         fixed fraction of the period, which is madmom's rule and assumes an
         activation as sharp as madmom's; a fixed count assumes the bump has a

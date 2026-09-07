@@ -1024,6 +1024,7 @@ void vpRunBarReentryTests (int& passed, int& failed)
     const double framesPerBeat = 60.0 / static_cast<double> (trackBpm)
                                  * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
     const int twoQuarters = static_cast<int> (sr * 2.0 * 60.0 / trackBpm);
+    const double twoBarsSec = 2.0 * 4.0 * 60.0 / trackBpm;
     const double fourBarsSec = 4.0 * 4.0 * 60.0 / trackBpm;
 
     auto silenceVoices = [] (vp::VirtualPercussionEngine& eng)
@@ -1087,7 +1088,7 @@ void vpRunBarReentryTests (int& passed, int& failed)
         const bool reentryOpened = eng.snapshot().barReentry;
         const int restartsDuring = eng.snapshot().analysisRestarts;
 
-        const int recover = static_cast<int> (sr * (fourBarsSec + 1.0));
+        const int recover = static_cast<int> (sr * twoBarsSec);
         pos = pump (eng, song.data(), n, pos, recover, oL, oR);
         auto after = eng.snapshot();
         const int beatAfter = std::clamp (static_cast<int> (after.barPhase * 4.0f), 0, 3);
@@ -1103,7 +1104,7 @@ void vpRunBarReentryTests (int& passed, int& failed)
         expect (starved || restartsDuring == restartsBefore,
                 "a two-quarter hole does not restart the tempo decoder");
         expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == 0),
-                "within two to four bars of the return the one is beat zero again");
+                "within two bars of the return the one is beat zero again");
         expect (starved || after.barTrusted,
                 "once the window closes the clap can trust the one");
         (void) pos;
@@ -1893,10 +1894,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
             const auto room = firstValid (false);
             const double beatSec = 60.0 / static_cast<double> (trueBpm);
             lineFastAndRight = lineFastAndRight
-                && line.first / beatSec < (trueBpm > 145.0f ? 2.65 : 1.55)
+                && line.first / beatSec < 4.0
                 && std::fabs (line.second - trueBpm) / trueBpm < 0.05f;
             roomFastAndRight = roomFastAndRight
-                && room.first / beatSec < 2.70
+                && room.first / beatSec < 4.0
                 && std::fabs (room.second - trueBpm) / trueBpm < 0.05f;
             std::printf ("fast-acquire %3.0f BPM  line %.2f s/%.1f  room %.2f s/%.1f\n",
                          static_cast<double> (trueBpm), line.first,
@@ -1905,9 +1906,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
 
         expect (lineFastAndRight,
-                "a direct feed acquires from the first measured quarter across the tempo range");
+                "a direct feed acquires with enough context inside one bar");
         expect (roomFastAndRight,
-                "a microphone acquires from two agreeing quarters across the tempo range");
+                "a microphone acquires with corroborated context inside one bar");
 
         // The dangerous fast case: at 76 BPM a loud eighth train presents a
         // perfectly regular 152 BPM spacing. Three alternating heights must
@@ -8755,6 +8756,180 @@ namespace
         if (worst > 0.0f)
             for (int i = from; i < hi; ++i)
                 dest[static_cast<size_t> (i)] *= peak / worst;
+    }
+}
+
+void vpRunSlowTempoRegressionTest (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    constexpr double fps = 50.0;
+
+    expect (vp::stepTempoOctave (-1, 1) == 0
+                && vp::stepTempoOctave (0, 1) == 1
+                && vp::stepTempoOctave (1, -1) == 0
+                && vp::stepTempoOctave (0, -1) == -1,
+            "half and double move one octave from the effective displayed level");
+
+    // Missing alternate downbeats at a perfectly clear 100 BPM used to publish
+    // an octave hint after two eight-beat gaps, even though every quarter was
+    // present. AUTO then obeyed it and displayed 50. That cadence is ambiguous,
+    // so it must never override the measured pulse.
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (true);
+        constexpr float bpm = 100.0f;
+        const double framesPerBeat = 60.0 / bpm * fps;
+        bool hinted = false;
+        vp::BeatHypothesis last {};
+        for (int frame = 0; frame < static_cast<int> (22.0 * framesPerBeat); ++frame)
+        {
+            const double beats = static_cast<double> (frame) / framesPerBeat;
+            const double nearest = std::round (beats);
+            const double distance = std::fabs (beats - nearest) * framesPerBeat;
+            const float pulse = 0.03f + 0.92f * static_cast<float> (
+                std::exp (-0.5 * (distance / 1.5) * (distance / 1.5)));
+            const bool sparseDownbeat = (static_cast<int> (nearest) % 8) == 0;
+            last = dec.observe (pulse, sparseDownbeat ? pulse * 0.95f : 0.03f, 0.0f);
+            hinted = hinted || last.metricalOctaveHintValid;
+        }
+        const bool autoHeld100 = ! hinted && last.valid && std::fabs (last.bpm - bpm) < 1.0f;
+        dec.setUserOctave (-1);
+        const float halved = dec.observe (0.03f, 0.03f, 0.0f).bpm;
+        dec.setUserOctave (0);
+        const float restoredFromHalf = dec.observe (0.03f, 0.03f, 0.0f).bpm;
+        dec.setUserOctave (1);
+        const float doubled = dec.observe (0.03f, 0.03f, 0.0f).bpm;
+        dec.setUserOctave (0);
+        const float restoredFromDouble = dec.observe (0.03f, 0.03f, 0.0f).bpm;
+        expect (autoHeld100
+                    && std::fabs (halved - 50.0f) < 1.0f
+                    && std::fabs (restoredFromHalf - 100.0f) < 1.0f
+                    && std::fabs (doubled - 200.0f) < 2.0f
+                    && std::fabs (restoredFromDouble - 100.0f) < 1.0f,
+                "100 BPM stays at 100 automatically and manual octave steps return through 100");
+    }
+
+    auto run = [] (float bpm, bool gap)
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (true);
+        const double period = 60.0 / static_cast<double> (bpm);
+        double correctAt = -1.0;
+        double returnPeakAt = -1.0;
+        float returnPhaseError = 1.0f;
+        vp::BeatHypothesis h {};
+        const double seconds = gap ? 45.0 : 18.0;
+        for (int frame = 0; frame < static_cast<int> (seconds * fps); ++frame)
+        {
+            const double t = static_cast<double> (frame) / fps;
+            const double cycle = std::fmod (t, period);
+            const double distance = std::min (cycle, period - cycle) * fps;
+            const bool quiet = gap && t >= 20.0 && t < 26.0;
+            const float activation = quiet ? 0.02f
+                : std::max (0.03f, 0.94f * static_cast<float> (
+                    std::exp (-0.5 * (distance / 1.35) * (distance / 1.35))));
+            h = dec.observe (activation, 0.02f, 1.0f - activation);
+            if (correctAt < 0.0 && h.valid && std::fabs (h.bpm - bpm) / bpm < 0.02f)
+                correctAt = t;
+            if (gap && t >= 26.0 && returnPeakAt < 0.0 && h.peak)
+            {
+                returnPeakAt = t;
+                const float truth = static_cast<float> (cycle / period);
+                returnPhaseError = std::fabs (vp::wrapCentered (h.beatPhase - truth));
+            }
+        }
+        struct Result { double lock; double returned; float phase; vp::BeatHypothesis last; };
+        return Result { correctAt, returnPeakAt, returnPhaseError, h };
+    };
+
+    const auto slow = run (52.0f, true);
+    std::printf ("tempo-slow  52 lock=%.2fs final=%.2f return=%.2fs phase=%.3f beat\n",
+                 slow.lock, static_cast<double> (slow.last.bpm), slow.returned,
+                 static_cast<double> (slow.phase));
+    expect (slow.lock >= 0.0 && slow.lock * 52.0 / 60.0 < 3.2
+                && std::fabs (slow.last.bpm - 52.0f) < 1.1f,
+            "52 BPM acquires the right level inside one bar");
+    expect (slow.returned >= 26.0 && slow.returned < 26.0 + 60.0 / 52.0 + 0.05
+                && slow.phase < 0.08f,
+            "the first beat after a six-second musical gap rejoins the held slow grid");
+
+    for (float bpm : { 60.0f, 100.0f, 120.0f, 160.0f })
+    {
+        const auto r = run (bpm, false);
+        std::printf ("tempo-slow %3.0f lock=%.2fs final=%.2f\n",
+                     static_cast<double> (bpm), r.lock, static_cast<double> (r.last.bpm));
+        expect (r.lock >= 0.0 && r.lock * bpm / 60.0 < 3.2
+                    && std::fabs (r.last.bpm - bpm) / bpm < 0.02f,
+                "context acquisition stays inside one bar across the tempo range");
+    }
+
+    // A player hears swing as a repeating long-short cell, not as two separate
+    // candidate tempi. Exercise both input paths across the useful range and
+    // require the *first* published tempo to be the quarter, comfortably inside
+    // one bar (and therefore well inside the product requirement of two bars).
+    struct SwingResult { double firstAt; float firstBpm; float finalBpm; };
+    auto runSwing = [] (float bpm, float ratio, bool lineFeed)
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (lineFeed);
+        const double period = 60.0 / static_cast<double> (bpm);
+        SwingResult result { -1.0, 0.0f, 0.0f };
+        for (int frame = 0; frame < static_cast<int> (10.0 * fps); ++frame)
+        {
+            const double t = static_cast<double> (frame) / fps;
+            const double beatPosition = t / period - 0.35;
+            const double cycle = beatPosition - std::floor (beatPosition);
+            const double beatDistance = std::min (cycle, 1.0 - cycle) * period * fps;
+            const double offDistance = std::fabs (cycle - ratio) * period * fps;
+            const float beat = 0.03f + 0.92f * static_cast<float> (
+                std::exp (-0.5 * (beatDistance / 1.5) * (beatDistance / 1.5)));
+            const float off = 0.03f + 0.65f * static_cast<float> (
+                std::exp (-0.5 * (offDistance / 1.5) * (offDistance / 1.5)));
+            const auto h = dec.observe (std::max (beat, off), 0.03f, 0.0f);
+            if (h.valid)
+            {
+                if (result.firstAt < 0.0)
+                {
+                    result.firstAt = t;
+                    result.firstBpm = h.bpm;
+                }
+                result.finalBpm = h.bpm;
+            }
+        }
+        return result;
+    };
+
+    for (bool lineFeed : { true, false })
+    {
+        bool allFastAndRight = true;
+        for (float bpm : { 52.0f, 81.0f, 96.0f, 120.0f, 168.0f })
+        {
+            for (float ratio : { 0.60f, 2.0f / 3.0f })
+            {
+                const auto r = runSwing (bpm, ratio, lineFeed);
+                const double beats = r.firstAt * static_cast<double> (bpm) / 60.0;
+                const bool right = r.firstAt >= 0.0 && beats < 2.8
+                                   && std::fabs (r.firstBpm - bpm) / bpm < 0.025f
+                                   && std::fabs (r.finalBpm - bpm) / bpm < 0.025f;
+                allFastAndRight = allFastAndRight && right;
+                std::printf ("tempo-swing %s %3.0f ratio %.3f lock=%.2f beats bpm=%.2f final=%.2f\n",
+                             lineFeed ? "line" : "room", static_cast<double> (bpm),
+                             static_cast<double> (ratio), beats,
+                             static_cast<double> (r.firstBpm),
+                             static_cast<double> (r.finalBpm));
+            }
+        }
+        expect (allFastAndRight,
+                lineFeed
+                    ? "a direct feed counts a swung long-short cell before one bar"
+                    : "a microphone counts a swung long-short cell before one bar");
     }
 }
 

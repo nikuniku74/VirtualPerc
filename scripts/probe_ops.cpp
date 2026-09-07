@@ -53,6 +53,8 @@ struct RunResult
     std::vector<int> restarts, gaps;
     double lockedAt = -1.0;
     int strokes = 0;
+    int finalRestarts = 0;
+    int finalGaps = 0;
 };
 
 // Phase error in milliseconds, against the beat the renderer actually played.
@@ -198,6 +200,8 @@ RunResult drive (const std::vector<Op>& ops, bool applyOps, bool mixer, bool dir
         }
     }
     r.strokes = eng.shakerHits();
+    r.finalRestarts = snap.analysisRestarts;
+    r.finalGaps = snap.analysisGaps;
     return r;
 }
 } // namespace
@@ -211,7 +215,7 @@ namespace
 // question is whether this one does, and what it does when the kit comes back.
 // Same song as above with the arrangement's own breakdown left in, and the
 // phase reported per bar so the shape is visible rather than averaged away.
-int material (bool mixer, float leakGain, float bpm)
+int material (bool mixer, bool directFile, float leakGain, float bpm)
 {
     const double sr = 48000.0;
     const int block = 256;
@@ -230,13 +234,14 @@ int material (bool mixer, float leakGain, float bpm)
     truePhase.resize (static_cast<size_t> (n), 0.0);
     for (int i = 0; i < static_cast<int> (sr * 1.0) && i < n; ++i)
         song[static_cast<size_t> (i)] *= 0.02f;
-    if (! mixer)
+    if (! mixer && ! directFile)
         speakerRoomMic (song, sr, seed, 0.55f);
 
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
     eng.settings().followSource.store (static_cast<int> (
-        mixer ? vp::FollowSource::kitMic : vp::FollowSource::speaker));
+        directFile ? vp::FollowSource::internalPlayer
+                   : (mixer ? vp::FollowSource::kitMic : vp::FollowSource::speaker)));
     eng.settings().humanization.store (0.0f);
     eng.settings().swing.store (0.0f);
     eng.start();
@@ -262,7 +267,7 @@ int material (bool mixer, float leakGain, float bpm)
         for (int i = 0; i < block; ++i)
         {
             const size_t at = static_cast<size_t> (pos + block + acoustic + i);
-            if (at < echo.size())
+            if (! directFile && at < echo.size())
                 echo[at] += leakGain * 0.5f * (oL[static_cast<size_t> (i)]
                                                + oR[static_cast<size_t> (i)]);
         }
@@ -300,7 +305,9 @@ int material (bool mixer, float leakGain, float bpm)
     }
 
     std::printf ("# %s, %.0f BPM, rientro %.2f, arrangiamento con i suoi buchi\n",
-                 mixer ? "MIXER (linea)" : "IPAD (cassa -> stanza -> microfono)",
+                 directFile ? "BRANO (bus diretto)"
+                            : (mixer ? "MIXER (linea)"
+                                     : "IPAD (cassa -> stanza -> microfono)"),
                  static_cast<double> (bpm), static_cast<double> (leakGain));
     std::printf ("# fase contro la battuta suonata, per battuta, in ms\n");
     std::printf ("# la batteria esce nelle battute 8-11 di ogni 16\n\n");
@@ -346,6 +353,8 @@ int main (int argc, char** argv)
     bool silentPartMode = false;
     bool materialMode = false;
     bool styleChangeOnly = false;
+    bool inputGainOnly = false;
+    bool voiceToggleOnly = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (argv[i], "--mixer") == 0) mixer = true;
@@ -355,6 +364,8 @@ int main (int argc, char** argv)
                  || std::strcmp (argv[i], "--voices") == 0) silentPartMode = true;
         else if (std::strcmp (argv[i], "--material") == 0) materialMode = true;
         else if (std::strcmp (argv[i], "--style-change") == 0) styleChangeOnly = true;
+        else if (std::strcmp (argv[i], "--input-gain") == 0) inputGainOnly = true;
+        else if (std::strcmp (argv[i], "--voice-toggle") == 0) voiceToggleOnly = true;
         else if (std::strcmp (argv[i], "--leak") == 0 && i + 1 < argc)
             leakGain = static_cast<float> (std::atof (argv[++i]));
         else if (std::strcmp (argv[i], "--bpm") == 0 && i + 1 < argc)
@@ -385,9 +396,13 @@ int main (int argc, char** argv)
     // diagnosis cheap enough to repeat after every style-control change.
     if (styleChangeOnly)
         ops = { ops[10] };
+    else if (inputGainOnly)
+        ops = { ops[12], ops[13] };
+    else if (voiceToggleOnly)
+        ops = { ops[5], ops[6] };
 
     if (materialMode)
-        return material (mixer, leakGain, bpm);
+        return material (mixer, directFile, leakGain, bpm);
 
     const Timeline tl;
     if (silentPartMode)
@@ -459,8 +474,8 @@ int main (int argc, char** argv)
                                 : "una passata per operazione, piu' un controllo",
                  with.lockedAt, with.strokes);
     std::printf ("# fase contro la battuta suonata, in millisecondi\n\n");
-    std::printf ("%-26s %9s %9s | %9s %9s | %s\n",
-                 "operazione", "con", "peggio", "controllo", "peggio", "differenza");
+    std::printf ("%-26s %9s %9s | %9s %9s | %10s %7s\n",
+                 "operazione", "con", "peggio", "controllo", "peggio", "differenza", "epoch");
 
     double worst = 0.0;
     const char* worstName = "-";
@@ -471,9 +486,10 @@ int main (int argc, char** argv)
         const double b = without.after[k].mean();
         const double d = (a >= 0.0 && b >= 0.0) ? a - b : 0.0;
         if (d > worst) { worst = d; worstName = ops[k].name; }
-        std::printf ("%-26s %9.2f %9.2f | %9.2f %9.2f | %+9.2f%s\n",
+        std::printf ("%-26s %9.2f %9.2f | %9.2f %9.2f | %+10.2f %+7d%s\n",
                      ops[k].name, a, run.after[k].worstMs, b, without.after[k].worstMs,
-                     d, d > kResolvableOperationMs ? "  <-- l'operazione sposta" : "");
+                     d, run.finalRestarts - without.finalRestarts,
+                     d > kResolvableOperationMs ? "  <-- l'operazione sposta" : "");
     }
     std::printf ("\npeggiore: %s, %+.2f ms\n", worstName, worst);
     if (with.gaps.back() != 0 || without.gaps.back() != 0)

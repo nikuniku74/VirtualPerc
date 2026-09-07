@@ -295,6 +295,8 @@ namespace
     constexpr float kFastAcquireMarginLine = 0.55f;
     constexpr float kFastAcquireMarginRoom = 0.90f;
     constexpr float kFastAcquireMaxLevelError = 0.20f; // octaves
+    constexpr int   kContextAcquirePeaksLine = 3;
+    constexpr int   kContextAcquirePeaksRoom = 4;
 
     // The abrupt-change detector.
     //
@@ -451,6 +453,7 @@ void BeatDecoder::reset() noexcept
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
     longWrite = 0;
@@ -530,6 +533,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
     clearTempoTransition (TempoTransitionReason::reset);
@@ -538,6 +542,16 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
 
 void BeatDecoder::observeDownbeatCadence() noexcept
 {
+    // Threshold-crossing downbeats were tried as an automatic octave oracle
+    // and rejected: a correct 100-BPM track on which the network misses every
+    // other downbeat produces the same two eight-beat gaps as a 50-BPM groove
+    // whose eighths were counted. Letting this path publish a metrical hint is
+    // exactly how a clear 100 was being forced to 50. The continuous low-band
+    // experiment below remains available for measurement, behind the same
+    // compile-time switch; neither may control the shipped AUTO mode.
+    if (! kCadenceCorrectionEnabled)
+        return;
+
     // A microphone in a room scatters the downbeat curve too widely for this
     // count to mean what it says. The reported failure is the loaded-track and
     // mixer path; there the model sees a stable direct signal and a repeated
@@ -759,6 +773,7 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
     d.coverage = lastFitCoverage;
+    d.fitIndexGap = lastFitIndexGap;
     d.octaveMismatch = octaveMismatchBeats;
     d.beatsHeld = beatsOnLevel;
     d.levelSettled = tempo.levelSettled();
@@ -801,6 +816,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     staleGridBpm = 0.0f;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
     longWrite = 0;
@@ -855,6 +871,7 @@ void BeatDecoder::notifyInputRestart() noexcept
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
     longWrite = 0;
@@ -915,10 +932,12 @@ bool BeatDecoder::recentPeriod (float& period) const noexcept
 }
 
 bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
-                             double& anchorOut) const noexcept
+                             double& anchorOut, float* indexGapOut) const noexcept
 {
     coverage = 0.0f;
     anchorOut = -1.0;
+    if (indexGapOut != nullptr)
+        *indexGapOut = 1.0f;
     const int n = std::min (beatFilled, maxBeats);
     if (n < 4 || bpm < kMinBpm)
         return false;
@@ -952,6 +971,26 @@ bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float
     // octave too slow has to throw away every second beat to fit, and that is
     // the difference between a wrong grid and a merely imprecise one.
     coverage = static_cast<float> (keep) / static_cast<float> (n);
+
+    // And the half of that picture coverage cannot supply, which is the other
+    // direction. A grid an octave too *fast* throws nothing away - every beat
+    // lands on every other tick - so it reads coverage 1.0 and a low residual
+    // and looks perfect. What gives it away is the indices those beats landed
+    // on: 0, 2, 4, 6 instead of 0, 1, 2, 3.
+    //
+    // Median, not mean, so one missed beat is one gap of two among many of one
+    // rather than a shifted average. Measured at 60 BPM on material with a
+    // single impulse per beat and silence between: the committed grid read
+    // 122.2 with coverage 1.00 and residual 0.030, and the gap read 2.
+    if (indexGapOut != nullptr && keep >= 2)
+    {
+        double gaps[kBeatHistory];
+        int ng = 0;
+        for (int i = 1; i < keep; ++i)
+            gaps[ng++] = idx[i] - idx[i - 1];
+        std::sort (gaps, gaps + ng);
+        *indexGapOut = static_cast<float> (gaps[ng / 2]);
+    }
 
     double meanIdx = 0.0, meanT = 0.0;
     for (int i = 0; i < keep; ++i)
@@ -1071,6 +1110,7 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     longFilled = 0;
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
 }
 
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
@@ -1279,9 +1319,31 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     {
         const float first = static_cast<float> (transitionLastSec - transitionFirstSec);
         const float mean = 0.5f * (first + interval);
+        // Two intervals of one new period differ only by the material's own
+        // scatter, and two draws with relative spread `jitter` differ by about
+        // 1.1 of it on average. So the bar is a small multiple of the jitter -
+        // but it was four times it, not two, and the factor of two that is easy
+        // to miss is in `deviation` below: that is *half* the relative
+        // difference, so a tolerance of `2 * jitter` accepts intervals that
+        // disagree by four.
+        //
+        // Measured at the five remaining false confirmations on
+        // `probe_steady_tempo` (constant tempo, --live settings): two of them
+        // were pairs like 0.4635 s and 0.4826 s - 4.1% apart, as far from each
+        // other as the step they were claiming - called one tempo because 2.0%
+        // cleared a 2.4% bar. That is not a period measured twice; it is two
+        // different numbers whose mean happens to sit away from the committed
+        // tempo.
+        //
+        // At `1.0f * jitter` the pair must agree within twice the scatter,
+        // which a genuine step clears about five times out of six, and a
+        // candidate that misses gets the next pair - the code falls through to
+        // restart rather than waiting a beat. The absolute floors are left
+        // where they are: they are the cleanest-material case and were not what
+        // was loose.
         const float tolerance = std::max (lineFeed ? kTransitionLineCoherence
                                                    : kTransitionRoomCoherence,
-                                          2.0f * jitter);
+                                          1.0f * jitter);
         const float deviation = mean > 0.0f
                                     ? 0.5f * std::fabs (first - interval) / mean
                                     : 1.0f;
@@ -1396,8 +1458,31 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     // hundred percent change and this detector would be switched off for them.
     const float candidateBpm = applyUserOctave (60.0f / interval);
     const float delta = std::fabs (candidateBpm - bpm) / std::max (kMinBpm, bpm);
-    const float needed = std::max (kTransitionMinBpmDelta / std::max (kMinBpm, bpm),
-                                   3.0f * jitter);
+    // And never below the smallest step this path exists to catch.
+    //
+    // `3 * jitter` alone let the detector open candidates *under* the floor the
+    // file states two hundred lines up: on ordinary material the median scatter
+    // reads about 1.4%, so `needed` came out at 4.2% while
+    // `kTransitionSmallestStep` says 5% is the smallest change worth claiming.
+    // Everything between the two is a size the detector was willing to act on
+    // and unwilling to defend.
+    //
+    // What lives in that gap is not a tempo change. Two consecutive intervals
+    // drawn from the same jittered material will now and then agree with each
+    // other while both sit 4-5% off the true period; the coherence test then
+    // passes, because it asks whether the two agree, not whether they are
+    // right. Measured on `probe_steady_tempo` at constant tempo with the --live
+    // settings, 300 s x 10 seeds: eight such excursions across 110-160 BPM, all
+    // of them 4.0-5.5%, lasting 1.8-3.0 s, and - the part that says they are not
+    // acquisition - at 80, 88, 155, 171, 243, 270, 282 and 295 seconds into the
+    // run. The comb read the true tempo throughout each one; nothing asked it.
+    //
+    // A grid that moves 4% for three seconds under a percussionist is heard.
+    // The listener's words were "ogni tanto rallentano o accelerano e poi ci
+    // mettono molto a rientrare".
+    const float needed = std::max (kTransitionSmallestStep,
+                                   std::max (kTransitionMinBpmDelta / std::max (kMinBpm, bpm),
+                                             3.0f * jitter));
     if (delta < needed)
     {
         if (transitionState == TempoTransitionState::suspected)
@@ -1442,11 +1527,12 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
 
 bool BeatDecoder::tryFastAcquire() noexcept
 {
-    // A period is not present in one isolated event. Two events are the first
-    // instant at which a causal system can measure one; through a microphone we
-    // ask for a third event because a reflection/transient pair is common. A
-    // direct feed has no acoustic echo and can use the first interval.
-    const int minimum = lineFeed ? 2 : 3;
+    // A period is not present in one isolated event, and one interval is not
+    // enough context to distinguish a quarter from one half of a swung pair.
+    // A direct feed therefore waits for three peaks; a microphone asks for a
+    // fourth, which also rejects a reflection/transient pair. Both still answer
+    // inside one 4/4 bar.
+    const int minimum = lineFeed ? kContextAcquirePeaksLine : kContextAcquirePeaksRoom;
     if (! useAnchor || beatFilled < minimum || hmm.bpm() < kMinBpm)
         return false;
 
@@ -1461,8 +1547,9 @@ bool BeatDecoder::tryFastAcquire() noexcept
 
     const float rawBpm = 60.0f / raw;
     const bool fastOctaveAmbiguous = rawBpm > 145.0f && rawBpm * 0.5f >= kMinBpm;
-    if (fastOctaveAmbiguous && beatFilled < 3)
-        return false;
+
+    double acquireAnchorSec = beatTime[newest];
+    bool pairedSubdivision = false;
 
     // A peak interval may be the pulse or a subdivision. Keep both causal
     // readings alive and let the accumulated state-space path choose the level.
@@ -1500,12 +1587,97 @@ bool BeatDecoder::tryFastAcquire() noexcept
         intervalSelfSufficient = true;
     }
 
+    // On a direct feed, strong-weak-strong already closes one complete swung
+    // cell. That is enough to count its sum as the quarter without waiting for
+    // the fourth event used by the more defensive room path below.
+    if (lineFeed && beatFilled == 3)
+    {
+        const int i0 = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+        const int i1 = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+        const int i2 = newest;
+        const float d0 = static_cast<float> (beatTime[i1] - beatTime[i0]);
+        const float d1 = static_cast<float> (beatTime[i2] - beatTime[i1]);
+        const float pairPeriod = d0 + d1;
+        const float shortIoi = std::min (d0, d1);
+        const float longIoi = std::max (d0, d1);
+        const float ends = 0.5f * (beatStrength[i0] + beatStrength[i2]);
+        const bool accentedCell = std::fabs (beatStrength[i0] - beatStrength[i2])
+                                      < 0.20f * std::max (0.10f, ends)
+                                  && std::fabs (beatStrength[i1] - ends)
+                                      > 0.14f * std::max (0.10f, ends);
+        const float pairBpm = pairPeriod > 0.0f ? 60.0f / pairPeriod : 0.0f;
+        if (shortIoi < 0.82f * longIoi && accentedCell
+            && pairBpm >= kMinBpm && pairBpm <= kMaxBpm)
+        {
+            bestPeriod = pairPeriod;
+            bestError = 0.0f;
+            intervalSelfSufficient = true;
+            pairedSubdivision = true;
+            acquireAnchorSec = d0 >= d1 ? beatTime[i0] : beatTime[i1];
+        }
+    }
+
+    // A swung eighth is not a bad quarter: it is a repeated long-short pair.
+    // Reading either half alone produces the familiar 1.5x answer (81 -> 123)
+    // and then makes the slow comb spend several bars disproving it. Four
+    // peaks are enough to see two overlapping cells: d0+d1 and d1+d2 have the
+    // same duration when d0 and d2 agree, while the unequal adjacent intervals
+    // say this is not an ordinary train at that faster rate. This is the causal
+    // information a player uses to count the quarter before joining.
+    //
+    // Require the two amplitude parities to be internally coherent as well.
+    // Their means need not differ: some swung parts accent every eighth evenly;
+    // coherence is useful because a fill's four unrelated hits should not earn
+    // a new grid. The room tolerance is wider because reflections move the
+    // detected crest, but both paths still need a genuinely uneven pair.
+    if (beatFilled >= 4)
+    {
+        const int i0 = (beatWrite - 4 + kBeatHistory) % kBeatHistory;
+        const int i1 = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+        const int i2 = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+        const int i3 = newest;
+        const float d0 = static_cast<float> (beatTime[i1] - beatTime[i0]);
+        const float d1 = static_cast<float> (beatTime[i2] - beatTime[i1]);
+        const float d2 = static_cast<float> (beatTime[i3] - beatTime[i2]);
+        const float outerMean = 0.5f * (d0 + d2);
+        const float pairPeriod = d1 + d2;
+        const float shortIoi = std::min (d1, d2);
+        const float longIoi = std::max (d1, d2);
+        const float timingTolerance = lineFeed ? 0.12f : 0.20f;
+        const bool timingRepeats = d0 > 0.0f && d1 > 0.0f && d2 > 0.0f
+                                   && std::fabs (d0 - d2)
+                                          < timingTolerance * std::max (0.05f, outerMean)
+                                   && shortIoi < 0.82f * longIoi;
+
+        const float evenMean = 0.5f * (beatStrength[i0] + beatStrength[i2]);
+        const float oddMean = 0.5f * (beatStrength[i1] + beatStrength[i3]);
+        const bool evenCoherent = std::fabs (beatStrength[i0] - beatStrength[i2])
+                                  < 0.28f * std::max (0.10f, evenMean);
+        const bool oddCoherent = std::fabs (beatStrength[i1] - beatStrength[i3])
+                                 < 0.28f * std::max (0.10f, oddMean);
+        const float pairBpm = pairPeriod > 0.0f ? 60.0f / pairPeriod : 0.0f;
+
+        if (timingRepeats && evenCoherent && oddCoherent
+            && pairBpm >= kMinBpm && pairBpm <= kMaxBpm)
+        {
+            bestPeriod = pairPeriod;
+            bestError = 0.0f;
+            intervalSelfSufficient = true;
+            pairedSubdivision = true;
+            // In ordinary swing the beat begins the long interval and the
+            // off-eighth begins the short return. That convention supplies the
+            // phase even when every eighth has the same strength; accents are
+            // still used above to reject four unrelated hits.
+            acquireAnchorSec = d2 >= d1 ? beatTime[i2] : beatTime[i3];
+        }
+    }
+
     // At the opposite end, three alternating peak heights are direct evidence
     // that the short spacing is a subdivision: strong-weak-strong (or its
     // inverse) repeats only after two intervals. This resolves slow music with
     // loud eighths without making genuinely fast, evenly weighted music wait
     // for the long fold.
-    if (fastOctaveAmbiguous && beatFilled >= 3)
+    if (fastOctaveAmbiguous && beatFilled >= 3 && ! pairedSubdivision)
     {
         const int oldest = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
         const float a = beatStrength[oldest];
@@ -1532,7 +1704,7 @@ bool BeatDecoder::tryFastAcquire() noexcept
     // In the room path, make the two measured intervals corroborate the same
     // grid. This rejects a pair made from an impact and its reflection without
     // adding a bar-sized observation window.
-    if (! lineFeed)
+    if (! lineFeed && ! pairedSubdivision)
     {
         const int oldest = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
         const float previousRaw = static_cast<float> (beatTime[older] - beatTime[oldest]);
@@ -1543,12 +1715,26 @@ bool BeatDecoder::tryFastAcquire() noexcept
             return false;
     }
 
-    bpm = std::clamp (applyUserOctave (60.0f / bestPeriod), kMinBpm, kMaxBpm);
-    gridAnchorSec = beatTime[newest];
+    const float acquiredRawBpm = 60.0f / bestPeriod;
+    bpm = std::clamp (applyUserOctave (acquiredRawBpm), kMinBpm, kMaxBpm);
+    gridAnchorSec = acquireAnchorSec;
     established = true;
     provisional = true;
     intervalAcquired = true;
     provisionalStrength = std::clamp ((margin - required) / 2.0f + 0.55f, 0.55f, 0.90f);
+
+    // The HMM can speak after two periods of *its winner*, which at the lower
+    // edge means it may provisionally name 104 before two 52-BPM beats have
+    // even happened. Once the actual interval exists it is the more direct
+    // fact. Feed an octave-sized correction back into the HMM immediately or
+    // its confident answer rewrites the anchor on the following frame.
+    if (useAnchor && anchorBpm >= kMinBpm
+        && std::fabs (std::log2 (acquiredRawBpm / anchorBpm)) > kOctaveThreshold)
+    {
+        hmm.anchorMetricalLevel (acquiredRawBpm);
+        anchorBpm = std::clamp (acquiredRawBpm, kMinBpm, kMaxBpm);
+        anchorStrength = 0.0f;
+    }
     return true;
 }
 
@@ -1556,6 +1742,10 @@ void BeatDecoder::updateTempo() noexcept
 {
     const bool combReady = tempo.ready() && tempo.salience() > kSalienceFloor;
     const float combBpm = applyUserOctave (foldToAnchor (tempo.bpm()));
+    // The same reading with the anchor fold left off: what the fold actually
+    // measured, carrying only the listener's own half/double request. Used to
+    // decide whether the committed level is wrong - see `combDisagrees` below.
+    const float combRawBpm = applyUserOctave (tempo.bpm());
 
     // Acquisition: adopt the fold outright. Easing towards it from a default of
     // 120 is what used to make a 75 BPM song take twenty seconds to find.
@@ -1581,6 +1771,8 @@ void BeatDecoder::updateTempo() noexcept
             // more direct level evidence than its whole-frame early winner.
         }
         else if (useAnchor && hmm.ready() && anchorBpm >= kMinBpm
+                 && beatFilled >= (lineFeed ? kContextAcquirePeaksLine
+                                            : kContextAcquirePeaksRoom)
                  && hmm.levelMargin() > (lineFeed ? kAnchorAcquireMarginLine
                                                   : kAnchorAcquireMargin))
         {
@@ -1629,6 +1821,14 @@ void BeatDecoder::updateTempo() noexcept
             return;
     }
 
+    // A provisional HMM acquisition may precede the first measurable interval
+    // at a slow tempo. Revisit it as soon as the second detected beat arrives;
+    // otherwise `tryFastAcquire` is never called again simply because the less
+    // precise source happened to answer first. At 52 BPM this moves the first
+    // correct lock from about 12.5 s to the second interval (~2.3 s).
+    if (provisional && ! intervalAcquired)
+        tryFastAcquire();
+
     // The short-window grid is allowed to start the clock; it becomes an
     // ordinary committed grid only when the long-window fold has actually
     // examined the slower octave. Until then the correction logic below keeps
@@ -1646,19 +1846,69 @@ void BeatDecoder::updateTempo() noexcept
     // single bad comb frame must not cost us the beat history.
     const bool gridHealthy = lastFitResidual < kGridHealthyResidual
                              && lastFitCoverage > kGridHealthyCoverage;
+    // A provisional interval grid that uses every other tick has already
+    // supplied the evidence `levelSettled()` is waiting many slow seconds to
+    // collect: the measured beats are one octave below the grid. Let the raw
+    // comb corroborate that case immediately. At 52 BPM, waiting for the fold's
+    // ordinary slower-octave window left the clock at ~104 for about twelve
+    // seconds even though the fitted index gap was already exactly two.
+    const bool provisionalDoubledGrid = provisional && intervalAcquired
+                                        && lastFitIndexGap >= 1.5f;
     const bool combMayCorrect = tempo.levelSettled()
-                                || (provisional && ! intervalAcquired);
+                                || (provisional && ! intervalAcquired)
+                                || provisionalDoubledGrid;
     // Direction matters. A grid twice too fast can look healthy because every
     // detected beat lands on every other tick. A grid twice too slow cannot:
     // it would have to discard every other event. If this grid was built from
     // actual intervals and still covers those events tightly, a late 120 -> 60
     // fold is not evidence against it. This is the room-then-band failure that
     // otherwise appeared fourteen seconds after a correct lock.
-    const bool unprovenSlowerOctave = intervalAcquired && gridHealthy
-                                      && combBpm < bpm * 0.70f;
+    //
+    // But only while the grid's own beats say it is the pulse. `gridHealthy` is
+    // residual and coverage, and the sentence above says in as many words why
+    // neither can see a grid that is twice too fast: every detected beat lands
+    // on every other tick, so nothing is thrown away and nothing is out of
+    // place. Using that as evidence *for* the fast grid is the wrong way round,
+    // and it is what kept a doubled grid at slow tempo permanently: measured on
+    // one impulse per beat with silence between, 60 BPM read 122.2 for the
+    // whole run, ten runs out of ten, while the comb sat at 61.3 at salience
+    // 1.00 - the right answer, vetoed here every frame.
+    //
+    // The index gap is the missing half. It is 1 when the beats populate the
+    // grid and 2 when they use every other tick, so the veto now asks whether
+    // this grid is dense before it defends it. A genuine 120 with a late comb
+    // fold to 60 - the room-then-band failure the veto exists for - has a dense
+    // grid and is protected exactly as before. See docs/TODO.md item 22.
+    const bool gridIsDense = lastFitIndexGap < 1.5f;
+    const bool unprovenSlowerOctave = intervalAcquired && gridHealthy && gridIsDense
+                                      && combRawBpm < bpm * 0.70f;
+    // Against the fold's *raw* answer, not the one already folded onto the
+    // anchor - and this is the whole of why a doubled grid at slow tempo was
+    // permanent.
+    //
+    // `combBpm` is `foldToAnchor (tempo.bpm())`, which moves the fold's reading
+    // onto the level in use so the published number stays in the level the
+    // listener is in. That is right for publishing and fatal here: it is
+    // subtracted the octave *before* the test that exists to notice an octave.
+    // Measured at 60 BPM, one impulse per beat and silence between: the fold
+    // read 61.3 at salience 1.00 all run, the anchor sat at 122, so the value
+    // this line saw was 122.6 and `log2(122.2 / 122.6)` is 0.004 - no
+    // disagreement, every frame, forever. Ten runs out of ten never came back.
+    //
+    // It is the same trap `checkGridPhase` documents for phase - "a grid that
+    // once anchors on an offbeat is not merely wrong, it is stable ... and
+    // there was nothing in the chain that could notice" - and it was solved
+    // there by putting the fold outside the gate. For the rate the fold *was*
+    // the gate.
+    //
+    // Everything downstream still uses the anchored `combBpm`; only the
+    // question "is the level itself wrong" is asked of the unfolded answer, and
+    // it is still answered by salience, by repeated agreement over
+    // `snapBeats`, and now by a grid that admits it is using every other tick.
+    // See docs/TODO.md item 22.
     const bool combDisagrees = combReady && combMayCorrect && ! unprovenSlowerOctave
                                && bpm > kMinBpm
-                               && std::fabs (std::log2 (bpm / combBpm)) > kOctaveThreshold;
+                               && std::fabs (std::log2 (bpm / combRawBpm)) > kOctaveThreshold;
 
     int snapBeats = tempoRegime == TempoRegime::fixed ? kOctaveSnapBeatsFixed
                   : tempoRegime == TempoRegime::live  ? kOctaveSnapBeatsLive
@@ -1681,7 +1931,15 @@ void BeatDecoder::updateTempo() noexcept
     // *always* one of the healthy ones. Charging a fixed number of extra beats
     // keeps a glitching comb from costing a good grid without letting a bad
     // level defend itself forever.
-    if (gridHealthy && tempo.levelSettled())
+    //
+    // But only a grid that is actually on the pulse. The paragraph above says
+    // it itself - the double lands on every detected peak too, so it is always
+    // one of the healthy ones - and then hands it the patience anyway, because
+    // until `fitPeriod` reported the index gap there was no way to tell the two
+    // apart. There is now: a grid using every other tick has not earned
+    // anything. Measured on swung material at 81 BPM, where acquisition lands
+    // on the 1.5x level the swing implies, this is most of the wait.
+    if (gridHealthy && gridIsDense && tempo.levelSettled())
         snapBeats += kOctaveSnapBeatsHealthy;
 
     if (tempo.levelSettled())
@@ -1706,10 +1964,14 @@ void BeatDecoder::updateTempo() noexcept
         // accumulating case against the grid hands the clock to whichever level
         // happened to be named on the beat the total came due. Each new level
         // starts its own vote.
+        // The vote is about the level the fold actually measured, for the same
+        // reason the disagreement above is: `combBpm` has already been folded
+        // onto the level under suspicion, so voting on it is voting for the
+        // thing being argued against.
         if (octaveVoteBpm < kMinBpm
-            || std::fabs (std::log2 (combBpm / octaveVoteBpm)) > kOctaveVoteHold)
+            || std::fabs (std::log2 (combRawBpm / octaveVoteBpm)) > kOctaveVoteHold)
         {
-            octaveVoteBpm = combBpm;
+            octaveVoteBpm = combRawBpm;
             octaveMismatchBeats = 1;
         }
         else
@@ -1727,7 +1989,24 @@ void BeatDecoder::updateTempo() noexcept
 
     if (octaveMismatchBeats >= snapBeats)
     {
-        bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
+        // Snap to what the fold measured, not to its reading folded back onto
+        // the level being left. With `combBpm` here the snap was a no-op in the
+        // only dimension it exists for: it threw the beat history away and
+        // committed the same doubled tempo again, which is why a 60 BPM grid at
+        // 122 survived a counter that reached its bar over and over.
+        bpm = std::clamp (combRawBpm, kMinBpm, kMaxBpm);
+        // And move both owners of the level with it. Moving only `anchorBpm`
+        // lasted one frame: a confident HMM still at the doubled level wrote
+        // its answer back over the correction in `observe`. The comb vote is
+        // independent level evidence, so reweight the HMM's tempo marginal
+        // while retaining its phase evidence. `anchorBpm` is in the HMM's raw
+        // level (before the listener's manual octave), hence `tempo.bpm()`.
+        if (useAnchor && anchorBpm >= kMinBpm)
+        {
+            hmm.anchorMetricalLevel (tempo.bpm());
+            anchorBpm = std::clamp (tempo.bpm(), kMinBpm, kMaxBpm);
+            anchorStrength = 0.0f;
+        }
         // The beat times go. Keeping them was measured and is worse: at the new
         // level half of them are offbeats, fitPeriod keeps whichever of those
         // happen to land inside its tolerance, and the fits that result are
@@ -1751,6 +2030,7 @@ void BeatDecoder::updateTempo() noexcept
         // a stale clean bill of health would let it defend itself immediately.
         lastFitResidual = 1.0f;
         lastFitCoverage = 0.0f;
+        lastFitIndexGap = 1.0f;
         return;
     }
 
@@ -1821,6 +2101,7 @@ void BeatDecoder::updateTempo() noexcept
             fastDriftSign = 0;
             lastFitResidual = 1.0f;
             lastFitCoverage = 0.0f;
+    lastFitIndexGap = 1.0f;
             enterRegime (TempoRegime::unknown);
             return;
         }
@@ -1829,7 +2110,9 @@ void BeatDecoder::updateTempo() noexcept
     float longPeriod = 0.0f, longResidual = 0.0f, longCoverage = 0.0f;
     float shortPeriod = 0.0f, shortResidual = 0.0f, shortCoverage = 0.0f;
     double longAnchor = -1.0, shortAnchor = -1.0;
-    const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage, longAnchor);
+    float longIndexGap = 1.0f, shortIndexGap = 1.0f;
+    const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage,
+                                     longAnchor, &longIndexGap);
     // How many beats the responsive fit looks back over.
     //
     // This is what actually decides how fast a tempo change is taken, and
@@ -1849,7 +2132,7 @@ void BeatDecoder::updateTempo() noexcept
     // time. Eight stays; the seam and the bench stay with it, so the next
     // person can see the trade instead of re-deriving it.
     const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual,
-                                      shortCoverage, shortAnchor);
+                                      shortCoverage, shortAnchor, &shortIndexGap);
 
     // Where the grid is, from the same two fits and for the same reason the
     // tempo comes from them: the phase used to be `lastBeatSec`, one accepted
@@ -1878,11 +2161,13 @@ void BeatDecoder::updateTempo() noexcept
     {
         lastFitResidual = longResidual;
         lastFitCoverage = longCoverage;
+        lastFitIndexGap = longIndexGap;
     }
     else if (haveShort)
     {
         lastFitResidual = shortResidual;
         lastFitCoverage = shortCoverage;
+        lastFitIndexGap = shortIndexGap;
     }
 
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
@@ -1972,6 +2257,18 @@ void BeatDecoder::updateTempo() noexcept
     const bool moving = haveWindow
                         && std::fabs (trend) > kLiveTrend
                         && std::fabs (trend) > spread * 0.6f;
+
+    auto bringSlowFitCurrent = [recent, this] (float target) noexcept
+    {
+        if (recent <= 0.0f || bpm >= 75.0f || target < kMinBpm)
+            return target;
+        const float recentBpm = 60.0f / recent;
+        const float weight = std::clamp ((75.0f - bpm) / 20.0f, 0.0f, 1.0f);
+        const float boundedRecent = std::clamp (recentBpm,
+                                                target * 0.96f,
+                                                target * 1.04f);
+        return target + (boundedRecent - target) * weight;
+    };
 
     switch (tempoRegime)
     {
@@ -2110,12 +2407,24 @@ void BeatDecoder::updateTempo() noexcept
                 const float lead = kLiveLead * (shortFitBpm - longFitBpm);
                 target += std::clamp (lead, -0.04f * shortFitBpm, 0.04f * shortFitBpm);
             }
+
+            // Eight beats are a four-second window at 120 BPM but more than
+            // nine seconds at 52. Its least-squares precision is still useful;
+            // treating it as equally current is not. At slow live tempi blend
+            // towards the median of the last three intervals, which is centred
+            // roughly one beat back, and cap its authority to the range of a
+            // musical drift so one displaced onset cannot pull the clock.
+            // The blend fades to zero by 75 BPM, leaving the faster-tempo
+            // stability tuning untouched.
+            target = bringSlowFitCurrent (target);
             commit (pullTowardsComb (target, combReady, combBpm), kRateLive);
             break;
         }
 
         case TempoRegime::unknown:
-            commit (pullTowardsComb (haveLong ? longFitBpm : shortFitBpm, combReady, combBpm),
+            commit (pullTowardsComb (bringSlowFitCurrent (
+                                         haveLong ? longFitBpm : shortFitBpm),
+                                     combReady, combBpm),
                     kRateAcquiring);
             break;
     }
@@ -2214,7 +2523,14 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         // Only take the anchor once the state space is clear about it. The
         // margin is the winning tempo's lead over the best tempo that is not a
         // neighbour of it - that is, over the other metrical levels.
-        if (hmm.ready() && hmm.levelMargin() > kAnchorMargin)
+        const float hmmAtUserLevel = applyUserOctave (hmm.bpm());
+        const bool agreesWithCommittedLevel = ! established || bpm < kMinBpm
+                                               || (hmmAtUserLevel >= kMinBpm
+                                                   && std::fabs (std::log2 (
+                                                          hmmAtUserLevel / bpm))
+                                                          < kOctaveThreshold);
+        if (hmm.ready() && hmm.levelMargin() > kAnchorMargin
+            && agreesWithCommittedLevel)
         {
             anchorBpm = hmm.bpm();
             anchorStrength = std::clamp ((hmm.levelMargin() - kAnchorMargin) / kAnchorMargin,
@@ -2223,14 +2539,24 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         else
         {
             // The tempo it last named is kept - the fold is still folded onto
-            // it - but a margin that has fallen back is not evidence about
-            // anything now, so it stops counting as confidence.
+            // it - but a margin that has fallen back, or an HMM that has moved
+            // to another metrical level without the comb's repeated vote, is
+            // not evidence about the committed grid. In particular this stops
+            // the 52 -> 104 state-space bias from overwriting a confirmed slow
+            // level later in the same take.
             anchorStrength = 0.0f;
         }
     }
 
     const float period = 60.0f / std::max (kMinBpm, bpm);
-    const int minRefr = std::max (2, static_cast<int> (0.4f * period * static_cast<float> (fps)));
+    // Before a grid exists, do not use the 120-BPM default to suppress evidence
+    // that may be a swung off-eighth. At 120 BPM full swing returns only 167 ms
+    // after the beat, below the old 200 ms gate. The fastest legal pulse defines
+    // the causal minimum during acquisition; once established, the musical grid
+    // resumes owning the refractory window.
+    const float eventReferencePeriod = established ? period : 60.0f / kMaxBpm;
+    const int minRefr = std::max (2, static_cast<int> (
+        0.4f * eventReferencePeriod * static_cast<float> (fps)));
 
     // Activations are broad curves, so emit one causal event at a local maximum
     // rather than retriggering while the curve stays above threshold.
@@ -2262,7 +2588,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     const bool eligiblePeak = localMaximum && refractoryFrames == 0
                               && (lastBeatSec < 0.0
                                   || (eventTimeSec - lastBeatSec)
-                                         >= 0.4 * static_cast<double> (period));
+                                         >= 0.4 * static_cast<double> (eventReferencePeriod));
 
     bool acceptedByCurrentGrid = eligiblePeak;
     if (acceptedByCurrentGrid && established && lastBeatSec >= 0.0)

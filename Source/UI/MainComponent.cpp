@@ -372,14 +372,16 @@ MainComponent::MainComponent()
         const bool mine = ! engine.settings().tempoOctaveAuto.load()
                           && engine.settings().tempoOctave.load() < 0;
         if (mine) applyTempoOctaveAuto();
-        else      applyTempoOctave (-1);
+        else      applyTempoOctave (vp::stepTempoOctave (
+                      engine.snapshot().tempoOctave, -1));
     };
     doubleButton.onClick = [this]
     {
         const bool mine = ! engine.settings().tempoOctaveAuto.load()
                           && engine.settings().tempoOctave.load() > 0;
         if (mine) applyTempoOctaveAuto();
-        else      applyTempoOctave (1);
+        else      applyTempoOctave (vp::stepTempoOctave (
+                      engine.snapshot().tempoOctave, 1));
     };
 
     // Where beat one is cannot be read reliably from what the network gives us,

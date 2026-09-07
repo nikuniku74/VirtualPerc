@@ -29,7 +29,7 @@ namespace
     // a slow tempo for every frame it spends between its beats, which is a bias
     // towards the fastest state in the space and nothing else. With this, every
     // tempo spends the same *fraction* of its time on the beat, so the model
-    // compares them on the evidence instead of on their length. Sixteen is
+    // compares them on the evidenc e instead of on their length. Sixteen is
     // madmom's figure and it is not a delicate choice.
     constexpr float kObsLambda = 16.0f;
 
@@ -85,6 +85,49 @@ void BeatHmm::setPriorCentre (float bpm) noexcept
 {
     priorCentre = std::clamp (bpm, 60.0f, 200.0f);
     rebuildPrior();
+}
+
+void BeatHmm::anchorMetricalLevel (float bpm) noexcept
+{
+    if (numStates <= 0 || bpm < kMinBpm || ! std::isfinite (bpm))
+        return;
+
+    // The comb has already paid for several agreeing beats before this is
+    // called. Feed that level evidence into the state space instead of merely
+    // changing its public mirror: otherwise a confident HMM at 104 BPM writes
+    // 104 back over a confirmed 52-BPM correction on the very next frame.
+    //
+    // Preserve P(phase | tempo), but replace the accumulated tempo marginal
+    // with a narrow likelihood around the confirmed level. A hard reset loses
+    // the phase; changing the permanent perceptual prior makes later genuine
+    // tempo changes sticky. 0.10 octave is about 7%, wide enough for the HMM's
+    // frame-quantised tempo and far narrower than a half/double ambiguity.
+    constexpr float kConfirmedLevelWidthOct = 0.10f;
+    float normaliser = kNegInf;
+    for (int i = 0; i < numTempi; ++i)
+    {
+        const int b = base[static_cast<size_t> (i)];
+        const int t = tau[static_cast<size_t> (i)];
+        float tempoMass = kNegInf;
+        for (int p = 0; p < t; ++p)
+            tempoMass = logSumExp (tempoMass, alpha[static_cast<size_t> (b + p)]);
+
+        const float stateBpm = static_cast<float> (60.0 * fps) / static_cast<float> (t);
+        const float oct = std::log2 (stateBpm / bpm) / kConfirmedLevelWidthOct;
+        const float levelEvidence = -0.5f * oct * oct;
+        for (int p = 0; p < t; ++p)
+        {
+            float& v = alpha[static_cast<size_t> (b + p)];
+            v = tempoMass <= kNegInf * 0.5f ? kNegInf
+                                            : v - tempoMass + levelEvidence;
+        }
+        normaliser = logSumExp (normaliser, levelEvidence);
+    }
+
+    if (normaliser > kNegInf * 0.5f)
+        for (auto& v : alpha)
+            if (v > kNegInf * 0.5f)
+                v -= normaliser;
 }
 
 void BeatHmm::rebuildPrior() noexcept

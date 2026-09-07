@@ -32,6 +32,15 @@ enum class Subdivision : int
     sixteenth
 };
 
+/** One press of the octave controls is one metrical step from what the player
+    is hearing now. The stored manual value is not necessarily that level while
+    AUTO is active, so callers must pass the effective snapshot value. */
+constexpr int stepTempoOctave (int current, int direction) noexcept
+{
+    const int next = current + (direction < 0 ? -1 : 1);
+    return next < -1 ? -1 : (next > 1 ? 1 : next);
+}
+
 /** Which part the percussionist plays. A player does not bring a marcha to a
     rock track, so this is not a set of variations on one pattern - each has its
     own conga figure and its own shaker. */

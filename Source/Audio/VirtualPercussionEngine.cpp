@@ -1415,6 +1415,16 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
     lastLeakRemain.store (postPeak, std::memory_order_relaxed);
+    // INPUT is an analysis trim, not a claim that the room or the song changed.
+    // The epoch watcher used to see the trimmed level, so moving INPUT upward
+    // could look exactly like a new band entering and reset the decoder while
+    // it was already following. Undo the trim for every decision about the
+    // physical source; keep `postPeak` for make-up, because that stage really
+    // does need the level BeatNet is about to receive. Leak subtraction is
+    // linear in the input gain, so its residual scales by the same factor.
+    const float inputTrim = std::clamp (
+        cfg.inputGain.load (std::memory_order_relaxed), 0.0f, 4.0f);
+    const float sourcePeak = inputTrim > 1.0e-6f ? postPeak / inputTrim : 0.0f;
     // This is the last honest amplitude in the path. The make-up immediately
     // below deliberately raises a quiet room to BeatNet's operating level, so
     // asking the tracker whether the source is real after that point makes a
@@ -1425,18 +1435,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // playing (measured by the room-start regression). A direct/mixer source
     // therefore needs the higher line-level threshold; the iPad acoustic path
     // needs the lower one because its real music is much quieter at the mic.
-    tracker.setSourceAudible (postPeak > (speaker ? 0.004f : 0.040f));
+    tracker.setSourceAudible (sourcePeak > (speaker ? 0.004f : 0.040f));
     // How much the band is giving. Taken here on purpose: our own part has
     // just been subtracted, so the dynamics cannot follow themselves, and the
     // make-up gain below - which exists to hold the network's operating point
     // and therefore flattens exactly this - has not been applied yet.
-    bandDynamics.observe (postPeak, numSamples);
+    bandDynamics.observe (sourcePeak, numSamples);
 
-    const bool levelJumped = updateAnalysisEpoch (numSamples, postPeak);
+    const bool levelJumped = updateAnalysisEpoch (numSamples, sourcePeak);
     if (barReentryPending.exchange (false, std::memory_order_relaxed))
         tracker.notifyBarReentry();
     else if (! levelJumped)
-        maybeDetectBarReentry (numSamples, postPeak);
+        maybeDetectBarReentry (numSamples, sourcePeak);
     applyAnalysisMakeup (numSamples, postPeak, levelJumped);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)

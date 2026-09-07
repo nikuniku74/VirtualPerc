@@ -15,6 +15,7 @@
 #include <random>
 #include <algorithm>
 #include <initializer_list>
+#include <cstdlib>
 
 static const double fps = 50.0;
 static const float  kPeak = 0.94f;
@@ -65,13 +66,30 @@ static Out run (float nominal, double duration, float driftBpm, float jitterMs,
                 a = std::max (a, b.second * (float) std::exp (-0.5*d*d));
         }
         const auto h = dec.observe (a, 0.02f, 1.0f - a);
+        if (verbose && h.peak && now < 16.0)
+        {
+            const auto d = dec.diagnostics();
+            printf ("      beat %5.2f  read=%6.2f regime=%d short=%6.2f comb=%6.2f settled=%d gap=%.1f vote=%d\n",
+                    now, static_cast<double> (h.bpm), static_cast<int> (dec.regime()),
+                    static_cast<double> (d.shortFit), static_cast<double> (d.combBpm),
+                    d.levelSettled ? 1 : 0, static_cast<double> (d.fitIndexGap), d.octaveMismatch);
+        }
         if (! h.valid || now < 12.0) continue;      // let it acquire first
         const double truth = bpmAt (now);
         const double errPct = std::fabs (h.bpm - truth) / truth * 100.0;
         // Every frame contributes, in and out of an excursion alike.
         o.errIntegral += errPct / fps;
         o.measuredSec += 1.0 / fps;
-        if (! out && errPct > 4.0) { out = true; outStart = now; worstThis = errPct; }
+        if (! out && errPct > 4.0) {
+            out = true; outStart = now; worstThis = errPct;
+            if (verbose) {
+                const auto d = dec.diagnostics();
+                printf ("      fuori a %6.1f s true=%5.2f read=%5.2f regime=%d short=%5.2f long=%5.2f comb=%5.2f\n",
+                        now, truth, static_cast<double> (h.bpm), static_cast<int> (dec.regime()),
+                        static_cast<double> (d.shortFit), static_cast<double> (d.longFit),
+                        static_cast<double> (d.combBpm));
+            }
+        }
         else if (out) {
             worstThis = std::max (worstThis, errPct);
             if (errPct < 2.0) {
@@ -93,19 +111,29 @@ static Out run (float nominal, double duration, float driftBpm, float jitterMs,
     return o;
 }
 
-int main()
+int main (int argc, char** argv)
 {
-    const double dur = 300.0;
+    const bool focused = argc > 1;
+    // Keep focused runs concise by default; pass any fourth argument when the
+    // beat-by-beat decoder diagnostics are actually needed.
+    const bool verbose = argc > 4;
+    const float focusedBpm = focused ? std::strtof (argv[1], nullptr) : 0.0f;
+    const double dur = argc > 2 ? std::strtod (argv[2], nullptr) : 300.0;
+    const unsigned seeds = argc > 3 ? static_cast<unsigned> (std::max (1, std::atoi (argv[3]))) : 10u;
     printf ("Tempo COSTANTE (deriva %.0f BPM, jitter %.0f ms = impostazioni --live), %.0f s per corsa,\n", 3.0, 10.0, dur);
-    printf ("10 semi diversi per tempo. \"Fuori\" = errore > 4%%, \"rientrato\" = < 2%%.\n\n");
+    printf ("%u semi diversi per tempo. \"Fuori\" = errore > 4%%, \"rientrato\" = < 2%%.\n\n", seeds);
     printf ("%-6s %8s %10s %11s %11s %13s\n",
             "BPM", "corse", "con usc.", "tempo fuori", "err medio", "peggiore");
     printf ("%s\n", "---------------------------------------------------------------------");
-    for (float bpm : { 60.f, 75.f, 90.f, 100.f, 110.f, 120.f, 132.f, 140.f, 150.f, 160.f, 170.f }) {
+    const std::vector<float> tempos = focused
+                                      ? std::vector<float> { focusedBpm }
+                                      : std::vector<float> { 60.f, 75.f, 90.f, 100.f, 110.f, 120.f,
+                                                             132.f, 140.f, 150.f, 160.f, 170.f };
+    for (float bpm : tempos) {
         int runsWithOut = 0, tot = 0;
         double worst = 0, outSum = 0, errSum = 0, measSum = 0;
-        for (unsigned s = 1; s <= 10; ++s) {
-            Out o = run (bpm, dur, 3.0f, 10.0f, s, false);
+        for (unsigned s = 1; s <= seeds; ++s) {
+            Out o = run (bpm, dur, 3.0f, 10.0f, s, verbose);
             ++tot; if (o.n > 0) ++runsWithOut;
             worst = std::max (worst, o.worstErrPct);
             outSum += o.totalOutSec;

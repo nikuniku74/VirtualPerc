@@ -20,14 +20,17 @@ namespace
     // Beats the histogram has to hold before it is worth acting on while
     // waiting to come in, and the larger number needed to move a bar that is
     // already playing - where the correction is something the listener hears.
-    // Beats and not downbeats: every beat now files an opinion, so this is
-    // three bars of evidence and eight bars of it, decayed.
-    constexpr float kBeatsToTrustTheBar = 12.0f;
+    // The decayed counter reaches 7 after the eighth accepted beat, so a clear
+    // opinion can place the one by the end of two bars. Waiting twelve used to
+    // require thirteen beats in practice: more than three bars before a player
+    // could even call the first quarter. The confidence margin below still has
+    // to win; this only removes evidence that arrived after the deadline.
+    constexpr float kBeatsToTrustTheBar = 7.0f;
     constexpr float kBeatsToMoveTheBar = 32.0f;
-    // Two bars: the RED cut (item 2) has to have the one back inside that,
-    // and after a hole the new downbeats are a flip of 1 vs 3, not a noisy
-    // plurality. Song start still waits for the twelve above.
-    constexpr float kBeatsToTrustReentry = 8.0f;
+    // Two bars: with per-beat decay a threshold of 7 is crossed by the eighth
+    // vote. After a hole the new downbeats are a flip of 1 vs 3, not a noisy
+    // plurality, so there is no reason to charge a ninth beat.
+    constexpr float kBeatsToTrustReentry = 7.0f;
     // Four bars at the current tempo. Long enough for the eight beats of
     // evidence, short enough that a false hole does not leave the clap muted
     // for a phrase.

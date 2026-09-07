@@ -66,7 +66,46 @@ are told apart by whether the short fit keeps agreeing with the long one.
 
 Abrupt 5-10% steps use a separate bounded transition path: two completed causal
 intervals must agree, and the first changed interval must differ by at least 3%
-from the immediately preceding accepted interval. The edge requirement matters:
+from the immediately preceding accepted interval.
+
+**Both of those "must"s were looser than they read, and the cost was heard.** A
+listener reported percussion that occasionally slowed or sped up on a live
+recording and took a long time to come back. Measured with
+`probe_steady_tempo --verbose` at *constant* tempo: eight excursions between 110
+and 160 BPM, 4.0-5.5% for 1.8-3.0 s, at 80, 88, 155, 171, 243, 270, 282 and 295
+seconds - not acquisition, which is what docs/TODO.md item 18 had assumed. At each
+one the comb read the true tempo while the transition published something 4-5%
+away and dropped both fits. Two causes:
+
+- the candidate threshold was `max(1 BPM, 3 * jitter)`, about 4.2% on ordinary
+  material, **below** `kTransitionSmallestStep` (5%) which the same file calls
+  the smallest step worth claiming;
+- the coherence test compares `deviation`, which is *half* the relative
+  difference, against a tolerance of `2 * jitter` - so two intervals could
+  disagree by **four times** the measured scatter and be called one tempo.
+  Measured at the false confirmations: pairs 4.1% apart, as far from each other
+  as the step they claimed.
+
+Now `needed` never goes under `kTransitionSmallestStep` and the tolerance is
+`1 * jitter`. Eight excursions became three, with 110/120/132 clean over ten
+300 s runs each, and nothing else moved: `probe_tempo_step` is identical row for
+row, and `VPAlign`'s five protected steps still reach +/-1 BPM in 0.78-1.47 s at
+23.3-24.4 ms. The three left are at 144 and 160, where the pair really does agree
+inside the jitter and passes on the absolute floor; the discriminator that would
+catch them is the comb, which was right every time - but at candidate-start the
+comb still reads the old tempo on a genuine step too, so using it means confirming
+and then retracting, which is the shape of the watchdog already tried and reverted
+in 8528d4e. Do not retry that blind.
+
+**The clock is not where this lives, and that was measured before the decoder
+was touched.** `scripts/probe_steer.cpp` holds a wrong phase for two seconds and
+times the grid's return: 0.06-0.28 s at every FollowStrength, HIGH fastest. It
+did find that HIGH - which is the shipped default in `Types.h`, though the table
+below calls medium the default - makes excursions two to three times larger than
+LOW for no rms benefit on that bench (6.7% against 2.6% worst at 144 BPM, 0.55
+against 0.06 seconds per minute outside 2%). That bench has no genuine tempo
+change in it, which is the only thing HIGH exists for, so the default was left
+alone. See docs/TODO.md item 21. The edge requirement matters:
 without it, a 4 s or 12 s ramp eventually moves far enough from a fixed
 committed BPM to look like a step even though adjacent intervals never jumped.
 After confirmation, `rapid` is published through at most two accepted beats and
@@ -81,6 +120,115 @@ and no pulse-count violations; both ramps stay on the ordinary live-fit path.
 
 Autocorrelation runs on **activations**, never on the waveform. Volume-peak /
 SuperFlux tracking is deliberately not used.
+
+### The octave escape hatch was blindfolded, and it is not any more
+
+Before reading the "partly unsolvable" section below, know which part of it was
+a genuine ambiguity and which part was a bug. A listener reported slow songs -
+60 and 80 BPM - going out and not holding, while faster ones were fine.
+Reproduced on material with **one impulse per beat and silence between**, where
+doubling means putting half the grid on nothing, so it is not the ambiguity at
+all: 60 BPM read double in 10 runs of 10 and never came back; 70 BPM in 9 of 10.
+
+The fold was right the whole time - 61.3 BPM at salience 1.00 - and
+`octaveMismatch` sat at zero. Three faults, nested:
+
+- **`combDisagrees` tested `combBpm`, which is `foldToAnchor (tempo.bpm())`** -
+  the fold's reading already folded onto the level under suspicion. The test for
+  a wrong octave was run on a number the octave had just been taken out of:
+  `log2(122.2 / 122.6) = 0.004` against a 0.25 threshold, every frame, forever.
+  Same trap `checkGridPhase` documents for phase, and solved there by putting the
+  fold outside the gate; for the rate the fold *was* the gate.
+- **`unprovenSlowerOctave` used `gridHealthy` as evidence for the fast grid**,
+  three lines under a comment explaining that a doubled grid always looks healthy
+  because every beat lands on every other tick. `coverage` is one-sided: it sees
+  a grid too *slow* (which must discard beats) and cannot see one too fast (which
+  discards none). The missing half was free in the same loop - the grid indices
+  the kept beats land on, 0/2/4/6 instead of 0/1/2/3. `fitPeriod` now reports
+  their median gap; measured 2.0 exactly at 60 BPM with coverage 1.00.
+- **and the snap itself was a no-op**: `bpm = clamp (combBpm ...)` re-committed
+  the folded value, so it threw the beat history away and adopted the same
+  doubled tempo, without moving `anchorBpm` either - so the next beats folded
+  straight back.
+
+Now the disagreement, the vote and the snap all read the unfolded `combRawBpm`,
+the snap moves the anchor with it, and the veto asks whether the grid is dense
+before defending it. Measured, `probe_steady_tempo` at 300 s x 10 seeds: 70 BPM
+9/10 -> 3/10; 120, 132 and 140 from one to three runs each to **0/10**; **170
+from 4/10 with 50% error and 26.5 s out to 1/10 at 4.4% and 0.1%**. The five
+protected steps in `VPAlign` are unchanged to the hundredth (0.78-1.47 s,
+23.3-24.4 ms) and the unprotected 100->140 improves from 26.70 to 15.14.
+
+**Swung material is now understood during acquisition, rather than repaired
+several bars later.** Before the fix, a strong beat plus a quieter swung
+off-eighth locked within 2% in 1.9 s when straight at 81 BPM, but took **13.1 s
+at swing 0.65 and 17.7 s at full swing**. The decoder read either half of the
+long-short pair as an independent period and acquired the 1.5x level (81 ->
+about 123).
+
+`tryFastAcquire` now counts a repeated long-short cell as one quarter. On a
+direct feed, strong-weak-strong closes the first cell in three peaks; through a
+room, a fourth peak corroborates the second cell. Before a grid exists the peak
+picker uses the fastest legal pulse for its refractory window, rather than the
+120-BPM default, so the short return of full swing is not discarded. A bare HMM
+answer is held until the same three/four peaks exist; this prevents a quick but
+context-free wrong answer from escaping just before the cell can be measured.
+
+Focused deterministic measurement at ratios 0.60 and 2/3, 52/81/96/120/168 BPM:
+the direct path publishes the right quarter after **1.04-1.40 beats**, the room
+path after **1.37-2.07 beats**, and every case is still on the same level after
+ten seconds. Straight material across 52-160 BPM acquires in about three beats.
+The entry cost is below one bar, comfortably inside the two-bar product
+requirement; the old 13-18 s correction path is no longer entered.
+
+**The remaining 60-BPM feedback bug is fixed.** Two separate acquisition orders
+were undoing the right answer. First, the HMM can become ready after two periods
+of its *104-BPM winner*, before two 52-BPM beats have elapsed; once the real
+interval arrived, `tryFastAcquire` was never revisited because the provisional
+HMM result had already set `established`. The provisional result is now refined
+as soon as the second interval exists. Second, a confident HMM could rewrite
+`anchorBpm` at another metrical level on every later frame, including the frame
+after the comb had corrected it. A repeated comb octave vote now re-centres the
+HMM tempo marginal with `BeatHmm::anchorMetricalLevel`, preserving each tempo's
+conditional phase distribution, and an HMM level that disagrees with the
+committed decoder level cannot overwrite the anchor on its own.
+
+Focused deterministic measurement (`probe_steady_tempo BPM seconds seeds`, one
+impulse per beat, 3 BPM live drift, 10 ms jitter): first correct 52-BPM lock
+**~12.5 s -> 3.48 s (3.0 beats)** with the context gate above. Over 120 s x 5
+seeds, 52 BPM spent **0.4%** outside 4%
+(one 2.2 s excursion, worst 4.6%) and 60 BPM **1.5%**; 120 and 160 BPM were
+0/3 runs with an excursion. The slow live/unknown target also blends the
+three-interval median below 75 BPM because an eight-beat fit is over nine seconds
+long at 52; its authority is capped at +/-4% and fades to zero by 75 BPM, so the
+faster-tempo stability tuning is unchanged.
+
+The quick regression is `VPTests --tempo-slow`: 52 locks at 3.48 s, the first
+beat after a six-second musical gap returns at 26.56 s with 0.000 beat phase
+error, straight 60/120/160 also lock in about three beats, and the ten swung
+tempo/ratio cases pass on both line and room paths. It is decoder-only and is
+the iteration gate for these paths; do not run the full suite for every change.
+
+This does not repeal the ambiguity below: a real 52-BPM arrangement with strong
+eighths can be acoustically identical to 104 BPM half-time. The focused real-
+network slow-kit test still names 100 for the 50-BPM fixture; the ÷2 control is
+the deterministic answer for that material.
+
+**AUTO must not manufacture an answer from missing downbeats.** The old
+threshold-crossing cadence path called two consecutive eight-beat gaps proof
+that the grid was doubled. A correct 100-BPM track on which BeatNet simply
+missed every other downbeat has exactly the same gaps, so that path could force
+100 to 50 even while every quarter was clean. It is now gated off with the
+already-disabled cadence experiment; the regression feeds 22 beats at 100 with
+downbeats only every eight and requires no hint and a final 100 BPM.
+
+The manual buttons are relative to the **effective displayed level**, including
+AUTO's choice. Their stored value is absolute relative to the raw analysis and
+may be stale while AUTO is active. Sending `+1` directly while AUTO was at `-1`
+therefore jumped two octaves (50 -> 200), and `-1` from `+1` did the reverse.
+`stepTempoOctave` now turns both transitions through zero: 50 -> 100 -> 200 and
+200 -> 100 -> 50. Pressing the already-active manual button still returns to
+AUTO.
 
 ### The octave (half / double time) is partly unsolvable
 
@@ -211,6 +359,15 @@ alignment, so doing so makes the fallback impossible to enter. The focused
 end-to-end harmony regression in `VPTests` explicitly selects
 `FollowSource::speaker`; cut/seek regressions remain in `VPTests --bar`.
 
+**How long the one takes to arrive is arithmetic.** Votes accumulate and decay
+per *beat* (`kVoteDecay = 0.982`), so `voteBeats` saturates at 55.6. Against
+`kBeatsToMoveTheBar = 32` that is **47 accepted beats** before the bar can be
+rotated while playing - deliberately conservative because that correction is
+audible. Coming in and after a cut use a threshold of 7: with decay it is
+crossed by the eighth accepted beat, so a clear winner places the one within two
+bars at every tempo. The confidence margin is unchanged; ambiguous evidence
+still does not rotate the bar merely because the deadline arrived.
+
 `barLocked` (SPOSTA L'1, or a tap that declares the one) stops all automatic
 rotation. It does **not** freeze the count against the grid: a `snapPhase` with
 `keepBarInStep` still carries it, which is what keeps a locked bar on the beat
@@ -226,7 +383,7 @@ gap detector (`VirtualPercussionEngine::maybeDetectBarReentry`) looks at the
 block peak against the recent loud level - a mute clears it in one callback, a
 fill never does - and opens a four-bar coming-in window
 (`BeatTracker::notifyBarReentry`). Same window on seek (`notifyTrackSeek`),
-without bumping `analysisEpoch`. One rotation per return, 8 beats of evidence
+without bumping `analysisEpoch`. One rotation per return, two bars of evidence
 instead of 32, `rotateBarIndex` only. The clap reads `barTrusted` from the
 tracker (histogram names beat zero, or the listener's lock), not a time-since-
 rotation proxy. Verify with `VPTests --bar`.
@@ -310,6 +467,16 @@ the part comes in the analysis level can step up on its own account. That is us.
 `ownStepSamples` is set from the previous block's output level and, while it is
 running, **vetoes** the rise: it clears any step in progress and returns "no
 epoch". That is all it may do.
+
+The INPUT trim is similarly not a source change. The leak residual is linear in
+that trim, so source audibility, band dynamics, bar re-entry and
+`updateAnalysisEpoch` read `postPeak / inputTrim`; only the analysis make-up and
+the UI analysis meter read the trimmed peak. Before this separation, raising
+INPUT could manufacture the same level step as a new band and reset the decoder.
+Focused `VPOps --input-gain` at 120 BPM measured **+0.07 ms** worst operation
+delta through the iPad-room path, **0.00 ms** on the direct path and **zero extra
+epochs**. `--voice-toggle` measured +1.80 ms worst through the room, 0.00 ms
+direct, also with zero extra epochs.
 
 The veto is an early `return`, so for the blocks it covers `levelLoud`, the
 `wasQuiet` test and the *downward* decay of `levelRef` are skipped rather than
