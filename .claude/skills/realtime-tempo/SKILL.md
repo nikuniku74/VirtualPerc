@@ -855,6 +855,10 @@ runs.
 
 ## 6. State machine
 
+`VPTests --state-timing` checks the four-second low-confidence hold at buffers
+64/256/1024: 4.001333/4.005333/4.010667 s. The counter adds actual samples;
+the confidence filter also uses elapsed time (old 256/48k response preserved).
+
 ```
 LISTENING -> LOCKING -> FOLLOWING
 FOLLOWING -> LOW_CONFIDENCE -> RECOVERING -> FOLLOWING

@@ -8759,6 +8759,37 @@ namespace
     }
 }
 
+namespace vp
+{
+struct BeatTrackerTimingProbe
+{
+    static double lowAfter (int block)
+    {
+        BeatTracker t;
+        t.sampleRate = 48000;
+        t.currentState = TrackingState::following;
+        int samples = 0;
+        while (t.currentState == TrackingState::following && samples < 48000 * 5)
+        {
+            t.updateState (0.1f, false, true, true, block);
+            samples += block;
+        }
+        return samples / 48000.0;
+    }
+};
+}
+
+void vpRunStateTimingTest (int& passed, int& failed)
+{
+    for (int block : {64, 256, 1024})
+    {
+        const double seconds = vp::BeatTrackerTimingProbe::lowAfter (block);
+        const bool ok = seconds > 4 && seconds <= 4 + block / 48000.0;
+        std::printf ("state-timing buffer=%d low-confidence=%.6fs %s\n", block, seconds, ok ? "PASS" : "FAIL");
+        (ok ? passed : failed)++;
+    }
+}
+
 void vpRunSlowTempoRegressionTest (int& passed, int& failed)
 {
     gPass = &passed;

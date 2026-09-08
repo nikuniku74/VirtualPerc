@@ -8,7 +8,7 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 ## Stato
 
 1. COMPLETATO: sicurezza del rientro (annullamento, reset, prove fresche).
-2. DA FARE: contatori indipendenti dal buffer.
+2. COMPLETATO: contatori indipendenti dal buffer.
 3. DA FARE: recupero dello scarto con fiducia alta.
 4. DA FARE: percorso armonico completo sul collegamento diretto.
 5. DA FARE: verifica integrata e separazione delle misure sintetiche/reali.
@@ -40,3 +40,13 @@ forceTempo e transizione confermata cancellano il recupero. Da conferma a 8 ms:
 0.571 / 0.299 / 0.176 s; errore successivo <8 ms per oltre due beat. Questo è
 il clock, non il modello reale. Il vecchio `probe_steer --reentry` viene rifiutato
 con istruzioni perché non forniva beat freschi. Prossimo: step 2.
+
+## Step 2 — verifica
+
+`cmake --build build-host --target VPTests -j4`
+`./build-host/VPTests_artefacts/Release/VPTests --state-timing`
+
+3/3 PASS: soglia di quattro secondi attraversata a 4.001333 / 4.005333 /
+4.010667 s con buffer 64/256/1024, entro un callback. Anche il filtro della
+fiducia ora usa il tempo reale, preservando la risposta precedente a 256/48k.
+Step 1 salvato nel commit cdcb33c. Prossimo: step 3.

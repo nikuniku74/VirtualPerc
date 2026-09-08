@@ -712,6 +712,9 @@ esattamente il segnale che conferma al tracker qualunque cosa stia già credendo
 
 ### 21. Le percussioni ogni tanto rallentano o accelerano, e ci mettono a rientrare 🟡 (2026-09-07, causa trovata e corretta — resta ascolto)
 
+- [x] 08/09: timer bassa fiducia e filtro indipendenti dal buffer;
+  `VPTests --state-timing` 3/3 PASS (64/256/1024). Ripresa in HANDOFF_TEMPO.md.
+
 Segnalato dall'utente su un **brano registrato dal vivo**: *«ogni tanto le
 percussioni tendono a rallentare o a velocizzare e poi ci impiegano molto a
 rientrare nel tempo»*.

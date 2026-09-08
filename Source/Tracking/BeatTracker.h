@@ -70,6 +70,7 @@ static_assert (std::is_trivially_copyable<TempoTransitionConsumer>::value,
 
 class BeatTracker
 {
+    friend struct BeatTrackerTimingProbe;
 public:
     /** Test seam: supply the model the neural worker will run, instead of
         letting it load the bundled BeatNet. Must be called before prepare(),
@@ -364,7 +365,7 @@ public:
     bool tryLoadHypothesis (BeatHypothesis& out) const noexcept { return neural.tryLoad (out); }
 
 private:
-    void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept;
+    void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
     /** One source's opinion about the bar, acted on or not. Returns true when
         it moved the count, so the caller can stop asking. */

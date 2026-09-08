@@ -477,7 +477,7 @@ int BeatTracker::pulsesFor (Subdivision s) const noexcept
     return 4;
 }
 
-void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic) noexcept
+void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept
 {
     const int sr = static_cast<int> (sampleRate);
 
@@ -524,7 +524,8 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
             }
             if (! tapHold && confidence < 0.22f)
             {
-                lowHoldSamples += sr / 50;
+                // Four seconds of audio, not 200 callbacks of arbitrary size.
+                lowHoldSamples += std::max (0, numSamples);
                 if (lowHoldSamples > sr * 4)
                     currentState = TrackingState::lowConfidence;
             }
@@ -1486,7 +1487,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     out.clock = follower.advance (numSamples);
 
-    smoothedConf = smoothedConf * 0.85f + nnConf * 0.15f;
+    // Preserve the old 256/48k response, with the same wall time on all buffers.
+    const float confidenceDecay = std::pow (0.85f, static_cast<float> (
+        numSamples * 48000.0 / (sampleRate * 256.0)));
+    smoothedConf = smoothedConf * confidenceDecay + nnConf * (1.0f - confidenceDecay);
     if (hadBeat && nnConf > 0.35f)
         smoothedConf = std::min (1.0f, smoothedConf + 0.025f);
 
@@ -1508,7 +1512,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     }
 
     const TrackingState prevState = currentState;
-    updateState (smoothedConf, hadBeat, loudEnough, periodic);
+    updateState (smoothedConf, hadBeat, loudEnough, periodic, numSamples);
 
     if (speakerFollow && ! armed && ! lockedOnce && ! tapEstablished && ! heardMusic && ! loudEnough
         && currentState == TrackingState::locking)

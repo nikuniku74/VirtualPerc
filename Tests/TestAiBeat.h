@@ -17,6 +17,7 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only = nullptr)
 /** Fast decoder-only regressions for slow acquisition, octave-anchor feedback
     and re-entry after a musical gap. Also `VPTests --tempo-slow`. */
 void vpRunSlowTempoRegressionTest (int& passed, int& failed);
+void vpRunStateTimingTest (int& passed, int& failed);
 
 /** The own-output / analysis-epoch benches. Part of the full suite, and
     runnable on their own with `VPTests --makeup`: they drive the neural worker
