@@ -14,6 +14,19 @@ void vpRunBarReentryTests (int& passed, int& failed);
     suite. */
 void vpRunOctaveSweepTest (int& passed, int& failed, const char* only = nullptr);
 
+/** What the input level does to the tempo (docs/TODO.md item 24): a sweep of
+    0 / -6 / -12 / -18 dB and a clipped case over 52 / 91 / 168 BPM, reporting
+    time to the correct octave, percussion entry, `FISSO`, drift and recovery
+    after a gap as five separate numbers. Also `VPTests --level`; `only` narrows
+    it to one tempo ("52", "91", "168") because each run drives the real neural
+    worker over thirty-eight seconds of audio.
+
+    Deliberately NOT part of `vpRunAiBeatTests`: fifteen such runs are about
+    five minutes, and the full suite is long enough. Run it by hand after
+    anything that touches the analysis level, the frontend or the octave
+    logic. It ships with three known failures - see docs/TODO.md item 24. */
+void vpRunLevelSweepTest (int& passed, int& failed, const char* only = nullptr);
+
 /** Fast decoder-only regressions for slow acquisition, octave-anchor feedback
     and re-entry after a musical gap. Also `VPTests --tempo-slow`. */
 void vpRunSlowTempoRegressionTest (int& passed, int& failed);

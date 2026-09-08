@@ -190,6 +190,7 @@ int main (int argc, char** argv)
     bool speaker = false;
     bool autoMode = false;
     bool trace = false;
+    double gainDb = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -201,6 +202,7 @@ int main (int argc, char** argv)
         else if (a == "--speaker") speaker = true;
         else if (a == "--auto")    autoMode = true;
         else if (a == "--trace")   trace = true;
+        else if (a == "--gain")    gainDb = std::atof (next().c_str());
         else
         {
             std::printf ("uso: VPLive --mix band.wav [--click click.wav | --bpm 118] [--speaker]\n\n"
@@ -209,7 +211,9 @@ int main (int argc, char** argv)
                          "            verita' al campione, ed e' il modo giusto\n"
                          "  --bpm     un tempo costante, se il click non e' stato tenuto. In\n"
                          "            questo caso conta la *deriva*, non lo scarto assoluto\n"
-                         "  --speaker seguendo l'altoparlante dell'iPad invece del mixer\n");
+                         "  --speaker seguendo l'altoparlante dell'iPad invece del mixer\n"
+                         "  --gain    dB applicati al mix prima dell'analisi, per provare\n"
+                         "            lo stesso brano a livelli diversi (0 = invariato)\n");
             return 1;
         }
     }
@@ -229,6 +233,19 @@ int main (int argc, char** argv)
     double sr = 48000.0;
     if (! readMono (juce::File::getCurrentWorkingDirectory().getChildFile (mixPath), mix, sr))
         return 1;
+
+    // The same take at another level. The frontend is madmom's log10(1 + x),
+    // which is not scale invariant, so a quiet feed is a different input to the
+    // network and not merely a smaller one: measured on this recording, the
+    // confident beat frames fall from 33 to 3 between 0 and -18 dB while the
+    // downbeat activations quadruple. Scaling the file here rather than
+    // re-encoding it keeps the musical content identical between the runs.
+    if (std::fabs (gainDb) > 1.0e-6)
+    {
+        const float g = std::pow (10.0f, static_cast<float> (gainDb) / 20.0f);
+        for (float& v : mix)
+            v = std::clamp (v * g, -1.0f, 1.0f);
+    }
 
     // The truth, as beat times in seconds. Not needed in auto mode, where the
     // reference is the band's own strokes.

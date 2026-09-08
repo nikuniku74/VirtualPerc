@@ -295,6 +295,10 @@ namespace
     constexpr float kFastAcquireMarginLine = 0.55f;
     constexpr float kFastAcquireMarginRoom = 0.90f;
     constexpr float kFastAcquireMaxLevelError = 0.20f; // octaves
+    // Above this the state space keeps a veto over the interval branches that
+    // waive the level check. See `tryFastAcquire`; measured at 180 because the
+    // one regression that must survive is 168 acquiring on the interval alone.
+    constexpr float kFastAcquireVetoBpm = 180.0f;
     constexpr int   kContextAcquirePeaksLine = 3;
     constexpr int   kContextAcquirePeaksRoom = 4;
 
@@ -1756,6 +1760,31 @@ bool BeatDecoder::tryFastAcquire() noexcept
     }
 
     const float acquiredRawBpm = 60.0f / bestPeriod;
+
+    // The top of the range is where the interval alone cannot tell a pulse from
+    // a subdivision and where being wrong costs the most. The paired and
+    // alternating branches above deliberately set `bestError` to zero, which
+    // waives the level check - correctly, so that loud eighths at 76 BPM do not
+    // have to argue with a state space still sitting near its 118-BPM prior.
+    //
+    // Up here that waiver is what published 212 BPM. Measured on a real
+    // recording at about -12 dB, where the quiet feed puts the network out of
+    // the distribution it was trained on: the detected peaks were 141 ms apart,
+    // the alternation test correctly said "this spacing is a subdivision" and
+    // folded it once to 212 - which is still faster than any pulse in the take,
+    // and still passes the same test, so nothing folded it again. The state
+    // space was naming 103.45 at that moment, a full octave away, and no branch
+    // looked at it. The song was 91, and the fold took eight more seconds to
+    // say so while the part played at 212.
+    //
+    // So in this band the state space keeps a veto. It does not have to be
+    // confident - it was not, at 0.047 of margin - but if it is naming a level
+    // an octave off, this is not the moment to publish one. Below the band
+    // nothing changes: 168 still acquires on the interval alone.
+    if (acquiredRawBpm > kFastAcquireVetoBpm
+        && std::fabs (std::log2 (acquiredRawBpm / level)) > kOctaveThreshold)
+        return false;
+
     bpm = std::clamp (applyUserOctave (acquiredRawBpm), kMinBpm, kMaxBpm);
     gridAnchorSec = acquireAnchorSec;
     established = true;

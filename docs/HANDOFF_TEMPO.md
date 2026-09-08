@@ -368,3 +368,196 @@ correggere nel frontend. Restano due vie, in quest'ordine:
    regressione del punto 3, non con un guadagno costante.
 
 Prossima azione: punto 2, l'arbitraggio iniziale 91/182-212.
+
+## Punto 2 — arbitraggio iniziale 91/182-212 (08/09/2026)
+
+### Causa trovata
+
+Strumentando i quattro rami di acquisizione di `BeatDecoder::updateTempo`
+(printf temporanei, rimossi):
+
+```
+quiet (-12 dB): ACQ fast bpm=212.04 raw=424.08 hmm=103.45 margin=0.047 self=1 comb(ready=0)
+hot  (+6 dB):   ACQ fast bpm=94.07  raw=188.15 hmm=90.91  margin=1.695 self=1 comb(ready=0)
+```
+
+Il ramo è `tryFastAcquire`. Nel caso debole i picchi rilevati distano 141 ms
+(424 BPM). Il test di alternanza forte-debole-forte conclude — correttamente —
+«questa spaziatura è una suddivisione» e raddoppia il periodo una volta: 212.
+Ma 212 è ancora più veloce di qualsiasi pulsazione del brano e supera lo stesso
+test, e nessun ramo lo ripiega di nuovo.
+
+Il punto vero: i rami a coppie e ad alternanza impostano `bestError = 0.0f`,
+che **disattiva** il controllo `bestError > kFastAcquireMaxLevelError` contro
+lo state space. È voluto (serve perché gli ottavi forti a 76 BPM non debbano
+discutere con un prior ancora a 118), ma in cima al range regala il clock
+all'unica lettura che solo il pettine può smentire — e il pettine tace fino a
+circa 8 s. Lo state space diceva **103.45**, un'ottava esatta di distanza, e
+nessuno lo guardava. `margin` era 0.047: non era sicuro, ma non era muto.
+
+### Correzione
+
+`Source/AI/BeatDecoder.cpp`, `tryFastAcquire`, 4 righe più commento: sopra
+`kFastAcquireVetoBpm = 180.0f` lo state space conserva un veto — se nomina un
+livello oltre `kOctaveThreshold` (0.25 ottave) dal candidato, non si pubblica.
+Sotto la banda nulla cambia: 168 aggancia ancora sul solo intervallo. Nessun
+nuovo onset picker, nessun restart del clock, precedenza dei cambi confermati
+intatta.
+
+Aggiunto anche `VPLive --gain <dB>`, che scala il mix prima dell'analisi: la
+prova di livello diventa un ciclo su un solo file, senza pre-renderizzare WAV.
+
+### Misure
+
+```bash
+cmake --build build-host --target VPLive -j4
+for g in 0 -6 -12 -18; do ./build-host/VPLive_artefacts/Release/VPLive \
+  --mix /tmp/vp-infinito-30-120.wav --bpm 91 --gain $g; done
+```
+
+| livello | BPM medio prima | dopo | deriva media prima → dopo | peggiore prima → dopo |
+|---|---|---|---|---|
+| clippato | 91.06 | 91.07 | 5.3 → 5.3 ms | 19.0 → 18.8 ms |
+| 0 dB | 91.01 | 91.01 | 10.0 → 10.0 ms | 85.4 → 85.5 ms |
+| -6 | 91.01 | 91.01 | 11.8 → 11.9 ms | 93.7 → 93.8 ms |
+| **-12** | **94.92 (+4.3%)** | **90.96 (+0.04%)** | **16.3 → 9.5 ms** | **262.5 → 139.4 ms** |
+| -18 | 121.10 | 121.06 | 61.7 → 63.3 ms | 304.8 → 322.7 ms |
+
+Traccia a -12 dB dopo la correzione: pubblica 90.05 a t=2, suona da t=4, non
+tocca mai 212. Prima: 212.61 a t=2, snap a 91.19 solo a t=12, `FISSO` a ~20 s.
+
+### Regressioni, tutte eseguite prima/dopo
+
+- `probe_matrix` (12 stili × 5 tempi × 6 semi = 360 corse): output **identico
+  byte per byte**. Aggancio medio 5.25 s, 101 uscite, 30 mai-agganciate,
+  9.01% fuori — invariati. Il banco arriva a 170 BPM, quindi il veto non scatta
+  mai lì: è la prova che non tocca il materiale normale.
+- `probe_tempo_step`: **identico**.
+- `VPAlign`: **identico**.
+- `VPTests --tempo-slow`: 10 PASS.
+- `VPTests --octave`: 7 PASS / 4 FAIL, **identici prima e dopo**. I quattro
+  fallimenti sono i casi a 50 BPM dell'item 1 di `docs/TODO.md`, aperti da
+  prima e non toccati da questa modifica.
+
+Nessuna suite completa. Nessun commit.
+
+### Limiti
+
+- **-18 dB non è risolto** ed è un guasto diverso: aggancia correttamente 91
+  entro t=12, poi a t=14 è il **pettine stesso** a saltare a 182.37 e a
+  trascinare tutto per quattordici secondi, prima di tornare a 91 a t=28. È un
+  salto d'ottava dopo l'acquisizione, con le sorgenti concordi sul valore
+  sbagliato; il veto di acquisizione non lo tocca. Invariato prima/dopo.
+- **Nessun test automatico blocca ancora questo veto.** Tentato un sintetico a
+  livello di decoder (treno a 428 BPM più polso a 103): non riproduce il ramo,
+  il peak picker sceglie il polso e la lettura resta corretta anche col codice
+  vecchio. Il caso nasce dalla curva di attivazione di un feed reale silenzioso,
+  non da un treno pulito. La verifica ripetibile è oggi il ciclo `--gain` sopra:
+  il lucchetto automatico appartiene al punto 3.
+- La soglia di 180 BPM è una banda, non una misura del brano: sopra i 180 reali
+  l'aggancio ora richiede che lo state space concordi, quindi su musica
+  genuinamente velocissima l'ingresso può arrivare più tardi. Nessun banco del
+  repository copre quella zona.
+
+Prossima azione: punto 3, la regressione mirata del livello, che ora può usare
+`VPLive --gain` e deve misurare separatamente prima ottava corretta, ingresso,
+`FISSO`, deriva e recupero su 52 / 91-100 / 168 BPM.
+
+## Punto 3 — regressione mirata del livello (08/09/2026)
+
+Nuovo filtro `VPTests --level [52|91|168]`, in `Tests/TestAiBeat.cpp`
+(`vpRunLevelSweepTest`). Kit sintetico normalizzato a picco 0.9, poi 0 / -6 /
+-12 / -18 dB più un caso clippato (×4 e taglio a ±1), su 52 / 91 / 168 BPM.
+38 s per corsa: musica da 1 s, vuoto di 2 s a 26 s, rientro fino a 38 s.
+Il guadagno è applicato **all'ingresso**, non al bus di analisi: è quello che
+una sorgente più bassa è davvero, e non introduce il condizionamento che il
+punto 1 ha lasciato per dopo.
+
+Cinque numeri separati per corsa, come chiede il punto 3 — un'ottava sbagliata,
+un ingresso tardivo e un clock che deriva sono tre guasti diversi:
+
+- **ottava**: primo istante in cui `|log2(bpm/vero)| < 0.25` e ci resta due beat
+  (stessa domanda di `kOctaveThreshold`, posta da fuori);
+- **ingresso**: `percussionAudible`;
+- **FISSO**: `tempoRegime == fixed`;
+- **fase**: errore **segnato** medio su 20-26 s, meno `attackLeadMs`;
+- **rientro**: dopo il vuoto, ottava di nuovo giusta per due beat.
+
+Più `bpm@4s`, che dice *su quale* livello sbagliato stava.
+
+```bash
+cmake --build build-host --target VPTests -j4
+./build-host/VPTests_artefacts/Release/VPTests --level        # 4:46, 13 PASS / 3 FAIL
+./build-host/VPTests_artefacts/Release/VPTests --level 91     # un tempo solo
+```
+
+Il filtro **non** è nella suite completa: quindici corse sono circa cinque
+minuti. Va lanciato a mano dopo ogni modifica al livello di analisi, al frontend
+o alla logica d'ottava. Due corse consecutive danno numeri identici.
+
+### Tabella (tree attuale, con il veto del punto 2)
+
+```
+52 BPM   due battute = 9.23 s
+livello  picco  ottava   ingresso  FISSO    fase   rientro  bpm@4s   bpm
+  0 dB   0.900    -1.00      1.30   22.70     n/a    -1.00  105.83  104.01
+ -6 dB   0.451    -1.00      1.30   22.12     n/a    -1.00  105.83  103.97
+-12 dB   0.226    -1.00      1.30   22.12     n/a    -1.00  107.23  103.86
+-18 dB   0.113    -1.00      1.87   23.24     n/a    -1.00  104.55  103.83
+clip     1.000    -1.00      0.99   -1.00     n/a    -1.00   83.07  104.11
+
+91 BPM   due battute = 5.27 s
+  0 dB   0.900    17.71      1.88   -1.00     2.8     0.01   66.67   91.07
+ -6 dB   0.451     2.53      2.93   20.16    27.7     0.01   91.22   91.05
+-12 dB   0.226     3.35      2.78   -1.00    32.6     0.01  106.14   90.46
+-18 dB   0.113     2.51      2.53   18.14    26.1     0.01   91.01   91.05
+clip     1.000     1.21      1.61    8.28    13.3     0.01   91.00   91.01
+
+168 BPM  due battute = 2.86 s
+  0 dB   0.900     0.29      0.41   10.84    -2.2     0.01  168.71  168.00
+ -6 dB   0.451     0.29      0.41   11.20     6.7     0.01  168.15  168.05
+-12 dB   0.226     0.29      0.41   10.84     6.5     0.01  168.56  168.02
+-18 dB   0.113     0.29      0.41   10.84     6.5     0.01  168.64  168.02
+clip     1.000    -1.00      0.41   22.98     n/a    -1.00  168.41   84.04
+```
+
+### Cosa dice
+
+1. **168 BPM è pulito a ogni livello pulito**: ottava a 0.29 s, ingresso a
+   0.41 s, fase 6.5 ms, da 0 a -18 dB. Il livello, da solo, non rompe niente.
+2. **A 91 BPM il -12 dB ora aggancia in 3.35 s**, dentro le due battute: è la
+   correzione del punto 2 vista dal banco sintetico.
+3. **52 BPM legge 104 a ogni livello.** È l'item 1 di `docs/TODO.md` — un kit
+   con gli hat sugli ottavi a 52 e un kit half-time a 104 sono lo stesso
+   segnale — e non dipende dal guadagno. **Misurato e non asserito**: metterci
+   un gate renderebbe questo filtro rosso per un motivo che non sta misurando.
+4. **Tre fallimenti veri, aperti:**
+   - **91 BPM a 0 dB: 17.71 s per l'ottava**, mentre -6/-12/-18 ci arrivano in
+     2.5-3.4 s. `bpm@4s = 66.67`: sta **sotto**, non sopra. È la riga più forte
+     a essere l'anomalia. Provato a spostare il riferimento da 0.9 a 0.7 di
+     picco per escludere `kMakeupClipGuardPeak`: **numero identico**, 17.71 s.
+     Non è la guardia di clipping.
+   - **168 BPM clippato: si assesta a 84**, la metà, e non rientra dopo il
+     vuoto. A 4 s stava ancora leggendo 168.41, quindi l'ottava la perde dopo,
+     non in acquisizione.
+   - Il rientro a 168 clippato fallisce come conseguenza del precedente.
+5. **`FISSO` è erratico**: mai raggiunto in 26 s su cinque righe che per tutto
+   il resto sono corrette (91 a 0 dB e -12 dB, 52 clippato). Non è una
+   regressione di questo lavoro; è un dato nuovo che questo banco rende visibile.
+6. **La fase peggiora quando il livello scende, a 91 BPM**: 2.8 ms a 0 dB contro
+   26-33 ms a -6/-12/-18. A 168 BPM non succede (6.5 ms ovunque). Un ritardo di
+   circa 30 ms non è l'ottava e non si vede nelle colonne dell'aggancio.
+
+### Limiti
+
+- Materiale **sintetico**. Non riproduce l'errore che ha originato l'item 24
+  (212 BPM a -12 dB su registrazione reale): quello nasce dalla curva di
+  attivazione di un feed reale silenzioso. La prova su file reale resta
+  `VPLive --gain`, ed è quella che ha misurato la correzione del punto 2.
+- Il caso clippato è ×4 con taglio duro: è una caricatura di un preamp in
+  saturazione, non la compressione di un banco vero.
+- Nessuna suite completa eseguita. Nessun commit.
+
+Prossima azione: punto 4, la verità di fase annotata sulla registrazione — senza
+la quale i 26-33 ms del punto 6 qui sopra non si possono confrontare con nulla di
+reale.

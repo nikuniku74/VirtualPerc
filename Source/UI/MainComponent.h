@@ -344,6 +344,9 @@ private:
     juce::Slider clapVolSlider;
     juce::Label  clapVolLabel { {}, "CLAP" };
     juce::Label  clapVolValue { {}, "100%" };
+    /** Input peak with a slow release, so the meter can be read against its
+        target band instead of flickering. Updated on the UI timer. */
+    float micHold = 0.0f;
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

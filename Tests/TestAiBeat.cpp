@@ -986,6 +986,282 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
     }
 }
 
+void vpRunLevelSweepTest (int& passed, int& failed, const char* only)
+{
+    gPass = &passed;
+    gFail = &failed;
+
+    // What the level of the input does to the tempo, measured rather than
+    // assumed (docs/TODO.md item 24).
+    //
+    // The frontend is madmom's log10(1 + magnitude), which is not scale
+    // invariant: the same take at -12 dB is a different input to the network,
+    // not a smaller one. Measured on a real recording with `VPActivations
+    // --sweep`, the confident beat frames fall from 33 to 3 between 0 and
+    // -18 dB while the downbeat activations quadruple - so a bench that only
+    // ever feeds one level is not testing the thing that broke.
+    //
+    // Deliberately five separate numbers per run rather than one verdict. A
+    // wrong octave, a late entry and a drifting clock are three different
+    // faults with three different fixes, and the failure this exists for -
+    // the network naming 212 BPM on a quiet feed while the song was 91 - shows
+    // up only in the first of them.
+    std::printf ("\nlevel sweep (item 24)\n");
+
+    constexpr double sr = 48000.0;
+    constexpr int block = 256;
+    constexpr double musicStartSec = 1.0;   // `renderKitTrack` fades in a room
+    constexpr double gapStartSec = 26.0;
+    constexpr double gapEndSec = 28.0;
+    constexpr double seconds = 38.0;
+    constexpr double driftFromSec = 20.0;
+
+    struct LevelRun
+    {
+        double octaveSec = -1.0;   // first correct octave that then holds
+        double entrySec = -1.0;    // percussion actually audible
+        double fixedSec = -1.0;    // regime FISSO
+        double recoverSec = -1.0;  // correct again after the gap
+        float  phaseMs = 0.0f;     // signed phase error over the settled window
+        bool   phaseSeen = false;
+        float  finalBpm = 0.0f;
+        float  earlyBpm = 0.0f;    // what it was naming four seconds in
+        float  peak = 0.0f;
+        int    gaps = 0;
+    };
+
+    // Gain on the input, which is what a quieter source or a hotter one
+    // actually is. Nothing is inserted in the analysis bus: the point is to
+    // measure what the existing chain does with a different level, not to
+    // introduce the conditioning that the handoff keeps for later.
+    struct Level { const char* name; float gain; bool clip; };
+    const Level levels[] = {
+        { "  0 dB", 1.0f,     false },
+        { " -6 dB", 0.5012f,  false },
+        { "-12 dB", 0.2512f,  false },
+        { "-18 dB", 0.1259f,  false },
+        { "clip  ", 4.0f,     true  },
+    };
+
+    auto run = [&] (float trackBpm, const Level& level)
+    {
+        const int n = static_cast<int> (sr * seconds);
+        std::vector<float> kit (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (kit, trackBpm, sr);
+
+        // The gap is the re-entry the closing criterion asks about: the band
+        // stops for two seconds and comes back at the same tempo.
+        const int gapFrom = static_cast<int> (sr * gapStartSec);
+        const int gapTo = std::min (n, static_cast<int> (sr * gapEndSec));
+        for (int i = gapFrom; i < gapTo; ++i)
+            kit[static_cast<size_t> (i)] *= 0.01f;
+
+        // Normalise before the sweep, so "0 dB" is a stated peak and not
+        // whatever `renderKitTrack` happens to produce. It peaks at 1.10, which
+        // is already inside the clip guard's territory - see
+        // `kMakeupClipGuardPeak` - and made the loudest row behave like the
+        // clipped one.
+        LevelRun r;
+        float rendered = 0.0f;
+        for (float v : kit)
+            rendered = std::max (rendered, std::fabs (v));
+        const float unit = rendered > 1.0e-6f ? 0.9f / rendered : 1.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            float v = kit[static_cast<size_t> (i)] * unit * level.gain;
+            if (level.clip)
+                v = std::clamp (v, -1.0f, 1.0f);
+            kit[static_cast<size_t> (i)] = v;
+            r.peak = std::max (r.peak, std::fabs (v));
+        }
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().shakerEnabled.store (true);
+        eng.settings().congasEnabled.store (false);
+        eng.settings().cembaloEnabled.store (false);
+        eng.settings().clapEnabled.store (false);
+        eng.start();
+
+        std::vector<float> left (static_cast<size_t> (block), 0.0f);
+        std::vector<float> right (static_cast<size_t> (block), 0.0f);
+        float* outputs[2] = { left.data(), right.data() };
+        const int hop = static_cast<int> (std::ceil (
+            vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+        const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
+        const float beatMs = 60000.0f / trackBpm;
+
+        double driftSum = 0.0;
+        int driftN = 0;
+        double rightSince = -1.0;
+        double rightSinceAfterGap = -1.0;
+        const double holdBeats = 2.0;
+        const double holdSec = holdBeats * 60.0 / static_cast<double> (trackBpm);
+
+        int pos = 0, samplesInHop = 0;
+        vp::EngineSnapshot last {};
+        while (pos < n)
+        {
+            const int numThisBlock = std::min ({ block, n - pos, hop - samplesInHop });
+            const float* inputs[1] = { kit.data() + pos };
+            eng.process (inputs, 1, outputs, 2, numThisBlock);
+            last = eng.snapshot();
+            const double t = static_cast<double> (pos) / sr;
+
+            // The metrical level, not the fine tempo. `kOctaveThreshold` in the
+            // decoder is a quarter of an octave and this is the same question
+            // asked from outside: a doubled reading misses it by 100%, while a
+            // clock still easing the last 1% towards the beat has the level
+            // right and is what the entry column is about.
+            const bool right = last.state == vp::TrackingState::following
+                               && last.bpm > 1.0f
+                               && std::fabs (std::log2 (last.bpm / trackBpm)) < 0.25f;
+
+            if (t < gapStartSec)
+            {
+                if (right)
+                {
+                    if (rightSince < 0.0)
+                        rightSince = t;
+                    if (r.octaveSec < 0.0 && t - rightSince >= holdSec)
+                        r.octaveSec = rightSince - musicStartSec;
+                }
+                else
+                {
+                    rightSince = -1.0;
+                    r.octaveSec = -1.0;   // it did not hold; start again
+                }
+                if (r.earlyBpm <= 0.0f && t >= musicStartSec + 4.0)
+                    r.earlyBpm = last.bpm;
+                if (r.entrySec < 0.0 && last.percussionAudible)
+                    r.entrySec = t - musicStartSec;
+                if (r.fixedSec < 0.0
+                    && last.tempoRegime == static_cast<int> (vp::TempoRegime::fixed))
+                    r.fixedSec = t - musicStartSec;
+            }
+            else if (t > gapEndSec)
+            {
+                if (right)
+                {
+                    if (rightSinceAfterGap < 0.0)
+                        rightSinceAfterGap = t;
+                    if (r.recoverSec < 0.0 && t - rightSinceAfterGap >= holdSec)
+                        r.recoverSec = rightSinceAfterGap - gapEndSec;
+                }
+                else
+                {
+                    rightSinceAfterGap = -1.0;
+                    r.recoverSec = -1.0;
+                }
+            }
+
+            // Drift over the settled window only, and only while the tempo is
+            // the right one: a phase error measured against a grid at twice the
+            // tempo is not a phase error, it is the octave being reported twice.
+            if (right && t >= driftFromSec && t < gapStartSec)
+            {
+                const double truePhase = static_cast<double> (pos) * beatsPerSample;
+                const double error = static_cast<double> (vp::wrapCentered (
+                    last.beatPhase
+                    - static_cast<float> (truePhase - std::floor (truePhase))));
+                driftSum += error * beatMs;
+                ++driftN;
+            }
+
+            pos += numThisBlock;
+            samplesInHop += numThisBlock;
+            if (samplesInHop == hop)
+            {
+                const auto until = std::chrono::steady_clock::now()
+                                   + std::chrono::milliseconds (400);
+                while (eng.analysisCompletedSamples() < pos
+                       && std::chrono::steady_clock::now() < until)
+                    std::this_thread::yield();
+                samplesInHop = 0;
+            }
+        }
+
+        if (driftN > 0)
+        {
+            // Signed, and with the deliberate lead taken out: the clock runs
+            // early by `attackLeadMs` on purpose so the *sound* lands on the
+            // beat. A mean of absolute errors cannot have that subtracted from
+            // it and stay meaningful, and early-versus-late is the half of this
+            // number that says which way to look.
+            r.phaseMs = static_cast<float> (driftSum / driftN) - last.attackLeadMs;
+            r.phaseSeen = true;
+        }
+        r.finalBpm = last.bpm;
+        r.gaps = last.analysisGaps;
+        return r;
+    };
+
+    const float tempi[] = { 52.0f, 91.0f, 168.0f };
+    for (float bpm : tempi)
+    {
+        char sel[8] {};
+        std::snprintf (sel, sizeof (sel), "%d", static_cast<int> (bpm));
+        if (only != nullptr && std::string (only) != sel)
+            continue;
+
+        const double twoBarsSec = 8.0 * 60.0 / static_cast<double> (bpm);
+        std::printf ("\n%.0f BPM   due battute = %.2f s\n", static_cast<double> (bpm),
+                     twoBarsSec);
+        std::printf ("livello  picco  ottava   ingresso  FISSO    fase   rientro  bpm@4s   bpm\n");
+        std::printf ("         (dall'inizio della musica; -1 = mai) "
+                     "fase su %.0f-%.0f s, segnata, meno l'anticipo\n",
+                     driftFromSec, gapStartSec);
+
+        for (const auto& level : levels)
+        {
+            const LevelRun r = run (bpm, level);
+            char phase[12];
+            if (r.phaseSeen)
+                std::snprintf (phase, sizeof (phase), "%6.1f",
+                               static_cast<double> (r.phaseMs));
+            else
+                std::snprintf (phase, sizeof (phase), "   n/a");
+            std::printf ("%s   %.3f  %7.2f  %8.2f  %6.2f  %s  %7.2f  %6.2f  %6.2f%s\n",
+                         level.name, static_cast<double> (r.peak),
+                         r.octaveSec, r.entrySec, r.fixedSec, phase,
+                         r.recoverSec,
+                         static_cast<double> (r.earlyBpm),
+                         static_cast<double> (r.finalBpm),
+                         r.gaps > 0 ? "  (gap analisi!)" : "");
+
+            // The gate is only on the levels a device actually delivers. What
+            // -18 dB does is printed and not judged: on the recording that item
+            // 24 is about, that level is a separate fault - the fold itself
+            // jumps an octave fourteen seconds in - and asserting on it here
+            // would tie this bench to a bug it is not measuring.
+            //
+            // 52 BPM is measured at every level and asserted at none. A kit
+            // with hats on the eighths at 52 is the same signal as a half-time
+            // kit at 104 - docs/TODO.md item 1 says so with the numbers - and
+            // it reads 104 at every level here, which is a fact about the
+            // material and not about the gain. Gating it would make this filter
+            // permanently red for a reason it is not measuring.
+            const bool gated = level.gain >= 0.25f && bpm > 60.0f;
+            if (! gated)
+                continue;
+
+            char what[128];
+            std::snprintf (what, sizeof (what),
+                           "%.0f BPM a %s: ottava e ingresso entro due battute",
+                           static_cast<double> (bpm), level.name);
+            expect (r.octaveSec >= 0.0 && r.octaveSec <= twoBarsSec
+                        && r.entrySec >= 0.0 && r.entrySec <= twoBarsSec,
+                    what);
+
+            std::snprintf (what, sizeof (what),
+                           "%.0f BPM a %s: rientra dopo il vuoto e ci resta due beat",
+                           static_cast<double> (bpm), level.name);
+            expect (r.recoverSec >= 0.0, what);
+        }
+    }
+}
+
 void vpRunBarReentryTests (int& passed, int& failed)
 {
     gPass = &passed;

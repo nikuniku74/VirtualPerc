@@ -1053,6 +1053,20 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--level")
+    {
+        const char* only = argc > 2 ? argv[2] : nullptr;
+        if (only != nullptr && std::string (only) != "52"
+            && std::string (only) != "91" && std::string (only) != "168")
+        {
+            std::printf ("invalid --level selector: %s\n", only);
+            return 2;
+        }
+        vpRunLevelSweepTest (gPassed, gFailed, only);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
     if (argc > 1 && std::string (argv[1]) == "--harmonic-entry")
     {
         vpRunHarmonicEntryTest (gPassed, gFailed);

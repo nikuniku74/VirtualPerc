@@ -1145,7 +1145,7 @@ seguire la band.
 
 ---
 
-### 24. A basso livello l'acquisizione prende un'ottava alta falsa 🔴 (2026-09-08, misurato il frontend — causa non ancora corretta)
+### 24. A basso livello l'acquisizione prende un'ottava alta falsa 🟡 (2026-09-08, causa trovata e corretta a -12 dB — resta -18 dB e l'ascolto)
 
 Riprodotto sulla registrazione dell'utente (`3 INFINITO.mp3`, estratto 30-120 s,
 riferimento 91 BPM). Stesso contenuto musicale, solo il livello cambia:
@@ -1190,17 +1190,132 @@ La dipendenza dal livello e' **intrinseca a `log10(1 + x)`**: lo stesso seno
 scende da 2.2666 a 1.3826 a -18 dB. Nessuna AGC nel bus audio; un eventuale
 condizionamento riguarda solo la copia del segnale per il modello.
 
-- [ ] Correggere l'arbitraggio iniziale 91/182-212 (il pettine vede gia' 91 a
-  8-10 s mentre la rete pubblica 208). Evidenza fresca e concordante tra le
-  sorgenti esistenti; niente nuovo onset picker, niente restart del clock.
-- [ ] Regressione mirata del livello: -18/-12/-6/0 dB e caso clippato, su
-  52/91-100/168 BPM; misurare separatamente prima ottava corretta, ingresso,
-  `FISSO`, deriva, recupero.
+- [x] **Arbitraggio iniziale corretto (2026-09-08).** Causa: `tryFastAcquire`.
+  A -12 dB i picchi distavano 141 ms (424 BPM); il test di alternanza concludeva
+  giustamente «è una suddivisione» e raddoppiava **una sola volta**, a 212, che
+  supera lo stesso test. I rami a coppie e ad alternanza azzerano `bestError`,
+  disattivando il confronto con lo state space — che stava dicendo 103.45, un
+  ottava esatta di distanza. Fix: sopra `kFastAcquireVetoBpm` (180) lo state
+  space conserva un veto oltre `kOctaveThreshold`. Sotto la banda nulla cambia.
+
+  | livello | prima | dopo | deriva media | peggiore |
+  |---|---|---|---|---|
+  | clip / 0 / -6 dB | corretto | invariato | invariata | invariata |
+  | **-12 dB** | 94.92 BPM | **90.96** | 16.3 → **9.5 ms** | 262.5 → **139.4 ms** |
+  | -18 dB | 121.10 | 121.06 | invariata | invariata |
+
+  Regressioni prima/dopo: `probe_matrix` (360 corse) **identico byte per byte**,
+  `probe_tempo_step` identico, `VPAlign` identico, `--tempo-slow` 10 PASS,
+  `--octave` 7/4 identico (i 4 fallimenti a 50 BPM sono l'item 1, preesistenti).
+- [x] Aggiunto `VPLive --gain <dB>`: la prova di livello è un ciclo su un solo
+  file, senza pre-renderizzare WAV con mpg123.
+- [ ] **-18 dB resta rotto, ed è un altro guasto**: aggancia 91 entro 12 s, poi
+  è il **pettine** a saltare a 182.37 per quattordici secondi prima di tornare.
+  Salto d'ottava dopo l'acquisizione, sorgenti concordi sul valore sbagliato.
+- [x] **Regressione mirata del livello (2026-09-08): `VPTests --level`.**
+  Kit sintetico normalizzato a picco 0.9, poi 0/-6/-12/-18 dB e caso clippato,
+  su 52/91/168 BPM; 38 s a corsa con un vuoto di 2 s a 26 s. Cinque numeri
+  separati — ottava (`|log2| < 0.25` tenuta due beat), ingresso, `FISSO`, fase
+  segnata meno l'anticipo, rientro — più `bpm@4s` per sapere *quale* livello
+  sbagliato stava leggendo. Non è nella suite completa: 15 corse sono ~4:46.
+  `--level 52|91|168` per un tempo solo. Due corse danno numeri identici.
+
+  Esito **13 PASS / 3 FAIL**. 168 BPM è pulito a ogni livello pulito (ottava
+  0.29 s, ingresso 0.41 s, fase 6.5 ms). 91 BPM a -12 dB aggancia in 3.35 s,
+  dentro le due battute: la correzione qui sopra vista dal banco sintetico.
+- [ ] **91 BPM a 0 dB: 17.71 s per l'ottava**, mentre -6/-12/-18 ci arrivano in
+  2.5-3.4 s. `bpm@4s = 66.67`: legge **sotto**, non sopra, ed è la riga più
+  forte a essere l'anomalia. Escluso `kMakeupClipGuardPeak`: con riferimento a
+  0.7 invece di 0.9 il numero è identico.
+- [ ] **168 BPM clippato: si assesta a 84** (la metà) e non rientra dopo il
+  vuoto. A 4 s leggeva ancora 168.41, quindi perde l'ottava dopo l'acquisizione,
+  non durante.
+- [ ] **`FISSO` erratico**: mai raggiunto in 26 s su righe per il resto
+  corrette (91 a 0 e -12 dB, 52 clippato). Dato nuovo, non una regressione.
+- [ ] **La fase peggiora col livello a 91 BPM**: 2.8 ms a 0 dB contro 26-33 ms
+  a -6/-12/-18. A 168 BPM non succede. Serve prima la verità di fase annotata
+  sulla registrazione per sapere se conta davvero.
+- [ ] 52 BPM legge 104 a **ogni** livello: è l'item 1, non il guadagno.
+  Misurato e deliberatamente **non** asserito nel filtro.
 - [ ] Verita' di fase annotata sulla registrazione (30-120 / 120-210 / 210-250 s)
   prima di credere ai picchi isolati da 85-167 ms.
 - [ ] iPad, con variazione del gain hardware.
 
 Dettaglio completo e comandi in `docs/HANDOFF_TEMPO.md`.
+
+---
+
+### 25. Il volume d'ingresso: fader inguidabile e barra che non dice niente 🟡 (2026-09-08, codice ok — resta l'ascolto e la prova su iPad)
+
+Segnalazione dell'utente: *«il volume di ingresso... anche la barra del volume,
+perche' e' estremamente sensibile e non si capisce quale potrebbe essere il
+volume piu corretto di ingresso»*. Due difetti distinti, con la stessa causa:
+nessuno dei due era in dB.
+
+**La barra.** Era `sqrt(picco) * 3.2`, che si riempie a **-20 dBFS**: qualunque
+livello che un palco produce davvero la mandava a fondo scala, quindi l'unica
+cosa che sapeva dire era «sta arrivando qualcosa». Ora e' una scala in dB su 48,
+con una **striscia chiara** disegnata dove l'analisi vuole stare, presa dalle
+misure dell'item 24:
+
+- sotto circa **-18 dBFS di picco** la rete e' fuori dal livello su cui e' stata
+  addestrata e il tempo se ne va con lei (la registrazione reale a quel livello
+  passava dieci secondi su un'ottava alta falsa);
+- sopra circa **-1 dBFS** la guardia di clipping dell'analisi
+  (`kMakeupClipGuardPeak`, item 16) inizia a riportare giu' il segnale, quindi
+  alzare ancora non compra piu' niente.
+
+Banda a `kInputLowPeak` 0.2512 (-12 dBFS) .. `kInputHighPeak` 0.8913 (-1 dBFS),
+cioe' dal 75.0% al 97.9% della larghezza. Riempimento grigio sotto, fuchsia
+dentro, ambra sopra, con due tacche sui bordi. Tenuta di picco con rilascio
+lento (salita immediata, ~20 dB al secondo in discesa): a 15 fps il picco grezzo
+di una band sfarfalla di 20 dB fra un colpo e il vuoto dopo, e una barra che
+sfarfalla non si legge contro una banda.
+
+La frase sotto la barra diceva «SENTO LA STANZA», che rispondeva a un'altra
+domanda. Ora dice **IN ASCOLTO / MIC BASSO, ALZA / LIVELLO OK / MIC ALTO,
+ABBASSA**.
+
+**Il fader MIC.** Era lineare in ampiezza su 0..2 con 180 punti di trascinamento:
+un punto di dito valeva 0.10 dB all'unita', **0.92 dB a -20 dBFS e 2.13 dB a
+-28** — cioe' la parte piu' nervosa del controllo era proprio quella dove uno
+sta cercando, perche' e' li' che il livello e' troppo basso. Ora:
+
+| | prima | dopo |
+|---|---|---|
+| corsa | 180 punti | 600 |
+| scala | lineare 0..2 (+6 dB max) | unita' a meta' corsa, 0..4 (+12 dB max) |
+| lettura | `100%` | `+0.0 dB` |
+| dB per punto a 0 dB | 0.10 | **0.06** |
+| dB per punto a -20 dBFS | 0.92 | **0.18** |
+| dB per punto a -28 dBFS | 2.13 | **0.28** |
+
+Da 1.6 a 7.6 volte piu' fermo, e piu' fermo dove prima era peggio. Doppio tocco
+riporta a unita' come prima. Il tetto a +12 dB serve perche' una mandata a
+-30 dBFS non arrivava alla banda con +6. Il motore gia' limita a 4.
+
+Aggiunta una riga alla nota INPUT delle impostazioni: alzare finche' la barra
+entra nella striscia.
+
+- [x] Codice: `Source/UI/MainComponent.cpp` (`meterPosition`, `micGainText`,
+  `kInputLowPeak`/`kInputHighPeak`, `micHold`), `MainComponent.h`.
+- [x] Mappatura verificata numericamente (tabella qui sopra). Compila.
+- [x] **Visto sul Mac (2026-09-08)**, tema chiaro e scuro, con il brano
+  dell'utente caricato in BRANO: manopola `0.0 dB` con lancetta a ore 12,
+  striscia e tacche leggibili su entrambi i fondi, barra al 62% con verdetto
+  `MIC BASSO, ALZA` (il file entra a circa -18 dBFS di picco). I tre stati e i
+  tre colori verificati dall'utente muovendo la manopola.
+- [x] Due difetti trovati **guardandolo** e corretti subito: il gradiente
+  finiva in `text()`, bianco in tema scuro, quindi la punta della barra era
+  bianca in tutti e tre gli stati e il colore sopravviveva solo a sinistra (ora
+  il colore sta sulla punta); e in BRANO il verdetto non compariva affatto,
+  perche' la riga scriveva `BRANO DIRETTO`, che ripeteva l'etichetta accanto.
+- [ ] **Resta iPad**: con una mandata vera, per dire se la striscia cade dove
+  serve e se 600 punti di corsa sono comodi con il dito.
+- [ ] La banda e' in **picco**. Sulla registrazione reale il picco naturale era
+  -4 dBFS con RMS -19.5 (fattore di cresta 15 dB); un segnale molto compresso
+  entrera' in banda con un RMS piu' alto. Se sul palco la striscia risulta
+  ottimista, la soglia giusta e' l'RMS, non il picco.
 
 ---
 

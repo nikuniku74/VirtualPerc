@@ -27,6 +27,42 @@ namespace
     }
 #endif
 
+    // The input level, in the units a player already thinks in.
+    //
+    // Where the good band is was measured rather than chosen. Below about
+    // -18 dBFS of peak the network is outside the level it was trained on and
+    // the tempo goes with it - on a real recording at that level the first ten
+    // seconds settle on a false high octave (docs/TODO.md item 24). Above about
+    // -1 dBFS the analysis clip guard starts pulling the signal back down
+    // (`kMakeupClipGuardPeak`, item 16), so turning the trim further up stops
+    // buying anything. The comfortable middle is around -6 dBFS.
+    constexpr float kInputLowPeak    = 0.2512f;  // -12 dBFS: bottom of the band
+    constexpr float kInputHighPeak   = 0.8913f;  //  -1 dBFS: top of the band
+    constexpr float kInputSilentPeak = 0.0012f;  // below this nothing is arriving
+    constexpr float kMeterFloorDb    = -48.0f;
+
+    float peakToDb (float peak) noexcept
+    {
+        return peak > 1.0e-6f ? 20.0f * std::log10 (peak) : -120.0f;
+    }
+
+    /** Where a peak sits across the meter. dB, not amplitude: a linear bar
+        spends four fifths of its width on the top 6 dB, which is why the old
+        one was full at -20 dBFS and told a player nothing. */
+    float meterPosition (float peak) noexcept
+    {
+        return juce::jlimit (0.0f, 1.0f,
+                             (peakToDb (peak) - kMeterFloorDb) / -kMeterFloorDb);
+    }
+
+    juce::String micGainText (float gain)
+    {
+        if (gain <= 0.001f)
+            return "MUTO";
+        const float db = 20.0f * std::log10 (gain);
+        return (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
+    }
+
     juce::Colour bg()      { return gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6); }
     juce::Colour panel()   { return gDarkMode ? juce::Colour (0xff0c0c0e) : juce::Colour (0xffffffff); }
     // The surface a control sits on. In light this has to *be* light: it was a
@@ -540,8 +576,14 @@ MainComponent::MainComponent()
 
     auto setupFader = [this] (juce::Slider& s, juce::Label& name, juce::Label& value,
                               const char* title, double minV, double maxV, double initial,
-                              double dblClick, std::function<void (float)> apply)
+                              double dblClick, std::function<void (float)> apply,
+                              std::function<juce::String (float)> fmt = {})
     {
+        if (! fmt)
+            fmt = [] (float v)
+            {
+                return juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%";
+            };
         addAndMakeVisible (name);
         name.setText (title, juce::dontSendNotification);
         name.setJustificationType (juce::Justification::centred);
@@ -554,8 +596,7 @@ MainComponent::MainComponent()
         value.setColour (juce::Label::textColourId, fuchsia());
         value.setFont (fontUi (13.0f));
         value.setInterceptsMouseClicks (false, false);
-        value.setText (juce::String (juce::roundToInt (initial * 100.0)) + "%",
-                       juce::dontSendNotification);
+        value.setText (fmt (static_cast<float> (initial)), juce::dontSendNotification);
 
         addAndMakeVisible (s);
         // Vertical drag, not circular: the old faders were up/down, and a
@@ -570,12 +611,11 @@ MainComponent::MainComponent()
         s.setDoubleClickReturnValue (true, dblClick);
         auto* sp = &s;
         auto* valueLab = &value;
-        s.onValueChange = [this, sp, valueLab, apply]
+        s.onValueChange = [this, sp, valueLab, apply, fmt]
         {
             const float v = static_cast<float> (sp->getValue());
             apply (v);
-            valueLab->setText (juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%",
-                               juce::dontSendNotification);
+            valueLab->setText (fmt (v), juce::dontSendNotification);
             savePrefs (false);
         };
         s.onDragEnd = [this] { savePrefs(); };
@@ -594,8 +634,29 @@ MainComponent::MainComponent()
                 0.0, 1.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().clapVolume.store (v); });
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
-                0.0, 2.0, 1.00, 1.0,
-                [this] (float v) { engine.settings().inputGain.store (v); });
+                0.0, 4.0, 1.00, 1.0,
+                [this] (float v) { engine.settings().inputGain.store (v); },
+                micGainText);
+    // A trim is read in dB and turned in dB. It was linear in amplitude over
+    // 0..2 across 180 points of drag, which is uneven in the units that matter:
+    // one point of finger travel moved 0.10 dB at unity, 0.92 dB at -20 dBFS
+    // and 2.13 dB at -28 dBFS. The quiet end - exactly where a player is
+    // hunting, because that is where the level is too low - was the twitchiest
+    // part of the control.
+    //
+    // Unity at half travel over 0..4 makes the value the square of the travel,
+    // which is close enough to dB over the range that matters, and 600 points
+    // of drag is a deliberate full-screen gesture: 0.06 dB per point at unity,
+    // 0.18 at -20, 0.28 at -28. Between 1.6 and 7.6 times steadier, and the
+    // steadiest gain is where the old one was worst. This is the one control a
+    // player sets once, carefully, on a stage; a double tap still returns it to
+    // unity.
+    //
+    // The top is +12 dB rather than +6 because the point of the trim is to
+    // reach the band the meter draws, and a stage feed sitting at -30 dBFS
+    // could not get there with six. The engine already clamps to 4.
+    inputGainSlider.setSkewFactorFromMidPoint (1.0);
+    inputGainSlider.setMouseDragSensitivity (600);
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -1256,7 +1317,10 @@ namespace
             "all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il "
             "file; l'onda sotto (o sul palco) si trascina per saltare. PLAY "
             "mette in pausa. In IPAD l'app toglie shaker e congas "
-            "da quello che ascolta. MIC regola quanto sente l'analisi. "
+            "da quello che ascolta. MIC regola quanto sente l'analisi: alzalo "
+            "finche' la barra entra nella striscia chiara, dove scrive LIVELLO "
+            "OK. Sotto la striscia l'analisi sbaglia il tempo, sopra non "
+            "guadagna piu' niente. "
             "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
             "vuole l'analisi."));
     }
@@ -1695,10 +1759,10 @@ void MainComponent::loadPrefs()
     engine.settings().clapVolume.store (clapVol);
     setFader (clapVolSlider, clapVolValue, clapVol);
 
-    const float inGain = juce::jlimit (0.0, 2.0, prefs->getDoubleValue ("inputGain", 1.0));
+    const float inGain = juce::jlimit (0.0, 4.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
     inputGainSlider.setValue (inGain, juce::dontSendNotification);
-    inputGainValue.setText (juce::String (juce::roundToInt (inGain * 100.0)) + "%",
+    inputGainValue.setText (micGainText (static_cast<float> (inGain)),
                             juce::dontSendNotification);
 
     const float reverb = clamp01 (prefs->getDoubleValue ("reverbAmount", 0.30), 0.30);
@@ -2097,6 +2161,15 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+
+    // Peak hold with a slow release. The raw block peak of a band is a
+    // flickering thing at fifteen frames a second - a snare hit and the gap
+    // after it are 20 dB apart - and a bar that flickers cannot be read against
+    // a target band. Rise instantly so a transient is never missed, fall about
+    // 20 dB a second so what is on screen is the level of the *playing*, not of
+    // the last buffer.
+    const float peak = juce::jmax (0.0f, snap.inputPeak);
+    micHold = peak > micHold ? peak : juce::jmax (peak, micHold * 0.79f);
     if (trackTransport.hasStreamFinished() && trackTransport.isPlaying())
         trackTransport.stop();
 
@@ -2739,24 +2812,52 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                  : juce::String()),
                       rows.part, juce::Justification::centred, 1);
 
-    // Input. A bar and a phrase: enough to tell "the microphone is hearing the
-    // room" from "the microphone is hearing nothing", which is the only
-    // question the old row of numbers was ever answering.
+    // Input. A bar, the band to aim at, and a phrase.
+    //
+    // It used to be `sqrt(peak) * 3.2`, which is full at -20 dBFS: every level
+    // a stage actually produces pinned it, so the only thing it could say was
+    // "something is arriving". The scale is now dB across 48 of them, and the
+    // lighter stripe is where the analysis wants to be - see `kInputLowPeak`.
+    // Answering "am I loud enough" is the whole job of this bar; without the
+    // stripe a player has no way to know what the right answer looks like.
+    const auto meterF = rows.meter.toFloat();
     g.setColour (sliderTrack());
-    g.fillRoundedRectangle (rows.meter.toFloat(), 5.0f);
-    auto fillM = rows.meter.toFloat().withWidth (
-                     static_cast<float> (rows.meter.getWidth()) * energy);
+    g.fillRoundedRectangle (meterF, 5.0f);
+
+    const float bandFrom = meterPosition (kInputLowPeak);
+    const float bandTo = meterPosition (kInputHighPeak);
+    g.setColour (mute().withAlpha (gDarkMode ? 0.22f : 0.28f));
+    g.fillRect (meterF.getX() + meterF.getWidth() * bandFrom, meterF.getY(),
+                meterF.getWidth() * (bandTo - bandFrom), meterF.getHeight());
+
+    const float pos = meterPosition (micHold);
+    auto fillM = meterF.withWidth (meterF.getWidth() * pos);
     if (fillM.getWidth() > 2.0f)
     {
-        // Fuchsia into the ink of the theme: white in dark, but in light
-        // `text()` is a near-black, and a meter that fades to black reads as a
-        // fault rather than as a level.
-        juce::ColourGradient mg (fuchsia().brighter (0.2f), fillM.getX(), fillM.getY(),
-                                 gDarkMode ? text() : fuchsia().darker (0.45f),
-                                 fillM.getRight(), fillM.getY(), false);
+        // Three states and three colours, because the number itself is not on
+        // screen: under the band it is grey and obviously short of it, inside
+        // it is the brand fuchsia, over it is amber.
+        //
+        // The bright end of the gradient is the *tip*, not the root. It used to
+        // run the other way and end in `text()`, which is white in dark: seen
+        // on screen, every level ended in the same white point and the state
+        // colour survived only at the far left, where nobody is looking. The
+        // eye goes to the end of the bar, so that is where the colour has to be.
+        const juce::Colour lead = micHold < kInputLowPeak  ? mute()
+                                : micHold > kInputHighPeak ? juce::Colour (0xffffa726)
+                                                           : fuchsia().brighter (0.2f);
+        juce::ColourGradient mg (lead.darker (0.55f), fillM.getX(), fillM.getY(),
+                                 lead, fillM.getRight(), fillM.getY(), false);
         g.setGradientFill (mg);
         g.fillRoundedRectangle (fillM, 5.0f);
     }
+
+    // The two edges of the band, drawn over the fill so they stay readable when
+    // the bar is inside it.
+    g.setColour (text().withAlpha (gDarkMode ? 0.45f : 0.35f));
+    for (float mark : { bandFrom, bandTo })
+        g.fillRect (meterF.getX() + meterF.getWidth() * mark - 0.5f, meterF.getY(),
+                    1.0f, meterF.getHeight());
 
     if (tapFlash > 0 && ! tapStrip.isEmpty())
     {
@@ -2769,12 +2870,23 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour (mute());
     g.setFont (fontUi (11.5f, false));
     const bool fromTrack = snap.source == vp::FollowSource::internalPlayer;
-    const juce::String micText = fromTrack ? (trackReader != nullptr ? "BRANO DIRETTO"
-                                                                       : "CARICA UN BRANO")
+    // And what to do about it, in the same three states the bar is drawn in.
+    // "SENTO LA STANZA" answered whether anything was arriving; it never said
+    // whether what arrives is usable, which is the question a player asks while
+    // holding the trim.
+    const juce::String levelText =
+        snap.inputPeak <= kInputSilentPeak ? "IN ASCOLTO"
+      : micHold < kInputLowPeak            ? "MIC BASSO, ALZA"
+      : micHold > kInputHighPeak           ? "MIC ALTO, ABBASSA"
+                                           : "LIVELLO OK";
+    // A loaded track goes through the same trim and the same analysis bus, so
+    // the level verdict is as useful there as on a microphone - and "BRANO
+    // DIRETTO" only repeated the source label standing next to it.
+    const juce::String micText = fromTrack ? (trackReader != nullptr ? levelText
+                                                                     : "CARICA UN BRANO")
                                : (! micGranted ? "MICROFONO NEGATO"
                                : (inputChannels <= 0 ? "MICROFONO SPENTO"
-                               : (snap.inputPeak > 0.0012f ? "SENTO LA STANZA"
-                                                           : "IN ASCOLTO")));
+                                                     : levelText));
     const juce::String dot (juce::CharPointer_UTF8 ("   \xc2\xb7   "));
     const juce::String sourceText = fromTrack ? "BRANO"
                                              : (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER");
