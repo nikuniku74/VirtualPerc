@@ -464,6 +464,28 @@ skipped. It is what a player does - nobody moves their hand, they lean until
 they are back with the band.
 
 **Recovery safety update (2026-09-08).** The trust edge only arms recovery;
+**Return after a displaced passage (2026-09-08).** A running clock fed a wrong
+phase for two seconds exposed a second problem which starting from a snapped
+offset did not: the fast controller closed the raw error, but handed control
+back to the ordinary filter's old average. At 120 BPM, a 0.125-beat passage
+took 3.605 s after the clean reference returned to stay within 8 ms. During a
+confirmed recovery the ordinary error and derivative memory now follow the
+raw error, with the actual steering still subtracted once. The same case takes
+0.752 s. The accepted displacement range is now <0.25 beat (previously <0.15),
+with the same two-beat coherence, trust and cooldown guards. Recovery duration
+is max(0.5 beat, error outside 7.5 ms / 0.20), bounded below 1.25 beats by that
+range: a half beat at the 20% rail cannot close more than 0.1 beat. The rail
+itself is unchanged. A 0.20-beat passage at 120 returns stably in 0.880 s,
+including confirmation. At 168, the three tested shifts return in 0.608–0.699 s.
+`probe_recovery` default: 84 PASS, including buffers 64/256/1024 and 18 negative
+controls (noise, outlier, ramp, duplicate-like bursts, a single 160 ms phase
+error). The explicit `--slow-passages` extension has 18 FAIL at 52 BPM, also
+present before the fix at 256 frames: unconfirmed small residuals can fall
+below the recovery floor and remain near the ordinary 0.012-beat deadband
+(13.85 ms at 52). Do not call that slow case fixed or confuse these scripted
+clock results with recognition delay from live audio. No new live-audio test
+was run for this change.
+
 **Subdivision starvation fix (2026-09-08).** Distinct serials closer than
 0.55 beat cannot confirm recovery and now leave the first candidate and its
 accumulated steering intact. Previously every accepted eighth replaced that

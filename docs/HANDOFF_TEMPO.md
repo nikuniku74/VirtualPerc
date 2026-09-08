@@ -20,7 +20,76 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
    in presenza di suddivisioni, con verifica del solo clock nel checkpoint
    qui sotto. Il riconoscimento e il rientro audio completi restano aperti.
 
-## Ultimo checkpoint — rientro e suddivisioni, 08/09/2026
+## Ultimo checkpoint — rientro lento a circa 120 BPM, 08/09/2026
+
+Nuova segnalazione dell'utente: la parte a volte accelera/decelera su un brano
+intorno a 120 BPM e torna troppo lentamente. Chiesti nome e istante del brano;
+non ancora ricevuti durante questa verifica. Non assumere che sia INFINITO,
+che nelle prove precedenti aveva una parte centrale intorno a 91 BPM.
+
+Riproduzione aggiunta a `scripts/probe_recovery.cpp`: clock già in marcia,
+fase sbagliata per due secondi (da t=4 a t=6), poi ritorno della fase corretta;
+osservazioni indipendenti ogni beat. Misurare l'ULTIMO ingresso nella banda di
+8 ms, e richiedere che vi resti almeno due beat, non soltanto il primo passaggio
+per lo zero. Le precedenti prove partivano da un offset applicato con snap e
+non esponevano la memoria del filtro accumulata durante una deviazione.
+
+Trovati e corretti in `TempoFollower`:
+
+1. Durante la correzione rapida, il filtro ordinario conservava una vecchia
+   stima: alla scadenza poteva continuare a spingere e uscire di nuovo dal tempo.
+   Ora l'errore filtrato e la memoria della derivata seguono l'errore grezzo già
+   confermato; la correzione realmente applicata viene sottratta una sola volta.
+2. La finestra fissa di mezzo beat, con rail del 20%, poteva correggere al più
+   0.1 beat, scadendo prima di chiudere scarti maggiori. Ora dura il massimo tra
+   mezzo beat e distanza residua fuori da 7.5 ms divisa per 0.20. Il rail resta
+   invariato, la finestra resta sotto 1.25 beat; sono ammessi scarti confermati
+   sotto 0.25 beat anziché 0.15. Restano due osservazioni concordanti, fiducia,
+   annullamenti, precedenza delle transizioni e continuità della griglia.
+
+Comandi eseguiti, soltanto probe standalone:
+
+```bash
+c++ -std=c++17 -O2 -ISource scripts/probe_recovery.cpp \
+  Source/Tracking/TempoFollower.cpp -o /tmp/vp-recovery
+/tmp/vp-recovery
+/tmp/vp-recovery --slow-passages
+```
+
+Default: **84 PASS, exit 0** (36 rientri 120/168, 18 suddivisioni, 12 precedenti
+recuperi, 18 controlli negativi). Buffer 64/256/1024, entrambi i segni. A buffer
+256, tempi dal ritorno della fase corretta alla permanenza entro 8 ms:
+
+| BPM | Scarto del passaggio | Prima | Dopo |
+| --- | --- | --- | --- |
+| 120 | 0.075 beat | 0.747 s | 0.747 s |
+| 120 | 0.125 beat | 3.605 s | 0.752 s |
+| 120 | 0.200 beat | 1.253 s | 0.880 s |
+| 168 | 0.075 beat | 2.581 s | 0.608 s |
+| 168 | 0.125 beat | 2.533 s | 0.608 s |
+| 168 | 0.200 beat | non stabile nella finestra | 0.699 s |
+
+Intervalli fra impulsi durante il rientro 0.83–1.25 volte il nominale, entro
+il gate 0.7–1.3; nessun salto o doppione rilevato. Rumore, rampa, outlier,
+raffiche ravvicinate e singolo errore di fase di 160 ms non attivano il recupero
+rapido; errore uguale al controllo senza conferme a 52/120/168 BPM.
+
+**Limite riproducibile, ancora aperto:** `--slow-passages` aggiunge 18 casi a
+52 BPM e termina con **84 PASS / 18 FAIL, exit 1**. I sei casi a buffer 256
+fallivano già prima delle modifiche: il rientro può lasciare un residuo troppo
+piccolo per confermare il recupero (soglia 0.04 beat) ma superiore agli 8 ms,
+vicino alla deadband ordinaria di 0.012 beat = 13.85 ms a 52. Anche il cooldown
+di un recupero precedente richiede indagine. Non abbassare alla cieca le soglie:
+va misurato il compromesso con rumore e swing a tempo lento.
+
+Questa correzione migliora il clock a 120/168; NON chiude lo step 5 né prova che
+la stima del decoder sul brano reale sia già corretta. Il prossimo passo resta
+misurare il tratto reale indicato dall'utente, tracciando BPM/fase/fiducia della
+rete, conferma/termine del recupero e attacchi audio. Se il decoder rimane sul
+BPM sbagliato, questa correzione del clock non elimina quell'attesa. Nessuna
+nuova build iPad, suite completa o commit in questa iterazione.
+
+## Checkpoint precedente — rientro e suddivisioni, 08/09/2026
 
 L'utente segnala che, perso il tempo, a volte la parte impiega troppo a tornare.
 Trovato un difetto indipendente dall'ottava: `observeRecoveryBeat` richiede

@@ -4,10 +4,72 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
-int main()
+int main (int argc, char** argv)
 {
+    // The slow passage investigation is a separate, explicitly red gate:
+    // at 52 BPM the ordinary 0.012-beat floor alone is already 13.85 ms.
+    const bool slowPassages = argc == 2 && std::strcmp (argv[1], "--slow-passages") == 0;
+    if (argc > 1 && !slowPassages) return 2;
     int failures = 0;
+    // A sounding clock is pulled away for two seconds, then receives clean
+    // tempo/phase again. Measure from that return, not only from confirmation.
+    for (float bpm : {52.0f, 120.0f, 168.0f})
+    for (float sign : {-1.0f, 1.0f})
+    for (float displacement : {0.075f, 0.125f, 0.20f})
+    for (int buffer : {64, 256, 1024})
+    {
+        if (bpm == 52 && !slowPassages) continue;
+        vp::TempoFollower c;
+        c.prepare (48000); c.forceTempo (bpm); c.setLocked (true);
+        c.setFollowStrength (vp::FollowStrength::high);
+        const double period = 60.0 / bpm, dt = buffer / 48000.0;
+        double time = 0, song = 0, next = 0, returned = -1, confirmed = -1;
+        double settled = -1, lastPulse = -1;
+        double minGap = 10, maxGap = 0;
+        float worst = 0;
+        unsigned serial = 0;
+        while (time < 6 + period * 8)
+        {
+            const bool wrong = time >= 4 && time < 6;
+            if (time >= 6 && returned < 0) returned = time;
+            const float seen = vp::wrap01 (song + (wrong ? sign * displacement : 0));
+            const float error = vp::wrapCentered (c.beatPhase() - seen);
+            if (time >= next)
+            {
+                c.observeRecoveryBeat (error, ++serial);
+                next += period;
+                if (returned >= 0 && confirmed < 0 && c.phaseRecoveryActive()) confirmed = time;
+            }
+            c.setGridPhase (seen,0.9f);
+            auto tick = c.advance (buffer);
+            for (int p = 0; p < tick.pulsesFired; ++p)
+            {
+                const double at = time + tick.pulseOffset[p] / 48000.0;
+                if (lastPulse >= 0 && returned >= 0)
+                {
+                    minGap = std::min (minGap,(at-lastPulse)/(period/4));
+                    maxGap = std::max (maxGap,(at-lastPulse)/(period/4));
+                }
+                lastPulse = at;
+            }
+            time += dt; song += dt / period;
+            if (returned >= 0)
+            {
+                const float ms = std::fabs (vp::wrapCentered(c.beatPhase()-vp::wrap01(song))) * period * 1000;
+                worst = std::max(worst,ms);
+                if (ms >= 8) settled=-1;
+                else if (settled < 0) settled=time;
+            }
+        }
+        const bool ok = settled >= 0 && settled-returned <= period * 2 + dt*2
+            && time-settled >= period*2 && minGap > 0.7 && maxGap < 1.3;
+        std::printf("passage %.0f sign=%+.0f shift=%.3f buffer=%d confirm=%.3f stable=%.3f peak=%.2fms gaps=%.2f..%.2f %s\n",
+                    bpm,sign,displacement,buffer,confirmed < 0 ? -1 : confirmed-returned,
+                    settled < 0 ? -1 : settled-returned,worst,minGap,maxGap,ok?"PASS":"FAIL");
+        failures += !ok;
+    }
     // Accepted subdivision peaks have distinct serials too. They must neither
     // confirm a return prematurely nor continually replace its first beat.
     for (float bpm : {52.0f, 100.0f, 168.0f})
@@ -125,10 +187,11 @@ int main()
             poorPassage ? "return" : "persistent",bpm,sign,confirmed,recovered-confirmed,worstAfter,minGap,maxGap,ok?"PASS":"FAIL");
         failures += !ok;
     }
-    for (int scenario : {0, 1, 2, 3, 4})
+    for (int scenario : {0, 1, 2, 3, 4, 5})
+    for (float baseBpm : {52.0f, 120.0f, 168.0f})
     {
         vp::TempoFollower c, control;
-        c.prepare (48000); c.forceTempo (100); c.setLocked (true);
+        c.prepare (48000); c.forceTempo (baseBpm); c.setLocked (true);
         c.setFollowStrength (vp::FollowStrength::high); control = c;
         double song = 0, t = 0, next = 0, sq = 0, baseSq = 0;
         unsigned serial = 0, seed = 71;
@@ -136,12 +199,15 @@ int main()
         bool active = false;
         for (int block = 0; block < 48000 * 12 / 256; ++block)
         {
-            const float bpm = scenario == 2 ? 100 + static_cast<float> (t) * 0.2f : 100;
+            const float bpm = scenario == 2 ? baseBpm + static_cast<float> (t) * 0.2f : baseBpm;
             if (block % 31 == 0)
             {
                 seed = seed * 1664525u + 1013904223u;
                 noise = (static_cast<float> (seed >> 16) / 65535 - 0.5f) * 0.06f;
             }
+            // One wrong 6-Hz phase publication must not start fast recovery,
+            // even in the newly supported larger-displacement band.
+            if (scenario == 5) noise = t >= 4 && t < 4.16 ? 0.20f : 0.0f;
             const float seen = vp::wrap01 (song + noise);
             if (t >= next)
             {
@@ -166,8 +232,8 @@ int main()
             sq += e*e; baseSq += b*b;
         }
         const bool ok = !active && sq <= baseSq * 1.01 + 1e-9;
-        std::printf ("noise/outlier/ramp scenario=%d accelerated=%d error-ratio=%.4f %s\n",
-                     scenario,active,sq/std::max(1e-30,baseSq),ok?"PASS":"FAIL");
+        std::printf ("noise/outlier/ramp bpm=%.0f scenario=%d accelerated=%d error-ratio=%.4f %s\n",
+                     baseBpm,scenario,active,sq/std::max(1e-30,baseSq),ok?"PASS":"FAIL");
         failures += !ok;
     }
     return failures ? 1 : 0;

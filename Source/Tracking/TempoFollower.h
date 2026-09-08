@@ -149,7 +149,8 @@ private:
     /** See setTempoTrust. 1 is the clock as it has always been. */
     float tempoTrust = 1.0f;
     // Poor evidence may hold the clock slightly away from the song. Once clean
-    // beats return, this bounded half-beat window spends that residue promptly.
+    // beats return, a bounded window (half a beat, extended only when required
+    // by the 20% rate rail) spends that residue promptly.
     int poorTrustSamples = 0;
     int phaseRecoverySamplesRemaining = 0;
     bool recoveryArmed = false;

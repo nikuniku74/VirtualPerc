@@ -712,6 +712,17 @@ esattamente il segnale che conferma al tracker qualunque cosa stia già credendo
 
 ### 21. Le percussioni ogni tanto rallentano o accelerano, e ci mettono a rientrare 🟡 (2026-09-07, causa trovata e corretta — resta ascolto)
 
+- [x] 08/09, segnalazione a ~120 BPM: corretto il passaggio dal recupero rapido
+  al filtro ordinario, che conservava la vecchia correzione. Sul clock dopo un
+  passaggio sfasato: 3.605 → 0.752 s per tornare stabilmente entro 8 ms; con
+  scarto più grande 0.880 s. Durata del recupero derivata dalla distanza e dal
+  rail invariato del 20%, scarti confermati <0.25 beat. `probe_recovery`: 84 PASS.
+- [ ] Nuovo gate `probe_recovery --slow-passages`: 18 FAIL a 52 BPM, residui
+  sotto la soglia di conferma e deadband ordinaria da 13.85 ms. I casi a 256
+  fallivano già prima. Restano aperti anche l'attribuzione del problema sul
+  brano reale a ~120 BPM e la misura degli attacchi audio: non sono questi
+  tempi sintetici a provare il rientro dell'app sulla registrazione.
+
 - [x] 08/09, nuova segnalazione: corretto il recupero che non si confermava
   quando arrivavano seriali distinti a ottavi. I colpi dentro 0.55 beat ora
   conservano il primo candidato e la correzione accumulata. `probe_recovery`:

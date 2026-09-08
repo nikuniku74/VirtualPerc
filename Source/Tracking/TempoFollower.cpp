@@ -10,6 +10,8 @@ namespace
 {
     /** How little the clock may be asked to believe the tempo it is handed. */
     constexpr float kMinTempoTrust = 0.30f;
+    constexpr float kRecoveryToleranceSeconds = 0.0075f;
+    constexpr float kRecoverySteerRail = 0.20f;
 
     /** And what "not believing it" costs, in seconds: at no trust at all the
         clock averages the target over this long instead of taking it.
@@ -238,9 +240,13 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
         && std::fabs (error - expected) < 0.015f;
     if ((recoveryArmed || persistent) && agrees && recoveryCooldownSamples <= 0
         && std::fabs (error) > 0.012f
-        && std::fabs (error) < 0.15f)
+        && std::fabs (error) < 0.25f)
     {
-        phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (sampleRate * period * 0.5));
+        // Half a beat cannot close more than 0.1 beat at the 20% rate rail.
+        // Budget the actual distance instead of expiring with error still owed.
+        const float excess = std::max (0.0f, std::fabs (error) - kRecoveryToleranceSeconds / period);
+        const float correctionBeats = std::max (0.5f, excess / kRecoverySteerRail);
+        phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (std::ceil (sampleRate * period * correctionBeats)));
         recoveryArmed = false;
         recoveryCooldownSamples = static_cast<int> (sampleRate * period * 2.5);
     }
@@ -831,15 +837,14 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         && std::isfinite (rawGridPhaseError) && std::isfinite (tempo))
     {
         // Clean beats have returned after a passage that the evidence itself
-        // marked unreliable. Land within 8 ms during this beat, updating the
+        // marked unreliable, or two beats confirmed a persistent displacement.
+        // Land within 8 ms over the bounded recovery window, updating the
         // command from every projected phase. This is a player's fast rientro:
         // temporarily lengthen or shorten the next interval, never restart the
         // clock or replay/skip a grid position.
         // Aim half a millisecond inside the public 8 ms line. The song and
         // clock phases are float grids sampled at different instants; aiming
         // at the inclusive boundary otherwise lands a few ulps outside it.
-        constexpr float kRecoveryToleranceSeconds = 0.0075f;
-        constexpr float kRecoverySteerRail = 0.20f;
         const float toleranceBeats = kRecoveryToleranceSeconds * tempo / 60.0f;
         const int commandSamples = std::max (numSamples,
                                              phaseRecoverySamplesRemaining);
@@ -857,6 +862,12 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         }
         if (excess <= 0.0f)
             phaseRecoverySamplesRemaining = 0;
+        // The fast command follows the confirmed raw error. Bring the ordinary
+        // controller along with it: retaining its pre-return average would
+        // steer away again as soon as the fast window ends.
+        phaseErrEma = rawGridPhaseError;
+        prevPhaseErr = std::copysign (std::max (0.0f, std::fabs (rawGridPhaseError) - 0.012f),
+                                     rawGridPhaseError);
     }
 
     // Phase this block will *not* advance because of the steer. The trim
