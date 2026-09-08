@@ -457,6 +457,16 @@ is closed, so the grid stays monotonic and no stroke is ever played twice or
 skipped. It is what a player does - nobody moves their hand, they lean until
 they are back with the band.
 
+**Recovery safety update (2026-09-08).** The trust edge only arms recovery;
+two fresh accepted beat serials must agree after subtracting the correction
+already applied. Repeated publications cannot confirm. Poor trust, explicit
+reference changes and confirmed tempo transitions cancel the fast command.
+`scripts/probe_recovery.cpp` is the standalone iteration gate: six signed cases
+at 52/100/168 pass, reaching 8 ms in 0.571/0.299/0.176 s **after confirmation**
+and remaining there for two beats. Historical numbers below used perfect phase
+and scripted trust, not end-to-end audio. The old `probe_steer --reentry` is
+retired because it supplied no independent beat evidence.
+
 **The return of clean evidence is an edge, not another holding frame.** While a
 fill, a level change or a different percussion voice makes the fitted beats
 poor, `kPoorLeanBeats` deliberately limits how far the clock may follow them.

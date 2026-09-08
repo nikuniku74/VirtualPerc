@@ -1,0 +1,42 @@
+# Ripresa del lavoro sul tempo
+
+Richiesta: implementare progressivamente il piano approvato, con test mirati e
+commit locali separati. Non eseguire la suite completa. Nessuna modifica al
+submodule JUCE, già sporco all'inizio. Nessuna promessa di perfezione su audio
+ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
+
+## Stato
+
+1. COMPLETATO: sicurezza del rientro (annullamento, reset, prove fresche).
+2. DA FARE: contatori indipendenti dal buffer.
+3. DA FARE: recupero dello scarto con fiducia alta.
+4. DA FARE: percorso armonico completo sul collegamento diretto.
+5. DA FARE: verifica integrata e separazione delle misure sintetiche/reali.
+
+## Regole per riprendere
+
+Leggere `.claude/skills/realtime-tempo/SKILL.md`, questo file e `git status`.
+Continuare dal primo step incompleto. Salvare qui comandi, risultati, limiti e
+prossima azione dopo ogni step; creare un commit per step verificato includendo
+soltanto file pertinenti. I precedenti 8 ms / mezzo beat erano misure del solo
+clock con fase esatta e fiducia simulata, non dell'app sul brano live.
+
+## Verifica prevista
+
+Probe brevi a 52/100/168 BPM, entrambe le direzioni; jitter, ritorno di evidenza
+povera, reset, pubblicazioni ripetute e buffer 64/256/1024. Separare ritardo di
+riconoscimento, convergenza del clock e attacchi audio. Per l'armonia verificare
+inizializzazione a sample rate diverso, scadenza, accordi radi/sostenuti,
+ingresso effettivo e ritorno della batteria. Il percorso acustico armonico
+resta disabilitato finché non supera una verifica con stanza e ritorno proprio.
+
+## Step 1 — verifica
+
+`c++ -std=c++17 -O2 -ISource scripts/probe_recovery.cpp Source/Tracking/TempoFollower.cpp -o /tmp/vp-recovery && /tmp/vp-recovery`
+
+6/6 PASS, 52/100/168 BPM, entrambi i segni. Due seriali distinti confermano;
+copie della stessa pubblicazione non contano. Peggioramento, snap, reset,
+forceTempo e transizione confermata cancellano il recupero. Da conferma a 8 ms:
+0.571 / 0.299 / 0.176 s; errore successivo <8 ms per oltre due beat. Questo è
+il clock, non il modello reale. Il vecchio `probe_steer --reentry` viene rifiutato
+con istruzioni perché non forniva beat freschi. Prossimo: step 2.

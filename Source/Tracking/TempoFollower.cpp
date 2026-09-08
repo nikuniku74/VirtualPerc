@@ -110,6 +110,7 @@ void TempoFollower::prepare (double sr) noexcept
 
 void TempoFollower::reset() noexcept
 {
+    cancelPhaseRecovery();
     phase = 0.0;
     tempo = 120.0f;
     target = 120.0f;
@@ -143,6 +144,7 @@ void TempoFollower::reset() noexcept
 
 void TempoFollower::resetClock() noexcept
 {
+    cancelPhaseRecovery();
     phase = 0.0;
     beatInBar = 0;
     phaseErrEma = 0.0f;
@@ -167,7 +169,7 @@ void TempoFollower::resetClock() noexcept
 
 void TempoFollower::setTempoTrust (float trust) noexcept
 {
-    const float next = std::clamp (trust, kMinTempoTrust, 1.0f);
+    const float next = std::isfinite (trust) ? std::clamp (trust, kMinTempoTrust, 1.0f) : kMinTempoTrust;
 
     // A fill, a newly enabled percussion voice or a level change can make the
     // fitted beats temporarily poor. While that is true the lean cap is
@@ -176,18 +178,59 @@ void TempoFollower::setTempoTrust (float trust) noexcept
     // answered "the drummer is back" and the clock still behaved as if it had
     // not. Arm a half-beat catch-up only after at least 200 ms of genuinely poor
     // evidence; one bad six-Hz hypothesis is shorter and cannot trigger it.
-    constexpr float kPoorBelow = 0.55f;
     constexpr float kRecoveredAbove = 0.80f;
     const int poorLongEnough = static_cast<int> (sampleRate * 0.20);
     if (next >= kRecoveredAbove && poorTrustSamples >= poorLongEnough
         && phaseRecoverySamplesRemaining <= 0)
     {
-        phaseRecoverySamplesRemaining = std::max (
-            1, static_cast<int> (std::lround (sampleRate * 30.0
-                                              / std::max (40.0f, tempo))));
+        recoveryArmed = true;
         poorTrustSamples = 0;
     }
     tempoTrust = next;
+    if (next < kRecoveredAbove)
+    {
+        phaseRecoverySamplesRemaining = 0;
+        recoveryCandidate = false;
+    }
+}
+
+void TempoFollower::cancelPhaseRecovery() noexcept
+{
+    poorTrustSamples = 0;
+    phaseRecoverySamplesRemaining = 0;
+    recoveryArmed = recoveryCandidate = recoverySerialSeen = false;
+    recoveryError = recoveryCorrection = 0.0f;
+    recoveryAgeSamples = 0;
+}
+
+void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noexcept
+{
+    if (recoverySerialSeen && serial == recoverySerial)
+        return;
+    recoverySerialSeen = true;
+    recoverySerial = serial;
+    if (! locked || tempoTrust < 0.80f || tempoTransitionActive()
+        || ! std::isfinite (errorBeats))
+    {
+        recoveryCandidate = false;
+        return;
+    }
+    const float error = wrapCentered (errorBeats);
+    const float expected = wrapCentered (recoveryError - recoveryCorrection);
+    const float period = 60.0f / std::max (40.0f, tempo);
+    const bool agrees = recoveryCandidate && recoveryAgeSamples > sampleRate * period * 0.55
+        && recoveryAgeSamples < sampleRate * period * 1.8
+        && error * expected > 0.0f && std::fabs (error - expected) < 0.025f;
+    if (recoveryArmed && agrees && std::fabs (error) > 0.012f
+        && std::fabs (error) < 0.15f)
+    {
+        phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (sampleRate * period * 0.5));
+        recoveryArmed = false;
+    }
+    recoveryCandidate = true;
+    recoveryError = error;
+    recoveryCorrection = 0.0f;
+    recoveryAgeSamples = 0;
 }
 
 void TempoFollower::setTempoTrimEnabled (bool on) noexcept
@@ -250,6 +293,7 @@ void TempoFollower::beginTempoTransition (float bpm) noexcept
 {
     if (! std::isfinite (bpm) || bpm <= 40.0f || bpm >= 220.0f)
         return;
+    cancelPhaseRecovery();
 
     tempo = bpm;
     target = bpm;
@@ -264,6 +308,7 @@ void TempoFollower::forceTempo (float bpm) noexcept
 {
     if (bpm <= 40.0f || bpm >= 220.0f)
         return;
+    cancelPhaseRecovery();
     tempo = bpm;
     target = bpm;
     tempoTrim = 0.0f;
@@ -286,6 +331,7 @@ void TempoFollower::setGridPhase (float targetPhase, float tauSeconds) noexcept
 
 void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
 {
+    cancelPhaseRecovery();
     // Carry the count over the boundary the snap crosses.
     //
     // `beatInBar` is advanced in one place only - `advance`, when the phase
@@ -494,6 +540,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
 ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
 {
+    recoveryAgeSamples = std::min (recoveryAgeSamples + numSamples, static_cast<int> (sampleRate * 30.0));
     ClockTick tick;
     const bool rapidTransition = transitionSamplesRemaining > 0;
 
@@ -798,6 +845,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // leaned far enough rather than overshooting on an estimate that is only
     // refreshed once a beat.
     const float applied = steer * nominalBeats;
+    recoveryCorrection += applied;
     phaseCorrectionSinceObservation += applied;
     phaseErrEma -= applied;
 

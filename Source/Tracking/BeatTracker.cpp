@@ -1067,6 +1067,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // instead of followed. A tempo the listener owns is not the analysis's to
     // slow down.
     follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
+    // Serial identity belongs to the neural beat, never the audio callback.
+    // Reject a backlog older than one beat instead of confirming stale audio.
+    if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
+        follower.cancelPhaseRecovery();
+    else if (hadBeat && hyp.confidence > 0.40f && hyp.analysisSample > 0
+             && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
+        follower.observeRecoveryBeat (wrapCentered (follower.beatPhase() - songPhase),
+                                      hyp.beatSerial);
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has

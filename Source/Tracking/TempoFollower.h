@@ -54,6 +54,10 @@ public:
         accelerando; a band speeding up with its drummer still playing never
         leaves trust below one, so it is never slowed here at all. */
     void setTempoTrust (float trust) noexcept;
+    /** Only fresh accepted neural beats may confirm a phase recovery. */
+    void observeRecoveryBeat (float errorBeats, uint32_t serial) noexcept;
+    void cancelPhaseRecovery() noexcept;
+    bool phaseRecoveryActive() const noexcept { return phaseRecoverySamplesRemaining > 0; }
     void resetClock() noexcept;
 
     /** Where the analysis says the song's pulse is, and how long the loop
@@ -148,6 +152,13 @@ private:
     // beats return, this bounded half-beat window spends that residue promptly.
     int poorTrustSamples = 0;
     int phaseRecoverySamplesRemaining = 0;
+    bool recoveryArmed = false;
+    bool recoveryCandidate = false;
+    bool recoverySerialSeen = false;
+    uint32_t recoverySerial = 0;
+    float recoveryError = 0.0f;
+    float recoveryCorrection = 0.0f;
+    int recoveryAgeSamples = 0;
     int transitionSamplesRemaining = 0;
     FollowStrength follow = FollowStrength::medium;
 };

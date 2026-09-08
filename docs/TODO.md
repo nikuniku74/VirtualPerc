@@ -717,6 +717,9 @@ percussioni tendono a rallentare o a velocizzare e poi ci impiegano molto a
 rientrare nel tempo»*.
 
 - [x] **Rientro quando tornano colpi puliti.** Un fill, un cambio di volume o
+  **Aggiornamento 08/09:** il fronte ora arma soltanto; due beat freschi e
+  concordanti confermano. Peggioramento e cambio di riferimento annullano.
+  `probe_recovery`: 6/6 PASS; mezzo beat misurato dalla conferma, solo clock.
   l'attivazione di un'altra percussione abbassano correttamente la fiducia e
   limitano quanto la griglia segue quell'evidenza; quando la fiducia tornava
   alta, però, il residuo passava ancora dal filtro lento di mantenimento. Ora il

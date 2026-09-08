@@ -288,6 +288,8 @@ int main (int argc, char** argv)
 {
     if (argc > 1 && std::strcmp (argv[1], "--reentry") == 0)
     {
+        std::fprintf (stderr, "Legacy fixture has no fresh beat serials; use scripts/probe_recovery.cpp.\n");
+        return 2;
         bool ok = true;
         for (float bpm : { 52.0f, 96.0f, 120.0f, 168.0f })
         {
