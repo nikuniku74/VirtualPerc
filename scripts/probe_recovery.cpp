@@ -8,6 +8,60 @@
 int main()
 {
     int failures = 0;
+    // Accepted subdivision peaks have distinct serials too. They must neither
+    // confirm a return prematurely nor continually replace its first beat.
+    for (float bpm : {52.0f, 100.0f, 168.0f})
+    for (float sign : {-1.0f, 1.0f})
+    for (int buffer : {64, 256, 1024})
+    {
+        vp::TempoFollower c;
+        c.prepare (48000); c.forceTempo (bpm); c.setLocked (true);
+        c.setFollowStrength (vp::FollowStrength::high);
+        c.snapPhase (vp::wrap01 (sign * 0.075f));
+        auto ordinary = c;
+        const double period = 60.0 / bpm, dt = buffer / 48000.0;
+        double time = 0, song = 0, next = 0, confirmed = -1, recovered = -1;
+        double ordinaryRecovered = -1;
+        double lastPulse = -1, minGap = 10, maxGap = 0;
+        float worstAfter = 0;
+        unsigned serial = 0;
+        while (time < period * 5)
+        {
+            const float error = vp::wrapCentered (c.beatPhase() - vp::wrap01 (song));
+            if (time >= next)
+            {
+                c.observeRecoveryBeat (error, ++serial);
+                next += period * 0.5;
+                if (confirmed < 0 && c.phaseRecoveryActive()) confirmed = time;
+            }
+            c.setGridPhase (vp::wrap01 (song), 0.9f);
+            ordinary.setGridPhase (vp::wrap01 (song), 0.9f);
+            ordinary.advance (buffer);
+            auto tick = c.advance (buffer);
+            for (int p = 0; p < tick.pulsesFired; ++p)
+            {
+                const double at = time + tick.pulseOffset[p] / 48000.0;
+                if (lastPulse >= 0)
+                {
+                    minGap = std::min (minGap, (at-lastPulse)/(period/4));
+                    maxGap = std::max (maxGap, (at-lastPulse)/(period/4));
+                }
+                lastPulse = at;
+            }
+            time += dt; song += dt / period;
+            const float ms = std::fabs (vp::wrapCentered (c.beatPhase()-vp::wrap01(song))) * period * 1000;
+            if (confirmed >= 0 && recovered < 0 && ms < 8) recovered = time;
+            if (recovered >= 0) worstAfter = std::max (worstAfter, ms);
+            const float ordinaryMs = std::fabs (vp::wrapCentered (ordinary.beatPhase()-vp::wrap01(song))) * period * 1000;
+            if (ordinaryRecovered < 0 && ordinaryMs < 8) ordinaryRecovered = time;
+        }
+        const bool ok = confirmed >= period * 0.9 && confirmed <= period + dt
+            && recovered >= confirmed && recovered-confirmed <= period * 0.5 + dt*2
+            && worstAfter < 15 && minGap > 0.7 && maxGap < 1.3;
+        std::printf ("subdivisions %.0f sign=%+.0f buffer=%d confirm=%.3f recover=%.3f total=%.3f ordinary=%.3f after=%.2fms %s\n",
+                     bpm,sign,buffer,confirmed,recovered-confirmed,recovered,ordinaryRecovered,worstAfter,ok?"PASS":"FAIL");
+        failures += !ok;
+    }
     for (bool poorPassage : {true, false})
     for (float bpm : {52.0f, 100.0f, 168.0f})
     for (float sign : {-1.0f, 1.0f})
@@ -71,7 +125,7 @@ int main()
             poorPassage ? "return" : "persistent",bpm,sign,confirmed,recovered-confirmed,worstAfter,minGap,maxGap,ok?"PASS":"FAIL");
         failures += !ok;
     }
-    for (int scenario : {0, 1, 2})
+    for (int scenario : {0, 1, 2, 3, 4})
     {
         vp::TempoFollower c, control;
         c.prepare (48000); c.forceTempo (100); c.setLocked (true);
@@ -93,8 +147,14 @@ int main()
             {
                 const float error = vp::wrapCentered (c.beatPhase() - seen);
                 ++serial;
-                c.observeRecoveryBeat (scenario == 1 && serial == 7 ? 0.10f : error, serial);
-                next += 60.0 / bpm;
+                // A burst of different serials within half a beat is still
+                // only one independent observation. An isolated displaced
+                // quarter must also fail confirmation despite intervening hats.
+                const bool outlier = (scenario == 1 && serial == 7)
+                    || (scenario == 3 && serial >= 7 && serial <= 10)
+                    || (scenario == 4 && serial == 7);
+                c.observeRecoveryBeat (outlier ? 0.10f : error, serial);
+                next += 60.0 / bpm * (scenario == 3 ? 0.125 : scenario == 4 ? 0.5 : 1.0);
             }
             active |= c.phaseRecoveryActive();
             c.setTargetTempo (bpm,1); control.setTargetTempo (bpm,1);

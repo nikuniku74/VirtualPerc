@@ -14,8 +14,56 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 4. COMPLETATO (integrazione con date accordi note): percorso armonico diretto.
 5. INCOMPLETO: il percorso armonico su audio sintetico ritmico ora aggancia e
    rende sul tempo, ma non entro due battute; il caso con pad fallisce ancora.
-   La registrazione live dell'utente e' stata provata: il mantenimento a livello
-   normale e' buono, ma a -12 dB l'avvio resta per circa 10 s sull'ottava alta.
+   La registrazione live e' stata provata. Il difetto iniziale 212 BPM a -12 dB
+   e' stato corretto nel successivo punto 2 (vedi cronologia sotto). L'ultima
+   segnalazione riguarda il rientro lento: corretto un blocco della conferma
+   in presenza di suddivisioni, con verifica del solo clock nel checkpoint
+   qui sotto. Il riconoscimento e il rientro audio completi restano aperti.
+
+## Ultimo checkpoint — rientro e suddivisioni, 08/09/2026
+
+L'utente segnala che, perso il tempo, a volte la parte impiega troppo a tornare.
+Trovato un difetto indipendente dall'ottava: `observeRecoveryBeat` richiede
+osservazioni distanti oltre 0.55 beat, ma ogni seriale nuovo sostituiva il
+candidato e azzerava la sua eta'. Con picchi accettati a ottavi l'eta' restava
+sempre a circa 0.5 beat: nessuna conferma rapida, soltanto il lento controllo
+ordinario. La ripetizione della stessa pubblicazione era gia' protetta; erano
+i seriali diversi dei colpi intermedi a causare questo blocco.
+
+Correzione minima in `Source/Tracking/TempoFollower.cpp`: finche' il candidato
+non ha superato 0.55 beat, conservare osservazione, eta' e correzione applicata
+dal clock. Un colpo intermedio non conferma e non rimanda la conferma. Restano
+invariati i requisiti di concordanza/fiducia, il limite di scarto <0.15 beat,
+il rail del 20%, la precedenza delle transizioni di tempo e gli annullamenti.
+
+Verifica mirata (nessuna suite completa e nessun commit):
+
+```bash
+c++ -std=c++17 -O2 -ISource scripts/probe_recovery.cpp \
+  Source/Tracking/TempoFollower.cpp -o /tmp/vp-recovery
+/tmp/vp-recovery
+```
+
+- Prima: 18/18 nuovi casi con suddivisioni FALLITI, mai confermata la correzione.
+- Dopo: 35/35 PASS (18 suddivisioni + 12 recuperi precedenti + 5 controlli).
+- Suddivisioni: 52/100/168 BPM, scarto iniziale +/-0.075 beat, buffer
+  64/256/1024. A 256: conferma in 1.157/0.603/0.357 s; convergenza aggiuntiva
+  in 0.576/0.299/0.176 s. Totale dalla prima osservazione affidabile:
+  **1.733/0.901/0.533 s**, scarto <8 ms e tenuta oltre due beat. Il controllo
+  ordinario senza recupero rapido non raggiunge 8 ms entro i cinque beat della
+  finestra. Intervalli fra impulsi controllati: nessun salto/doppione.
+- Controlli: rumore, outlier, rampa, raffica di seriali nuovi entro mezzo beat,
+  outlier isolato fra ottavi. Nessuna attivazione, errore uguale al controllo.
+
+Limite: e' una regressione del clock con fase corretta iniettata, non una prova
+che il brano live sia riconosciuto in questi tempi. La correzione non accorcia
+un errore del decoder o l'attesa di fiducia sufficiente. Lo step 5 rimane aperto.
+Prossima azione: sul passaggio reale che esce dal tempo registrare nello stesso
+probe BPM/fase del decoder, seriali beat, fiducia, conferma del recupero e
+attacchi renderizzati; separare ritardo della rete dalla convergenza del clock.
+Per attribuire gli errori assoluti serve la beat-grid annotata gia' richiesta.
+Proseguire con prove mirate; mantenere le correzioni successive di Claude
+documentate nella cronologia di questo file e il submodule JUCE preesistente.
 
 ## Regole per riprendere
 

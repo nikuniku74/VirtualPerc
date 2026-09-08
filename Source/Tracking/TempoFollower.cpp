@@ -219,6 +219,13 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
     const float error = wrapCentered (errorBeats);
     const float expected = wrapCentered (recoveryError - recoveryCorrection);
     const float period = 60.0f / std::max (40.0f, tempo);
+    // The decoder also accepts subdivision peaks. A fresh serial inside the
+    // minimum independent-beat window cannot confirm recovery, but must not
+    // replace its first observation either: eighths otherwise reset this age
+    // every half beat and prevent confirmation forever. Keep the accumulated
+    // steering so the next eligible beat is compared on the same reference.
+    if (recoveryCandidate && recoveryAgeSamples <= sampleRate * period * 0.55)
+        return;
     const bool agrees = recoveryCandidate && recoveryAgeSamples > sampleRate * period * 0.55
         && recoveryAgeSamples < sampleRate * period * 1.8
         && error * expected > 0.0f && std::fabs (error - expected) < 0.025f;

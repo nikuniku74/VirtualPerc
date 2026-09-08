@@ -464,6 +464,19 @@ skipped. It is what a player does - nobody moves their hand, they lean until
 they are back with the band.
 
 **Recovery safety update (2026-09-08).** The trust edge only arms recovery;
+**Subdivision starvation fix (2026-09-08).** Distinct serials closer than
+0.55 beat cannot confirm recovery and now leave the first candidate and its
+accumulated steering intact. Previously every accepted eighth replaced that
+candidate, so its age never reached the confirmation window. The focused
+`probe_recovery` fails all 18 subdivision cases before this fix and passes
+afterwards (52/100/168 BPM, both signs, 64/256/1024 buffers). At 256 frames,
+error below 8 ms is reached 1.733/0.901/0.533 s from the first clean observation,
+including confirmation; correction alone takes 0.576/0.299/0.176 s. Stability
+continues beyond two beats and pulse intervals stay bounded. Five negative
+controls include fresh-serial bursts shorter than half a beat and an isolated
+outlier amid eighths: none activates, all match the ordinary clock. These are
+scripted clock observations, not a measured neural recognition/re-entry delay.
+
 Persistent high-trust errors can also confirm: two distinct beats beyond both
 0.04 beat and 20 ms, agreeing within 0.015 beat after subtracting our steering.
 A 2.5-beat cooldown prevents repeated acceleration. The standalone recovery

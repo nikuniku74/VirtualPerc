@@ -712,6 +712,14 @@ esattamente il segnale che conferma al tracker qualunque cosa stia già credendo
 
 ### 21. Le percussioni ogni tanto rallentano o accelerano, e ci mettono a rientrare 🟡 (2026-09-07, causa trovata e corretta — resta ascolto)
 
+- [x] 08/09, nuova segnalazione: corretto il recupero che non si confermava
+  quando arrivavano seriali distinti a ottavi. I colpi dentro 0.55 beat ora
+  conservano il primo candidato e la correzione accumulata. `probe_recovery`:
+  18 casi nuovi da FAIL a PASS, 12 precedenti e 5 controlli negativi PASS.
+  A buffer 256: scarto <8 ms in 1.733/0.901/0.533 s dalla prima osservazione
+  a 52/100/168 BPM, stabile oltre due beat. Solo clock con fase nota;
+  il ritardo del riconoscimento sul brano reale resta da localizzare.
+
 - [x] 08/09: sorgente armonica collegata a fase, ingresso e clock sul diretto;
   `--harmonic-entry` 4/4. Con accordi radi l'ingresso resta lento (18.79 s),
   non confondere questa integrazione con riconoscimento istantaneo senza batteria.
