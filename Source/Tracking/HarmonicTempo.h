@@ -85,8 +85,11 @@ public:
         bestBar = 0.0f;
         runR = 0.0f;
         runBar = 0.0f;
+        runBarScore = 0.0f;
         settledBpm = 0.0f;
         settledR = 0.0f;
+        originSeconds = 0.0;
+        lastChangeSeconds = -1.0;
     }
 
     /** A change the detector has just reported, at `offset` samples into the
@@ -99,6 +102,7 @@ public:
         if (t <= 0.0)
             return;
         at[write] = t;
+        lastChangeSeconds = t;
         w[write] = std::max (0.05f, std::min (1.0f, strength));
         write = (write + 1) % kKeep;
         if (count < kKeep)
@@ -114,6 +118,14 @@ public:
     void process (int numSamples) noexcept
     {
         absPos += numSamples;
+        // A sustained chord provides no new timing evidence. Expire the
+        // hypothesis, not the engine clock, after two bars (at most 12 s).
+        if (lastChangeSeconds >= 0.0 && ageSeconds() > freshnessSeconds())
+        {
+            count = write = scan = 0;
+            settledBpm = settledR = runR = runBar = 0.0f;
+            lastChangeSeconds = -1.0;
+        }
         if (count < kLeastChanges)
             return;
 
@@ -128,14 +140,16 @@ public:
             // every division of the answer; the true bar is the longest of
             // them. Same choice BeatDecoder::userOctave makes, and for the same
             // reason - a metrical level is not decided by which peak is tallest.
-            if (r > runR)
+            runR = std::max (runR, r);
+            // Choose the longest distinct peak, then its summit. Choosing
+            // every longer near-tie picked the skirt (98 instead of 100 BPM);
+            // choosing only the first near-tie picked its other skirt (102).
+            if (r >= runR * kCloseEnough
+                && (runBar <= 0.0f || bar > runBar * 1.4f
+                    || (bar < runBar * 1.15f && r > runBarScore)))
             {
-                runR = r;
                 runBar = bar;
-            }
-            else if (r >= runR * kCloseEnough && bar > runBar)
-            {
-                runBar = bar;
+                runBarScore = r;
             }
 
             if (++scan >= kCandidates)
@@ -145,10 +159,22 @@ public:
                 bestBar = runBar;
                 runR = 0.0f;
                 runBar = 0.0f;
+                runBarScore = 0.0f;
                 if (bestR >= kCoherentEnough && bestBar > 0.0f)
                 {
                     settledBpm = 4.0f * 60.0f / bestBar;
-                    settledR = bestR;
+                    // runR may belong to the shorter candidate, whereas
+                    // bestBar was extended by the longest-period preference.
+                    // Phase confidence must score the period actually used.
+                    settledR = coherenceAt (bestBar);
+                    double re = 0.0, im = 0.0;
+                    for (int k = 0; k < count; ++k)
+                    {
+                        const double ph = kTwoPi * at[k] / bestBar;
+                        re += w[k] * std::cos (ph);
+                        im += w[k] * std::sin (ph);
+                    }
+                    originSeconds = std::atan2 (im, re) * bestBar / kTwoPi;
                 }
                 else
                 {
@@ -171,6 +197,25 @@ public:
 
     /** How many changes the estimate is standing on. */
     int changes() const noexcept { return count; }
+
+    double ageSeconds() const noexcept
+    {
+        return lastChangeSeconds < 0 ? 1e9 : absPos / sampleRate - lastChangeSeconds;
+    }
+    double freshnessSeconds() const noexcept
+    {
+        return settledBpm > 0 ? std::min (12.0, 480.0 / settledBpm) : 12.0;
+    }
+    bool phaseValid() const noexcept
+    {
+        return settledBpm >= 50 && settledR >= 0.80f && count >= kLeastChanges
+               && ageSeconds() <= freshnessSeconds();
+    }
+    /** Absolute quarter position, referred to the beginning of this callback. */
+    double beatPosition (int numSamples) const noexcept
+    {
+        return ((absPos - numSamples) / sampleRate - originSeconds) * settledBpm / 60.0;
+    }
 
 private:
     float coherenceAt (float bar) const noexcept
@@ -221,8 +266,10 @@ private:
 
     int   scan = 0;
     float runR = 0.0f, runBar = 0.0f;
+    float runBarScore = 0.0f;
     float bestR = 0.0f, bestBar = 0.0f;
     float settledBpm = 0.0f, settledR = 0.0f;
+    double originSeconds = 0.0, lastChangeSeconds = -1.0;
 };
 
 } // namespace vp

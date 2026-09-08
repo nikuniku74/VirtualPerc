@@ -89,17 +89,6 @@ namespace
         maxima over their runs and the gate reads the instantaneous value. */
     constexpr float kHarmonicShareToTrust = 0.42f;
 
-/** How much the clock should believe a tempo that came from the harmony.
-
-    Low, and it is not a hedge: this is the only tempo source in the app that
-    can be wrong by a *factor* rather than by a percentage. It assumes four four
-    and a chord that lasts no longer than a bar, and a song that changes chord
-    every two bars reads as half the tempo - which is not an error the clock can
-    steer out of. Handed over gently, the glide takes a couple of seconds to
-    adopt it and the decoder takes it straight back the moment it has anything
-    of its own. */
-constexpr float kHarmonicTempoConfidence = 0.30f;
-
 /** How long the network has to have had no tempo before the harmony is asked
     for one. See where it is used: a fill is a second of silence and a voice
     with a guitar is a song of it. */
@@ -168,6 +157,7 @@ void BeatTracker::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
     follower.prepare (sampleRate);
+    harmonicTempo.prepare (sampleRate);
     neural.start (sampleRate);
     reset();
 }
@@ -182,6 +172,11 @@ void BeatTracker::reset() noexcept
     neural.invalidatePublicationsBeforeNow();
     transitionConsumer.reset();
     follower.reset();
+    harmonicTempo.reset();
+    harmonicSourceActive = false;
+    harmonicBeatIndex = -1;
+    harmonicBeatSerial = 0;
+    noNetworkTempoSamples = 0;
     evidence.reset();
     kickAssigned = false;
     kickQuietSec = 0.0f;
@@ -933,6 +928,46 @@ void BeatTracker::updateKickTrust (float phaseErr) noexcept
         kickTrusted = false;
 }
 
+bool BeatTracker::selectHarmonicSource (BeatHypothesis& hyp, bool haveHyp, int numSamples) noexcept
+{
+    harmonicTempo.process (numSamples);
+    const bool neuralHasTempo = haveHyp && hyp.valid && hyp.bpm >= 50.0f;
+    noNetworkTempoSamples = neuralHasTempo ? 0 : std::min (
+        noNetworkTempoSamples + numSamples, static_cast<int> (sampleRate * 30));
+    // A cold start has no prior grid to protect from a fill. Once playing,
+    // keep the six-second quarantine measured by the existing fill probe.
+    const bool eligible = !lockedOnce || noNetworkTempoSamples > sampleRate * kNoNetworkTempoSec;
+    const bool selected = !neuralHasTempo && eligible && !speakerFollow && tempoFollow
+        && !tapEstablished && harmonicShare > 0.55f && harmonicTempo.phaseValid();
+    if (selected != harmonicSourceActive)
+    {
+        seenSerials = false;
+        evidence.restart();
+        follower.cancelPhaseRecovery();
+        harmonicBeatIndex = -1;
+    }
+    harmonicSourceActive = selected;
+    if (!selected) return haveHyp;
+
+    const double position = harmonicTempo.beatPosition (numSamples);
+    const auto index = static_cast<int64_t> (std::floor (position));
+    if (harmonicBeatIndex >= 0 && index > harmonicBeatIndex)
+        ++harmonicBeatSerial;
+    harmonicBeatIndex = index;
+    hyp = {};
+    hyp.valid = true;
+    hyp.bpm = harmonicTempo.bpm();
+    hyp.periodSec = 60.0f / hyp.bpm;
+    hyp.beatPhase = static_cast<float> (position - std::floor (position));
+    hyp.barPhase = static_cast<float> (position / 4 - std::floor (position / 4));
+    hyp.confidence = 0.65f * harmonicTempo.coherence();
+    hyp.beatSerial = harmonicBeatSerial;
+    // Predicted quarters are not fresh observed attacks: they must not arm
+    // rapid recovery or masquerade as neural downbeat votes.
+    hyp.analysisSample = neural.samplesFed() - numSamples;
+    return true;
+}
+
 BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noexcept
 {
     Output out;
@@ -958,10 +993,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         inputPeakEnv += (blockPeak - inputPeakEnv) * release;
     const bool loudEnough = inputPeakEnv > (speakerFollow ? 0.0010f : 0.0020f);
     BeatHypothesis hyp;
-    const bool haveHyp = neural.tryLoad (hyp);
+    const bool neuralHaveHyp = neural.tryLoad (hyp);
+    const bool haveHyp = selectHarmonicSource (hyp, neuralHaveHyp, numSamples);
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
-    const bool periodic = haveHyp && hyp.valid && nnBpm > 50.0f;
+    const bool periodic = haveHyp && hyp.valid && nnBpm >= 50.0f;
 
     // How well the analysis is fitting, against how well it has been fitting on
     // this song. Nothing downstream of this touches the tempo - see the note on
@@ -998,7 +1034,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                   ? hyp.periodSec
                                   : 60.0f / std::max (50.0f, heldBpm > 50.0f ? heldBpm : 120.0f);
     float leadBeats = 0.0f;
-    if (haveHyp && hyp.analysisSample > 0)
+    if (harmonicSourceActive)
+    {
+        // Harmonic phase is evaluated at this callback's start. It has no
+        // neural FIFO/response delay; only the output/attack lead applies.
+        lastLeadMs = reportedLatencyMs;
+        leadBeats = reportedLatencyMs * 0.001f / beatSeconds;
+    }
+    else if (haveHyp && hyp.analysisSample > 0)
     {
         const double pipelineSec = static_cast<double> (neural.samplesFed() - hyp.analysisSample)
                                    / sampleRate;
@@ -1020,33 +1063,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // flow was designed around - so on a mixer feed four taps set the tempo and
     // the network took it straight back. Measured on a 100 BPM track tapped at
     // 132: held 100% of the time in IPAD, 0% in MIXER.
-    // A slice of the harmonic tempo sweep, and what it currently believes. Run
-    // every block: the cost is bounded per callback by design, and the answer
-    // has to be there before the tempo is chosen a few lines down.
-    harmonicTempo.process (numSamples);
-    const float harmonicBpm = harmonicTempo.bpm();
-
-    // How long the network has had nothing to say about the tempo.
-    //
-    // "The network has no tempo" is true in two situations that want opposite
-    // things, and telling them apart is a matter of *how long*, not of anything
-    // measurable in the instant. A band playing a fill drops the pulse for a
-    // bar or two and comes back; a voice with a guitar behind it never had one.
-    // Letting the harmony speak the moment the network went quiet moved the
-    // clock during every fill - measured at 44.1 ms of phase scatter through
-    // the fill bars against 30 allowed - because a fill is exactly where the
-    // harmony is least placeable and the network's silence shortest.
-    //
-    // Six seconds. Longer than any fill, and short enough that material which
-    // genuinely has no percussion is not left waiting through a whole verse.
-    if (nnBpm > 50.0f)
-        noNetworkTempoSamples = 0;
-    else
-        noNetworkTempoSamples = std::min (noNetworkTempoSamples + numSamples,
-                                          static_cast<int> (sampleRate * 30.0));
-    const bool networkHasGivenUp = noNetworkTempoSamples
-                                   > static_cast<int> (sampleRate * kNoNetworkTempoSec);
-
     const bool tapOwnsTempo = tapEstablished && heldBpm > 50.0f;
     const bool userOwnsTempo = ! tempoFollow && heldBpm > 50.0f;
     const bool tempoOwned = tapOwnsTempo || userOwnsTempo;
@@ -1072,7 +1088,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // Reject a backlog older than one beat instead of confirming stale audio.
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();
-    else if (hadBeat && hyp.confidence > 0.40f && hyp.analysisSample > 0
+    else if (!harmonicSourceActive && hadBeat && hyp.confidence > 0.40f && hyp.analysisSample > 0
              && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
         follower.observeRecoveryBeat (wrapCentered (follower.beatPhase() - songPhase),
                                       hyp.beatSerial);
@@ -1117,7 +1133,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // away from the decoder. Keep phase steering in both modes, but derive a
     // rate correction from it only on MIXER.
     const bool trimTempo = tapOwnsTempo
-                           || (! speakerFollow && periodic
+                           || (! speakerFollow && !harmonicSourceActive && periodic
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
 
@@ -1141,27 +1157,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             && hyp.transitionState == TempoTransitionState::rapid;
         follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : nnBpm,
                                  useTransitionPayload ? hyp.transitionConfidence : nnConf);
-    }
-    else if (harmonicBpm > 50.0f && networkHasGivenUp && ! speakerFollow && tempoFollow)
-    {
-        // Nothing percussive to time, and the harmony can still say how long a
-        // beat is. See Tracking/HarmonicTempo.h: chords change on bar lines, so
-        // a period that makes every interval between changes come out a whole
-        // number of bars is the period the band is playing - measured inside
-        // 0.75% over five tempos on material with every drum taken out.
-        //
-        // Only where the network has no tempo at all. Where it has one it is
-        // the better source by a wide margin, and this is not asked; where it
-        // has none the app used to hold whatever it last believed, which on a
-        // voice and a guitar is nothing at all. Deliberately not a vote against
-        // the network, because the two are not comparable: this one assumes
-        // four four and a chord no longer than a bar, and when a song breaks
-        // either assumption it is wrong by a factor, not by a percent.
-        //
-        // Not through a speaker. The chroma is read off the same bus that
-        // carries the room and our own returned part, and a mic in a room is
-        // where every other harmonic measurement in this app has been worst.
-        follower.setTargetTempo (harmonicBpm, kHarmonicTempoConfidence);
     }
 
     // The clock always runs on sixteenths, whatever the part is playing. The
@@ -1194,7 +1189,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // far fewer, and a vote taken over a handful of samples shows a wide margin
     // on noise alone. Over every beat, the same margin is a measurement: 0.34
     // where the network really has found the one, 0.014 where it has not.
-    if (hadBeat && ! tapHold)
+    if (hadBeat && ! tapHold && !harmonicSourceActive)
     {
         // Which quarter of the bar this beat fell on, in the clock's own count.
         //
@@ -1255,7 +1250,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         samplesSinceBeat = 0;
         quietSamples = 0;
         beatCount += newBeats;
-        if (! tapHold && tempoFollow && hyp.confidence > 0.25f)
+        if (!harmonicSourceActive && ! tapHold && tempoFollow && hyp.confidence > 0.25f)
         {
             // observeOnsetPhase wants the clock's own phase at the instant the
             // song's beat happened, which is what makes its error term mean
@@ -1352,7 +1347,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         needsResync = false;
     }
 
-    if (octaveAuto && tempoFollow)
+    if (octaveAuto && tempoFollow && !harmonicSourceActive)
         updateAutoOctave (nnBpm, periodic, numSamples,
                           hyp.metricalOctaveHintValid,
                           hyp.metricalOctaveHint);
@@ -1686,6 +1681,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.tapLocked = tapHold;
     out.aiOnnx = neural.usingOnnx();
     out.hypValid = haveHyp && hyp.valid;
+    out.harmonicTempoSource = harmonicSourceActive;
     out.neuralBpm = nnBpm;
     out.pBeat = haveHyp ? hyp.pBeat : 0.0f;
     out.leadMs = lastLeadMs;

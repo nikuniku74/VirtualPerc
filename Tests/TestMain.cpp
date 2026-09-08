@@ -1053,6 +1053,11 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--harmonic-entry")
+    {
+        vpRunHarmonicEntryTest (gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
     if (argc > 1 && std::string (argv[1]) == "--state-timing")
     {
         vpRunStateTimingTest (gPassed, gFailed);

@@ -10,7 +10,7 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 1. COMPLETATO: sicurezza del rientro (annullamento, reset, prove fresche).
 2. COMPLETATO: contatori indipendenti dal buffer.
 3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.
-4. DA FARE: percorso armonico completo sul collegamento diretto.
+4. COMPLETATO (integrazione con date accordi note): percorso armonico diretto.
 5. DA FARE: verifica integrata e separazione delle misure sintetiche/reali.
 
 ## Regole per riprendere
@@ -61,3 +61,21 @@ controllo senza conferme. Due beat devono concordare entro 0.015 beat dopo la
 compensazione, entrambi oltre max(0.04 beat, 20 ms). Cooldown di 2.5 beat.
 La verifica dello swing del decoder e dell'audio completo resta allo step 5.
 Prossimo: step 4. Step 2 commit d52f099.
+
+## Step 4 — verifica e limite importante
+
+`cmake --build build-host --target VPTests -j4`
+`./build-host/VPTests_artefacts/Release/VPTests --harmonic-entry`
+
+4/4 PASS: a 44.1/48 kHz il tracker entra senza worker neurale, grazie a otto
+cambi di accordo datati, 100.000 BPM. PercussionEngine produce sei attacchi
+misurati: errore massimo 2.59/0.23 ms. Microfono escluso, ritorno del BPM
+neurale prioritario, scadenza dopo due battute (max 12 s), reset completo.
+Il selettore armonico sceglie ora il massimo locale anziché il fianco della
+curva: il vecchio confronto dei pareggi portava 100 esatti a 98.039.
+
+LIMITI: questa prova bypassa il rilevatore di accordi, non il tracker/render.
+Con un accordo per battuta servono otto accordi: ingresso a 18.79 s, NON entro
+due battute. L'armonia rada da sola non soddisfa quell'obiettivo. Nessun nuovo
+modello di pulsazione non percussiva è stato aggiunto. Step 5 deve misurare la
+catena con il rilevatore e distinguere le registrazioni reali dai sintetici.

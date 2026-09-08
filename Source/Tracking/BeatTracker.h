@@ -203,6 +203,11 @@ public:
     {
         if (seenEpoch && epoch != lastInputEpoch)
         {
+            harmonicTempo.reset();
+            harmonicSourceActive = false;
+            harmonicBeatIndex = -1;
+            noNetworkTempoSamples = 0;
+            follower.cancelPhaseRecovery();
             sawInputStart = true;
             // A new input must earn its own metrical level. In particular, a
             // 50 BPM file may have taught AUTO to divide the hat pulse by two;
@@ -248,6 +253,7 @@ public:
         int           beatsElapsed = 0;
         bool          aiOnnx = false;
         bool          hypValid = false;
+        bool          harmonicTempoSource = false;
         float         neuralBpm = 0.0f;
         float         pBeat = 0.0f;
         /** Measured analysis-plus-output delay the clock is running ahead by. */
@@ -383,6 +389,10 @@ private:
     TempoFollower     follower;
     EvidenceTrust     evidence;
     HarmonicTempo     harmonicTempo;
+    bool harmonicSourceActive = false;
+    int64_t harmonicBeatIndex = -1;
+    uint32_t harmonicBeatSerial = 0;
+    bool selectHarmonicSource (BeatHypothesis& hyp, bool haveHyp, int numSamples) noexcept;
     int               noNetworkTempoSamples = 0;
 
     /** The kick channel's state, as the audio thread last reported it. */

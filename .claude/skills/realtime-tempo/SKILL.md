@@ -860,6 +860,18 @@ runs.
 
 ## 6. State machine
 
+**Harmonic source integration (2026-09-08).** Direct mode can now acquire and
+enter from a fresh harmonic phase, not just set a target BPM while the state
+machine waits forever for neural beats. `HarmonicTempo` is prepared at the
+device rate, reset with the session/input epoch, and expires after two bars
+(maximum 12 s). Phase is the circular mean of chord dates at the selected bar
+period; readiness requires eight changes and coherence >=0.80. Its predicted
+quarters never count as independent observations for fast recovery or neural
+downbeat votes. A valid neural tempo takes priority; the acoustic fallback stays
+disabled. `VPTests --harmonic-entry` passes at 44.1/48k, with six rendered
+attacks within 2.59/0.23 ms on **scripted chord dates**. At one chord per bar,
+entry costs 18.79 s: this does not prove a two-bar acquisition without drums.
+
 `VPTests --state-timing` checks the four-second low-confidence hold at buffers
 64/256/1024: 4.001333/4.005333/4.010667 s. The counter adds actual samples;
 the confidence filter also uses elapsed time (old 256/48k response preserved).

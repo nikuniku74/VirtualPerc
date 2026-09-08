@@ -8763,6 +8763,79 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool harmonicEntry (double sr, bool speaker)
+    {
+        BeatTracker t;
+        t.sampleRate = sr;
+        t.follower.prepare (sr);
+        t.harmonicTempo.prepare (sr);
+        t.reset();
+        t.setSpeakerFollow (speaker);
+        t.setSourceAudible (true);
+        t.setHarmonicShare (1);
+        PercussionEngine perc;
+        perc.prepare (sr); perc.setHumanization (0); perc.setReverbAmount (0);
+        perc.setCongasEnabled (false); perc.setSubdivision (Subdivision::quarter);
+        t.setReportedLatencyMs (perc.attackLeadMs());
+        t.start();
+        constexpr int block = 256;
+        float input[block]; std::fill (input,input+block,0.1f);
+        double nextChord = 0.20, entered = -1;
+        BeatTracker::Output out;
+        std::vector<float> audio (static_cast<size_t>(sr*24+block),0);
+        float right[block];
+        // Known chord dates isolate the source integration from the chord
+        // detector. No neural worker runs and no beat is supplied by a model.
+        for (int pos=0; pos < sr*24; pos += block)
+        {
+            const double start = pos/sr, end = (pos+block)/sr;
+            if (nextChord < end && nextChord < 20)
+            {
+                t.notifyHarmonicChange (static_cast<int>((nextChord-start)*sr),1);
+                nextChord += 2.4; // 100 BPM, four quarters per chord
+            }
+            out = t.process (input,block);
+            std::fill(right,right+block,0);
+            perc.setGroove (out.clock.tempoBpm,4);
+            perc.render (audio.data()+pos,right,block,out.clock,out.percussionShouldPlay);
+            if (out.percussionShouldPlay && entered < 0) entered = start;
+        }
+        bool ok = speaker ? entered < 0 : entered > 0 && std::fabs(out.bpm-100)<1;
+        double worstAudioMs = 0;
+        int attacks = 0;
+        if (!speaker && entered > 0)
+        {
+            for (double beat = 20.6; beat < 23.9; beat += 0.6)
+            {
+                const int from = static_cast<int>((beat-0.05)*sr);
+                const int to = static_cast<int>((beat+0.05)*sr);
+                float peak = 0;
+                for (int i=from;i<to;++i) peak = std::max(peak,std::fabs(audio[i]));
+                if (peak < 1e-5f) continue;
+                for (int i=from;i<to;++i)
+                    if (std::fabs(audio[i]) >= peak*0.20f)
+                    {
+                        worstAudioMs = std::max(worstAudioMs,std::fabs(i/sr-beat)*1000);
+                        ++attacks; break;
+                    }
+            }
+            ok &= attacks >= 5 && worstAudioMs < 25;
+        }
+        if (!speaker)
+        {
+            BeatHypothesis neural;
+            neural.valid = true; neural.bpm = 120; neural.confidence = 0.9f;
+            t.selectHarmonicSource (neural,true,block);
+            ok &= !t.harmonicSourceActive && neural.bpm == 120;
+            for (int pos=0;pos<sr*14;pos+=block) t.process(input,block);
+            ok &= !t.harmonicTempo.phaseValid() && t.follower.currentTempo()>50;
+            t.reset();
+            ok &= t.harmonicTempo.changes()==0 && t.noNetworkTempoSamples==0;
+        }
+        std::printf("harmonic-entry sr=%.0f speaker=%d entered=%.3fs bpm=%.3f attacks=%d worst=%.2fms %s\n",
+                    sr,speaker,entered,out.bpm,attacks,worstAudioMs,ok?"PASS":"FAIL");
+        return ok;
+    }
     static double lowAfter (int block)
     {
         BeatTracker t;
@@ -8788,6 +8861,13 @@ void vpRunStateTimingTest (int& passed, int& failed)
         std::printf ("state-timing buffer=%d low-confidence=%.6fs %s\n", block, seconds, ok ? "PASS" : "FAIL");
         (ok ? passed : failed)++;
     }
+}
+
+void vpRunHarmonicEntryTest (int& passed, int& failed)
+{
+    for (double sr : {44100.0,48000.0})
+    for (bool speaker : {false,true})
+        (vp::BeatTrackerTimingProbe::harmonicEntry(sr,speaker) ? passed : failed)++;
 }
 
 void vpRunSlowTempoRegressionTest (int& passed, int& failed)

@@ -712,6 +712,10 @@ esattamente il segnale che conferma al tracker qualunque cosa stia già credendo
 
 ### 21. Le percussioni ogni tanto rallentano o accelerano, e ci mettono a rientrare 🟡 (2026-09-07, causa trovata e corretta — resta ascolto)
 
+- [x] 08/09: sorgente armonica collegata a fase, ingresso e clock sul diretto;
+  `--harmonic-entry` 4/4. Con accordi radi l'ingresso resta lento (18.79 s),
+  non confondere questa integrazione con riconoscimento istantaneo senza batteria.
+
 - [x] 08/09: timer bassa fiducia e filtro indipendenti dal buffer;
   Recupero anche con fiducia alta: due beat concordanti, 12 casi clock + 3
   controlli mirati; verifica audio completa ancora separata nello step 5.
