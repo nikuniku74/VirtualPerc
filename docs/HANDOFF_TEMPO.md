@@ -9,7 +9,7 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 
 1. COMPLETATO: sicurezza del rientro (annullamento, reset, prove fresche).
 2. COMPLETATO: contatori indipendenti dal buffer.
-3. DA FARE: recupero dello scarto con fiducia alta.
+3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.
 4. DA FARE: percorso armonico completo sul collegamento diretto.
 5. DA FARE: verifica integrata e separazione delle misure sintetiche/reali.
 
@@ -50,3 +50,14 @@ con istruzioni perché non forniva beat freschi. Prossimo: step 2.
 4.010667 s con buffer 64/256/1024, entro un callback. Anche il filtro della
 fiducia ora usa il tempo reale, preservando la risposta precedente a 256/48k.
 Step 1 salvato nel commit cdcb33c. Prossimo: step 3.
+
+## Step 3 — verifica
+
+Stesso comando standalone dello step 1: 12 casi di recupero + 3 controlli.
+Fiducia alta: conferma dopo 1.157 / 0.603 / 0.357 s, convergenza aggiuntiva
+0.576 / 0.299 / 0.176 s a 52/100/168; entrambi i segni, errore stabile <8 ms.
+Rumore di fase, outlier isolato e rampa: nessuna attivazione, errore uguale al
+controllo senza conferme. Due beat devono concordare entro 0.015 beat dopo la
+compensazione, entrambi oltre max(0.04 beat, 20 ms). Cooldown di 2.5 beat.
+La verifica dello swing del decoder e dell'audio completo resta allo step 5.
+Prossimo: step 4. Step 2 commit d52f099.

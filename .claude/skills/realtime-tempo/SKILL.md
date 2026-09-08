@@ -458,6 +458,11 @@ skipped. It is what a player does - nobody moves their hand, they lean until
 they are back with the band.
 
 **Recovery safety update (2026-09-08).** The trust edge only arms recovery;
+Persistent high-trust errors can also confirm: two distinct beats beyond both
+0.04 beat and 20 ms, agreeing within 0.015 beat after subtracting our steering.
+A 2.5-beat cooldown prevents repeated acceleration. The standalone recovery
+gate covers both directions, jitter, isolated outlier and a gradual ramp;
+the latter controls never arm and match the ordinary clock.
 two fresh accepted beat serials must agree after subtracting the correction
 already applied. Repeated publications cannot confirm. Poor trust, explicit
 reference changes and confirmed tempo transitions cancel the fast command.

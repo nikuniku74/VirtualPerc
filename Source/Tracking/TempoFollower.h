@@ -159,6 +159,7 @@ private:
     float recoveryError = 0.0f;
     float recoveryCorrection = 0.0f;
     int recoveryAgeSamples = 0;
+    int recoveryCooldownSamples = 0;
     int transitionSamplesRemaining = 0;
     FollowStrength follow = FollowStrength::medium;
 };

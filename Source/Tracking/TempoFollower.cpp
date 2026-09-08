@@ -201,6 +201,7 @@ void TempoFollower::cancelPhaseRecovery() noexcept
     recoveryArmed = recoveryCandidate = recoverySerialSeen = false;
     recoveryError = recoveryCorrection = 0.0f;
     recoveryAgeSamples = 0;
+    recoveryCooldownSamples = 0;
 }
 
 void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noexcept
@@ -221,11 +222,20 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
     const bool agrees = recoveryCandidate && recoveryAgeSamples > sampleRate * period * 0.55
         && recoveryAgeSamples < sampleRate * period * 1.8
         && error * expected > 0.0f && std::fabs (error - expected) < 0.025f;
-    if (recoveryArmed && agrees && std::fabs (error) > 0.012f
+    // Two persistent errors beyond both the phase-noise floor and 20 ms.
+    // The expected error subtracts our own steering: correcting the clock
+    // must not make two observations of the same displacement disagree.
+    const float persistentFloor = std::max (0.04f, 0.020f / period);
+    const bool persistent = std::fabs (error) > persistentFloor
+        && std::fabs (expected) > persistentFloor
+        && std::fabs (error - expected) < 0.015f;
+    if ((recoveryArmed || persistent) && agrees && recoveryCooldownSamples <= 0
+        && std::fabs (error) > 0.012f
         && std::fabs (error) < 0.15f)
     {
         phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (sampleRate * period * 0.5));
         recoveryArmed = false;
+        recoveryCooldownSamples = static_cast<int> (sampleRate * period * 2.5);
     }
     recoveryCandidate = true;
     recoveryError = error;
@@ -540,6 +550,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
 ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
 {
+    recoveryCooldownSamples = std::max (0, recoveryCooldownSamples - numSamples);
     recoveryAgeSamples = std::min (recoveryAgeSamples + numSamples, static_cast<int> (sampleRate * 30.0));
     ClockTick tick;
     const bool rapidTransition = transitionSamplesRemaining > 0;
