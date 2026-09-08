@@ -142,6 +142,7 @@ void NeuralBeatTracker::workerLoop()
     {
         decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
         decoder.setLineFeed (wantedLineFeed.load (std::memory_order_relaxed));
+        decoder.setSounding (wantedSounding.load (std::memory_order_relaxed));
 
         // Before the audio from after the event reaches the decoder, not after:
         // the whole point is that nothing measured before it may vouch for what

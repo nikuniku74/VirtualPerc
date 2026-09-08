@@ -44,6 +44,18 @@ public:
     {
         wantedLineFeed.store (on, std::memory_order_relaxed);
     }
+
+    /** Whether a part is currently sounding. Same hand-over as the two above.
+
+        `BeatTracker::updateAutoOctave` already refuses to move the metrical
+        level under a playing part, and says at length why. It could only ever
+        enforce that on its own shift: the decoder can halve the tempo it
+        reports, and then the shift stays at zero while the grid moves anyway.
+        The decoder needs the same fact to apply the same rule. */
+    void setSounding (bool on) noexcept
+    {
+        wantedSounding.store (on, std::memory_order_relaxed);
+    }
     /** The analysis input has changed character - see
         BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
         flag, from the audio thread, so an event that comes and goes between two
@@ -118,6 +130,7 @@ private:
     std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
     std::atomic<bool> wantedLineFeed { false };
+    std::atomic<bool> wantedSounding { false };
     std::atomic<uint32_t> inputEpoch { 0 };
     std::atomic<int64_t> minimumAnalysisSample { 0 };
     uint32_t seenInputEpoch = 0;

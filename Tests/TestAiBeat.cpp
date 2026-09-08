@@ -1372,6 +1372,15 @@ void vpRunBarReentryTests (int& passed, int& failed)
         int pos = pump (eng, song.data(), n, 0, cutAt, oL, oR);
         auto before = eng.snapshot();
         const int beatBefore = std::clamp (static_cast<int> (before.barPhase * 4.0f), 0, 3);
+        // Printed, not asserted, and it is normally *not* the model's one yet:
+        // while a part is playing the count only moves on `kBeatsToMoveTheBar`
+        // beats of histogram, which under `kVoteDecay` is about forty-seven
+        // beats - twelve bars, or twenty-nine seconds at this tempo. Sixteen
+        // seconds of lead-in cannot get there, and that is the point of the
+        // hole: the re-entry window is what makes the correction cheap.
+        const long long beatBeforeNo = static_cast<long long> (
+            static_cast<double> (pos) / sr * trackBpm / 60.0);
+        const int beatBeforeWanted = static_cast<int> ((beatBeforeNo % 4 + 4) % 4);
         const int restartsBefore = before.analysisRestarts;
         const int rotBefore = before.barRotations;
         const bool starved = before.analysisGaps > 0;
@@ -1386,18 +1395,34 @@ void vpRunBarReentryTests (int& passed, int& failed)
         auto after = eng.snapshot();
         const int beatAfter = std::clamp (static_cast<int> (after.barPhase * 4.0f), 0, 3);
 
-        std::printf ("bar-reentry    before beat=%d rot=%d  hole reentry=%d restarts %d->%d  "
-                     "after beat=%d rot=%d trusted=%d\n",
-                     beatBefore, rotBefore, reentryOpened ? 1 : 0,
+        // Where the *model* says the one is at the instant we look, which is
+        // not beat zero unless the pumping happens to stop on a downbeat.
+        //
+        // This used to assert zero outright. That was true while the recovery
+        // window was four bars and a second - 27.797 s lands on beat 46, and
+        // 46 + 2 is a multiple of four - and stopped being true when the window
+        // was tightened to two bars: 22.0 s lands on beat 36, and the count
+        // reads 2 because 2 is where the one now is. Measured at six window
+        // lengths from 4.8 s to 10.6 s, the reading matched `(beatNo + 2) % 4`
+        // at every one of them, so what the old assertion caught was its own
+        // arithmetic rather than the bar.
+        const double lookedAtSec = static_cast<double> (pos) / sr;
+        const long long beatNo = static_cast<long long> (lookedAtSec * trackBpm / 60.0);
+        const int beatWanted = static_cast<int> (((beatNo + 2) % 4 + 4) % 4);
+
+        std::printf ("bar-reentry    before beat=%d (l'uno e' su %d) rot=%d  hole reentry=%d "
+                     "restarts %d->%d  after beat=%d (atteso %d) rot=%d trusted=%d\n",
+                     beatBefore, beatBeforeWanted, rotBefore, reentryOpened ? 1 : 0,
                      restartsBefore, restartsDuring,
-                     beatAfter, after.barRotations, after.barTrusted ? 1 : 0);
+                     beatAfter, beatWanted, after.barRotations,
+                     after.barTrusted ? 1 : 0);
 
         expect (starved || (before.state == vp::TrackingState::following && before.bpm > 40.0f),
                 "cut test is following before the hole");
         expect (starved || restartsDuring == restartsBefore,
                 "a two-quarter hole does not restart the tempo decoder");
-        expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == 0),
-                "within two bars of the return the one is beat zero again");
+        expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == beatWanted),
+                "within two bars of the return the count is back on the model's one");
         expect (starved || after.barTrusted,
                 "once the window closes the clap can trust the one");
         (void) pos;

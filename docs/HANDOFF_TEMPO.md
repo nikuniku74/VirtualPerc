@@ -690,3 +690,160 @@ colonna «fase» misura, vista da un'altra parte.
 
 Prossima azione: nessuna correzione ulteriore senza materiale reale a livelli
 diversi. A e B restano aperti negli item di `docs/TODO.md`.
+
+## Il pettine che cambia idea sotto una parte che suona — 08/09/2026
+
+Due riproduzioni indipendenti dello stesso comportamento, da estremi opposti
+dello sweep di livello:
+
+```
+--level 168, riga clip:
+  TR t=14.00 bpm=167.78 neur=168.13 comb=168.07 conf=0.97 res=0.014 settled=1
+  TR t=15.00 bpm= 84.03 neur= 84.03 comb= 84.03 conf=0.54 res=1.000 settled=1
+
+VPLive --gain -18 sulla registrazione reale:
+  t=12  orologio=92.16   decoder=91.84   pettine=91.46   residuo=0.134
+  t=14  orologio=182.37  decoder=182.37  pettine=182.37  residuo=1.000
+```
+
+In entrambi la griglia era sana e assestata, e poi **il pettine stesso** ha
+nominato l'ottava sbagliata e il decoder l'ha seguito. Le sorgenti sono
+d'accordo fra loro sul valore sbagliato, quindi nessun arbitraggio fra loro può
+aiutare: sbagliato è il **momento**, non l'evidenza.
+
+### Dove mancava la regola
+
+`BeatTracker::updateAutoOctave` rifiuta già di muovere il livello metrico sotto
+una parte che suona, e spiega perché per quindici righe: dimezzare o raddoppiare
+sotto un percussionista non è una correzione di tempo, è la griglia su cui sta
+suonando che si sposta, e la densità della parte, dove cade la battuta e cosa
+dice il display diventano sbagliati tutti insieme.
+
+Quella regola poteva però valere **solo sullo shift del tracker**. Il decoder
+può dimezzare il tempo che riporta, e allora `autoOctave` resta a zero mentre la
+griglia si muove lo stesso: la protezione era un piano troppo in alto.
+
+### Correzione
+
+`sounding` arriva al decoder con lo stesso passaggio già usato per l'ottava
+dell'utente e per `lineFeed`: `BeatTracker` → `NeuralBeatTracker` (atomica) →
+`BeatDecoder`. Nel voto dello snap d'ottava:
+
+```cpp
+const bool levelHeldWhilePlaying = sounding && ! provisional && octaveArgument;
+```
+
+Solo un'argomentazione **sull'ottava** viene rifiutata, e solo quando il livello
+ha smesso di essere provvisorio:
+
+- un tempo che è davvero cambiato non è vicino a un numero intero di ottave e
+  passa ancora (è la stessa `octaveArgument` introdotta poco sopra);
+- un ingresso nuovo azzera `established` via `notifyInputRestart` e non è
+  coperto da questa regola;
+- finché il livello è `provisional` — circa i primi 8-11 s, fino a
+  `levelSettled` — le correzioni funzionano come prima, il che lascia una
+  valvola di sicurezza a un'acquisizione sbagliata;
+- se il livello tenuto è quello sbagliato, la via d'uscita è quella che l'item
+  17 nomina già: ÷2 / ×2.
+
+### Misure
+
+- `VPTests --level`: **15 PASS / 1 FAIL**, da 13/3. La riga 168 clippata passa
+  da «si assesta a 84, nessun rientro» a ottava 0.29 s, ingresso 0.41 s, finale
+  **168.03**, fase 2.6 ms, rientro 0.01 s. A 168 BPM ora **8 PASS / 0 FAIL**.
+  Nessuna riga peggiora; a 52 BPM tutto invariato.
+- `VPLive --gain -18` sulla registrazione: BPM medio **121.06 → 91.08**
+  (scarto 33% → 0.09%), e la traccia non tocca più 182. I livelli 0 / -6 / -12
+  sono identici al decimo di millisecondo.
+- `VPTests --octave`: 7 PASS / 4 FAIL, **identico**, compresi i tasti ÷2 e ×2.
+- `VPTests --tempo-slow`: 10 PASS. `--state-timing`: 3 PASS.
+- `VPAlign`: **identico**.
+- `probe_matrix` (360 corse) e `probe_tempo_step`: **identici**. Vale la pena
+  dirlo per intero: quei due banchi pilotano `BeatDecoder` da soli e non
+  chiamano mai `setSounding`, quindi `sounding` resta falso e la nuova regola
+  non si attiva. Non possono regredire per questa modifica **e non possono
+  neanche validarla**: la copertura viene da `--level`, `--octave` e `VPLive`.
+
+### Limiti
+
+- Una sezione **half-time vera dentro il brano** è un cambio d'ottava sotto una
+  parte che suona, e adesso viene rifiutato. È esattamente lo scambio che
+  l'item 17 aveva già accettato per il tracker; qui vale anche per il decoder.
+  ÷2 / ×2 restano la via manuale.
+- A -18 dB la deriva media resta **61.6 ms** (max 349.3): il tempo ora è giusto
+  per tutta la corsa, ma la fase a quel livello è comunque povera. È lo stesso
+  degrado che la colonna «fase» di `--level` misura, non l'ottava.
+- Resta aperto il caso A (91 BPM a 0 dB, `tryFastAcquire` che pubblica 64.55
+  contro uno state space a 115.38 con margine negativo): non è un'ottava, quindi
+  questa regola non lo tocca, ed è giusto così.
+- **`VPTests --bar` fallisce** («within two bars of the return the one is beat
+  zero again»), e falliva già a `dcff368` e prima delle modifiche di oggi:
+  verificato ricostruendo entrambi. Non è una regressione di questo lavoro, ma
+  non risulta annotato da nessuna parte — l'item 2 di `docs/TODO.md` è segnato
+  chiuso.
+
+## `VPTests --bar`: il test era sbagliato, non la battuta — 08/09/2026
+
+Il fallimento («within two bars of the return the one is beat zero again») e'
+piu' vecchio di tutto il lavoro di oggi: identico a `e5cc06e`, `11618cb`,
+`aa97ced`, `9fcaf02` e `dcff368`, ricostruiti uno per uno. Deterministico su
+tre corse.
+
+**Causa.** L'asserzione pretendeva `beatAfter == 0` alla lettera. Ma
+`barPhase * 4` e' la posizione nella battuta **all'istante in cui si guarda**, e
+lo stub `ShiftBarModel` mette l'uno dove `(beatNo + 2) % 4 == 0`. Quello zero era
+vero finche' la finestra di recupero era `fourBarsSec + 1.0`: 27.797 s cade sul
+battito 46, e 46 + 2 e' multiplo di quattro. Il commit `74fe5fc` ha stretto la
+finestra a `twoBarsSec` senza ricontrollare dove si andava a cadere: 22.0 s cade
+sul battito 36, e il conteggio legge 2 perche' **2 e' dove l'uno adesso sta**.
+
+**Prova che il codice e' giusto.** Con la finestra resa variabile, a sei
+lunghezze diverse:
+
+```
+recover=4.8    t=22.0000 beatNo=36 atteso=2 letto=2
+recover=6.0    t=23.2000 beatNo=38 atteso=0 letto=0
+recover=7.2    t=24.4000 beatNo=40 atteso=2 letto=2
+recover=8.4    t=25.6000 beatNo=42 atteso=0 letto=0
+recover=9.6    t=26.8000 beatNo=44 atteso=2 letto=2
+recover=10.6   t=27.7973 beatNo=46 atteso=0 letto=0
+```
+
+Sei istanti su sei. Il rientro della battuta funziona; quello che l'asserzione
+verificava era la propria aritmetica.
+
+**Correzione**: il test calcola `beatWanted = (beatNo + 2) % 4` dall'istante in
+cui guarda, esattamente come fa gia' il test gemello `bar-seek` due blocchi piu'
+sotto (`const int expected = ((fileBeat - 2) % 4 + 4) % 4;`). `VPTests --bar`:
+**10 PASS / 0 FAIL**, tre corse identiche. Nessun codice di produzione toccato.
+
+**E l'uno che sembrava non allinearsi da solo.** Prima del buco il conteggio
+legge 3 dove l'uno del modello e' su 2, con `rot=0`. Avevo scritto che non si
+allineava mai da solo: **e' sbagliato, si allinea**, solo molto piu' tardi di
+quei sedici secondi.
+
+Tracciando `tryAlignFrom`, l'opinione e' schiacciante fin dall'inizio -
+`best=1 bestV=0.92 runner=0.03` - e a fermarla e' una cosa sola: `evid`, cioe'
+`voteBeats`, non arriva mai a `kBeatsToMoveTheBar`. Spostando il buco:
+
+```
+cut=16 s   t=16.00 beatNo=26 l'uno e' su 2  letto=3  rot=0
+cut=28 s   t=28.00 beatNo=46 l'uno e' su 2  letto=3  rot=0
+cut=32 s   t=32.00 beatNo=53 l'uno e' su 1  letto=1  rot=1
+cut=40 s   t=40.00 beatNo=66 l'uno e' su 2  letto=2  rot=1
+```
+
+La rotazione cade fra i **46.7 e i 53.3 battiti**, ed e' esattamente il conto:
+`voteBeats = voteBeats * kVoteDecay + 1` con `kVoteDecay = 0.982` converge a
+55.6 e attraversa 32 al **quarantasettesimo battito** - dodici battute,
+ventinove secondi a 100 BPM, cinquantanove a 50.
+
+Quindi non e' un difetto: e' il prezzo, voluto, di spostare una battuta che
+l'ascoltatore sente. Quello che mancava era che il numero non fosse scritto da
+nessuna parte - «32» non dice «dodici battute». Ora e' annotato accanto alla
+costante, con la misura. Resta una domanda per l'utente, non un bug: se l'app
+entra sull'uno sbagliato, ci mette mezzo minuto a correggersi da sola (e il
+tasto «SPOSTA L'1» e' li' per quello).
+
+Il test stampa ora anche dove l'uno **e'** prima del buco, cosi' quella riga si
+legge senza rifare il conto.

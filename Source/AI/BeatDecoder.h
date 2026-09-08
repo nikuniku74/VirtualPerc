@@ -133,6 +133,9 @@ public:
         room. The two are not the same signal and the acquisition threshold is
         not the same number; see kAnchorAcquireMarginLine. */
     void setLineFeed (bool on) noexcept { lineFeed = on; }
+    /** Whether a part is sounding right now. Only the octave snap reads it:
+        see the note beside `levelHeldWhilePlaying` in `updateTempo`. */
+    void setSounding (bool on) noexcept { sounding = on; }
 
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
@@ -371,6 +374,7 @@ private:
     int   octaveShift = 0;
     bool  useAnchor = false;
     bool  lineFeed = false;
+    bool  sounding = false;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear

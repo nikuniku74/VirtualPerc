@@ -2074,7 +2074,31 @@ void BeatDecoder::updateTempo() noexcept
     // on every single beat, it disagrees on most of them; a counter that reset
     // on the first agreeing beat never got anywhere against that, which is how
     // a level chosen in the first seconds outlived every correction.
-    if (combDisagrees && tempo.salience() > kOctaveSnapSalience)
+    // The level is chosen while nothing is sounding and held for as long as the
+    // part plays. `BeatTracker::updateAutoOctave` says why, at length: halving
+    // or doubling under a percussionist is not a tempo correction, it is the
+    // grid they are playing against moving, and the density of the part, where
+    // the bar falls and what the display says are all wrong at once.
+    //
+    // That rule could only ever cover the tracker's own shift. Measured twice
+    // here, from both ends of the level sweep: a clipped 168 BPM kit runs
+    // fourteen seconds of a healthy grid (residual 0.014, level settled) and
+    // then the *fold* names 84.03 and the tempo halves under a playing part;
+    // and the same recording at -18 dB locks 91 and then goes to 182.37 for
+    // fourteen seconds. In both the sources agree with each other on the wrong
+    // answer, so no arbitration between them can help - what is wrong is the
+    // moment, not the evidence.
+    //
+    // Only an argument about the octave is refused, and only once the level has
+    // stopped being provisional. A tempo that genuinely changed is not near a
+    // whole number of octaves and still gets through; a new input clears
+    // `established` through `notifyInputRestart` and is not covered by this at
+    // all; and if the held level is the wrong one, the way out is the same one
+    // item 17 names - the listener taps ÷2 or ×2.
+    const bool levelHeldWhilePlaying = sounding && ! provisional && octaveArgument;
+
+    if (combDisagrees && ! levelHeldWhilePlaying
+        && tempo.salience() > kOctaveSnapSalience)
     {
         // A vote is for one specific level. On ambiguous material the comb does
         // not merely disagree with the grid, it disagrees with itself - 208,

@@ -26,6 +26,15 @@ namespace
     // could even call the first quarter. The confidence margin below still has
     // to win; this only removes evidence that arrived after the deadline.
     constexpr float kBeatsToTrustTheBar = 7.0f;
+    // What 32 costs, written down because it is not obvious from the number:
+    // the counter is `v = v * kVoteDecay + 1`, so it converges to 55.6 and
+    // crosses 32 on the forty-seventh beat - twelve bars, twenty-nine seconds
+    // at 100 BPM and fifty-nine at 50. Measured on the bar bench by moving the
+    // hole: the count is still on the wrong beat at 46.7 beats of clean
+    // downbeats and has rotated by 53.3. That is the deliberate price of
+    // moving a bar the listener can hear - one tap fixes a bar that is
+    // consistently wrong, nothing fixes one that keeps moving - but it is a
+    // long time to play on the wrong one, so change it knowing the number.
     constexpr float kBeatsToMoveTheBar = 32.0f;
     // Two bars: with per-beat decay a threshold of 7 is crossed by the eighth
     // vote. After a hole the new downbeats are a flip of 1 vs 3, not a noisy
@@ -1683,6 +1692,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     out.percussionShouldPlay = canPlay && ! waitForQuantize;
     sounding = out.percussionShouldPlay;
+    // The decoder holds its own metrical level under a playing part for the
+    // same reason `updateAutoOctave` holds the shift above it.
+    neural.setSounding (sounding);
     if (out.percussionShouldPlay)
         hadPlayed = true;
     out.tapLocked = tapHold;
