@@ -74,6 +74,15 @@ namespace
     juce::Colour sliderTrack() { return gDarkMode ? ink() : juce::Colour (0xffd9d2dc); }
     juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
     juce::Colour mute()    { return gDarkMode ? juce::Colour (0xffa8a8b4) : juce::Colour (0xff655e6a); }
+
+    // STRUMENTI voices. Off stays ink(); on is a light pastel so each part
+    // reads as a different tile without opening the label. Tuned to sit
+    // apart from each other and from the light-theme ink (0xffe8e3ea).
+    juce::Colour voiceShakerOn()  { return juce::Colour (0xffd2d0cc); } // grigetto
+    juce::Colour voiceCongasOn()  { return juce::Colour (0xffe4cbb4); } // marroncino
+    juce::Colour voiceCembaloOn() { return juce::Colour (0xffeadcaa); } // dorato
+    juce::Colour voiceClapOn()    { return juce::Colour (0xffc5dcea); } // azzurrino
+    juce::Colour voiceOnText()    { return juce::Colour (0xff18141b); }
     juce::Font fontDisplay (float h)
     {
         return juce::Font (juce::FontOptions().withName ("Futura").withStyle ("Bold").withHeight (h));
@@ -133,8 +142,12 @@ namespace
         auto bounds = button.getLocalBounds().toFloat();
         const bool hotFill = fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
         const bool active = button.getToggleState() || down || hotFill;
+        // Pastel on-fills (STRUMENTI voices) sit below the hotFill
+        // saturation cut, so they would otherwise paint as ink().
+        const bool voiceOn = button.getToggleState()
+                             && (bool) button.getProperties().getWithDefault ("voiceOnFill", false);
 
-        g.setColour (hotFill || down ? fuchsia() : ink());
+        g.setColour (hotFill || down ? fuchsia() : (voiceOn ? fill : ink()));
         g.fillRect (bounds);
 
         // PARTE / STRUMENTI are a row of squares: without an edge they read as
@@ -389,6 +402,10 @@ MainComponent::MainComponent()
     setupBtn (congasButton, ink());
     setupBtn (cembaloButton, ink());
     setupBtn (clapButton, ink());
+    shakerButton.getProperties().set ("voiceOnFill", true);
+    congasButton.getProperties().set ("voiceOnFill", true);
+    cembaloButton.getProperties().set ("voiceOnFill", true);
+    clapButton.getProperties().set ("voiceOnFill", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
     setupBtn (dynamicsButton, ink());
@@ -933,6 +950,16 @@ void MainComponent::refreshThemeColours()
         button->setColour (juce::TextButton::textColourOffId, text());
         button->setColour (juce::TextButton::textColourOnId, text());
     }
+
+    auto paintVoiceOn = [] (juce::TextButton& b, juce::Colour onFill)
+    {
+        b.setColour (juce::TextButton::buttonOnColourId, onFill);
+        b.setColour (juce::TextButton::textColourOnId, voiceOnText());
+    };
+    paintVoiceOn (shakerButton, voiceShakerOn());
+    paintVoiceOn (congasButton, voiceCongasOn());
+    paintVoiceOn (cembaloButton, voiceCembaloOn());
+    paintVoiceOn (clapButton, voiceClapOn());
 
     reverbLabel.setColour (juce::Label::textColourId, mute());
     reverbValue.setColour (juce::Label::textColourId, fuchsia());
