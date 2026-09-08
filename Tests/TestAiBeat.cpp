@@ -8763,6 +8763,82 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool harmonicOctaveReference (float bpm)
+    {
+        constexpr double sr=48000;
+        constexpr int block=256;
+        const double seconds=4.0+11.0*4.0*60.0/bpm;
+        probe::SongOptions opt; opt.bpm=bpm; opt.breakdown=false;
+        std::vector<float> mix(static_cast<size_t>(sr*seconds),0);
+        probe::SongStems stems;
+        probe::renderSong(mix,opt,sr,143,nullptr,&stems);
+        HarmonicChange detector; detector.prepare(sr);
+        HarmonicTempo tempo; tempo.prepare(sr);
+        int changes=0; double ready=-1;
+        for(int pos=0;pos<static_cast<int>(mix.size());pos+=block)
+        {
+            const int n=std::min(block,static_cast<int>(mix.size())-pos);
+            HarmonicChange::Change events[HarmonicChange::kMaxChanges];
+            const int got=detector.process(stems.music.data()+pos,n,events,HarmonicChange::kMaxChanges);
+            changes+=got;
+            for(int i=0;i<got;++i) tempo.addChange(events[i].offset,events[i].strength);
+            tempo.process(n);
+            if(tempo.phaseValid()&&ready<0) ready=pos/sr;
+        }
+        const bool ok=ready>=0&&std::fabs(tempo.bpm()-bpm)<2;
+        std::printf("harmonic-octave-reference target=%.0f changes=%d ready=%.3fs bpm=%.3f coherence=%.3f %s\n",
+            bpm,changes,ready,tempo.bpm(),tempo.coherence(),ok?"PASS":"FAIL");
+        return ok;
+    }
+
+    static bool harmonicNeuralAudio (float bpm, bool sustained)
+    {
+        constexpr double sr=48000, seconds=12;
+        constexpr int block=256;
+        probe::SongOptions opt; opt.bpm=bpm; opt.sustained=sustained; opt.breakdown=false;
+        std::vector<float> mix(static_cast<size_t>(sr*seconds),0);
+        probe::SongStems stems;
+        probe::renderSong(mix,opt,sr,143,nullptr,&stems);
+
+        HarmonicChange detector; detector.prepare(sr);
+        BeatTracker t; t.prepare(sr); t.setSpeakerFollow(false);
+        t.setSourceAudible(true); t.start();
+        PercussionEngine perc; perc.prepare(sr); perc.setHumanization(0); perc.setReverbAmount(0);
+        perc.setCongasEnabled(false); perc.setSubdivision(Subdivision::quarter);
+        t.setReportedLatencyMs(perc.attackLeadMs());
+        std::vector<float> audio(mix.size(),0);
+        float right[block];
+        BeatTracker::Output out;
+        double entered=-1; int neuralBlocks=0,harmonicBlocks=0,late=0;
+        const int hop=static_cast<int>(std::ceil(kBeatModelHop*sr/kBeatModelSampleRate));
+        for(int pos=0;pos<static_cast<int>(mix.size());pos+=block)
+        {
+            const int n=std::min(block,static_cast<int>(mix.size())-pos);
+            HarmonicChange::Change events[HarmonicChange::kMaxChanges];
+            const int got=detector.process(stems.music.data()+pos,n,events,HarmonicChange::kMaxChanges);
+            for(int i=0;i<got;++i) t.notifyHarmonicChange(events[i].offset,events[i].strength);
+            t.setHarmonicShare(detector.tonalShare());
+            out=t.process(stems.music.data()+pos,n);
+            harmonicBlocks+=out.harmonicTempoSource?1:0;
+            neuralBlocks+=out.bpm>=50&&!out.harmonicTempoSource?1:0;
+            if(out.percussionShouldPlay&&entered<0) entered=pos/sr;
+            std::fill(right,right+n,0);
+            perc.setGroove(out.clock.tempoBpm,4);
+            perc.render(audio.data()+pos,right,n,out.clock,out.percussionShouldPlay);
+            const auto until=std::chrono::steady_clock::now()+std::chrono::milliseconds(50);
+            while(t.analysisBacklog()>hop&&std::chrono::steady_clock::now()<until)
+                std::this_thread::yield();
+            if(t.analysisBacklog()>hop) ++late;
+        }
+        t.suspendAnalysis();
+        const double twoBars=8.0*60.0/bpm;
+        const bool ok=entered>=0&&entered<=twoBars&&std::fabs(out.bpm-bpm)<2&&neuralBlocks>0&&late==0;
+        std::printf("harmonic-neural target=%.0f sustained=%d entry=%.3fs limit=%.3fs bpm=%.3f conf=%.3f fit=%.3f/%.3f comb=%.3f settled=%d state=%d neuralBlocks=%d harmonicBlocks=%d late=%d %s\n",
+            bpm,sustained,entered,twoBars,out.bpm,out.confidence,out.fitResidual,out.fitCoverage,
+            out.combBpm,out.levelSettled,static_cast<int>(out.state),neuralBlocks,harmonicBlocks,late,ok?"PASS":"FAIL");
+        return ok;
+    }
+
     static bool harmonicAbstention (bool drums)
     {
         constexpr double sr=48000, seconds=24;
@@ -8834,6 +8910,7 @@ struct BeatTrackerTimingProbe
         double validSeconds = 0, selectedSeconds = 0;
         float maxReadyShare = 0;
         int changes = 0, phaseBlocks = 0, clockPulses = 0;
+        std::vector<double> changeTimes;
         BeatTracker::Output out;
         // Actual detector events only, including startup. No chord dates or
         // beat activations are injected. Analysis conditioning/ONNX/room are
@@ -8844,7 +8921,11 @@ struct BeatTrackerTimingProbe
             HarmonicChange::Change events[HarmonicChange::kMaxChanges];
             const int got = detector.process (stems.music.data()+pos,n,events,HarmonicChange::kMaxChanges);
             changes += got;
-            for (int i=0;i<got;++i) t.notifyHarmonicChange(events[i].offset,events[i].strength);
+            for (int i=0;i<got;++i)
+            {
+                changeTimes.push_back((pos+events[i].offset)/sr);
+                t.notifyHarmonicChange(events[i].offset,events[i].strength);
+            }
             t.setHarmonicShare(detector.tonalShare());
             out = t.process(stems.music.data()+pos,n);
             if (t.harmonicTempo.phaseValid() && recognized < 0) recognized = pos/sr;
@@ -8896,6 +8977,12 @@ struct BeatTrackerTimingProbe
             && phaseBlocks>0 && clockPulses>0 && worstPhaseMs<25 && worstClockMs<25 && worstAudioMs<25;
         std::printf("harmonic-audio sustained=%d changes=%d ready=%.3fs valid=%.3fs readyShareMax=%.3f selected=%.3fs entry=%.3fs bpm=%.3f coherence=%.3f phaseBlocks=%d phaseWorst=%.2fms clockPulses=%d clockWorst=%.2fms attacks=%d audioWorst=%.2fms %s\n",
             sustained,changes,recognized,validSeconds,maxReadyShare,selectedSeconds,entered,out.bpm,t.harmonicTempo.coherence(),phaseBlocks,phaseBlocks?worstPhaseMs:-1,clockPulses,clockPulses?worstClockMs:-1,attacks,attacks?worstAudioMs:-1,ok?"PASS":"FAIL");
+        if (!sustained)
+        {
+            std::printf("harmonic-change-times");
+            for(double at:changeTimes) std::printf(" %.3f",at);
+            std::printf("\n");
+        }
         return ok;
     }
     static bool harmonicEntry (double sr, bool speaker)
@@ -9011,6 +9098,11 @@ void vpRunHarmonicAudioTest (int& passed, int& failed)
         (vp::BeatTrackerTimingProbe::harmonicAudio(sustained) ? passed : failed)++;
     for (bool drums : {true,false})
         (vp::BeatTrackerTimingProbe::harmonicAbstention(drums) ? passed : failed)++;
+    for (float bpm : {52.0f,100.0f,168.0f})
+    for (bool sustained : {false,true})
+        (vp::BeatTrackerTimingProbe::harmonicNeuralAudio(bpm,sustained) ? passed : failed)++;
+    for (float bpm : {52.0f,168.0f})
+        (vp::BeatTrackerTimingProbe::harmonicOctaveReference(bpm) ? passed : failed)++;
 }
 
 void vpRunSlowTempoRegressionTest (int& passed, int& failed)

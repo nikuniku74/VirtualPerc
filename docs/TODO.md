@@ -749,6 +749,15 @@ Restano due FAIL: ingresso oltre 4.8 s e caso con pad senza fase valida. Serve
 una fonte di pulse non percussivo; non è risolto l'ingresso entro due battute.
 Dettagli nel passaggio di consegne.
 
+**Verifica worker reale 08/09:** sui soli stems musicali BeatNet passa 100 BPM
+senza pad (2.347 s, 101.940 BPM), ma legge 52 come 103.927 e 168 come 91.585;
+con pad falliscono tutti i 52/100/168. Fit e copertura sono buoni anche sulle
+ottave errate, quindi non sono distinguibili con un'altra soglia di fiducia.
+Ridurre HarmonicTempo a due cambi è stato provato e ripristinato: produce 200
+col pad e coerenza 1.0 sulla batteria. Serve la registrazione reale e, se
+confermata, un modello adatto agli accompagnamenti tonali; niente euristica
+onset è stata lasciata attiva. Misure complete in HANDOFF_TEMPO.md.
+
 **Conclusione storica, limitata alla velocità:** `scripts/probe_steer.cpp`
 (nuovo, clock da solo, deterministico) dà una fase sbagliata di 0,25 di beat per
 **due secondi** e misura quanto ci mette la griglia a rientrare — **0,06–0,28 s**
@@ -1133,6 +1142,65 @@ seguire la band.
   `probe_tempo_step` + `VPAlign`, come queste due.
 - [ ] **Ascolto.** È l'unica verifica che manca: rimettere lo stesso brano live
   swingato a 81 e dire se il congelamento si sente ancora.
+
+---
+
+### 24. A basso livello l'acquisizione prende un'ottava alta falsa 🔴 (2026-09-08, misurato il frontend — causa non ancora corretta)
+
+Riprodotto sulla registrazione dell'utente (`3 INFINITO.mp3`, estratto 30-120 s,
+riferimento 91 BPM). Stesso contenuto musicale, solo il livello cambia:
+
+| livello | avvio | `FISSO` | media finestra | deriva media / max |
+|---|---|---|---|---|
+| `-f 65536` (caldo) | 91 subito | — | 91.06 | 5.3 / 19.0 ms |
+| `-f 8192` (circa -12 dB) | 212.6 BPM, snap a 91.19 solo a 12 s | ~20 s | 94.94 | 15.7 / 257.7 ms |
+
+Non e' "il volume alto fa perdere il tempo": e' il **livello basso** che lascia
+passare una falsa ottava alta durante l'acquisizione. Tenuto il tempo, il
+mantenimento e' buono in entrambi i casi.
+
+**Misurato il frontend (nuovo `VPActivations --wav ... --sweep`).** Primi 12 s
+dell'estratto, guadagno applicato **solo alla copia destinata al modello**:
+
+```bash
+cmake --build build-host --target VPActivations -j4
+./build-host/VPActivations_artefacts/Release/VPActivations \
+  --wav /tmp/vp-infinito-30-120.wav --sweep --secs 12 --gains 0,-6,-12,-18
+```
+
+| gain | rms | magMean | diffMean | pBeat>0.5 | pDown medio | pDown>0.5 |
+|---|---|---|---|---|---|---|
+| 0 dB | -19.5 | 0.2395 | 0.0301 | 33 | 0.035 | 17 |
+| -6 | -25.5 | 0.1595 | 0.0216 | 23 | 0.084 | 30 |
+| -12 | -31.5 | 0.1020 | 0.0148 | 15 | 0.144 | 57 |
+| -18 | -37.5 | 0.0624 | 0.0096 | 3 | 0.169 | 67 |
+
+I fotogrammi di battito confidenti **crollano da 33 a 3** e le attivazioni di
+downbeat **quintuplicano**: al decoder arriva un'evidenza diversa, non piu'
+debole in modo uniforme.
+
+**Il frontend non ha un bug di normalizzazione.** Verificato con un seno a
+1 kHz a fondo scala: `magMax = 2.2666`, cioe' `log10(1 + 183.6)`, contro il
+riferimento madmom analitico `|X|` di picco `352.1` (finestra `/ 32767`, rfft
+non normalizzata) ridotto dal filtro triangolare a somma 1. Scala, finestra e
+filterbank coincidono con BeatNet/madmom. madmom non e' installato qui, quindi
+**non** e' stato fatto un confronto bit-a-bit con l'implementazione originale.
+
+La dipendenza dal livello e' **intrinseca a `log10(1 + x)`**: lo stesso seno
+scende da 2.2666 a 1.3826 a -18 dB. Nessuna AGC nel bus audio; un eventuale
+condizionamento riguarda solo la copia del segnale per il modello.
+
+- [ ] Correggere l'arbitraggio iniziale 91/182-212 (il pettine vede gia' 91 a
+  8-10 s mentre la rete pubblica 208). Evidenza fresca e concordante tra le
+  sorgenti esistenti; niente nuovo onset picker, niente restart del clock.
+- [ ] Regressione mirata del livello: -18/-12/-6/0 dB e caso clippato, su
+  52/91-100/168 BPM; misurare separatamente prima ottava corretta, ingresso,
+  `FISSO`, deriva, recupero.
+- [ ] Verita' di fase annotata sulla registrazione (30-120 / 120-210 / 210-250 s)
+  prima di credere ai picchi isolati da 85-167 ms.
+- [ ] iPad, con variazione del gain hardware.
+
+Dettaglio completo e comandi in `docs/HANDOFF_TEMPO.md`.
 
 ---
 

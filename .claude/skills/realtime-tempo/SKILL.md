@@ -898,6 +898,21 @@ produces zero changes and no BPM. Absent phase/clock/attack measurements print
 Two-bar acquisition needs a non-percussive pulse source; chord changes alone
 cannot provide eight observations in two bars when harmony moves once per bar.
 
+**Do not implement that source as another onset picker.** The next focused run
+fed the same music-only stems through the real BeatNet worker, with every hop
+drained: 100 BPM without pad already passes (entry 2.347 s, reading 101.940),
+but 52 reads 103.927 with fit 0.003/coverage 0.833 and 168 reads 91.585 with
+fit 0.093/coverage 0.909. Those are coherent octave interpretations, not low
+confidence. With pad, 52/100/168 read 147.282/60.685/83.565 and all fail.
+A trial with only two harmonic changes was reverted: pad transiently read 200
+and drums alone reached coherence 1.0. The safe eight-change harmonic reference
+eventually reads 168 as 169.492 at 16.427 s, but never validates 52 in the
+extended fixture. It cannot meet two bars or safely change level under a part
+already playing. The next evidence must be the user's real recording and its
+activation dump; if it agrees, the missing component is a model trained for
+tonal/no-drum beat and downbeat, not a threshold adjustment. Preserve TAP and
+manual octave controls for genuinely ambiguous 52/104 and 84/168 material.
+
 `VPTests --state-timing` checks the four-second low-confidence hold at buffers
 64/256/1024: 4.001333/4.005333/4.010667 s. The counter adds actual samples;
 the confidence filter also uses elapsed time (old 256/48k response preserved).
