@@ -878,6 +878,19 @@ disabled. `VPTests --harmonic-entry` passes at 44.1/48k, with six rendered
 attacks within 2.59/0.23 ms on **scripted chord dates**. At one chord per bar,
 entry costs 18.79 s: this does not prove a two-bar acquisition without drums.
 
+**Actual detector audio gate (2026-09-08, incomplete).** `VPTests
+--harmonic-audio` now renders music-only SongStems (100 BPM, 48k, 256 frames,
+36 s, seed 42) through HarmonicChange -> BeatTracker -> PercussionEngine.
+No scripted chord dates, neural worker, bus conditioning or room. Both cases
+FAIL acquisition: without pad, phase first becomes valid at 17.317 s for only
+1.845 s total, and tonalShare during valid phase peaks at 0.313 (selection
+requires >0.55); with pad, 38 changes never produce valid phase (final coherence
+0.360). Neither produces an audible entry. The pad case retains bass/lead and
+is not a pulse-free sustained-chord test. Absent phase/clock/attack measurements
+print -1, not a zero error. Keep this targeted failing gate separate from the
+passing scripted integration check; do not infer live performance or lower
+thresholds without negative controls. Two-bar acquisition remains unachieved.
+
 `VPTests --state-timing` checks the four-second low-confidence hold at buffers
 64/256/1024: 4.001333/4.005333/4.010667 s. The counter adds actual samples;
 the confidence filter also uses elapsed time (old 256/48k response preserved).

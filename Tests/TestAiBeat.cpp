@@ -8763,6 +8763,94 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool harmonicAudio (bool sustained)
+    {
+        constexpr double sr = 48000, seconds = 36, bpm = 100, beatSec = 60 / bpm;
+        constexpr int block = 256;
+        probe::SongOptions opt;
+        opt.bpm = bpm; opt.sustained = sustained; opt.breakdown = false;
+        std::vector<float> mix (static_cast<size_t>(sr * seconds), 0);
+        probe::SongStems stems;
+        probe::renderSong (mix, opt, sr, 42, nullptr, &stems);
+        HarmonicChange detector;
+        detector.prepare (sr);
+        BeatTracker t;
+        t.sampleRate = sr; t.follower.prepare (sr); t.harmonicTempo.prepare (sr);
+        t.reset(); t.setSpeakerFollow (false); t.setSourceAudible (true);
+        PercussionEngine perc;
+        perc.prepare (sr); perc.setHumanization (0); perc.setReverbAmount (0);
+        perc.setCongasEnabled (false); perc.setSubdivision (Subdivision::quarter);
+        t.setReportedLatencyMs (perc.attackLeadMs()); t.start();
+        std::vector<float> audio (mix.size(), 0);
+        float right[block];
+        double recognized = -1, entered = -1, worstPhaseMs = 0, worstClockMs = 0;
+        double validSeconds = 0, selectedSeconds = 0;
+        float maxReadyShare = 0;
+        int changes = 0, phaseBlocks = 0, clockPulses = 0;
+        BeatTracker::Output out;
+        // Actual detector events only, including startup. No chord dates or
+        // beat activations are injected. Analysis conditioning/ONNX/room are
+        // deliberately excluded to isolate the direct harmonic route.
+        for (int pos = 0; pos < static_cast<int>(mix.size()); pos += block)
+        {
+            const int n = std::min (block, static_cast<int>(mix.size()) - pos);
+            HarmonicChange::Change events[HarmonicChange::kMaxChanges];
+            const int got = detector.process (stems.music.data()+pos,n,events,HarmonicChange::kMaxChanges);
+            changes += got;
+            for (int i=0;i<got;++i) t.notifyHarmonicChange(events[i].offset,events[i].strength);
+            t.setHarmonicShare(detector.tonalShare());
+            out = t.process(stems.music.data()+pos,n);
+            if (t.harmonicTempo.phaseValid() && recognized < 0) recognized = pos/sr;
+            if (t.harmonicTempo.phaseValid())
+            {
+                validSeconds += n/sr;
+                maxReadyShare = std::max(maxReadyShare,detector.tonalShare());
+            }
+            if (out.harmonicTempoSource) selectedSeconds += n/sr;
+            if (out.percussionShouldPlay && entered < 0) entered = pos/sr;
+            if (pos/sr >= seconds-4.8 && t.harmonicTempo.phaseValid())
+            {
+                const double error = t.harmonicTempo.beatPosition(n) - pos/sr/beatSec;
+                worstPhaseMs = std::max(worstPhaseMs,std::fabs(error-std::round(error))*beatSec*1000);
+                ++phaseBlocks;
+            }
+            if (pos/sr >= seconds-4.8 && out.percussionShouldPlay)
+                for (int i=0;i<out.clock.pulsesFired;++i)
+                    if (out.clock.pulseIndex[i] == 0)
+                    {
+                        const double beat = (pos+out.clock.pulseOffset[i])/sr/beatSec;
+                        worstClockMs = std::max(worstClockMs,std::fabs(beat-std::round(beat))*beatSec*1000);
+                        ++clockPulses;
+                    }
+            std::fill(right,right+n,0);
+            perc.setGroove(out.clock.tempoBpm,4);
+            perc.render(audio.data()+pos,right,n,out.clock,out.percussionShouldPlay);
+        }
+        int attacks = 0;
+        double worstAudioMs = 0;
+        // Whole beat cells, not a narrow window that silently drops late hits.
+        // Quarter-only dry shaker: first 20%-of-peak crossing measures attack.
+        for (double beat=seconds-4.8; beat < seconds-beatSec/2; beat+=beatSec)
+        {
+            const int from = static_cast<int>((beat-beatSec/2)*sr);
+            const int to = static_cast<int>((beat+beatSec/2)*sr);
+            float peak = 0;
+            for(int i=from;i<to;++i) peak=std::max(peak,std::fabs(audio[i]));
+            if(peak < 1e-5f) continue;
+            for(int i=from;i<to;++i) if(std::fabs(audio[i])>=peak*.20f)
+            {
+                ++attacks;
+                worstAudioMs=std::max(worstAudioMs,std::fabs(i/sr-beat)*1000);
+                break;
+            }
+        }
+        const bool ok = entered >= 0 && entered <= 8*beatSec
+            && std::fabs(out.bpm-bpm)<1 && attacks==8
+            && phaseBlocks>0 && clockPulses>0 && worstPhaseMs<25 && worstClockMs<25 && worstAudioMs<25;
+        std::printf("harmonic-audio sustained=%d changes=%d ready=%.3fs valid=%.3fs readyShareMax=%.3f selected=%.3fs entry=%.3fs bpm=%.3f coherence=%.3f phaseBlocks=%d phaseWorst=%.2fms clockPulses=%d clockWorst=%.2fms attacks=%d audioWorst=%.2fms %s\n",
+            sustained,changes,recognized,validSeconds,maxReadyShare,selectedSeconds,entered,out.bpm,t.harmonicTempo.coherence(),phaseBlocks,phaseBlocks?worstPhaseMs:-1,clockPulses,clockPulses?worstClockMs:-1,attacks,attacks?worstAudioMs:-1,ok?"PASS":"FAIL");
+        return ok;
+    }
     static bool harmonicEntry (double sr, bool speaker)
     {
         BeatTracker t;
@@ -8868,6 +8956,12 @@ void vpRunHarmonicEntryTest (int& passed, int& failed)
     for (double sr : {44100.0,48000.0})
     for (bool speaker : {false,true})
         (vp::BeatTrackerTimingProbe::harmonicEntry(sr,speaker) ? passed : failed)++;
+}
+
+void vpRunHarmonicAudioTest (int& passed, int& failed)
+{
+    for (bool sustained : {false,true})
+        (vp::BeatTrackerTimingProbe::harmonicAudio(sustained) ? passed : failed)++;
 }
 
 void vpRunSlowTempoRegressionTest (int& passed, int& failed)

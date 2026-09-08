@@ -19,6 +19,7 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only = nullptr)
 void vpRunSlowTempoRegressionTest (int& passed, int& failed);
 void vpRunStateTimingTest (int& passed, int& failed);
 void vpRunHarmonicEntryTest (int& passed, int& failed);
+void vpRunHarmonicAudioTest (int& passed, int& failed);
 
 /** The own-output / analysis-epoch benches. Part of the full suite, and
     runnable on their own with `VPTests --makeup`: they drive the neural worker

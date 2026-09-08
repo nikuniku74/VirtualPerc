@@ -1,7 +1,8 @@
 # Ripresa del lavoro sul tempo
 
 Richiesta: implementare progressivamente il piano approvato, con test mirati e
-commit locali separati. Non eseguire la suite completa. Nessuna modifica al
+commit locali separati. **Ultima istruzione utente: proseguire SENZA committare**;
+questa prevale sul piano iniziale. Non eseguire la suite completa. Nessuna modifica al
 submodule JUCE, già sporco all'inizio. Nessuna promessa di perfezione su audio
 ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 
@@ -11,15 +12,15 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 2. COMPLETATO: contatori indipendenti dal buffer.
 3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.
 4. COMPLETATO (integrazione con date accordi note): percorso armonico diretto.
-5. PARZIALE: verifiche mirate concluse; restano detector armonico su audio e
-   registrazione live dell'utente. Non dichiarare l'intero obiettivo raggiunto.
+5. INCOMPLETO: detector armonico provato su audio sintetico, due casi falliscono
+   l'ingresso (dettagli sotto). Registrazione live ancora da provare.
 
 ## Regole per riprendere
 
 Leggere `.claude/skills/realtime-tempo/SKILL.md`, questo file e `git status`.
 Continuare dal primo step incompleto. Salvare qui comandi, risultati, limiti e
-prossima azione dopo ogni step; creare un commit per step verificato includendo
-soltanto file pertinenti. I precedenti 8 ms / mezzo beat erano misure del solo
+prossima azione dopo ogni step; non creare commit finché l'utente non lo richiede.
+I precedenti 8 ms / mezzo beat erano misure del solo
 clock con fase esatta e fiducia simulata, non dell'app sul brano live.
 
 ## Verifica prevista
@@ -103,9 +104,37 @@ su iPad. Non è stata eseguita la suite completa.
 
 ## Prossima azione concreta
 
-Estendere `--harmonic-entry` con `HarmonicChange` alimentato dai soli stems
-musicali di `probe_song_render.h`, senza date di accordi preimpostate, misurando
-tempo di riconoscimento, fase e attacchi renderizzati nella medesima prova.
+Il nuovo `--harmonic-audio` alimenta HarmonicChange con i soli stems musicali
+di `probe_song_render.h` (basso e melodia, con/senza pad sostenuto), poi usa
+BeatTracker e PercussionEngine nello stesso percorso. 36 s sintetici a 100 BPM,
+48 kHz, buffer 256, seed 42; nessuna data di accordo iniettata, nessun worker
+neurale. Include gli eventi iniziali del detector come in produzione. Esclusi
+condizionamento del bus, stanza e ritorno delle percussioni. Il caso col pad
+NON è un accordo isolato senza pulsazione: conserva basso e melodia.
+
+Comandi eseguiti (nessuna suite completa, nessun commit):
+
+- `cmake --build build-host --target VPTests -j4`: PASS.
+- `./build-host/VPTests_artefacts/Release/VPTests --harmonic-audio`: exit 1, due FAIL, circa 0.8 s host.
+- `./build-host/VPTests_artefacts/Release/VPTests --harmonic-entry`: quattro PASS, controllo con date note invariato.
+
+Risultati del nuovo gate, che richiede ingresso entro 4.8 s e attacchi entro
+25 ms nelle ultime due battute:
+
+- Senza pad: 15 cambi; fase valida per la prima volta a 17.317 s, valida per
+  soli 1.845 s complessivi. In quelle finestre tonalShare arriva al massimo a
+  0.313, sotto lo 0.55 richiesto dal selettore. Fonte mai selezionata; nessun
+  ingresso, nessun attacco.
+- Con pad: 38 cambi; fase mai valida, coerenza finale 0.360. Nessun ingresso,
+  nessun attacco. Il solo numero di eventi non prova quali siano falsi.
+- Errori fase/clock/audio stampati a -1 quando non misurabili: NON zero errore.
+
+La strumentazione è pronta, ma lo step NON è completato e non è stata cambiata
+alcuna soglia DSP per far passare il test. Prossima azione: analizzare il gate
+di tonalità sul basso/melodia e la stabilità degli eventi col pad, con controlli
+negativi per batteria e accordi senza pulsazione prima di modificare i criteri.
+Gli otto cambi richiesti restano inoltre incompatibili con due battute quando
+c'è un solo accordo per battuta: non basta correggere il selettore di fonte.
 Poi usare la registrazione live dell'utente (non identificata in questa sessione).
 L'obiettivo entro due battute resta aperto per l'armonia rada: non abbassare il
 numero di cambi alla cieca, né attivare il percorso acustico non verificato.
