@@ -8763,6 +8763,53 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool harmonicAbstention (bool drums)
+    {
+        constexpr double sr=48000, seconds=24;
+        constexpr int block=256;
+        std::vector<float> signal(static_cast<size_t>(sr*seconds),0);
+        if (drums)
+        {
+            probe::SongOptions opt; opt.bpm=100; opt.breakdown=false;
+            std::vector<float> mix(signal.size(),0);
+            probe::SongStems stems;
+            probe::renderSong(mix,opt,sr,91,nullptr,&stems);
+            for(size_t i=0;i<signal.size();++i)
+                signal[i]=stems.kick[i]+stems.snare[i]+stems.hats[i];
+        }
+        else
+        {
+            // A loud, perfectly tonal chord with no pulse. Tonality alone must
+            // never manufacture tempo or phase.
+            for(size_t i=0;i<signal.size();++i)
+            {
+                const double t=i/sr;
+                signal[i]=.10f*static_cast<float>(std::sin(2*juce::MathConstants<double>::pi*261.63*t)
+                    +.8*std::sin(2*juce::MathConstants<double>::pi*329.63*t)
+                    +.7*std::sin(2*juce::MathConstants<double>::pi*392.00*t));
+            }
+        }
+        HarmonicChange detector; detector.prepare(sr);
+        HarmonicTempo tempo; tempo.prepare(sr);
+        int changes=0; bool valid=false; float maxShare=0,maxCoherence=0;
+        for(int pos=0;pos<static_cast<int>(signal.size());pos+=block)
+        {
+            const int n=std::min(block,static_cast<int>(signal.size())-pos);
+            HarmonicChange::Change events[HarmonicChange::kMaxChanges];
+            const int got=detector.process(signal.data()+pos,n,events,HarmonicChange::kMaxChanges);
+            changes+=got;
+            for(int i=0;i<got;++i) tempo.addChange(events[i].offset,events[i].strength);
+            tempo.process(n);
+            valid|=tempo.phaseValid();
+            maxShare=std::max(maxShare,detector.tonalShare());
+            maxCoherence=std::max(maxCoherence,tempo.coherence());
+        }
+        const bool ok=!valid && tempo.bpm()<50;
+        std::printf("harmonic-control source=%s changes=%d shareMax=%.3f coherenceMax=%.3f valid=%d bpm=%.3f %s\n",
+            drums?"drums":"held-chord",changes,maxShare,maxCoherence,valid,tempo.bpm(),ok?"PASS":"FAIL");
+        return ok;
+    }
+
     static bool harmonicAudio (bool sustained)
     {
         constexpr double sr = 48000, seconds = 36, bpm = 100, beatSec = 60 / bpm;
@@ -8962,6 +9009,8 @@ void vpRunHarmonicAudioTest (int& passed, int& failed)
 {
     for (bool sustained : {false,true})
         (vp::BeatTrackerTimingProbe::harmonicAudio(sustained) ? passed : failed)++;
+    for (bool drums : {true,false})
+        (vp::BeatTrackerTimingProbe::harmonicAbstention(drums) ? passed : failed)++;
 }
 
 void vpRunSlowTempoRegressionTest (int& passed, int& failed)

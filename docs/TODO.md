@@ -742,10 +742,12 @@ rientrare nel tempo»*.
 velocità, non della fase; non esclude uno scarto persistente. Risultati e limiti
 aggiornati in `docs/HANDOFF_TEMPO.md`. Step 1–4 salvati; verifica finale parziale
 (detector armonico su audio ora misurato ma non superato; manca registrazione live).
-`VPTests --harmonic-audio`: due FAIL riproducibili a 100 BPM senza batteria,
-nessun ingresso in 36 s. Senza pad la tonalità non supera il gate di selezione
-(max 0.313 durante fase valida, soglia 0.55); con pad manca fase valida.
-Non è risolto l'ingresso entro due battute; dettagli nel passaggio di consegne.
+`VPTests --harmonic-audio`: dopo aver allineato il warm-up produzione/probe e
+rimosso il doppio gate sulla fonte, il caso senza pad entra a 23.371 s, 99.917
+BPM, otto attacchi entro 18.17 ms. Batteria sola e accordo fermo si astengono.
+Restano due FAIL: ingresso oltre 4.8 s e caso con pad senza fase valida. Serve
+una fonte di pulse non percussivo; non è risolto l'ingresso entro due battute.
+Dettagli nel passaggio di consegne.
 
 **Conclusione storica, limitata alla velocità:** `scripts/probe_steer.cpp`
 (nuovo, clock da solo, deterministico) dà una fase sbagliata di 0,25 di beat per

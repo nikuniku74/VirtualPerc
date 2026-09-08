@@ -12,8 +12,9 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 2. COMPLETATO: contatori indipendenti dal buffer.
 3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.
 4. COMPLETATO (integrazione con date accordi note): percorso armonico diretto.
-5. INCOMPLETO: detector armonico provato su audio sintetico, due casi falliscono
-   l'ingresso (dettagli sotto). Registrazione live ancora da provare.
+5. INCOMPLETO: il percorso armonico su audio sintetico ritmico ora aggancia e
+   rende sul tempo, ma non entro due battute; il caso con pad fallisce ancora.
+   Registrazione live ancora da provare.
 
 ## Regole per riprendere
 
@@ -118,23 +119,33 @@ Comandi eseguiti (nessuna suite completa, nessun commit):
 - `./build-host/VPTests_artefacts/Release/VPTests --harmonic-audio`: exit 1, due FAIL, circa 0.8 s host.
 - `./build-host/VPTests_artefacts/Release/VPTests --harmonic-entry`: quattro PASS, controllo con date note invariato.
 
-Risultati del nuovo gate, che richiede ingresso entro 4.8 s e attacchi entro
-25 ms nelle ultime due battute:
+Seconda iterazione, senza commit: `HarmonicChange` ora usa in produzione lo
+stesso warm-up di quattro secondi che il vecchio VPSing applicava solo nel
+probe. Gli eventi instabili di inizializzazione non contaminano più
+HarmonicTempo. La selezione della fonte non richiede più anche il lento
+`tonalShare > 0.55`: una fase armonica valida è già fondata su otto cambi
+freschi e coerenti; qualsiasi BPM neurale resta immediatamente prioritario.
+Il gate di tonalità rimane sul percorso separato che sposta la battuta.
 
-- Senza pad: 15 cambi; fase valida per la prima volta a 17.317 s, valida per
-  soli 1.845 s complessivi. In quelle finestre tonalShare arriva al massimo a
-  0.313, sotto lo 0.55 richiesto dal selettore. Fonte mai selezionata; nessun
-  ingresso, nessun attacco.
-- Con pad: 38 cambi; fase mai valida, coerenza finale 0.360. Nessun ingresso,
+Risultati del gate, che richiede ingresso entro 4.8 s e attacchi entro 25 ms
+nelle ultime due battute:
+
+- Senza pad: 13 cambi; fase e fonte valide da 22.096 s, ingresso a 23.371 s,
+  99.917 BPM, coerenza 0.997. Otto impulsi del clock e otto attacchi; errori
+  massimi 22.27 ms e 18.17 ms. Funziona, ma fallisce il limite di 4.8 s.
+- Con pad: 34 cambi; fase mai valida, coerenza finale 0.355. Nessun ingresso,
   nessun attacco. Il solo numero di eventi non prova quali siano falsi.
+- Batteria sola: 7 cambi, quota tonale max 0.252, nessuna fase/BPM: astensione PASS.
+- Accordo continuo: quota tonale max 0.814 ma zero cambi e zero BPM: astensione PASS.
 - Errori fase/clock/audio stampati a -1 quando non misurabili: NON zero errore.
 
-La strumentazione è pronta, ma lo step NON è completato e non è stata cambiata
-alcuna soglia DSP per far passare il test. Prossima azione: analizzare il gate
-di tonalità sul basso/melodia e la stabilità degli eventi col pad, con controlli
-negativi per batteria e accordi senza pulsazione prima di modificare i criteri.
-Gli otto cambi richiesti restano inoltre incompatibili con due battute quando
-c'è un solo accordo per battuta: non basta correggere il selettore di fonte.
+La strumentazione e i controlli negativi sono pronti, ma lo step NON è
+completato. Gli otto cambi richiesti restano incompatibili con due battute
+quando c'è un solo accordo per battuta: non basta ridurre ancora i gate. Prossima
+azione: aggiungere una fonte di pulsazione non percussiva che usi le articolazioni
+ritmiche di basso/chitarra per l'aggancio rapido, lasciando all'armonia tempo e
+fase di battuta solo quando realmente disponibili; il caso pad deve astenersi
+finché quella fonte non conferma il pulse.
 Poi usare la registrazione live dell'utente (non identificata in questa sessione).
 L'obiettivo entro due battute resta aperto per l'armonia rada: non abbassare il
 numero di cambi alla cieca, né attivare il percorso acustico non verificato.

@@ -198,6 +198,20 @@ public:
             if (moved <= enterNow)
                 typicalMove += (moved - typicalMove) * kTypicalRise;
 
+            // The first chroma is merely the first sound heard, not yet a
+            // musical reference. The original harmony probe discarded these
+            // four seconds, while the production path did not; startup events
+            // could therefore seed HarmonicTempo with a metrical level that
+            // the verified probe never saw. Learn the reference and the local
+            // movement floor during the same measured warm-up, but publish no
+            // change until it is complete.
+            if (absPos < static_cast<std::int64_t> (sampleRate * kPrimeSeconds))
+            {
+                heldHops = 0;
+                peakHeld = 0.0f;
+                continue;
+            }
+
             if (moved > enterNow)
             {
                 if (heldHops == 0)
@@ -271,6 +285,7 @@ private:
     static constexpr double kPi = 3.14159265358979;
     /** Everything harmonic is under 6 kHz, so the whole thing runs there. */
     static constexpr double kWorkRate = 12000.0;
+    static constexpr double kPrimeSeconds = 4.0;
     /** 170 ms at the work rate: a semitone at C3 is 7.8 Hz apart and this
         resolves 5.9, which is the reason the window is not shorter. */
     static constexpr int kWindow = 2048;

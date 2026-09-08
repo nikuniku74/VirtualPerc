@@ -881,15 +881,22 @@ entry costs 18.79 s: this does not prove a two-bar acquisition without drums.
 **Actual detector audio gate (2026-09-08, incomplete).** `VPTests
 --harmonic-audio` now renders music-only SongStems (100 BPM, 48k, 256 frames,
 36 s, seed 42) through HarmonicChange -> BeatTracker -> PercussionEngine.
-No scripted chord dates, neural worker, bus conditioning or room. Both cases
-FAIL acquisition: without pad, phase first becomes valid at 17.317 s for only
-1.845 s total, and tonalShare during valid phase peaks at 0.313 (selection
-requires >0.55); with pad, 38 changes never produce valid phase (final coherence
-0.360). Neither produces an audible entry. The pad case retains bass/lead and
-is not a pulse-free sustained-chord test. Absent phase/clock/attack measurements
-print -1, not a zero error. Keep this targeted failing gate separate from the
-passing scripted integration check; do not infer live performance or lower
-thresholds without negative controls. Two-bar acquisition remains unachieved.
+No scripted chord dates, neural worker, bus conditioning or room. Production
+now suppresses detector publications during the same four-second reference
+warm-up that VPSing historically performed only in its probe; startup events no
+longer seed the tempo. Source selection no longer duplicates `phaseValid()`
+with the slow tonal-share meter: eight fresh changes and coherence >=0.80 are
+the source guard, while tonal share still guards bar rotation and neural tempo
+still wins immediately. Without pad this yields 99.917 BPM, entry at 23.371 s,
+and eight rendered attacks within 18.17 ms (clock pulses within 22.27 ms). It
+still FAILS the 4.8 s target. With pad, 34 changes never produce valid phase
+(final coherence 0.355), so it correctly emits nothing but still FAILS the
+recognisable-pulse product case. Negative controls pass: drums alone produce
+seven changes but no phase/BPM; a loud held chord is tonal (share 0.814) but
+produces zero changes and no BPM. Absent phase/clock/attack measurements print
+-1, not zero error. Keep this gate separate from the passing scripted test.
+Two-bar acquisition needs a non-percussive pulse source; chord changes alone
+cannot provide eight observations in two bars when harmony moves once per bar.
 
 `VPTests --state-timing` checks the four-second low-confidence hold at buffers
 64/256/1024: 4.001333/4.005333/4.010667 s. The counter adds actual samples;

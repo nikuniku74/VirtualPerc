@@ -937,8 +937,14 @@ bool BeatTracker::selectHarmonicSource (BeatHypothesis& hyp, bool haveHyp, int n
     // A cold start has no prior grid to protect from a fill. Once playing,
     // keep the six-second quarantine measured by the existing fill probe.
     const bool eligible = !lockedOnce || noNetworkTempoSamples > sampleRate * kNoNetworkTempoSec;
+    // phaseValid already needs eight fresh, strongly coherent harmonic-change
+    // dates. Requiring the slow fifteen-second tonal-share meter as well made
+    // that evidence unusable on a real bass/lead stem: measured, phase was
+    // valid at 17.317 s while the share peaked at 0.313. Tonal share still
+    // protects the separate bar-vote path; source acquisition is protected by
+    // phase coherence itself and by immediate priority for any neural tempo.
     const bool selected = !neuralHasTempo && eligible && !speakerFollow && tempoFollow
-        && !tapEstablished && harmonicShare > 0.55f && harmonicTempo.phaseValid();
+        && !tapEstablished && harmonicTempo.phaseValid();
     if (selected != harmonicSourceActive)
     {
         seenSerials = false;
