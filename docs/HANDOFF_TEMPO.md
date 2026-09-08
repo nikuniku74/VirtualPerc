@@ -11,7 +11,8 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 2. COMPLETATO: contatori indipendenti dal buffer.
 3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.
 4. COMPLETATO (integrazione con date accordi note): percorso armonico diretto.
-5. DA FARE: verifica integrata e separazione delle misure sintetiche/reali.
+5. PARZIALE: verifiche mirate concluse; restano detector armonico su audio e
+   registrazione live dell'utente. Non dichiarare l'intero obiettivo raggiunto.
 
 ## Regole per riprendere
 
@@ -79,3 +80,32 @@ Con un accordo per battuta servono otto accordi: ingresso a 18.79 s, NON entro
 due battute. L'armonia rada da sola non soddisfa quell'obiettivo. Nessun nuovo
 modello di pulsazione non percussiva è stato aggiunto. Step 5 deve misurare la
 catena con il rilevatore e distinguere le registrazioni reali dai sintetici.
+
+## Checkpoint finale — 08/09
+
+Commit degli step: `cdcb33c`, `d52f099`, `cdf807f`, `9fcaf02`.
+Ultimo controllo aggiunge annullamento del recupero anche su cambio d'ottava e
+ricostruzione della griglia neurale; il probe verifica anche il cambio d'ottava.
+
+Comandi mirati eseguiti:
+
+- `c++ -std=c++17 -O2 -ISource scripts/probe_recovery.cpp Source/Tracking/TempoFollower.cpp -o /tmp/vp-recovery && /tmp/vp-recovery`: 15 casi PASS.
+- `cmake --build build-host --target VPTests -j4`: compilazione riuscita.
+- `./build-host/VPTests_artefacts/Release/VPTests --state-timing`: 3 PASS.
+- `./build-host/VPTests_artefacts/Release/VPTests --harmonic-entry`: 4 PASS.
+- `./build-host/VPTests_artefacts/Release/VPTests --tempo-slow`: 10 PASS, inclusi swing e ritorno dopo gap.
+- `./build-host/VPTests_artefacts/Release/VPTests --octave 100-file`: 4 PASS. BeatNet reale su KIT SINTETICO: 99.97 BPM, ottava zero, FOLLOWING per 41.2 s, fase media +1.86 -> -1.23 ms, 137 colpi, zero gap, worker sincronizzato.
+
+Le medie di fase del test BeatNet non sono un massimo degli attacchi audio.
+Gli attacchi audio sono stati misurati separatamente nel test armonico con date
+note. Non è stata provata la registrazione live dell'utente né una nuova build
+su iPad. Non è stata eseguita la suite completa.
+
+## Prossima azione concreta
+
+Estendere `--harmonic-entry` con `HarmonicChange` alimentato dai soli stems
+musicali di `probe_song_render.h`, senza date di accordi preimpostate, misurando
+tempo di riconoscimento, fase e attacchi renderizzati nella medesima prova.
+Poi usare la registrazione live dell'utente (non identificata in questa sessione).
+L'obiettivo entro due battute resta aperto per l'armonia rada: non abbassare il
+numero di cambi alla cieca, né attivare il percorso acustico non verificato.

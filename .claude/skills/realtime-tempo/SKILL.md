@@ -97,6 +97,12 @@ comb still reads the old tempo on a genuine step too, so using it means confirmi
 and then retracting, which is the shape of the watchdog already tried and reverted
 in 8528d4e. Do not retry that blind.
 
+**Historical rate-only measurement, not a phase-recovery guarantee.**
+The old `fillRecovery` in `probe_steer` times the return of instantaneous rate
+inside 1%, not the return of beat phase; it cannot exclude a standing offset.
+Use `probe_recovery.cpp` for phase recovery and HANDOFF_TEMPO.md for the scope
+of the latest integrated measurements.
+
 **The clock is not where this lives, and that was measured before the decoder
 was touched.** `scripts/probe_steer.cpp` holds a wrong phase for two seconds and
 times the grid's return: 0.06-0.28 s at every FollowStrength, HIGH fastest. It

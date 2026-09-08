@@ -42,9 +42,10 @@ int main()
                 auto reset = c; reset.reset();
                 auto force = c; force.forceTempo (bpm);
                 auto transition = c; transition.beginTempoTransition (bpm + 5);
+                auto octave = c; octave.setTargetTempo (bpm <= 100 ? bpm*2 : bpm/2,1);
                 canceled = !bad.phaseRecoveryActive() && !snap.phaseRecoveryActive()
                     && !reset.phaseRecoveryActive() && !force.phaseRecoveryActive()
-                    && !transition.phaseRecoveryActive();
+                    && !transition.phaseRecoveryActive() && !octave.phaseRecoveryActive();
             }
             c.setGridPhase (vp::wrap01 (song), 0.90f);
             auto tick = c.advance (256);

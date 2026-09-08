@@ -738,7 +738,12 @@ rientrare nel tempo»*.
   fra impulsi **0,99–1,14x**, quindi nessun colpo doppio o saltato. Il banco
   pulito 60 s × 8 semi resta invariato.
 
-**Non è il clock.** Prima ipotesi, misurata e scartata: `scripts/probe_steer.cpp`
+**Nota di verifica 08/09:** il vecchio `fillRecovery` misura il ritorno della
+velocità, non della fase; non esclude uno scarto persistente. Risultati e limiti
+aggiornati in `docs/HANDOFF_TEMPO.md`. Step 1–4 salvati; verifica finale parziale
+(mancano detector armonico su audio e registrazione live).
+
+**Conclusione storica, limitata alla velocità:** `scripts/probe_steer.cpp`
 (nuovo, clock da solo, deterministico) dà una fase sbagliata di 0,25 di beat per
 **due secondi** e misura quanto ci mette la griglia a rientrare — **0,06–0,28 s**
 a tutte e tre le forze di inseguimento, e ALTO è la più veloce. Lo sterzo di fase

@@ -1376,6 +1376,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // as poor evidence on every hypothesis, and the clock would be at its
         // slowest exactly where it has the furthest to go.
         evidence.restart();
+        follower.cancelPhaseRecovery();
         // Not over a bar the listener placed by hand, and not over one that was
         // moved a moment ago: those are the two cases where somebody already
         // answered this question.

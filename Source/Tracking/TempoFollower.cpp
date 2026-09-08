@@ -293,7 +293,10 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
         {
             const float ratio = bpm / tempo;
             if (std::fabs (ratio - 2.0f) < 0.08f || std::fabs (ratio - 0.5f) < 0.02f)
+            {
+                cancelPhaseRecovery();
                 tempo = bpm;
+            }
         }
         target = bpm;
     }
