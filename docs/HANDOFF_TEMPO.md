@@ -561,3 +561,132 @@ clip     1.000    -1.00      0.41   22.98     n/a    -1.00  168.41   84.04
 Prossima azione: punto 4, la verità di fase annotata sulla registrazione — senza
 la quale i 26-33 ms del punto 6 qui sopra non si possono confrontare con nulla di
 reale.
+
+## Stato a fine sessione — 08/09/2026
+
+Punti 1, 2 e 3 chiusi; il lavoro è nel commit `dcff368` (fatto dall'utente, in
+un blocco unico) sopra `e5cc06e`. iPad provato dall'utente sulla nuova build:
+«sembra ok». È un giudizio, non una misura — non sono stati registrati livello,
+tempo alla prima ottava corretta, ingresso né deriva su dispositivo.
+
+Restano aperti, in ordine di valore:
+
+1. **Punto 4 — verità di fase annotata** sulla registrazione (30-120 / 120-210 /
+   210-250 s), o uno stem/click affidabile. Senza, i 26-33 ms di ritardo che
+   `--level` misura ai livelli bassi a 91 BPM non si possono confrontare con
+   niente di reale, e i picchi isolati da 85-167 ms restano non attribuiti.
+2. **I tre guasti che `VPTests --level` ha trovato** (docs/TODO.md item 24):
+   91 BPM a 0 dB impiega 17.71 s per l'ottava mentre tutti i livelli più bassi
+   ci arrivano in 2.5-3.4 s; 168 BPM clippato si assesta a 84 e non rientra
+   dopo il vuoto; `FISSO` non arriva in 26 s su righe per il resto corrette.
+3. **-18 dB**: aggancia 91 entro 12 s, poi è il **pettine** a saltare a 182.37
+   per quattordici secondi. Salto d'ottava dopo l'acquisizione, con le sorgenti
+   concordi sul valore sbagliato: il veto d'acquisizione non lo tocca.
+4. **Punto 5 — il caso senza batteria.** Il test armonico con pad fallisce
+   ancora e la fonte armonica è troppo lenta a 52 BPM. Se BeatNet non
+   generalizza serve un modello beat/downbeat adatto a materiale tonale; non
+   indebolire alla cieca warm-up, otto cambi o `tonalShare`.
+5. **La suite completa non è mai stata eseguita in questa sessione**, per scelta
+   dell'utente. Prima di una consegna va fatta girare almeno una volta.
+
+Item 1 (52 BPM letto 104 a ogni livello) resta indecidibile su quel materiale e
+non è un difetto di livello: `--level` lo misura e deliberatamente non lo asserisce.
+
+## Punto 2 della lista aperta — i tre guasti trovati da `--level` (08/09/2026)
+
+Diagnosi con `VP_LEVEL_TRACE=1` (nuovo, documentato in `Tests/TestAiBeat.h`) e
+printf temporanei sui quattro rami di acquisizione, poi rimossi.
+
+### A — 91 BPM a 0 dB: causa trovata, non corretta
+
+```
+VPACQ t=2.58 fast bpm=64.55 hmm=115.38 margin=-0.174 comb(r=0 s=0)   <- 0 dB, fallisce
+VPACQ t=3.30 fast bpm=90.34 hmm= 96.77 margin= 6.071                 <- -6 dB
+VPACQ t=1.98 fast bpm=90.38 hmm= 90.91 margin= 4.465                 <- clip
+```
+
+`tryFastAcquire` pubblica **64.55** mentre lo state space nomina **115.38** con
+margine **negativo**: non e' incerto, e' contrario. E' la stessa forma del bug
+del punto 2, ma sotto i 180 BPM, dove il veto non arriva. Qui a disattivare il
+controllo di livello e' la regola `rawBpm < 90`, che sotto quella soglia prende
+la spaziatura osservata per buona (`bestPeriod = raw`, `intervalSelfSufficient`)
+per non ripetere l'errore 76 -> 152.
+
+Il clock resta poi su tre quarti della pulsazione (67.7) mentre il pettine dice
+90.91 dagli 8.5 s e non cambia idea.
+
+**Non corretto di proposito.** Stringere la regola dei 90 su una sola riga
+sintetica e' esattamente cio' che l'item 23 vieta («non tarare niente su un
+brano solo»), e la stessa regola e' l'unica cosa che tiene 76 BPM lontano da
+152. Serve materiale reale a piu' livelli prima di toccarla.
+
+### La correzione generale che ne e' uscita
+
+Le due concessioni di pazienza dello snap d'ottava - `kOctaveSnapBeatsHealthy` e
+il bonus di anzianita' - si applicavano a **qualsiasi** disaccordo oltre 0.25
+ottave. Esistono per l'ambiguita' d'ottava: una griglia doppia cade su ogni
+battito rilevato, quindi sembra sempre sana, e scegliere fra i due livelli e'
+davvero ambiguo. Un disaccordo che **non** e' vicino a un numero intero di
+ottave non ha quella scusa: 67.7 e 90.9 non sono la stessa pulsazione contata
+in due modi, una delle due e' semplicemente la griglia sbagliata.
+
+Ora entrambe le concessioni sono subordinate a `octaveArgument`, cioe' alla
+distanza fra `|log2(bpm/combRaw)|` e l'intero piu' vicino, entro
+`kOctaveArgumentTolerance` (0.15). Quando il pettine e' d'accordo, o e' d'accordo
+a meno di un'ottava esatta, la distanza e' quasi zero e tutto si comporta come
+prima.
+
+Misure prima/dopo, tutte eseguite:
+
+- `probe_tempo_step`, colonna lenta: 120->150 **17.2 -> 12.8 s**; 100->160
+  **13.5 -> 10.1**; 160->100 **15.0 -> 12.0**; 90->120 **26.7 -> 20.7**. La
+  colonna rapida non si muove (0.8 / 1.2 / 1.7 s). Un salto di tempo e' proprio
+  un disaccordo non-ottava: prima pagava la pazienza d'ottava per intero.
+- `probe_matrix`, 360 corse: aggancio medio **5.25 -> 5.20 s**, uscite
+  **101 -> 99**, fuori medio 9.01 -> 9.00%. `swing 8vi` **1/30 -> 0/30**,
+  `swing pieno` **3/30 -> 2/30**. Nessuna riga peggiora.
+- `VPAlign`: gradino 100->140 **15.14 -> 11.26 s**; le righe a 168 gia' marcate
+  «livello sbagliato: -67%» si muovono nel rumore.
+- `VPTests --octave`: 7 PASS / 4 FAIL, **identico** (sono i 50 BPM dell'item 1).
+- `VPTests --tempo-slow`: 10 PASS.
+- `VPTests --level`: 13 PASS / 3 FAIL; 91 a 0 dB **17.71 -> 15.67 s**, tutto il
+  resto invariato.
+
+### B — 168 BPM clippato: non e' l'arbitraggio, e' il pettine
+
+```
+TR t=14.00 bpm=167.78 neur=168.13 comb=168.07 conf=0.97 res=0.014 settled=1
+TR t=15.00 bpm= 84.03 neur= 84.03 comb= 84.03 conf=0.54 res=1.000 settled=1
+```
+
+Quattordici secondi di 168 corretto e sano, poi **il pettine stesso** passa a
+84.03 e il decoder segue una sorgente che ha cambiato idea. Il veto dell'item 22
+(`unprovenSlowerOctave`) non si applica perche' `gridLooksLikeSubdivision` e'
+vero: il kit alterna cassa e rullante, quindi le forze alternano e il pettine
+nomina la meta' — che e' esattamente la firma per cui quel veto si fa da parte.
+
+E' l'ambiguita' dell'item 1 (un kit a 168 con cassa/rullante alternati **e'** un
+kit half-time a 84) fatta emergere dal clipping. Nota per chi ci torna: la
+regola dell'item 17, «l'ottava non cambia mentre sta suonando», vive in
+`BeatTracker::updateAutoOctave` e **non copre** uno snap del decoder — qui il
+tempo si e' dimezzato sotto di essa con `suona=1`.
+
+### C — `FISSO`: la mia etichetta era sbagliata
+
+Non e' un terzo difetto. Guardando il regime a 20-26 s per livello, a 91 BPM:
+
+| livello | regime | perche' |
+|---|---|---|
+| 0 dB | `unknown` | conseguenza di A: trova il livello solo a 15.67 s |
+| -6 dB | **`fixed`** | ok |
+| -12 dB | **`live`** | su un tempo costante decide che si muove |
+| -18 dB | **`fixed`** | ok |
+| clip | **`fixed`** | ok |
+
+`mayFix` chiede `lastFitResidual < 0.05` e una finestra assestata: `FISSO` segue
+la qualita' dell'aggancio. L'unica riga davvero curiosa e' -12 dB letta come
+`live`, coerente con i suoi 32.6 ms di fase: la stessa degradazione che la
+colonna «fase» misura, vista da un'altra parte.
+
+Prossima azione: nessuna correzione ulteriore senza materiale reale a livelli
+diversi. A e B restano aperti negli item di `docs/TODO.md`.

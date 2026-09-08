@@ -213,6 +213,10 @@ namespace
     // what a change costs.
     constexpr int kOctaveTenurePerBeat = 12;
     constexpr int kOctaveTenureMax = 10;
+    // How near a whole number of octaves a disagreement has to be before it
+    // counts as an argument about the metrical level at all. See the two
+    // allowances in `updateTempo`.
+    constexpr float kOctaveArgumentTolerance = 0.15f;
     constexpr float kOctaveSnapSalience = 0.22f;
 
     // How far the comb may move and still be casting the same vote.
@@ -2032,10 +2036,31 @@ void BeatDecoder::updateTempo() noexcept
     // apart. There is now: a grid using every other tick has not earned
     // anything. Measured on swung material at 81 BPM, where acquisition lands
     // on the 1.5x level the swing implies, this is most of the wait.
-    if (gridHealthy && gridIsDense && tempo.levelSettled())
+    // Both allowances below are about *octaves*. A grid an octave too fast lands
+    // on every detected beat, so it always looks healthy, and choosing between
+    // the two levels is genuinely ambiguous - that is what the patience buys.
+    //
+    // A disagreement that is not near a whole number of octaves has no such
+    // excuse. Nobody hears 67.7 and 90.9 as the same pulse counted differently:
+    // one of them is simply the wrong grid. Measured on the level bench at
+    // 91 BPM and full level, acquisition landed on three quarters of the pulse,
+    // the fold named 90.91 from 8.5 s and held it, and the decoder spent ten
+    // more seconds paying octave tenure for an argument that was never about an
+    // octave - 17.71 s to the right level against 2.5-3.4 s at every quieter
+    // level. See docs/TODO.md item 24.
+    //
+    // When the fold agrees, or disagrees by a real octave, the distance is near
+    // zero and both allowances apply exactly as before.
+    const float disagreement = combRawBpm > kMinBpm && bpm > kMinBpm
+                                   ? std::fabs (std::log2 (bpm / combRawBpm))
+                                   : 0.0f;
+    const bool octaveArgument =
+        std::fabs (disagreement - std::round (disagreement)) < kOctaveArgumentTolerance;
+
+    if (octaveArgument && gridHealthy && gridIsDense && tempo.levelSettled())
         snapBeats += kOctaveSnapBeatsHealthy;
 
-    if (tempo.levelSettled())
+    if (octaveArgument && tempo.levelSettled())
         snapBeats += std::min (kOctaveTenureMax, beatsOnLevel / kOctaveTenurePerBeat);
 
     // Clarity is deliberately *not* a condition. Clarity measures how far the

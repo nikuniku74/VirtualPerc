@@ -1169,6 +1169,23 @@ void vpRunLevelSweepTest (int& passed, int& failed, const char* only)
                 ++driftN;
             }
 
+            if (std::getenv ("VP_LEVEL_TRACE") != nullptr)
+            {
+                static double lastT = -9.0;
+                if (t < 0.001) lastT = -9.0;
+                if (t >= lastT + 0.5)
+                {
+                    lastT = t;
+                    std::printf ("    TR t=%5.2f bpm=%7.2f neur=%7.2f comb=%7.2f "
+                                 "conf=%.2f res=%.3f settled=%d reg=%d stato=%d suona=%d\n",
+                                 t, (double) last.bpm, (double) last.neuralBpm,
+                                 (double) last.combBpm, (double) last.confidence,
+                                 (double) last.fitResidual, (int) last.levelSettled,
+                                 last.tempoRegime, (int) last.state,
+                                 (int) last.percussionAudible);
+                }
+            }
+
             pos += numThisBlock;
             samplesInHop += numThisBlock;
             if (samplesInHop == hop)

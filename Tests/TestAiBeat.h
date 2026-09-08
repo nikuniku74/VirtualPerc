@@ -24,7 +24,12 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only = nullptr)
     Deliberately NOT part of `vpRunAiBeatTests`: fifteen such runs are about
     five minutes, and the full suite is long enough. Run it by hand after
     anything that touches the analysis level, the frontend or the octave
-    logic. It ships with three known failures - see docs/TODO.md item 24. */
+    logic. It ships with three known failures - see docs/TODO.md item 24.
+
+    `VP_LEVEL_TRACE=1` in the environment prints the tempo, the network, the
+    fold, the residual and the regime twice a second for every run. A column
+    that says "17.71 s to the right level" does not say *what it was doing
+    instead*, and answering that from the summary alone costs an afternoon. */
 void vpRunLevelSweepTest (int& passed, int& failed, const char* only = nullptr);
 
 /** Fast decoder-only regressions for slow acquisition, octave-anchor feedback

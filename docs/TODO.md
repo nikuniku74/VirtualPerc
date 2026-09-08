@@ -1223,15 +1223,51 @@ condizionamento riguarda solo la copia del segnale per il modello.
   Esito **13 PASS / 3 FAIL**. 168 BPM è pulito a ogni livello pulito (ottava
   0.29 s, ingresso 0.41 s, fase 6.5 ms). 91 BPM a -12 dB aggancia in 3.35 s,
   dentro le due battute: la correzione qui sopra vista dal banco sintetico.
-- [ ] **91 BPM a 0 dB: 17.71 s per l'ottava**, mentre -6/-12/-18 ci arrivano in
-  2.5-3.4 s. `bpm@4s = 66.67`: legge **sotto**, non sopra, ed è la riga più
-  forte a essere l'anomalia. Escluso `kMakeupClipGuardPeak`: con riferimento a
-  0.7 invece di 0.9 il numero è identico.
-- [ ] **168 BPM clippato: si assesta a 84** (la metà) e non rientra dopo il
-  vuoto. A 4 s leggeva ancora 168.41, quindi perde l'ottava dopo l'acquisizione,
-  non durante.
-- [ ] **`FISSO` erratico**: mai raggiunto in 26 s su righe per il resto
-  corrette (91 a 0 e -12 dB, 52 clippato). Dato nuovo, non una regressione.
+- [x] **Corretta la pazienza dello snap d'ottava (2026-09-08).** Le due
+  concessioni `kOctaveSnapBeatsHealthy` e il bonus di anzianità si applicavano a
+  qualsiasi disaccordo oltre 0.25 ottave. Esistono per l'ambiguità **d'ottava**:
+  una griglia doppia cade su ogni battito rilevato, quindi sembra sempre sana.
+  Un disaccordo lontano da un numero intero di ottave non ha quella scusa —
+  67.7 e 90.9 non sono la stessa pulsazione contata in due modi. Ora entrambe
+  sono subordinate a `octaveArgument` (`kOctaveArgumentTolerance` 0.15).
+
+  Guadagno molto più largo del caso che l'ha fatta trovare:
+
+  | banco | prima | dopo |
+  |---|---|---|
+  | `probe_tempo_step` 120→150 | 17.2 s | **12.8** |
+  | 100→160 | 13.5 s | **10.1** |
+  | 160→100 | 15.0 s | **12.0** |
+  | 90→120 | 26.7 s | **20.7** |
+  | `probe_matrix` aggancio medio | 5.25 s | **5.20** |
+  | `probe_matrix` uscite | 101 | **99** |
+  | `VPAlign` gradino 100→140 | 15.14 s | **11.26** |
+
+  `swing 8vi` passa da 1/30 a **0/30** uscite, `swing pieno` da 3/30 a 2/30.
+  Nessuna riga peggiora. `--octave` 7/4 identico, `--tempo-slow` 10 PASS.
+- [ ] **91 BPM a 0 dB: causa trovata, non corretta.** `tryFastAcquire` pubblica
+  **64.55** a 2.58 s mentre lo state space nomina **115.38 con margine -0.174**
+  — non incerto, contrario. È la stessa forma del bug del punto 2 ma sotto i
+  180 BPM: qui a disattivare il controllo di livello è la regola `rawBpm < 90`,
+  che prende per buona la spaziatura osservata per non ripetere 76 → 152.
+  Stringerla su una sola riga sintetica è ciò che l'item 23 vieta, e quella
+  regola è l'unica cosa che tiene 76 lontano da 152: serve materiale reale a
+  più livelli. Con la correzione qui sopra: 17.71 → **15.67 s**, ancora FAIL.
+- [ ] **168 BPM clippato: è il pettine, non l'arbitraggio.** Quattordici secondi
+  di 168 sano (res 0.014, settled), poi a t=15 **il pettine stesso** passa a
+  84.03 e il decoder segue. `unprovenSlowerOctave` non si applica perché
+  `gridLooksLikeSubdivision` è vero: il kit alterna cassa e rullante, quindi le
+  forze alternano e il pettine nomina la metà — la firma esatta per cui quel
+  veto si fa da parte. È l'item 1 fatto emergere dal clipping. **Nota:** la
+  regola dell'item 17 («l'ottava non cambia mentre suona») vive in
+  `BeatTracker::updateAutoOctave` e non copre uno snap del decoder: qui il tempo
+  si è dimezzato sotto di essa con la parte in suono.
+- [x] **`FISSO` non era un terzo difetto** — etichetta mia sbagliata alla prima
+  lettura. A 91 BPM: -6, -18 e clip raggiungono `fixed`; 0 dB resta `unknown`
+  come conseguenza del punto sopra; -12 dB va in **`live`**, cioè su un tempo
+  costante decide che si muove, coerente con i suoi 32.6 ms di fase. `mayFix`
+  chiede `lastFitResidual < 0.05` e una finestra assestata: `FISSO` segue la
+  qualità dell'aggancio.
 - [ ] **La fase peggiora col livello a 91 BPM**: 2.8 ms a 0 dB contro 26-33 ms
   a -6/-12/-18. A 168 BPM non succede. Serve prima la verità di fase annotata
   sulla registrazione per sapere se conta davvero.
@@ -1245,7 +1281,7 @@ Dettaglio completo e comandi in `docs/HANDOFF_TEMPO.md`.
 
 ---
 
-### 25. Il volume d'ingresso: fader inguidabile e barra che non dice niente 🟡 (2026-09-08, codice ok — resta l'ascolto e la prova su iPad)
+### 25. Il volume d'ingresso: fader inguidabile e barra che non dice niente 🟢 (2026-09-08, corretto, visto su Mac e provato su iPad)
 
 Segnalazione dell'utente: *«il volume di ingresso... anche la barra del volume,
 perche' e' estremamente sensibile e non si capisce quale potrebbe essere il
@@ -1310,8 +1346,13 @@ entra nella striscia.
   bianca in tutti e tre gli stati e il colore sopravviveva solo a sinistra (ora
   il colore sta sulla punta); e in BRANO il verdetto non compariva affatto,
   perche' la riga scriveva `BRANO DIRETTO`, che ripeteva l'etichetta accanto.
-- [ ] **Resta iPad**: con una mandata vera, per dire se la striscia cade dove
-  serve e se 600 punti di corsa sono comodi con il dito.
+- [x] **iPad provato (2026-09-08)**: l'utente riferisce «sembra ok». È un
+  giudizio a orecchio e a occhio, non una misura: non sono stati registrati
+  livello, tempo alla prima ottava corretta né ingresso. Se serve un numero da
+  quella prova, va rifatta registrando la mandata.
+- [ ] Resta da vedere su una mandata con **gain hardware che cambia in corsa**
+  e con il ritorno acustico delle percussioni accese: il banco host non simula
+  microfono, stanza, latenza I/O né feedback degli strumenti.
 - [ ] La banda e' in **picco**. Sulla registrazione reale il picco naturale era
   -4 dBFS con RMS -19.5 (fattore di cresta 15 dB); un segnale molto compresso
   entrera' in banda con un RMS piu' alto. Se sul palco la striscia risulta
