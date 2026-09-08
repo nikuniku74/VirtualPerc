@@ -193,6 +193,27 @@ HMM tempo marginal with `BeatHmm::anchorMetricalLevel`, preserving each tempo's
 conditional phase distribution, and an HMM level that disagrees with the
 committed decoder level cannot overwrite the anchor on its own.
 
+**A dense grid is not a right grid.** `gridIsDense` (the fit's median index gap)
+catches a doubled grid when there is *silence* between the beats, and misses the
+commonest case there is: a hi-hat on the eighths fills those ticks, so the
+doubled grid reads coverage 1.00, residual 0.03 and gap 1.0, and every test the
+`unprovenSlowerOctave` veto owns says it is fine. Measured on kit-shaped material
+at 81 BPM - quarters at 0.8-1.0, eighths at 0.45 - the fold sat at 82 with
+salience 1.00 for a full minute while the committed tempo held 164 and
+`octaveMismatch` never left zero.
+
+What the two grids do not share is the *weight* of their beats: on the pulse they
+are all beats, an octave up every other one is a hat.
+`recentStrengthAlternation()` measures that - medians by parity over the last
+twelve accepted beats, **0.1-0.2 on a grid at the pulse against ~0.5 on one built
+on a subdivision** - and stands the veto down when it passes 0.35 *and* the fold
+names something within 20% of half the committed tempo. It only lifts the veto;
+the snap still needs salience and `snapBeats` of votes. On the material bank:
+rock eighths went from **8.30% of the run off the tempo to 0.65%**, its ratio at
+81 BPM from 1.44 to 1.00, the bank's mean from 9.70% to 9.01%, and no row got
+worse. `probe_tempo_step` and the click-track bench are identical to HEAD row for
+row - the alternation cannot fire on a click, where every beat weighs the same.
+
 **And measure on a bank of materials, never on one song.** `probe_matrix` runs
 twelve shapes real records have - quarters only, eighths, sixteenths, backbeat,
 half-time, swung eighths and sixteenths, a loose band at 25 ms of scatter, a mix

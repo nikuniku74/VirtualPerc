@@ -1047,15 +1047,64 @@ seguire la band.
   half-time 99,49→98,95 %). Miglioramento piccolo e pulito, non una svolta.
 - [ ] **La classifica di cosa attaccare dopo, in ordine di quanto pesa.** Tutte e
   tre le prime sono *acquisizione*, non recupero:
-  1. **Rock a ottavi ai tempi lenti (~81 BPM): 8,30 % del tempo fuori.** È il
-     materiale più comune che esista, ed è la stessa radice dell'item 22. Il
-     discriminante c'è e non è usato: nella fixture i quarti stanno a 0,8–1,0 e
-     gli ottavi a 0,45, quindi il livello giusto ha onset sistematicamente più
-     forti. Il decoder ha già `beatStrength` e `recentBeatStrengthMedian()`, usati
-     per le transizioni ma **non** per la scelta del livello metrico.
+  1. ~~**Rock a ottavi ai tempi lenti (~81 BPM): 8,30 % del tempo fuori.**~~
+     **FATTO (2026-09-07), vedi sotto.**
   2. **Mix che ingoia battiti: aggancio 9,05 s, peggiore 49,4 s.** Un missaggio
      vero non consegna ogni battito.
   3. **Vuoti d'arrangiamento e band larghe: 9,6 e 7,5 s.**
+- [x] **Punto 1 chiuso: il charleston sugli ottavi teneva la griglia un'ottava
+  sopra, per sempre.** Tracciato `rock 8vi` a 81 BPM, seme 2:
+
+  ```
+  t=11.1  pubbl=163.85 (vero 82.48)  comb=82.08 sal=1.00  lungo=163.87  mism=0  gap=1.0
+  t=59.4  pubbl=164.67 (vero 81.15)  comb=82.30 sal=1.00  lungo=164.58  mism=0  gap=1.0
+  ```
+
+  Il fold diceva **82 a salienza 1,00 per un minuto intero**, il committed stava
+  a **164** — un'ottava esatta — e `octaveMismatch` non lasciava mai lo zero.
+  Causa: il veto `unprovenSlowerOctave`. Il `gridIsDense` dell'item 22 prende la
+  griglia raddoppiata **quando fra i battiti c'è silenzio**; qui il charleston
+  *riempie* quei tick, quindi la griglia sbagliata è densa, coverage 1,00,
+  residuo 0,03, salto d'indice 1,0 — ogni prova che il veto possiede dice che la
+  griglia va bene.
+- [x] **Fix: quello che le due griglie non condividono è il *peso* dei battiti.**
+  Sul polso sono tutti battiti; un'ottava sopra, uno sì e uno no è un charleston.
+  Nuovo `BeatDecoder::recentStrengthAlternation()` — mediane per parità sugli
+  ultimi 12 battiti accettati, misurato **0,1–0,2 su una griglia giusta contro
+  ~0,5 su una costruita sulla suddivisione**. Il veto si stende quando
+  l'alternanza supera 0,35 **e** il fold nomina qualcosa entro il 20 % di metà
+  del committed (`kSubdivisionAlternation`, `halfError`). **Solo toglie il
+  veto**: lo scatto continua a volere la salienza del fold e i suoi `snapBeats`
+  di voti.
+- [x] **Effetto sul banco (12 materiali × 5 tempi × 6 semi):**
+
+  | | prima | dopo |
+  |---|---|---|
+  | **rock 8vi, tempo fuori** | **8,30 %** | **0,65 %** |
+  | rock 8vi, rapporto a 81 BPM | **1,44** | **1,00** |
+  | con vuoti | 2,00 %, agg 9,61 s | 1,50 %, agg 8,72 s |
+  | mix che ingoia | 4,54 % | 4,38 % |
+  | mai-agganciato | 33 | 30 |
+  | **fuori medio, tutto il banco** | **9,70 %** | **9,01 %** |
+
+  **Nessuna cella peggiora**, e nella tabella dei rapporti **ogni riga tranne
+  half-time legge adesso 1,00 a tutti e cinque i tempi**.
+- [x] **Gate, tutti verdi e tutti A/B contro `git show HEAD:`:** `probe_tempo_step`
+  **identico riga per riga**; click track (deriva 0, jitter 0,5 e 2 ms)
+  **identico riga per riga** — l'alternanza non scatta su un click; `VPAlign`
+  cinque gradini protetti tutti PASS con gli stessi numeri (0,78–1,47 s,
+  23,4–24,4 ms, zero violazioni di impulsi) e rampe PASS; `--octave focused` 6/4
+  con le quattro RED deliberate dell'item 1; `--swing` 3/0; `--leak` 49/0.
+- [ ] **Segnalazione, non mia:** `VPTests --bar` è **9/1 sul tree attuale** —
+  `within two bars of the return the one is beat zero again` — ed è rosso anche
+  con le mie modifiche tolte (verificato con `git stash`). Preesistente, item 2.
+- [ ] **Restano, nell'ordine:** `mix che ingoia` (aggancio 8,98 s, peggiore
+  49,4 s, 4,38 % fuori — un missaggio vero non consegna ogni battito),
+  `band larga` a 25 ms (7,53 s, 0,68 %), `con vuoti` (8,72 s). E half-time, che
+  però prima di essere chiamato guasto va rifatto **end-to-end**: la convenzione
+  che lo decide sta in `BeatTracker::updateAutoOctave`, che questa probe non
+  esercita.
+
 - [ ] **Non tarare niente di tutto questo su un brano solo.** Il banco esiste
   apposta; ogni modifica va misurata su tutte e dodici le righe **e** su
   `probe_tempo_step` + `VPAlign`, come queste due.

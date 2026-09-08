@@ -200,6 +200,14 @@ private:
         does not do is stand beside the beats around it, so this is the level a
         candidate peak is held to through a microphone. */
     float recentBeatStrengthMedian() const noexcept;
+    /** How deeply the accepted beats alternate loud/quiet, 0 when they are all
+        the same weight and approaching 1 when every other one is nothing.
+        A grid sitting on a filled subdivision - a hi-hat on the eighths under a
+        kit playing quarters - alternates; a grid on the pulse does not, and
+        that difference is the only thing that separates the two once the
+        subdivision is dense enough to make `coverage`, the residual and the
+        index gap all look perfect. See `unprovenSlowerOctave`. */
+    float recentStrengthAlternation() const noexcept;
     /** Whether a measured period is a tempo this grid could have moved to, as
         opposed to a subdivision, a missed beat or something off the range. */
     bool  transitionCandidateAllowed (float candidatePeriodSec) const noexcept;

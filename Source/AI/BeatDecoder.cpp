@@ -1227,6 +1227,46 @@ float BeatDecoder::recentBeatStrengthMedian() const noexcept
     return s[n / 2];
 }
 
+float BeatDecoder::recentStrengthAlternation() const noexcept
+{
+    // Split the recent accepted beats by parity and compare the two medians.
+    //
+    // On a grid that is the pulse, every accepted beat is a beat, so the two
+    // halves are the same population and the answer is near zero - accents move
+    // it a little, and a backbeat kit measured here reads 0.1-0.2. On a grid an
+    // octave too fast because a hi-hat fills the subdivision, one parity is the
+    // quarters and the other is the hat: measured on eighths at 0.45 against
+    // quarters at 0.8-1.0, it reads about 0.5.
+    //
+    // Medians, so one swallowed beat or one crash does not decide it.
+    constexpr int kAlternationBeats = 12;
+    const int n = std::min (beatFilled, kAlternationBeats);
+    if (n < 6)
+        return 0.0f;
+
+    float even[kAlternationBeats], odd[kAlternationBeats];
+    int ne = 0, no = 0;
+    for (int k = 0; k < n; ++k)
+    {
+        const float v = beatStrength[(beatWrite - 1 - k + kBeatHistory) % kBeatHistory];
+        if ((k & 1) == 0)
+            even[ne++] = v;
+        else
+            odd[no++] = v;
+    }
+    if (ne < 3 || no < 3)
+        return 0.0f;
+    std::sort (even, even + ne);
+    std::sort (odd, odd + no);
+    const float a = even[ne / 2];
+    const float b = odd[no / 2];
+    const float hi = std::max (a, b);
+    const float lo = std::min (a, b);
+    if (hi <= 1.0e-6f)
+        return 0.0f;
+    return (hi - lo) / hi;
+}
+
 bool BeatDecoder::transitionCandidateAllowed (float candidatePeriodSec) const noexcept
 {
     if (candidatePeriodSec <= 0.0f)
@@ -1880,7 +1920,31 @@ void BeatDecoder::updateTempo() noexcept
     // fold to 60 - the room-then-band failure the veto exists for - has a dense
     // grid and is protected exactly as before. See docs/TODO.md item 22.
     const bool gridIsDense = lastFitIndexGap < 1.5f;
+    // Dense is not the same as right.
+    //
+    // The index gap catches a grid that uses every other tick, which is what a
+    // doubled grid looks like when there is silence between the beats. It
+    // cannot catch the commonest case of all: a hi-hat on the eighths *fills*
+    // those ticks, so the doubled grid is dense, its coverage is 1.00 and its
+    // residual is 0.03, and every test the veto has says the grid is fine.
+    // Measured on kit-shaped material at 81 BPM - quarters at 0.8-1.0, eighths
+    // at 0.45 - the fold read 82 at salience 1.00 for a whole minute while the
+    // committed tempo sat at 164 and `octaveMismatch` never left zero.
+    //
+    // What the two cases do not share is the weight of the beats. On the pulse
+    // they are all beats; an octave up, every other one is a hat. So the veto
+    // stands down when the grid's own beats alternate loud and quiet *and* the
+    // fold is naming something close to half of it - the shape of a grid built
+    // on a subdivision, not of a tempo the fold got wrong. It only lifts the
+    // veto: the snap still needs the fold's salience and `snapBeats` of votes.
+    constexpr float kSubdivisionAlternation = 0.35f;
+    const float halfError = combRawBpm > kMinBpm
+                                ? std::fabs (std::log2 (bpm / combRawBpm) - 1.0f)
+                                : 1.0f;
+    const bool gridLooksLikeSubdivision =
+        recentStrengthAlternation() > kSubdivisionAlternation && halfError < 0.20f;
     const bool unprovenSlowerOctave = intervalAcquired && gridHealthy && gridIsDense
+                                      && ! gridLooksLikeSubdivision
                                       && combRawBpm < bpm * 0.70f;
     // Against the fold's *raw* answer, not the one already folded onto the
     // anchor - and this is the whole of why a doubled grid at slow tempo was
