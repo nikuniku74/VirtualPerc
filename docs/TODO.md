@@ -1487,6 +1487,67 @@ l'errore in millisecondi cresce col quadrato della durata del battito.
 
 ---
 
+### 28. I due suoni che non erano quello strumento: clap e cembalo 🟡 (2026-09-08/09, corretti e misurati — resta l'ascolto)
+
+Due richieste dell'utente, stessa forma di difetto: una voce trattata come se
+fosse un altro strumento.
+
+**Il clap** (2026-09-08, già committato). Era il campione VCSL *Claps*: una
+registrazione buona e lo strumento sbagliato, una stanza di gente che batte le
+mani **una volta**. Centrato a 3953 Hz con il 65% dell'energia fra 2 e 6 kHz e
+il 20% nel corpo — un «tss», e perfettamente mono. Ora `synthesizeClap` (i tre
+`Assets/Percussion/clap*.wav` non vengono più letti, `kStem` è `nullptr`):
+
+| | vecchio | nuovo |
+|---|---|---|
+| colpi | 8, 12, 22, 26 ms | 2, 8, 12, **20** ms |
+| coda a -30 dB | 86 ms | **186 ms** |
+| centroide | 3953 Hz | **2293 Hz** |
+| energia 0.5-2 kHz | 19.9% | **74.1%** |
+| correlazione L/R | +1.00 (mono) | **+0.65** |
+
+Quattro mani dentro 20 ms con spaziatura che si stringe con la forza e jitter
+per round-robin; corpo su due passabanda a 920 e 1260 Hz su rumori indipendenti
+(le mani a coppa sono un risuonatore di Helmholtz); 2 ms di schiocco a 3.3 kHz
+sopra ogni colpo; coda decorrelata fra i canali. Compensazione d'attacco 15.58 ms
+contro i 10.12 del campione: il colpo udibile resta sul beat.
+
+**Il cembalo** (2026-09-09). Qui il campione era **già vero** — tamburello VCSL
+— ma `layerFromRecording` rilegge ogni registrazione a `kDrumTune` (2^(10/12) =
+1.782) escludendo solo lo shaker. Quella costante è una decisione **sulle
+congas** e lo dice dove è definita. Un tamburello non ha una pelle da accordare.
+
+| | prima | dopo |
+|---|---|---|
+| parziali dominanti | 11.84 kHz | **6.64 kHz** |
+| centroide | 14299 Hz | **9719 Hz** |
+| energia 4-10 kHz | 7.5% | **62.1%** |
+| energia oltre 16 kHz | 24.8% | **3.6%** |
+| coda a -30 dB | 35 ms | **60 ms** |
+
+Nei file sorgente i sonagli stanno a 6.3 kHz, quattro quinti dell'energia fra 4
+e 10 kHz e **zero** sotto il kilohertz; a ×1.782 finivano a 11.2 kHz, un quarto
+sopra i 16 kHz dove quasi nessuno sente, e i 200 ms di risonanza diventavano 112.
+
+Correzione in due righe, nessuna modifica logica: il cembalo escluso da
+`kDrumTune` come lo shaker, e stessa banda dello shaker (3-12 kHz invece di
+1.6-6.8) per l'attenuazione dei colpi piani — un polo a 1600 Hz su uno strumento
+senza corpo non toglie il vertice del colpo, toglie il colpo. L'argomento «è un
+numero solo, così le due metà del banco restano accordate» non si applica:
+`synthesizeCymbal` è scritta in hertz assoluti e non ha mai usato `kDrumTune`.
+Attacco da 1.12 a 1.96 ms (down) e da 2.79 a 5.38 ms (up), sempre molto sotto il
+clap che fissa l'anticipo globale: il cembalo cade dove cadeva.
+
+- [ ] **Ascolto di entrambi in contesto**, con congas e shaker, sul brano vero.
+  Le misure dicono che ora sono lo strumento giusto; non dicono se stanno bene
+  nel mix.
+- [ ] I tre `clap*.wav` sono ancora sul disco e nel binario (~90 KB): se il clap
+  sintetico convince, si cancellano e si tolgono le righe da `ATTRIBUTION.md`.
+- [ ] Nessun test copre il timbro delle voci. Il solo controllo automatico è la
+  regressione d'attacco; il resto è `VPRender` più l'orecchio.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

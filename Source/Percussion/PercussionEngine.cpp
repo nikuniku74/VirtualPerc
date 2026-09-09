@@ -530,6 +530,20 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     force = std::clamp (force, 0.0f, 1.0f);
     const DrumSpec spec = specFor (stroke);
     const bool shaker = stroke == Stroke::shakerDown || stroke == Stroke::shakerUp;
+    // The tambourine is not a drum whose head you tune, and neither is a
+    // shaker. `kDrumTune` is a decision about congas - it says so where it is
+    // defined - and applying it to jingles moves metal that has one fixed
+    // pitch. Measured on the bundled takes, the jingles sit at 6.3 kHz with
+    // four fifths of the energy between 4 and 10 kHz and nothing at all below
+    // one; read at 1.782 they land near 11.2 kHz, most of the top octave goes
+    // past what anyone hears, and the 200 ms ring becomes 112. That is what
+    // made it sound like a toy rather than a tambourine.
+    //
+    // The synthesis fallback never used `kDrumTune` for this stroke either -
+    // `synthesizeCymbal` is written in absolute hertz - so leaving the take
+    // alone is what actually keeps the two halves of the bank agreeing.
+    const bool jingles = stroke == Stroke::cembaloDown || stroke == Stroke::cembaloUp;
+    const bool untunedMetal = shaker || jingles;
 
     // heel, toe and muff are the open tone with the hand left on the head: most
     // of the ring gone, and darker for it.
@@ -551,14 +565,19 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     const float sr = static_cast<float> (sampleRate);
     // Same interval as the synthetic bank. Reading the take faster raises the
     // membrane and shortens the ring, which is what a smaller drum does.
-    const float pitch = shaker ? 1.0f : kDrumTune;
+    const float pitch = untunedMetal ? 1.0f : kDrumTune;
     const int n = std::max (16, static_cast<int> (static_cast<float> (nSrc) / pitch));
     dest.left.assign (static_cast<size_t> (n), 0.0f);
     dest.right.assign (static_cast<size_t> (n), 0.0f);
 
     // Softer strokes lose the top. One pole is enough - the ear reads the
     // change of brightness, not the slope of the filter.
-    const float cutoff = (shaker ? 3000.0f : 1600.0f) + (shaker ? 9000.0f : 5200.0f) * force;
+    // And the same split for how a softer stroke loses its top. A conga that is
+    // struck gently loses the crack above its body; a tambourine has no body -
+    // zero per cent of it is under a kilohertz - so a 1600 Hz pole is not
+    // taking the top off the stroke, it is taking the stroke off.
+    const float cutoff = (untunedMetal ? 3000.0f : 1600.0f)
+                       + (untunedMetal ? 9000.0f : 5200.0f) * force;
     const float a = 1.0f - std::exp (-2.0f * kPi * cutoff / sr);
     const float softening = 0.55f + 0.45f * force;
 

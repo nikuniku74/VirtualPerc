@@ -316,6 +316,10 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const float lineW = juce::jlimit (4.5f, 9.0f, radius * 0.18f);
     const float arcRadius = radius - lineW * 0.5f;
     const float alpha = slider.isEnabled() ? 1.0f : 0.45f;
+    const bool voiceKnob = (bool) slider.getProperties().getWithDefault ("voiceOnFill", false);
+    const juce::Colour accent = voiceKnob
+        ? slider.findColour (juce::Slider::rotarySliderFillColourId)
+        : fuchsia();
 
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
@@ -332,13 +336,13 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         juce::Path value;
         value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                              rotaryStartAngle, toAngle, true);
-        g.setColour (fuchsia());
+        g.setColour (accent);
         g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
     }
 
     const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
-    paintRadial (g, centre, innerR * 1.7f, fuchsia(), 0.14f * alpha);
+    paintRadial (g, centre, innerR * 1.7f, accent, 0.14f * alpha);
     g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
     g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
     g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
@@ -349,7 +353,7 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const auto tip = juce::Point<float> (
         centre.x + pointerLen * std::cos (toAngle - juce::MathConstants<float>::halfPi),
         centre.y + pointerLen * std::sin (toAngle - juce::MathConstants<float>::halfPi));
-    g.setColour (fuchsia().withMultipliedAlpha (alpha));
+    g.setColour (accent.withMultipliedAlpha (alpha));
     g.drawLine (centre.x, centre.y, tip.x, tip.y, pointerW);
     g.fillEllipse (centre.x - pointerW, centre.y - pointerW, pointerW * 2.0f, pointerW * 2.0f);
 }
@@ -959,6 +963,16 @@ void MainComponent::refreshThemeColours()
     paintVoiceOn (congasButton, voiceCongasOn());
     paintVoiceOn (cembaloButton, voiceCembaloOn());
     paintVoiceOn (clapButton, voiceClapOn());
+
+    auto paintVoiceKnob = [] (juce::Slider& s, juce::Colour fill)
+    {
+        s.getProperties().set ("voiceOnFill", true);
+        s.setColour (juce::Slider::rotarySliderFillColourId, fill);
+    };
+    paintVoiceKnob (shakerVolSlider, voiceShakerOn());
+    paintVoiceKnob (congaVolSlider, voiceCongasOn());
+    paintVoiceKnob (cembaloVolSlider, voiceCembaloOn());
+    paintVoiceKnob (clapVolSlider, voiceClapOn());
 
     reverbLabel.setColour (juce::Label::textColourId, mute());
     reverbValue.setColour (juce::Label::textColourId, fuchsia());
