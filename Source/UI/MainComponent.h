@@ -425,6 +425,8 @@ private:
     int  stalledTicks = 0;
     int  rebuildCooldownTicks = 0;
     int  deviceRebuilds = 0;
+    /** Why the last one happened, for the diagnostics page. */
+    juce::String lastRebuildWhy;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

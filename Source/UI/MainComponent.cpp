@@ -1220,10 +1220,12 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
 
 void MainComponent::rebuildAudioDevice (const char* why)
 {
-    juce::ignoreUnused (why);
     if (! audioOpened)
         return;
 
+    // Kept for the diagnostics page. A rebuild count on its own says the rig had
+    // a problem; the reason says which one, and these three are different rigs.
+    lastRebuildWhy = why != nullptr ? why : "";
     ++deviceRebuilds;
     stalledTicks = 0;
     // Two seconds before another one is allowed. A rig that genuinely cannot
@@ -2273,8 +2275,27 @@ void MainComponent::timerCallback()
         }
         else if (haveDevice && ! audioReady)
         {
-            // Between close and prepareToPlay. Not a stall.
-            stalledTicks = 0;
+            // Between close and prepareToPlay, which is a tick or two - the
+            // start is synchronous, so `audioReady` is normally back before the
+            // next timer fires.
+            //
+            // It used to be excused with no bound at all, and that is a state
+            // the app can sit in for ever. JUCE's AudioSourcePlayer calls
+            // getNextAudioBlock from the device callback whether or not
+            // audioDeviceAboutToStart has run; with `inputScratch` still empty
+            // `nCopy` is zero, so every block is cleared and `audioBlocks`
+            // keeps counting. The device looks alive, the watchdog is told this
+            // is not a stall, and nothing is heard. The only way out was to
+            // change the clock by hand and put it back - which fixes it because
+            // it *reopens the device*, not because of the rate: on this desktop
+            // path AUTO writes no rate at all, so the two settings are the same
+            // number and the reopen is the whole of the cure.
+            //
+            // Reported by the listener as "sometimes there is no sound and I
+            // have to switch AUTO to 44100 and back". Bounded, the app does that
+            // reopen itself after a second.
+            if (++stalledTicks >= 12)
+                rebuildAudioDevice ("device open but never prepared");
         }
         else
         {
@@ -3150,7 +3171,7 @@ void MainComponent::paintSettings (juce::Graphics& g)
         // A rig that needs this is a rig with a problem the app is papering
         // over, so the number is on the page rather than in a log nobody reads.
         lines.add (juce::String ("riavvii    ") + juce::String (deviceRebuilds)
-                   + (deviceRebuilds > 0 ? "   (audio ricostruito)" : ""));
+                   + (deviceRebuilds > 0 ? "   " + lastRebuildWhy : ""));
 
         g.setColour (mute());
         g.setFont (fontUi (12.0f, false));

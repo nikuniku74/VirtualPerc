@@ -1854,6 +1854,67 @@ giustamente: nei primi 25 s di questo brano il pettine salta 84 → 173 → 87 �
 
 ---
 
+### 30. A volte all'avvio non si sente niente, e serve cambiare il clock e rimetterlo 🟡 (2026-09-09, causa trovata nel codice — non riprodotta a mano)
+
+Segnalazione: *«a volte l'audio non si sente e devo cambiare da "auto" a 44.100
+per esempio, e poi rimettere "auto"»*.
+
+**Cosa fa davvero quel gesto.** Su desktop `deviceSampleRate()` in AUTO
+restituisce `vp::sessionSampleRate()`, che fuori da iOS è 0, e uno 0 viaggia
+fino in fondo come «non scrivere nessuna frequenza». Quindi AUTO e 44100 non
+sono due frequenze diverse: AUTO lascia il setup com'è. L'unica cosa che quel
+gesto fa è **riaprire il dispositivo**. La cura non è la frequenza, è la
+riapertura — ed è questa l'informazione che indica dove guardare.
+
+**Il buco.** Il watchdog del timer aveva questo ramo:
+
+```cpp
+else if (haveDevice && ! audioReady)
+{
+    // Between close and prepareToPlay. Not a stall.
+    stalledTicks = 0;
+}
+```
+
+Senza limite. E quello è uno stato in cui l'app può restare per sempre:
+`AudioSourcePlayer` di JUCE chiama `getNextAudioBlock` dal callback del
+dispositivo indipendentemente dal fatto che `audioDeviceAboutToStart` sia
+passato. Se non è passato, `inputScratch` è ancora il buffer costruito di
+default — **zero canali, zero campioni** — quindi in `getNextAudioBlock`
+`count`, `nCopy` e `used` sono tutti zero, `engine.process` non scrive niente e
+il blocco finisce nel `buffer->clear` in fondo. Silenzio, mentre `audioBlocks`
+continua a contare. Il dispositivo sembra vivo, al watchdog viene detto che non
+è uno stallo, e non si sente niente finché non lo si riapre a mano.
+
+**Correzione**: lo stesso limite degli altri rami, dodici tick a 15 Hz (~0.8 s).
+Una chiusura-e-riapertura vera dura un tick o due, perché l'avvio è sincrono;
+oltre il secondo non è una transizione, è un dispositivo che non è mai partito.
+Passato il limite l'app fa da sola la riapertura che l'utente faceva a mano, con
+lo stesso raffreddamento di 2 s degli altri due casi.
+
+E il motivo dell'ultima ricostruzione ora è **sulla pagina diagnostica** accanto
+al contatore: `riavvii 1 device open but never prepared` è una cosa diversa da
+`riavvii 1 no audio callback for a second`, e sono tre rig diversi.
+
+- [ ] **Non riprodotto a mano.** È intermittente e dipende dall'ordine di
+  apertura del dispositivo; quello che c'è è che questo è l'unico percorso nel
+  codice che produce esattamente quel sintomo (dispositivo aperto, callback che
+  girano, silenzio, e la riapertura come unica via d'uscita). La verifica è la
+  riga `riavvii` sulla pagina diagnostica: se il difetto si ripresenta e adesso
+  si risolve da solo dopo un secondo, quella riga lo dirà.
+- [ ] Su un'**interruzione iOS** (una telefonata) il dispositivo può restare
+  aperto e fermo. Adesso dopo 0.8 s si ricostruisce, cosa che durante la
+  chiamata fallisce e riprova ogni 2 s, e al termine rientra da sola. È lo
+  stesso comportamento che il ramo «nessun dispositivo» ha già oggi; se in
+  pratica dà fastidio, il ramo va sospeso mentre `appIsSuspended` è vero.
+- [ ] **AUTO su desktop non è «segui l'hardware», è «lascia com'è».** Fuori da
+  iOS `sessionSampleRate()` è 0, quindi dopo aver scelto 44100 e rimesso AUTO il
+  dispositivo resta a 44100. Il commento in `deviceSampleRate()` dice perché
+  scrivere una frequenza è caro (ri-clocca un'interfaccia che tutta la sala sta
+  ascoltando), quindi non è stato toccato — ma l'etichetta mente un po'.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
