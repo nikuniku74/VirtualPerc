@@ -8,6 +8,32 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 
 ## Stato
 
+### File nuovamente disponibile — 09/09/2026
+
+L'utente ha riallegato `3 INFINITO.mp3`, ora leggibile nel percorso originale.
+VPLive ricompilato sul codice corrente. Nessuna nuova modifica DSP o commit.
+Conversioni solo nella directory temporanea `/tmp/vp-infinito-review.DdwGeQ`.
+
+```
+cmake --build build-host --target VPLive -j4
+/opt/homebrew/bin/mpg123 -q -w /tmp/vp-infinito-review.DdwGeQ/infinito.wav '/Users/nicolamarogna/Desktop/3 INFINITO.mp3'
+./build-host/VPLive_artefacts/Release/VPLive --mix /tmp/vp-infinito-review.DdwGeQ/infinito.wav --trace
+/opt/homebrew/bin/mpg123 -q -k 1148 -n 1531 -w /tmp/vp-infinito-review.DdwGeQ/center40.wav '/Users/nicolamarogna/Desktop/3 INFINITO.mp3'
+./build-host/VPLive_artefacts/Release/VPLive --mix /tmp/vp-infinito-review.DdwGeQ/center40.wav --bpm 91 --trace
+```
+
+File intero: tracker circa 72.8 a 2–6 s, 91.3 a 14 s; assestamento automatico
+18 s. Non chiamare l'intro un errore di BPM senza una griglia musicale annotata.
+L'estratto centrale (~30–70 s del file) è il riproduttore utile: da avvio freddo
+clock/decoder 95.57/95.43 a +2 s, 95.43/95.43 a +4 s, 92.31/90.91 a +6 s,
+91.45/90.84 a +8 s, 91.17/90.97 a +10 s. BPM medio dopo warm-up 91.05.
+Deriva relativa al riferimento costante: media 17.5 ms, massimo 81.1 ms;
+non è fase assoluta, né misura di attacchi renderizzati. Il banco bypassa il bus
+di make-up/leak dell'app, quindi non certifica il mixer fisico.
+Prossima correzione da verificare: prima griglia provvisoria imprecisa e sua
+rifinitura tardiva su questo estratto; usare un dump delle attivazioni per A/B
+deterministico prima di cambiare le soglie. Il ritardo resta INCOMPLETO.
+
 ### Indagine aggancio iniziale — 09/09/2026 (INCOMPLETA)
 
 Richiesto riconoscimento più veloce sul brano/mixer. Il file precedente
