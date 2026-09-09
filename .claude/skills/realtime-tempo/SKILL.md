@@ -43,6 +43,19 @@ Hard rules, in `docs/ARCHITECTURE.md` and enforced by review:
 
 ## 2. Where the BPM number actually comes from
 
+**Bounded line acquisition refinement (2026-09-09).** After level selection,
+unpaired direct-feed acquisition averages the two already available intervals
+only if they agree within 14%. It does not reject acquisition, add observations
+or change the selected octave. Swing cells and room acquisition are unchanged.
+On INFINITO's ~30–70 s excerpt, cold-start decoder at +2 s changes 95.43 ->
+92.27 BPM (reference ~91); VPLive relative drift 17.5/81.1 -> 9.0/25.1 ms
+mean/max. This is one real-network run per variant, not rendered audio phase.
+Reduced matrix: mean lock 7.28 -> 7.30 s; 18 excursion runs and six unacquired
+half-time cases unchanged, fraction outside 4% 13.33 -> 13.31%. This is a local
+initial-accuracy improvement, not a universal faster-lock claim. The earlier
+failed experiment below required coherence as a gate; this one only refines
+the period when coherence is already present.
+
 Acquisition experiment, 2026-09-09: extending the room's 14% consecutive-interval
 check to all unpaired line-feed fast acquisitions was reverted. On the reduced
 `probe_matrix --quick` bank it improved chords (7.79 -> 4.94 s) but worsened rock

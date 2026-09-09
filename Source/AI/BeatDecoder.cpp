@@ -1769,6 +1769,19 @@ bool BeatDecoder::tryFastAcquire() noexcept
             return false;
     }
 
+    // The two intervals are already present at acquisition. When they agree
+    // on a direct feed, use both dates instead of freezing the last interval's
+    // timing error until the longer fit becomes available. Preserve the level
+    // chosen above and leave swung cells on their own phase/period evidence.
+    // INFINITO central excerpt: at +2 s, 95.43 -> 92.27 BPM (reference ~91);
+    // quick material bank: excursion count unchanged, 18, mean lock +0.02 s.
+    if (lineFeed && ! pairedSubdivision && beatFilled >= 3)
+    {
+        const int oldest = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+        const float previousRaw = static_cast<float> (beatTime[older] - beatTime[oldest]);
+        if (previousRaw > 0.0f && std::fabs (previousRaw / raw - 1.0f) < 0.14f)
+            bestPeriod *= 0.5f * (1.0f + previousRaw / raw);
+    }
     const float acquiredRawBpm = 60.0f / bestPeriod;
 
     // The top of the range is where the interval alone cannot tell a pulse from

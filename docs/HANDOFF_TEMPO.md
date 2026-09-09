@@ -8,6 +8,38 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 
 ## Stato
 
+### Checkpoint credito limitato — 09/09/2026: rifinitura iniziale mantenuta
+
+Utente con 17% credito: un solo esperimento circoscritto, nessun commit.
+`BeatDecoder::tryFastAcquire`: su linea, dopo la scelta del livello, media due
+intervalli già presenti se concordano entro 14%. Non aggiunge attesa, non rifiuta
+l'aggancio se discordano, non modifica celle swing o ingresso microfonico.
+
+INFINITO estratto ~30–70 s, avvio freddo, vero ONNX:
+- a +2 s decoder 95.43 -> 92.27 BPM, clock 95.57 -> 92.44;
+- a +4 s decoder 95.43 -> 89.76, a +6 s 90.91 -> 90.37;
+- deriva relativa media/massima 17.5/81.1 -> 9.0/25.1 ms; BPM medio 91.11.
+Non sono attacchi audio renderizzati, né una fase assoluta certificata. Un run
+per variante, non prova di determinismo della rete. La stima non è perfetta a +2 s.
+
+Regressione ridotta `probe_matrix --quick` (72 casi): aggancio medio 7.28 ->
+7.30 s, corse con escursioni 18 invariato, sei half-time non agganciati invariati;
+fuori soglia 13.33 -> 13.31%. Piccoli peggioramenti di acquisizione su alcune
+forme (fino a +0.18 s nelle medie di stile), nessun aumento del numero di
+escursioni. Mantenuta per il vantaggio misurato sul caso reale, NON dichiarata
+soluzione generale dei ritardi. Non eseguita suite completa.
+
+```
+cmake --build build-host --target VPLive -j4
+./build-host/VPLive_artefacts/Release/VPLive --mix /tmp/vp-infinito-review.DdwGeQ/center40.wav --bpm 91 --trace
+c++ -std=c++17 -O2 -ISource scripts/probe_matrix.cpp Source/AI/BeatDecoder.cpp Source/AI/TempoEstimator.cpp Source/AI/BeatHmm.cpp -o /tmp/vp-acquire-average
+/tmp/vp-acquire-average --quick
+```
+
+Prossimo: provare il brano nell'app tramite input diretto/mixer, poi dump
+deterministico e regressione dedicata alla prima stima se serve ulteriore tuning.
+Restano aperti i ritardi su altri materiali e la verifica degli attacchi effettivi.
+
 ### File nuovamente disponibile — 09/09/2026
 
 L'utente ha riallegato `3 INFINITO.mp3`, ora leggibile nel percorso originale.

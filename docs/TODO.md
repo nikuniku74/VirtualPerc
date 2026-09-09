@@ -1686,6 +1686,11 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Guadagno automatico analisi (item 16): `kMakeupClipGuardPeak` in `VirtualPercussionEngine.cpp`, attenua solo sopra 0.90 di picco. Test veloce dedicato: `VPTests --octave` (non lanciare la suite intera per iterare qui). Full-suite gate e ascolto ancora da fare.
 # Priorità recupero diretto — 09/09/2026
 
+Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti
+mantenuta su linea; INFINITO centrale +2 s 95.43 -> 92.27 BPM, deriva media
+17.5 -> 9.0 ms. Banco ridotto: stabilità sostanzialmente invariata, aggancio medio
+7.28 -> 7.30 s (non miglioramento universale). Verifica nell'app/mixer ancora aperta.
+
 Input brano/mixer prima del microfono esterno. Correzione dopo conferma accelerata
 e verificata con 84 casi mirati; riconoscimento tardivo dei cambi BPM e residui
 lenti ancora aperti. Misure, comandi e prossima azione in `HANDOFF_TEMPO.md`,
