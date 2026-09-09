@@ -241,6 +241,8 @@ private:
         body. */
     bool  fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
                      double& anchorOut, float* indexGapOut = nullptr) const noexcept;
+    bool  fitPeriodBefore (int maxBeats, float& period, float& residual, float& coverage,
+                           double& anchorOut, float* indexGapOut, int skipNewest) const noexcept;
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     float scoreConfidence() const noexcept;

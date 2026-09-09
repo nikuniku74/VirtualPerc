@@ -48,19 +48,21 @@ int main()
             {
                 evidence.observe(h.fitResidual,h.fitCoverage,0.02);
                 clock.setTempoTrust(evidence.trust());
-                clock.setTargetTempo(h.bpm,h.confidence);
                 if(h.transitionSerial!=transitionSerial && h.transitionState==vp::TempoTransitionState::rapid)
                 {
                     clock.beginTempoTransition(h.transitionBpm);
                     transitionSerial=h.transitionSerial; ++transitions;
                 }
+                // Match BeatTracker's confirmed payload and rapid phase policy.
+                const bool payload=clock.tempoTransitionActive() && h.transitionState==vp::TempoTransitionState::rapid;
+                clock.setTargetTempo(payload?h.transitionBpm:h.bpm,payload?h.transitionConfidence:h.confidence);
                 if(h.beatSerial!=serial && h.confidence>0.4)
                 {
                     clock.observeRecoveryBeat(vp::wrapCentered(clock.beatPhase()-h.beatPhase),h.beatSerial);
                     clock.observeOnsetPhase(vp::wrap01(clock.beatPhase()-h.beatPhase),h.confidence,1);
                 }
                 serial=h.beatSerial;
-                clock.setGridPhase(h.beatPhase,vp::gridPhaseTau(vp::kGridTauHolding,true,evidence.trust()));
+                clock.setGridPhase(h.beatPhase,clock.tempoTransitionActive()?vp::kGridTauRapid:vp::gridPhaseTau(vp::kGridTauHolding,true,evidence.trust()));
             }
             const double positionBefore=clock.beatsElapsed()+clock.beatPhase();
             const auto tick=clock.advance(960);

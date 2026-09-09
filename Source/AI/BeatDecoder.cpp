@@ -942,17 +942,23 @@ bool BeatDecoder::recentPeriod (float& period) const noexcept
 bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
                              double& anchorOut, float* indexGapOut) const noexcept
 {
+    return fitPeriodBefore (maxBeats, period, residual, coverage, anchorOut, indexGapOut, 0);
+}
+
+bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual, float& coverage,
+                                   double& anchorOut, float* indexGapOut, int skipNewest) const noexcept
+{
     coverage = 0.0f;
     anchorOut = -1.0;
     if (indexGapOut != nullptr)
         *indexGapOut = 1.0f;
-    const int n = std::min (beatFilled, maxBeats);
+    const int n = std::min (beatFilled - skipNewest, maxBeats);
     if (n < 4 || bpm < kMinBpm)
         return false;
 
     // Newest n beat times, oldest first.
     double t[kBeatHistory];
-    const int oldest = (beatWrite - n + kBeatHistory) % kBeatHistory;
+    const int oldest = (beatWrite - skipNewest - n + kBeatHistory) % kBeatHistory;
     for (int i = 0; i < n; ++i)
         t[i] = beatTime[(oldest + i) % kBeatHistory];
 
@@ -1020,7 +1026,7 @@ bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float
         return false;
 
     const double slope = sxy / sxx;
-    if (slope < 60.0 / kMaxBpm || slope > 60.0 / kMinBpm)
+    if (slope < 60.0 / kMaxBpm - 1.0e-9 || slope > 60.0 / kMinBpm + 1.0e-9)
         return false;
 
     double sumSq = 0.0;
@@ -2534,6 +2540,75 @@ void BeatDecoder::updateTempo() noexcept
     {
         case TempoRegime::fixed:
         {
+            // A small, clean change can stay below every regime-release
+            // threshold. Four consecutive quarters provide three intervals;
+            // require their fit uncertainty to be far below the rate change.
+            // This is a bounded refinement on a direct feed, not an octave
+            // decision or permission to follow a noisy short fit continuously.
+            float recentFit = 0, recentResidual = 0, recentCoverage = 0, recentGap = 0;
+            float beforeFit = 0, beforeResidual = 0, beforeCoverage = 0, beforeGap = 0;
+            double recentAnchor = -1;
+            double beforeAnchor = -1;
+            if (lineFeed && !provisional && beatsInRegime >= kRegimeMinBeats
+                && fitPeriod (4, recentFit, recentResidual, recentCoverage, recentAnchor, &recentGap)
+                && recentCoverage == 1.0f && recentGap == 1.0f
+                && fitPeriodBefore (4, beforeFit, beforeResidual, beforeCoverage, beforeAnchor, &beforeGap, 3)
+                && beforeCoverage == 1.0f && beforeGap == 1.0f)
+            {
+                const float measured = 60.0f / recentFit;
+                const float difference = std::fabs (measured - bpm);
+                bool consecutive = true;
+                for (int i = 0; i < 6; ++i)
+                {
+                    const int newest = (beatWrite - 1 - i + kBeatHistory) % kBeatHistory;
+                    const int previous = (newest - 1 + kBeatHistory) % kBeatHistory;
+                    const float period = i < 3 ? recentFit : beforeFit;
+                    consecutive &= std::fabs ((beatTime[newest] - beatTime[previous]) / period - 1.0) < 0.10;
+                }
+                if (consecutive
+                    && std::fabs (60.0f / beforeFit - bpm) < 0.35f
+                    && difference > std::max (0.5f, 6.0f * (recentResidual + beforeResidual) * bpm)
+                    && difference < std::min (3.0f, 0.04f * bpm))
+                {
+                    bpm = fixedAnchorBpm = std::clamp (measured, kMinBpm, kMaxBpm);
+                    gridAnchorSec = recentAnchor;
+                    // The preceding intervals describe the old rate. Seed the
+                    // normal precision fit with the four proven new quarters;
+                    // keep serials, metrical level and musical clock intact.
+                    beatFilled = 4;
+                    longFilled = longWrite = 0;
+                    fixedSamples = 0;
+
+                    // And say so, in the one word the clock listens to.
+                    //
+                    // Rewriting `bpm` here is only half the job: the clock eases
+                    // towards a new target with its own time constant, so a step
+                    // this function has already *proven* still arrived as a
+                    // gentle lean. Measured on the small-step bench at 52 BPM,
+                    // the rate was right 3.6 s after the change and the phase
+                    // needed three more seconds to follow it - and the whole
+                    // point of the gate is that those four quarters were clean
+                    // enough not to have to guess.
+                    //
+                    // Same publication a confirmed rapid transition uses, so a
+                    // consumer needs to know nothing new; the regime stays
+                    // `fixed`, because a record cut to a click that changes by
+                    // two BPM is still a record cut to a click.
+                    transitionState = TempoTransitionState::rapid;
+                    transitionReason = TempoTransitionReason::confirmed;
+                    transitionPeriodSec = 60.0f / bpm;
+                    transitionIntervals = 3;
+                    transitionConfidence = 1.0f;
+                    transitionRapidBeats = 0;
+                    transitionRapidDeadlineSec =
+                        timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
+                                      * static_cast<double> (transitionPeriodSec);
+                    transitionRefitBeats = kShortFit;
+                    transitionLastSec = gridAnchorSec;
+                    ++transitionSerial;
+                    return;
+                }
+            }
             // Refinement, not tracking. The anchor is the running mean of the
             // long fit since the tempo was called fixed, so it converges as
             // evidence accumulates instead of following the last fit around;

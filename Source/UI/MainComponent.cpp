@@ -75,13 +75,12 @@ namespace
     juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
     juce::Colour mute()    { return gDarkMode ? juce::Colour (0xffa8a8b4) : juce::Colour (0xff655e6a); }
 
-    // STRUMENTI voices. Off stays ink(); on is a light pastel so each part
-    // reads as a different tile without opening the label. Tuned to sit
-    // apart from each other and from the light-theme ink (0xffe8e3ea).
-    juce::Colour voiceShakerOn()  { return juce::Colour (0xffd2d0cc); } // grigetto
-    juce::Colour voiceCongasOn()  { return juce::Colour (0xffe4cbb4); } // marroncino
-    juce::Colour voiceCembaloOn() { return juce::Colour (0xffeadcaa); } // dorato
-    juce::Colour voiceClapOn()    { return juce::Colour (0xffc5dcea); } // azzurrino
+    // STRUMENTI voices. Off stays ink(); on is a distinct fill so each part
+    // reads as a different tile without opening the label.
+    juce::Colour voiceShakerOn()  { return juce::Colour (0xffaab0b8); } // grigetto
+    juce::Colour voiceCongasOn()  { return juce::Colour (0xffd3925c); } // marroncino
+    juce::Colour voiceCembaloOn() { return juce::Colour (0xffe6c43c); } // dorato
+    juce::Colour voiceClapOn()    { return juce::Colour (0xff62b8e4); } // azzurrino
     juce::Colour voiceOnText()    { return juce::Colour (0xff18141b); }
     juce::Font fontDisplay (float h)
     {
@@ -140,12 +139,12 @@ namespace
                          bool down)
     {
         auto bounds = button.getLocalBounds().toFloat();
-        const bool hotFill = fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
-        const bool active = button.getToggleState() || down || hotFill;
-        // Pastel on-fills (STRUMENTI voices) sit below the hotFill
-        // saturation cut, so they would otherwise paint as ink().
         const bool voiceOn = button.getToggleState()
                              && (bool) button.getProperties().getWithDefault ("voiceOnFill", false);
+        // Voice tiles keep their own fill even when saturated; hotFill is
+        // the START/lock language and would otherwise paint them fuchsia.
+        const bool hotFill = ! voiceOn && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
+        const bool active = button.getToggleState() || down || hotFill;
 
         g.setColour (hotFill || down ? fuchsia() : (voiceOn ? fill : ink()));
         g.fillRect (bounds);

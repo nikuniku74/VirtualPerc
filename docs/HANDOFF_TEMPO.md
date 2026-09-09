@@ -964,3 +964,133 @@ tasto «SPOSTA L'1» e' li' per quello).
 
 Il test stampa ora anche dove l'uno **e'** prima del buco, cosi' quella riga si
 legge senza rifare il conto.
+
+## Follow-up recupero — 09/09/2026
+
+Priorità utente: input brano e mixer; microfono esterno fuori dal lavoro attuale.
+Nessun commit. Modifiche pregresse di Claude preservate.
+
+- TempoFollower: minimo di correzione dopo conferma ridotto da 0.5 a 0.25 beat;
+  durata ancora proporzionale allo scarto / rail 20%, conferma e protezioni intatte.
+  Memoria del filtro ordinario aggiornata anche durante transizioni BPM rapide.
+- probe_small_steps: allineate selezione del payload e tau rapido a BeatTracker;
+  non è comunque un test end-to-end. Il precedente conteggio 8/3 sotto è errato:
+  la verifica riproduce 7 PASS / 4 FAIL.
+- probe_recovery: 84 PASS, gate suddivisioni rafforzato a 0.35 beat dopo conferma.
+  A 120, passaggio spostato di 0.075 beat, buffer 256: 0.747 -> 0.624 s fino a
+  rientro stabile entro 8 ms, inclusa conferma; nessuna attivazione nei 18 controlli
+  negativi. Suddivisioni 52/100/168: totale 1.445/0.768/0.448 s.
+
+Comandi mirati (nessuna suite completa):
+```
+c++ -std=c++17 -O2 -ISource scripts/probe_recovery.cpp Source/Tracking/TempoFollower.cpp -o /tmp/vp-reentry-clock
+/tmp/vp-reentry-clock
+c++ -std=c++17 -O2 -ISource scripts/probe_small_steps.cpp Source/AI/BeatDecoder.cpp Source/AI/TempoEstimator.cpp Source/AI/BeatHmm.cpp Source/Tracking/TempoFollower.cpp -o /tmp/vp-reentry-step
+/tmp/vp-reentry-step
+```
+
+Incompleto: riconoscimento dei cambi piccoli (tre intervalli prima della conferma),
+52->50 e cambi ±12 nel probe restano fuori soglia; non attribuirli tutti al clock.
+Prossima azione: isolare pubblicazione del decoder e deriva di fase sul percorso
+diretto nei casi lenti, con traccia dall'inizio dello scarto. Poi test su registrazione
+reale con timestamp del problema e attacchi renderizzati. Nessuna garanzia sul mixer
+fisico e nessuna nuova verifica microfonica in questo step.
+
+## Gradini piccoli di tempo: completato il lavoro di astra — 08/09/2026
+
+Richiesta dell'utente: *«far seguire e tenere ancora meglio qualsiasi tempo,
+anche con un cambio di un paio di BPM improvviso»*, tempo trovato entro circa
+due quarti e rientro immediato dalla deriva.
+
+Nell'albero c'era il gate di astra: dentro il regime `fixed`, su feed diretto,
+due fit di quattro battiti (`fitPeriodBefore` con `skipNewest`) che devono
+essere entrambi puliti e consecutivi, il precedente ancora sul tempo committato
+e la differenza sopra il rumore e sotto il 4%. Banco: `scripts/probe_small_steps.cpp`
+(non ancora tracciato in git).
+
+### Cosa mancava: dirlo al clock
+
+Il gate riscriveva `bpm` e basta. Il clock arriva a un nuovo target con la sua
+costante di tempo, quindi un gradino gia' **dimostrato** atterrava come una
+pendenza. Ora lo stesso blocco pubblica una transizione `rapid` confermata - la
+stessa pubblicazione del percorso dei salti grandi - e il regime resta `fixed`,
+perche' un disco tagliato sul click che cambia di due BPM e' ancora un disco
+tagliato sul click.
+
+`probe_small_steps`: **da 6 PASS / 5 FAIL a 8 PASS / 3 FAIL**.
+
+| caso | prima | dopo |
+|---|---|---|
+| 168 -> 170 | FAIL 2.977 s | **PASS 1.077 s** |
+| 168 -> 166 | 1.317 s | **1.097 s** |
+| 120 -> 122 | 1.720 s | **1.500 s** |
+| 52 -> 54 | FAIL 5.975 s | **PASS 4.395 s** |
+| 52 -> 50 | FAIL 6.515 s | 6.135 s, ancora FAIL |
+| 120 -> 118 | PASS 2.000 s | FAIL 2.040 s (limite 2.034) |
+| ±12 a 120 | FAIL | invariato: altro meccanismo |
+
+Tracciando quando scatta: **3.1 battiti dopo il cambio**, a 52, 120 e 168, in
+entrambi i sensi. E' il pavimento fisico - con un intervallo solo non si puo'
+sapere che il tempo e' cambiato, ne servono due.
+
+Regressioni: `probe_matrix` completo (360 corse) **identico byte per byte**,
+`--steady` identico, `probe_tempo_step` identico, `VPAlign` identico,
+`probe_recovery` PASS. Il banco usa il feed diretto, quindi il gate *poteva*
+scattare e non e' mai scattato: su deriva musicale di 3 BPM al minuto non trova
+mai due finestre pulite consecutive. Distingue un gradino da una deriva.
+
+### La fase: ipotesi sbagliata, misurata e scartata
+
+`beginTempoTransition` chiama `cancelPhaseRecovery()` sempre. Sembrava la causa
+del ritardo residuo, e per un gradino piccolo lo scarto accumulato e' reale.
+Provato a renderlo condizionato ai 3 BPM che quella funzione gia' usa per
+azzerare il trim: **numeri identici, riga per riga.** Non era quello. Il codice
+e' stato ripristinato; niente e' rimasto in albero.
+
+### Dove vanno davvero i secondi
+
+Traiettoria a 52 -> 50 (errore di fase contro la griglia vera):
+
+```
+t=+0.12  clock=51.999  err=  5.4 ms      <- il clock e' ancora sul vecchio tempo
+t=+1.32  clock=51.999  err= 53.3 ms         e l'errore cresce, lineare
+t=+3.42  clock=51.998  err=137.2 ms
+t=+3.72  clock=50.000  err=132.7 ms      <- scatta il gate, il tempo e' giusto
+t=+4.32  clock=50.000  err= 73.8 ms      <- la fase rientra, ~79% per battito
+t=+4.92  clock=50.000  err= 28.4 ms
+t=+6.12  clock=50.000  err= 25.0 ms      <- sotto i 25 ms
+t=+6.72  clock=50.000  err= 11.4 ms      <- e li' si ferma
+```
+
+E la stessa cosa a 168 -> 170:
+
+```
+t=+0.06  clock=167.994 err= 1.0 ms
+t=+1.06  clock=168.088 err=12.6 ms       <- non supera mai i 25 ms
+t=+1.46  clock=170.006 err=12.3 ms       <- scatta il gate
+```
+
+**Non e' una costante di tempo da stringere, e' geometria.** La finestra di
+rilevamento e' 3.1 *battiti*; l'errore che si accumula dentro quella finestra e'
+3.1 battiti moltiplicati per l'errore relativo di tempo, quindi in millisecondi
+cresce con il quadrato della durata del battito. A 168 BPM lo stesso gradino di
+2 BPM accumula 12.6 ms e non si nota; a 52 BPM ne accumula 137 e poi vanno
+camminati via. Dopo il gradino la fase rientra del ~79% per battito, che per un
+anello che agisce sui battiti e' gia' vicino al suo limite.
+
+Da qui: **a 120 e 168 BPM il rientro e' gia' immediato** (1.1-1.5 s, e la fase
+non esce mai dai 25 ms). A 52 BPM servono circa cinque battiti in tutto, di cui
+tre sono il minimo teorico per accorgersi del cambio.
+
+### Limiti
+
+- Il criterio di PASS del banco (stabile entro **quattro** battiti) e' sotto il
+  pavimento fisico ai tempi lenti: 3.1 di rilevamento piu' circa due di fase
+  fanno cinque. I due FAIL a ±2 BPM (52->50, e 120->118 che sbaglia di 6 ms)
+  sono quello, non un difetto nuovo. Chi riprende decida se il criterio va
+  scritto in battiti-dopo-il-rilevamento invece che in battiti-dal-cambio.
+- I salti da ±12 BPM restano lenti (9.3 s a 132, e 108 non si stabilizza) e sono
+  il percorso della transizione ordinaria, non questo gate.
+- `scripts/probe_small_steps.cpp` non e' tracciato: va aggiunto a git.
+- Il gate resta **solo su feed diretto** (`lineFeed`). Su microfono non e' mai
+  stato provato e non deve esserlo senza una misura sua.

@@ -1439,6 +1439,54 @@ annotato accanto alla costante, con la misura, e il test stampa anche dove l'uno
 
 ---
 
+### 27. Gradini piccoli di tempo: seguire un cambio di un paio di BPM 🟡 (2026-09-08, misurato e migliorato — resta l'ascolto)
+
+Richiesta: *«far seguire e tenere ancora meglio qualsiasi tempo, anche con un
+cambio di un paio di BPM improvviso»*, entro circa due quarti, con rientro
+immediato dalla deriva.
+
+Il gate di astra (regime `fixed`, feed diretto, due fit di quattro battiti che
+devono essere puliti e consecutivi) riscriveva `bpm` e basta: il clock ci
+arrivava con la sua costante di tempo, quindi un gradino già dimostrato atterrava
+come una pendenza. Ora pubblica una transizione `rapid` confermata, la stessa dei
+salti grandi. Banco: `scripts/probe_small_steps.cpp` (**da aggiungere a git**).
+
+`probe_small_steps` da **6 PASS / 5 FAIL a 8 PASS / 3 FAIL**; 168→170 da FAIL
+2.977 s a PASS 1.077 s, 52→54 da FAIL 5.975 s a PASS 4.395 s. Il gate scatta
+**3.1 battiti dopo il cambio** a 52, 120 e 168, in entrambi i sensi: è il minimo
+teorico, con un intervallo solo non si può sapere che il tempo è cambiato.
+
+`probe_matrix` completo (360 corse) identico byte per byte, `--steady` identico,
+`probe_tempo_step` identico, `VPAlign` identico, `probe_recovery` PASS. Il banco
+usa il feed diretto e il gate non è **mai** scattato: distingue un gradino da una
+deriva musicale di 3 BPM al minuto.
+
+**Ipotesi sbagliata, misurata e scartata:** `beginTempoTransition` azzera sempre
+il recupero di fase; sembrava la causa del ritardo residuo. Reso condizionato ai
+3 BPM che quella funzione già usa per il trim: **numeri identici riga per riga**.
+Ripristinato, niente rimasto in albero.
+
+**Dove vanno i secondi** (52→50): il clock resta sul vecchio tempo per 3.6 s e
+l'errore cresce fino a 137 ms; il gate scatta, il tempo è giusto, e la fase
+rientra del ~79% per battito fino a fermarsi su 11.4 ms. A 168→170 lo stesso
+gradino accumula solo 12.6 ms e non esce mai dai 25 ms. **Non è una costante da
+stringere, è geometria**: la finestra di rilevamento è 3.1 *battiti*, quindi
+l'errore in millisecondi cresce col quadrato della durata del battito.
+
+- [x] A 120 e 168 BPM il rientro è già immediato (1.1-1.5 s, fase sempre sotto
+  i 25 ms).
+- [ ] A 52 BPM servono ~5 battiti in tutto, tre dei quali sono il minimo
+  teorico. Il criterio di PASS del banco (stabile entro **4** battiti dal
+  cambio) è sotto il pavimento: da riscrivere in battiti-dopo-il-rilevamento,
+  oppure accettare i due FAIL a ±2 BPM per quello che sono.
+- [ ] I salti da ±12 BPM restano lenti (9.3 s a 132, 108 non si stabilizza):
+  è il percorso della transizione ordinaria, non questo gate.
+- [ ] Il gate è **solo su feed diretto**. Su microfono non è mai stato provato e
+  non va abilitato senza una misura sua.
+- [ ] Ascolto: un brano che cambia di due BPM a metà, a tempo lento.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -1636,3 +1684,9 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Assestamento a volte lentissimo (fino a 30 s) sullo stesso materiale che di solito prende 2 s: item 18, aperto, **non** inseguirlo prima di sapere se esiste fuori dal banco (`VPProbe --sync`).
 - Chiusura Codex PATTERN: parte tecnica completata; resta l'ascolto umano in **Standby A**. Loop WAV registrati: **Standby B** + `HANDOFF_LOOP_DEBUG.md`
 - Guadagno automatico analisi (item 16): `kMakeupClipGuardPeak` in `VirtualPercussionEngine.cpp`, attenua solo sopra 0.90 di picco. Test veloce dedicato: `VPTests --octave` (non lanciare la suite intera per iterare qui). Full-suite gate e ascolto ancora da fare.
+# Priorità recupero diretto — 09/09/2026
+
+Input brano/mixer prima del microfono esterno. Correzione dopo conferma accelerata
+e verificata con 84 casi mirati; riconoscimento tardivo dei cambi BPM e residui
+lenti ancora aperti. Misure, comandi e prossima azione in `HANDOFF_TEMPO.md`,
+sezione «Follow-up recupero — 09/09/2026». Non dichiarare risolti tutti i deragliamenti.

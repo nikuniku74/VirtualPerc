@@ -133,10 +133,6 @@ namespace
             // weight of the low drum and loses its note.
             case Stroke::slapClosed: return { 360.0f * kTune, 0.60f, 90.0f, 0.05f,  0.30f };
             case Stroke::tapado:     return {  95.0f * kTune, 0.34f, 70.0f, 0.05f, -0.26f };
-            // Two hands, no membrane: almost all noise, gone in under a tenth
-            // of a second. The nominal pitch below only shapes the sliver that
-            // is not noise; it is not meant to be heard as a note.
-            case Stroke::clap:  return { 1500.0f, 0.90f, 55.0f, 0.09f,  0.0f };
             default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
@@ -348,6 +344,132 @@ void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std:
     fadeTail (s.left, s.right, sampleRate);
 }
 
+
+void PercussionEngine::synthesizeClap (Sample& s, int layer, std::uint32_t seed) noexcept
+{
+    // A clap is not one pair of hands, and it is not a drum.
+    //
+    // What makes the sound recognisable on every dance record since the
+    // seventies is that several people clap at almost the same moment and miss
+    // it: three or four short bursts about ten milliseconds apart, and then the
+    // last one together with the room it happened in. That tail is the whole
+    // character. Without it the sound is a stick on a rim; with only the tail
+    // it is a noise gate opening. It used to borrow `synthesizeDrum`, which is
+    // a membrane with a bandpass crack on it - a conga hit, which is what that
+    // function was written for, and no amount of parameter is going to make a
+    // membrane into a room full of hands.
+    //
+    // Everything below is one clap; the ensemble is the flam, not a chorus of
+    // copies. Round-robin changes the spacing, the panning and the weight of
+    // each hand, so two claps in a row are not the same clap twice.
+    const float sr = static_cast<float> (sampleRate);
+    const float force = 0.55f + 0.45f * (static_cast<float> (layer)
+                                         / static_cast<float> (kLayers - 1));
+
+    DeterministicRng local (seed);
+    auto uni = [&local]() noexcept { return local.nextFloat(); };
+
+    // Three leading hands and the one that lands: four claps, which is what the
+    // machines settled on and what a record sounds like. Force does not add
+    // hands - it closes the gap between them. People clap closer together when
+    // they are clapping hard, so a loud clap reads as one event and a soft one
+    // scatters, and the whole flam stays inside about thirty milliseconds
+    // either way. Longer than that and it stops being a clap and starts being
+    // two of them.
+    constexpr int hands = 3;
+    const float gapSec = 0.0100f - 0.0030f * force;
+
+    struct Burst { float at, decay, gain, pan, body; };
+    Burst burst[5] {};
+    float t0 = 0.0f;
+    for (int k = 0; k < hands; ++k)
+    {
+        burst[k].at = t0;
+        // The leading hands are short - each is nearly gone before the next
+        // arrives, or the flam turns into a buzz.
+        burst[k].decay = 300.0f + 120.0f * uni();
+        burst[k].gain = 0.45f + 0.35f * uni();
+        burst[k].pan = 0.70f * (uni() - 0.5f);
+        burst[k].body = uni();
+        t0 += gapSec * (0.75f + 0.5f * uni());
+    }
+
+    // The last hand is the one the listener hears as "the clap": louder, close
+    // to the middle, and it is the only one that gets the room.
+    Burst& last = burst[hands];
+    last.at = t0;
+    last.decay = 105.0f + 30.0f * force;
+    last.gain = 1.0f;
+    last.pan = 0.14f * (uni() - 0.5f);
+    last.body = 0.5f;
+    const int used = hands + 1;
+
+    // The room. Slow, quiet, and decorrelated between the channels - that is
+    // what makes it a hall rather than a filter still ringing.
+    const float tailDecay = 15.0f - 4.0f * force;
+    const float tailGain = 0.16f - 0.05f * force;
+
+    const int n = std::max (256, static_cast<int> (sampleRate * 0.42));
+    s.left.assign (static_cast<size_t> (n), 0.0f);
+    s.right.assign (static_cast<size_t> (n), 0.0f);
+
+    // Two independent noise streams through two bandpasses a third apart, so
+    // the hands do not all have the same voice. Cheaper than a filter per
+    // hand, and the difference is audible where a filter per hand would not be:
+    // each burst picks its own mix of the two.
+    const float bright = 0.92f + 0.20f * force;
+    Svf bodyA, bodyB, snapA;
+    DeterministicRng nA (seed ^ 0x9E3779B9u);
+    DeterministicRng nB (seed ^ 0x85EBCA6Bu);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const float t = static_cast<float> (i) / sr;
+
+        const float na = nA.nextSigned();
+        const float nb = nB.nextSigned();
+        // The body of a clap sits around a kilohertz - cupped palms are a
+        // Helmholtz resonator and that is where they resonate.
+        const float a = bodyA.bandpass (na, 920.0f * bright / sr, 0.42f);
+        const float b = bodyB.bandpass (nb, 1260.0f * bright / sr, 0.50f);
+        // And the sting on top is the skin, not the cavity: two milliseconds of
+        // it, high and dry. Leave it out and the clap is a "poff".
+        const float snap = snapA.bandpass (na, 3300.0f * bright / sr, 0.80f);
+
+        float l = 0.0f, r = 0.0f;
+        for (int k = 0; k < used; ++k)
+        {
+            const float dt = t - burst[k].at;
+            if (dt < 0.0f)
+                continue;
+            // A one-millisecond rise, so the burst starts rather than clicks.
+            const float env = burst[k].gain
+                              * (1.0f - std::exp (-dt * 2600.0f))
+                              * std::exp (-dt * burst[k].decay);
+            const float tone = a * (1.0f - burst[k].body) + b * burst[k].body
+                               + snap * 0.35f * std::exp (-dt * 900.0f);
+            const float v = tone * env;
+            l += v * (1.0f - burst[k].pan) * 0.5f;
+            r += v * (1.0f + burst[k].pan) * 0.5f;
+        }
+
+        const float dtTail = t - last.at;
+        if (dtTail >= 0.0f)
+        {
+            const float tail = tailGain * (1.0f - std::exp (-dtTail * 160.0f))
+                               * std::exp (-dtTail * tailDecay);
+            l += a * tail;
+            r += b * tail;
+        }
+
+        s.left[static_cast<size_t> (i)] = l;
+        s.right[static_cast<size_t> (i)] = r;
+    }
+
+    normalise (s.left, s.right, 0.95f);
+    fadeTail (s.left, s.right, sampleRate);
+}
+
 bool PercussionEngine::loadNamedWav (const char* name, std::vector<float>& mono) noexcept
 {
     mono.clear();
@@ -550,7 +672,12 @@ void PercussionEngine::buildBank() noexcept
     static const char* kStem[kStrokes] = {
         "shaker_down", "shaker_up", "tumba", "open", "slap",
         nullptr, nullptr, nullptr, nullptr, nullptr,
-        "clap", "cembalo_down", "cembalo_up"
+        // The clap is synthesised - see `synthesizeClap`. The VCSL ensemble take
+        // is a room of people clapping once, which is a fine recording and the
+        // wrong instrument: a dance clap is a flam of hands and a tail, and it
+        // has to follow the dynamics and the round-robin rather than replay one
+        // afternoon. `Assets/Percussion/clap*.wav` are no longer read.
+        nullptr, "cembalo_down", "cembalo_up"
     };
 
     for (int st = 0; st < kStrokes; ++st)
@@ -604,6 +731,8 @@ void PercussionEngine::buildBank() noexcept
                         synthesizeShaker (s, stroke, layer, seed);
                     else if (stroke == Stroke::cembaloDown || stroke == Stroke::cembaloUp)
                         synthesizeCymbal (s, stroke, layer, seed);
+                    else if (stroke == Stroke::clap)
+                        synthesizeClap (s, layer, seed);
                     else
                         synthesizeDrum (s, stroke, layer, seed);
                     continue;

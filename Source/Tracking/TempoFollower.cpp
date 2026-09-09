@@ -242,10 +242,12 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
         && std::fabs (error) > 0.012f
         && std::fabs (error) < 0.25f)
     {
-        // Half a beat cannot close more than 0.1 beat at the 20% rate rail.
-        // Budget the actual distance instead of expiring with error still owed.
+        // Once two independent beats agree, spend the confirmed offset without
+        // an additional half-beat wait. A quarter-beat minimum keeps tiny
+        // corrections smooth; larger offsets retain the distance / 20% budget
+        // so the window never expires with a correction the rail cannot pay.
         const float excess = std::max (0.0f, std::fabs (error) - kRecoveryToleranceSeconds / period);
-        const float correctionBeats = std::max (0.5f, excess / kRecoverySteerRail);
+        const float correctionBeats = std::max (0.25f, excess / kRecoverySteerRail);
         phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (std::ceil (sampleRate * period * correctionBeats)));
         recoveryArmed = false;
         recoveryCooldownSamples = static_cast<int> (sampleRate * period * 2.5);
@@ -830,6 +832,16 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
             if (std::isfinite (needed))
                 steer = std::clamp (needed, -kRapidSteerRail, kRapidSteerRail);
         }
+    }
+
+    // A confirmed tempo transition also bypasses the ordinary phase filter.
+    // Carry its memory along, just as for phase recovery below: otherwise the
+    // old error resumes steering after the rapid window has already paid it.
+    if (rapidTransition && haveRawGridPhaseError && std::isfinite (rawGridPhaseError))
+    {
+        phaseErrEma = rawGridPhaseError;
+        prevPhaseErr = std::copysign (std::max (0.0f, std::fabs (rawGridPhaseError) - 0.012f),
+                                     rawGridPhaseError);
     }
 
     if (! rapidTransition && phaseRecoverySamplesRemaining > 0

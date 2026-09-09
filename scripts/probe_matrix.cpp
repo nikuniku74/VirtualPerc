@@ -247,37 +247,42 @@ static void ratioTable();
 int main (int argc, char** argv)
 {
     if (argc > 1 && std::string (argv[1]) == "--ratio") { ratioTable(); return 0; }
-    const float tempos[] = { 60.f, 81.f, 100.f, 128.f, 165.f };
-    const int seeds = 6;
+    const bool steady = argc > 1 && std::string (argv[1]) == "--steady";
+    const bool quick = steady || (argc > 1 && std::string (argv[1]) == "--quick");
+    const std::vector<float> tempos = quick ? std::vector<float>{52.f,120.f,168.f}
+                                           : std::vector<float>{60.f,81.f,100.f,128.f,165.f};
+    const int seeds = quick ? 2 : 6;
     printf ("Banco materiali: %d stili x %d tempi x %d semi.\n",
             (int) (sizeof kStyles / sizeof kStyles[0]),
-            (int) (sizeof tempos / sizeof tempos[0]), seeds);
-    printf ("aggancio = entro il 2%% e ci resta 3 s;  uscite = corse con errore > 4%% in 4 minuti\n\n");
-    printf ("%-16s %8s %8s %9s %9s\n", "materiale", "agg.med", "agg.peg", "uscite", "%fuori");
+            (int) tempos.size(), seeds);
+    printf ("aggancio = entro il 2%% e ci resta 3 s;  uscite = corse con errore > 4%% in %d secondi\n\n",quick?60:240);
+    printf ("Deriva musicale: %.0f BPM\n",steady?0.0:3.0);
+    printf ("%-16s %8s %8s %9s %9s %10s\n", "materiale", "agg.med", "agg.peg", "uscite", "%fuori", "err.medio%");
     printf ("------------------------------------------------------------\n");
     double gLock = 0; int gLockN = 0, gExc = 0, gNever = 0; double gOut = 0; int cells = 0;
     for (const auto& st : kStyles) {
-        double lockSum = 0, lockWorst = 0, outSum = 0, meas = 0;
+        double lockSum = 0, lockWorst = 0, outSum = 0, meas = 0, errorSum = 0;
         int lockN = 0, never = 0, exc = 0, runs = 0;
         for (float bpm : tempos) {
             for (unsigned seed = 1; (int) seed <= seeds; ++seed) {
                 applyStyle (st);
                 gLockOnly = true; gLockAt = -1.0; gLockDone = -1.0;
-                run (bpm, 60.0, 3.0f, st.jitterMs, seed, false);
+                run (bpm, 60.0, steady?0.0f:3.0f, st.jitterMs, seed, false);
                 gLockOnly = false;
                 if (gLockDone >= 0.0) { lockSum += gLockDone; ++lockN;
                                         lockWorst = std::max (lockWorst, gLockDone); }
                 else ++never;
                 applyStyle (st);
-                Out o = run (bpm, 240.0, 3.0f, st.jitterMs, seed, false);
+                Out o = run (bpm, quick ? 60.0 : 240.0, steady?0.0f:3.0f, st.jitterMs, seed, false);
                 if (o.n > 0) ++exc;
-                outSum += o.totalOutSec; meas += o.measuredSec;
+                outSum += o.totalOutSec; meas += o.measuredSec; errorSum += o.errIntegral;
                 ++runs;
             }
         }
         const double om = meas > 0 ? outSum / meas * 100.0 : 0.0;
-        printf ("%-16s %8.2f %8.2f %6d/%-3d %8.2f%%%s\n", st.name,
+        printf ("%-16s %8.2f %8.2f %6d/%-3d %8.2f%% %10.4f%s\n", st.name,
                 lockN ? lockSum / lockN : -1.0, lockWorst, exc, runs, om,
+                meas > 0 ? errorSum/meas : 0,
                 never ? "   (qualche corsa non aggancia)" : "");
         if (lockN) { gLock += lockSum / lockN; ++gLockN; }
         gExc += exc; gNever += never; gOut += om; ++cells;

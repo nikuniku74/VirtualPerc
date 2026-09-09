@@ -442,6 +442,19 @@ rotation proxy. Verify with `VPTests --bar`.
 
 ## 4. The clock (`TempoFollower`)
 
+**Confirmed recovery follow-up (2026-09-09).** The correction budget now uses
+max(0.25 beat, excess / 0.20), not a half-beat minimum. Confirmation, trust,
+octave protection and the 20% rail are unchanged. `probe_recovery` passes 84/84;
+its subdivision gate now requires correction within 0.35 beat plus callbacks.
+At 256 frames the 0.075-beat displaced passage at 120 returns within 8 ms in
+0.624 s (previously 0.747); subdivision recovery totals at 52/100/168 are
+1.445/0.768/0.448 s including confirmation. Negative controls stay identical.
+The rapid tempo branch also carries the ordinary phase/derivative memory along
+before handback. The small-step probe now mirrors BeatTracker's rapid payload
+and phase tau, but is still a synthetic activation/clock probe, not audio.
+Slow residual and recognition-delay failures remain open; these measurements
+do not establish performance on a real mixer or microphone.
+
 A PLL on the audio thread. Two knobs behave differently and both matter:
 
 **Rate glide** (`TempoFollower.cpp:423`). Acquisition and playing are different

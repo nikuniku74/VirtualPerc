@@ -171,6 +171,7 @@ private:
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeCymbal (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    void   synthesizeClap (Sample& s, int layer, std::uint32_t seed) noexcept;
     void   applyReverbParams() noexcept;
     const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
 

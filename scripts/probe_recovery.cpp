@@ -118,7 +118,7 @@ int main (int argc, char** argv)
             if (ordinaryRecovered < 0 && ordinaryMs < 8) ordinaryRecovered = time;
         }
         const bool ok = confirmed >= period * 0.9 && confirmed <= period + dt
-            && recovered >= confirmed && recovered-confirmed <= period * 0.5 + dt*2
+            && recovered >= confirmed && recovered-confirmed <= period * 0.35 + dt*2
             && worstAfter < 15 && minGap > 0.7 && maxGap < 1.3;
         std::printf ("subdivisions %.0f sign=%+.0f buffer=%d confirm=%.3f recover=%.3f total=%.3f ordinary=%.3f after=%.2fms %s\n",
                      bpm,sign,buffer,confirmed,recovered-confirmed,recovered,ordinaryRecovered,worstAfter,ok?"PASS":"FAIL");
