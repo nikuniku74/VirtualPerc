@@ -733,6 +733,36 @@ void PercussionEngine::buildBank() noexcept
         }
 
         const bool haveSource = ! hard.empty();
+        // The tambourine has no dynamic layers, and that is not laziness about
+        // its dynamics - it is what the instrument is. A conga head struck
+        // softer loses the crack and rings shorter, so its layers are real; a
+        // tambourine struck softer is the same jingles moving less far, and the
+        // only honest difference is level.
+        //
+        // Measured, because this was reported as "on 2 and 4 it plays a
+        // different hit" and it was exactly that. Velocity here is
+        // `shaker[step] * accent[beat]`, and it crosses the layer boundary at
+        // 0.667 between one beat and the next: marcha reads 0.900 / 0.636 /
+        // 0.800 / 0.616 across the bar, dance 0.700 / 0.551 / 0.698 / 0.513,
+        // funk 0.880 / 0.644 / 0.768 / 0.602. Beats one and three landed on
+        // `cembalo_down.wav` and beats two and four on `cembalo_down_med.wav`,
+        // which is a different take - and `layerFromRecording` then filtered
+        // them differently as well, 12 kHz against 7.5. Two timbres, locked to
+        // the backbeat. With `humanize` at plus or minus seven per cent the
+        // values sitting near the boundary flipped from hit to hit on top of
+        // that, so it was not even consistently two.
+        //
+        // One take, at full force, for every layer and every round-robin slot.
+        // The accents are untouched: `pick` already spans 0.08 to 1.0 of gain
+        // continuously with velocity, so the backbeat is still louder, it is
+        // just no longer a different instrument. The alternate files stay on
+        // disk and are simply not read for this stroke - per
+        // Assets/Percussion/ATTRIBUTION.md `cembalo_down_b` and
+        // `cembalo_up_med` are a *second tambourine* (VCSL Tamb1 against
+        // Tamb2), so round-robining them was the same bug arriving by another
+        // route.
+        const bool jingles = stroke == Stroke::cembaloDown
+                             || stroke == Stroke::cembaloUp;
         recorded[st] = haveSource;
 
         for (int layer = 0; layer < kLayers; ++layer)
@@ -748,8 +778,10 @@ void PercussionEngine::buildBank() noexcept
                 {
                     if (stroke == Stroke::shakerDown || stroke == Stroke::shakerUp)
                         synthesizeShaker (s, stroke, layer, seed);
-                    else if (stroke == Stroke::cembaloDown || stroke == Stroke::cembaloUp)
-                        synthesizeCymbal (s, stroke, layer, seed);
+                    else if (jingles)
+                        // The same rule as the recorded bank above: one sound
+                        // per stroke, so the two halves of the bank agree.
+                        synthesizeCymbal (s, stroke, kLayers - 1, seed);
                     else if (stroke == Stroke::clap)
                         synthesizeClap (s, layer, seed);
                     else
@@ -758,9 +790,15 @@ void PercussionEngine::buildBank() noexcept
                 }
 
                 const std::vector<float>* src = &hard;
-                float force = static_cast<float> (layer) / static_cast<float> (kLayers - 1);
+                float force = jingles
+                                  ? 1.0f
+                                  : static_cast<float> (layer) / static_cast<float> (kLayers - 1);
 
-                if (layer == 0 && ! soft.empty())
+                if (jingles)
+                {
+                    // Nothing to choose: `hard` at full force, every slot.
+                }
+                else if (layer == 0 && ! soft.empty())
                 {
                     src = &soft;
                     force = 1.0f;

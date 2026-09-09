@@ -415,6 +415,9 @@ private:
     bool  rhythmSeen = false;
     std::atomic<float> lastLowShare { 0.0f };
     std::atomic<uint32_t> analysisEpoch { 0 };
+    // Audio-thread event kind, retained until the next epoch. Continuous
+    // arrangement changes preserve both comb history and network state.
+    bool preserveCombOnEpoch = false;
     /** Message-thread seek (and the audio-thread hole detector) set this;
         process() turns it into BeatTracker::notifyBarReentry. */
     std::atomic<bool> barReentryPending { false };

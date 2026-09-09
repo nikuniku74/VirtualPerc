@@ -242,6 +242,7 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     rhythmSeen = false;
     lastLowShare.store (0.0f, std::memory_order_relaxed);
     analysisEpoch.store (0, std::memory_order_relaxed);
+    preserveCombOnEpoch = false;
     barReentryPending.store (false, std::memory_order_relaxed);
     musicGapSamples = 0;
     musicGapArmed = false;
@@ -1237,11 +1238,12 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     // A rhythm section arriving on top of an intro that never had one. The two
     // conditions below cannot see it and must not be loosened until they can:
     // the intro is music, so the room was never quiet, and the entrance is a
-    // change of content rather than of level. It is the same event as theirs -
-    // this input is now a different thing to analyse - so it takes the same
-    // exit, and the make-up gain is re-primed at the new level with it.
+    // change of content rather than of level. Invalidate the intro's grid and
+    // re-prime make-up, but retain continuous network/comb evidence: on BLUE
+    // SKY the comb already sees the band by the time this event is called.
     if (rhythmArrived)
     {
+        preserveCombOnEpoch = true;
         levelRef = std::max (levelFast, kMakeupFloor);
         levelStepSamples = 0;
         analysisEpoch.fetch_add (1, std::memory_order_relaxed);
@@ -1266,6 +1268,7 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
 
     if (levelStepSamples > static_cast<int> (sampleRate * kLevelStepHoldSec))
     {
+        preserveCombOnEpoch = false;
         levelRef = std::max (levelFast, kMakeupFloor);
         levelStepSamples = 0;
         analysisEpoch.fetch_add (1, std::memory_order_relaxed);
@@ -1627,7 +1630,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         lastHarmonicShare.store (harmony.tonalShare(), std::memory_order_relaxed);
     }
 
-    tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed));
+    tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed), preserveCombOnEpoch);
     const auto tr = tracker.process (mono.data(), numSamples);
 
     percussion.setBarTrusted (tr.barTrusted);

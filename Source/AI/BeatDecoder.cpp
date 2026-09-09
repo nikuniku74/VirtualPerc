@@ -836,14 +836,19 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     clearTempoTransition (TempoTransitionReason::reset);
 }
 
-void BeatDecoder::notifyInputRestart() noexcept
+void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
 {
     // The two things that decide the metrical level. Both were measuring a
     // room: over forty seconds of room noise at the level the make-up gain
     // hands the network, the fold names a tempo with a salience of 0.29 and
     // calls the level settled, and the state space sits on it with a margin of
     // 8 - which, having a change penalty, it then defends against the music.
-    tempo.restartEvidence();
+    // An arrangement entrance can arrive after the fold already contains the
+    // band. The engine explicitly identifies that case; discard the old grid
+    // below but retain the independent activation history. Ordinary source
+    // changes still discard everything, including confident room evidence.
+    if (! preserveComb)
+        tempo.restartEvidence();
     hmm.reset();
     anchorBpm = 0.0f;
     anchorStrength = 0.0f;

@@ -603,6 +603,19 @@ swing are expressed as lateness (see the percussion-patterns skill).
 
 ### Where that epoch is decided: `updateAnalysisEpoch`
 
+**Arrangement continuity experiment (2026-09-09).** A low-share entrance
+can occur after the fold already sees the band. Carrying only that fold across
+the restart while resetting the network worsened BLUE SKY's first three-second
+lock to 56.971610 s. Keeping both the fold and the recurrent model state, while
+clearing the decoder's old grid, reached 41.285805 s (baseline 53.46 s), with
+73.8% within 2% over the whole recording (baseline 73.6%). The epoch remains
+39.7 s. This is not an always-stable lock: the reading rises near 90 during
+47-55 s, and playback is already enabled while the clock is converging at 40 s.
+Ordinary quiet-to-loud source epochs still clear the fold and model. The worker
+receives the epoch and continuity bit in one atomic word so the reason cannot
+race its counter. `probe_input_continuity` checks retained fold evidence and a
+subsequent hard reset at four tempos; it does not validate the real network.
+
 The make-up gain exists to hold the analysis at the one level BeatNet was
 validated at, and downstream of it an empty room and a band look alike - by
 design. `updateAnalysisEpoch` is the last place the difference still exists, so

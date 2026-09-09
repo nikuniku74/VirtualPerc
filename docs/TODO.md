@@ -1546,6 +1546,64 @@ clap che fissa l'anticipo globale: il cembalo cade dove cadeva.
 - [ ] Nessun test copre il timbro delle voci. Il solo controllo automatico è la
   regressione d'attacco; il resto è `VPRender` più l'orecchio.
 
+**Terzo caso, stessa forma (2026-09-09).** Segnalazione: *«sembra che sul 2 e sul
+4 stia suonando un colpo differente»*. Era vero, ed era il **livello dinamico**.
+
+`pick()` sceglie un layer con `int(velocity * 3)`, e per il cembalo ogni layer è
+una *registrazione diversa* — `cembalo_down.wav` contro `cembalo_down_med.wav` —
+più un filtro diverso in `layerFromRecording` (taglio a 12 kHz contro 7.5). La
+velocity del cembalo è `shaker[step] * accent[beat]`, e attraversa il confine a
+0.667 fra un quarto e l'altro:
+
+| stile | beat 1 | beat 2 | beat 3 | beat 4 |
+|---|---|---|---|---|
+| marcha | 0.900 **L2** | 0.636 **L1** | 0.800 **L2** | 0.616 **L1** |
+| dance | 0.700 **L2** | 0.551 **L1** | 0.698 **L2** | 0.513 **L1** |
+| funk | 0.880 **L2** | 0.644 **L1** | 0.768 **L2** | 0.602 **L1** |
+| samba | 0.648 L1 | 0.940 L2 | 0.598 L1 | 0.900 L2 |
+| pop / bossa | L2 | L1 | L1 | L1 |
+| rock | L2 | L2 | L2 | L2 (l'unico sano) |
+
+Due timbri, agganciati al backbeat. E con `humanize` a ±7% i valori vicini al
+confine (marcha 0.636, funk 0.644, samba 0.648) saltavano livello da un colpo
+all'altro, quindi non erano nemmeno due in modo coerente.
+
+**Correzione**: il cembalo non ha layer dinamici. Non è pigrizia sulle sue
+dinamiche, è cosa è lo strumento — una pelle di conga colpita piano perde il
+crack e risuona meno, un tamburello colpito piano è le stesse sonagliere che si
+muovono meno, e l'unica differenza onesta è il livello. Una sola presa
+(`cembalo_down.wav` / `cembalo_up.wav`) a forza piena per ogni layer e ogni
+round-robin; gli accenti restano, perché `pick` copre già 0.08-1.00 di guadagno
+in continuo con la velocity.
+
+Questo chiude anche la stessa cosa che arrivava per un'altra strada: per
+`ATTRIBUTION.md`, `cembalo_down_b` e `cembalo_up_med` sono un **secondo
+tamburello** (VCSL Tamb1 contro Tamb2), quindi il round-robin cambiava strumento.
+I file restano sul disco, semplicemente non vengono più letti per questa voce.
+
+Misurato con `VPRender` (marcha, 100 BPM, `--humanize 0`, solo cembalo),
+centroide spettrale dei colpi sugli ottavi:
+
+```
+          1      e      2      e      3      e      4      e
+prima   9438   9710   9512   9704   9430   9711   9512   9851
+dopo    9438   9877   9439   9887   9439   9879   9439   9891
+```
+
+Prima l'1 e il 3 leggevano ~9434 Hz e il 2 e il 4 leggevano 9512: campione
+diverso. Dopo tutti i down leggono 9439 e tutti gli up ~9880 — restano due
+timbri, che è giusto, perché down e up sono due articolazioni. Su rock, dance,
+funk, samba e pop l'escursione fra i down è **0 Hz** e fra gli up ≤10 Hz. I
+picchi (gli accenti) sono invariati riga per riga. `--swing` 3/0, `--bar` 10/0.
+
+- [ ] **Da ascoltare.** La misura dice che i colpi sono lo stesso suono; non dice
+  se il cembalo senza layer dinamici suona piatto in un crescendo vero. Se lo è,
+  la strada non è rimettere i layer ma dare a `layerFromRecording` una curva di
+  brillantezza continua per il metallo, invece di tre gradini.
+- [ ] Lo **shaker** ha la stessa struttura (stesse tabelle, stessi accenti,
+  stessi tre layer da tre file). Non è stato segnalato e non è stato toccato:
+  va misurato allo stesso modo prima di decidere.
+
 ---
 
 ### 29. Su un intro senza batteria l'app si impegna su un tempo sbagliato e ci resta un minuto 🔴 (2026-09-09, misurato su brano reale — causa trovata, non corretta)
@@ -1759,7 +1817,22 @@ identico. `VPAlign` differisce ancora su due righe: il 168 a 2.2 di jitter, che
 100→110 in 30 s. `--level` 15/1, `--octave` 7/4, `--bar` 10/0, `--tempo-slow`
 10/0.
 
-- [ ] **Restano 7 s che nessun arbitro può recuperare**: fra l'epoch (39.7) e il
+- [ ] **Continuità dell'analisi all'ingresso della band (prova 09/09).**
+  Distinto l'evento di quota bassa dal normale quiet-to-loud: il primo conserva
+  pettine e stato ricorrente della rete, azzerando la griglia del decoder;
+  il secondo continua a scartare tutta l'evidenza. Evento e tipo viaggiano
+  insieme nello stesso valore atomico verso il worker.
+  Su BLUE SKY, a 0 dB: primo aggancio tenuto tre secondi **53.46 -> 41.285805 s**,
+  quota entro ±2% sul brano intero **73.6 -> 73.8%**. Epoch sempre 39.7 s.
+  Conservare il solo pettine, resettando la rete, peggiora a **56.971610 s**:
+  non basta evitare il riempimento del buffer. La continuità della rete conta.
+  Il miglioramento non equivale a stabilità perfetta: fra 47 e 55 s la variante
+  continua sale intorno a 90 BPM; inoltre suona già a 40 s mentre il clock
+  sta raggiungendo il nuovo tempo. Questi due limiti restano aperti.
+  `probe_input_continuity` verifica conservazione e successivo reset completo
+  a 52/87/120/168 BPM (8 controlli). Non misura il modello o il suono.
+
+- [ ] **Diagnosi precedente dei 7 s di riempimento**: fra l'epoch (39.7) e il
   momento in cui il pettine è pronto (47.0) non esiste un secondo parere. È il
   riscaldamento del fold dopo che `notifyInputRestart` lo ha azzerato. Da notare
   che a 39.0 s, *prima* del restart, il pettine leggeva già **85.71** con

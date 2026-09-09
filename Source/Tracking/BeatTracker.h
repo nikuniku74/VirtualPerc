@@ -199,7 +199,7 @@ public:
         seen the input change since the app was opened. Until it has, a tempo it
         has found may be the room's - measured, an empty room reaches FOLLOWING
         at 99 BPM with a confidence of 0.91 - and the percussion is held out. */
-    void setInputEpoch (uint32_t epoch) noexcept
+    void setInputEpoch (uint32_t epoch, bool preserveComb = false) noexcept
     {
         if (seenEpoch && epoch != lastInputEpoch)
         {
@@ -223,7 +223,7 @@ public:
         }
         lastInputEpoch = epoch;
         seenEpoch = true;
-        neural.setInputEpoch (epoch);
+        neural.setInputEpoch (epoch, preserveComb);
     }
 
     /** The un-normalised analysis input is plainly music-level. This must be

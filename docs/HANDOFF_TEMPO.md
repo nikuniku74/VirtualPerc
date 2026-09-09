@@ -1216,6 +1216,17 @@ di lettura di questa sessione vengono da lì.
 
 ## Cosa manca, in ordine di quanto pesa
 
+**Aggiornamento della prova di continuità (09/09).** Per il solo ingresso
+della sezione ritmica, conservare sia il pettine sia lo stato ricorrente della
+rete, azzerando la griglia del decoder, porta BLUE SKY da 53.46 a
+**41.285805 s** al primo aggancio tenuto tre secondi. Epoch invariato a 39.7 s;
+entro ±2% sul brano intero 73.6 -> **73.8%**. Conservare soltanto il pettine
+peggiora a 56.971610 s: la continuità della rete è parte della misura.
+Restano l'escursione verso 90 BPM a 47-55 s e il suono già attivo mentre il
+clock converge a 40 s. Non è una validazione della fase o della CPU su iPad.
+Il normale restart per una nuova sorgente continua ad azzerare tutto.
+Dettaglio e verifiche: item 29 di TODO.md.
+
 ### 1. L'app non sa dire «non lo so ancora» — COSTRUITO il 09/09/2026
 
 Il cancello c'è, nel motore, prima del guadagno d'analisi:

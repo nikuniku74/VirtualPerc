@@ -60,9 +60,12 @@ public:
         BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
         flag, from the audio thread, so an event that comes and goes between two
         of the worker's passes cannot be missed. */
-    void setInputEpoch (uint32_t epoch) noexcept
+    void setInputEpoch (uint32_t epoch, bool preserveComb = false) noexcept
     {
-        inputEpoch.store (epoch, std::memory_order_relaxed);
+        // Publish event and kind together: the worker must not pair one epoch
+        // with the following epoch's kind. The low bit denotes continuous
+        // music, for which recurrent state and comb history both survive.
+        inputEpoch.store ((static_cast<uint64_t> (epoch) << 1) | (preserveComb ? 1u : 0u), std::memory_order_relaxed);
     }
 
     /** Reject publications describing audio older than the input position at
@@ -131,9 +134,10 @@ private:
     std::atomic<int> wantedOctave { 0 };
     std::atomic<bool> wantedLineFeed { false };
     std::atomic<bool> wantedSounding { false };
-    std::atomic<uint32_t> inputEpoch { 0 };
+    std::atomic<uint64_t> inputEpoch { 0 };
+    static_assert (std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<int64_t> minimumAnalysisSample { 0 };
-    uint32_t seenInputEpoch = 0;
+    uint64_t seenInputEpoch = 0;
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across
         all discontinuities. After a reset it buffers a whole frame before

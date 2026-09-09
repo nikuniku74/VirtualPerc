@@ -56,16 +56,16 @@ public:
         Everything the level sources have measured up to here describes the
         room, so their evidence starts again: the fold's buffer, the state
         space, and the beat history that was built on whatever the network made
-        of an empty room. What is deliberately kept is the committed tempo and
-        `established`, so the clock does not stop and the part does not drop
-        out; both are wrong if the previous lock was to a room, and both are
-        corrected within a couple of beats by sources that now have nothing but
-        the music in them.
+        of an empty room. The last BPM value is kept, but `established` is
+        cleared so acquisition can choose a new grid. The downstream clock
+        continues while new evidence arrives.
 
         This is not `notifyDiscontinuity`. There, audio was lost and the level
         evidence is still good; here no audio was lost and the level evidence is
         the thing that has gone stale. */
-    void notifyInputRestart() noexcept;
+    // preserveComb is only for a continuous arrangement acquiring a rhythm
+    // section, never for a new source or an ordinary quiet-to-loud restart.
+    void notifyInputRestart (bool preserveComb = false) noexcept;
 
     const BeatHypothesis& current() const noexcept { return hyp; }
     TempoRegime regime() const noexcept { return tempoRegime; }

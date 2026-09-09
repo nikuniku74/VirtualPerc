@@ -144,19 +144,19 @@ void NeuralBeatTracker::workerLoop()
         decoder.setLineFeed (wantedLineFeed.load (std::memory_order_relaxed));
         decoder.setSounding (wantedSounding.load (std::memory_order_relaxed));
 
-        // Before the audio from after the event reaches the decoder, not after:
-        // the whole point is that nothing measured before it may vouch for what
-        // comes next.
-        const uint32_t epoch = inputEpoch.load (std::memory_order_relaxed);
+        // Apply the event before processing more audio. A new source discards
+        // its predecessor's evidence; an arrangement entrance keeps the
+        // continuous analysis but invalidates the grid fitted to the intro.
+        const uint64_t epoch = inputEpoch.load (std::memory_order_relaxed);
         if (epoch != seenInputEpoch)
         {
             seenInputEpoch = epoch;
-            decoder.notifyInputRestart();
-            // The network's recurrent state as well. A cold start begins with it
-            // zeroed and that is the case every measurement in this repository
-            // was taken in; carrying twenty seconds of an amplified empty room
-            // into the first bar is not the same thing, and is not better.
-            if (model != nullptr)
+            decoder.notifyInputRestart ((epoch & 1u) != 0);
+            // Preserve the model together with the comb on continuous music.
+            // Preserving only the comb on BLUE SKY worsened the first held
+            // lock to 57.0 s; preserving both reached 41.3 s. A room/new source
+            // still needs a cold model as before.
+            if (model != nullptr && (epoch & 1u) == 0)
                 model->reset();
         }
 
