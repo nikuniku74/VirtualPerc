@@ -5,6 +5,8 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <functional>
+
 class MainComponent final : public juce::AudioAppComponent,
                             private juce::Timer,
                             private juce::DarkModeSettingListener
@@ -106,6 +108,9 @@ private:
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
     void refreshBarButton();
+    /** FEEL voice knobs: on/off is a tap, volume is a drag. Off is the same
+        knob, slightly faded. */
+    void refreshVoiceKnobs();
 
     /** The margin every full-screen page starts from: what the design wants,
         widened per side to whatever the system says is unusable. On a phone
@@ -189,10 +194,10 @@ private:
         void refreshColours();
 
         juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
-        /** Sized against the shorter side as well as the height. PARTE and
-            STRUMENTI are a row of squares, and scaling by height alone would
-            give each label more type than the square can hold - JUCE's answer
-            to that is an ellipsis, so MARCHA became "MAR..." on a phone. */
+        /** Sized against the shorter side as well as the height. MISURE is a
+            row of squares, and scaling by height alone would give each label
+            more type than the square can hold - JUCE's answer to that is an
+            ellipsis, so MARCHA became "MAR..." on a phone. */
         void drawButtonText (juce::Graphics&, juce::TextButton&,
                              bool shouldDrawButtonAsHighlighted,
                              bool shouldDrawButtonAsDown) override;
@@ -259,7 +264,6 @@ private:
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
     juce::Label      bpmEdit;
-    juce::TextButton shakerButton { "SHAKER" };
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
@@ -279,13 +283,10 @@ private:
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton naturalButton { "NATURALE" };
     juce::TextButton swingButton { "SWING" };
-    juce::TextButton congasButton { "CONGAS" };
-    juce::TextButton cembaloButton { "CEMBALO" };
-    juce::TextButton clapButton { "CLAP" };
 
-    /** Custom PARTE select. A native ComboBox on iOS/macOS is a system picker
+    /** Custom style select. A native ComboBox on iOS/macOS is a system picker
         and would break the look; this paints with the same chrome as the
-        STRUMENTI buttons. AUTO is the first row; picking a style turns AUTO
+        MISURE squares. AUTO is the first row; picking a style turns AUTO
         off. DUE-UNO is manual only. See docs/TODO.md item 12. */
     struct StyleSelect final : juce::Component
     {
@@ -332,16 +333,30 @@ private:
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
-    juce::Slider shakerVolSlider;
+    /** Volume knob that also arms the voice: a tap (no drag) flips the
+        enable, a vertical drag is still the level. */
+    struct VoiceKnob final : juce::Slider
+    {
+        std::function<void()> onTap;
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const bool tap = ! e.mouseWasDraggedSinceMouseDown()
+                             && e.getNumberOfClicks() == 1;
+            juce::Slider::mouseUp (e);
+            if (tap && onTap != nullptr)
+                onTap();
+        }
+    };
+    VoiceKnob shakerVolSlider;
     juce::Label  shakerVolLabel { {}, "SHAKER" };
     juce::Label  shakerVolValue { {}, "100%" };
-    juce::Slider congaVolSlider;
+    VoiceKnob congaVolSlider;
     juce::Label  congaVolLabel { {}, "CONGAS" };
     juce::Label  congaVolValue { {}, "100%" };
-    juce::Slider cembaloVolSlider;
+    VoiceKnob cembaloVolSlider;
     juce::Label  cembaloVolLabel { {}, "CEMBALO" };
     juce::Label  cembaloVolValue { {}, "100%" };
-    juce::Slider clapVolSlider;
+    VoiceKnob clapVolSlider;
     juce::Label  clapVolLabel { {}, "CLAP" };
     juce::Label  clapVolValue { {}, "100%" };
     /** Input peak with a slow release, so the meter can be read against its

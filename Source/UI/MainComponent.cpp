@@ -1,6 +1,7 @@
 #include "UI/MainComponent.h"
 #include "Platform/IosMicPermission.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -63,6 +64,14 @@ namespace
         return (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
     }
 
+    juce::String knobValueText (const juce::Slider& s)
+    {
+        const float v = static_cast<float> (s.getValue());
+        if (s.getMaximum() > 1.5)
+            return micGainText (v);
+        return juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%";
+    }
+
     juce::Colour bg()      { return gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6); }
     juce::Colour panel()   { return gDarkMode ? juce::Colour (0xff0c0c0e) : juce::Colour (0xffffffff); }
     // The surface a control sits on. In light this has to *be* light: it was a
@@ -75,13 +84,12 @@ namespace
     juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
     juce::Colour mute()    { return gDarkMode ? juce::Colour (0xffa8a8b4) : juce::Colour (0xff655e6a); }
 
-    // STRUMENTI voices. Off stays ink(); on is a distinct fill so each part
-    // reads as a different tile without opening the label.
+    // FEEL voice knobs. Each part has its own fill so the four tiles read
+    // apart without opening the label.
     juce::Colour voiceShakerOn()  { return juce::Colour (0xffaab0b8); } // grigetto
     juce::Colour voiceCongasOn()  { return juce::Colour (0xffd3925c); } // marroncino
     juce::Colour voiceCembaloOn() { return juce::Colour (0xffe6c43c); } // dorato
     juce::Colour voiceClapOn()    { return juce::Colour (0xff62b8e4); } // azzurrino
-    juce::Colour voiceOnText()    { return juce::Colour (0xff18141b); }
     juce::Font fontDisplay (float h)
     {
         return juce::Font (juce::FontOptions().withName ("Futura").withStyle ("Bold").withHeight (h));
@@ -149,7 +157,7 @@ namespace
         g.setColour (hotFill || down ? fuchsia() : (voiceOn ? fill : ink()));
         g.fillRect (bounds);
 
-        // PARTE / STRUMENTI are a row of squares: without an edge they read as
+        // MISURE is a row of squares: without an edge they read as
         // one bar. START/STOP stay flush - they are wide enough to be a pair.
         const bool compact = button.getWidth() <= button.getHeight() + 8;
         if (compact)
@@ -315,11 +323,13 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const float toAngle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
     const float lineW = juce::jlimit (4.5f, 9.0f, radius * 0.18f);
     const float arcRadius = radius - lineW * 0.5f;
-    const float alpha = slider.isEnabled() ? 1.0f : 0.45f;
     const bool voiceKnob = (bool) slider.getProperties().getWithDefault ("voiceOnFill", false);
+    const bool voiceOff = voiceKnob
+                          && ! (bool) slider.getProperties().getWithDefault ("voiceEnabled", true);
     const juce::Colour accent = voiceKnob
         ? slider.findColour (juce::Slider::rotarySliderFillColourId)
         : fuchsia();
+    const float alpha = slider.isEnabled() ? (voiceOff ? 0.40f : 1.0f) : 0.45f;
 
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
@@ -336,7 +346,7 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         juce::Path value;
         value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                              rotaryStartAngle, toAngle, true);
-        g.setColour (accent);
+        g.setColour (accent.withMultipliedAlpha (alpha));
         g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
     }
@@ -348,14 +358,31 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
     g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
 
-    const float pointerLen = innerR * 0.70f;
+    const float pointerInner = innerR * 0.48f;
+    const float pointerLen = innerR * 0.82f;
     const float pointerW = juce::jlimit (2.4f, 4.0f, innerR * 0.14f);
+    const float ang = toAngle - juce::MathConstants<float>::halfPi;
+    const auto origin = juce::Point<float> (
+        centre.x + pointerInner * std::cos (ang),
+        centre.y + pointerInner * std::sin (ang));
     const auto tip = juce::Point<float> (
-        centre.x + pointerLen * std::cos (toAngle - juce::MathConstants<float>::halfPi),
-        centre.y + pointerLen * std::sin (toAngle - juce::MathConstants<float>::halfPi));
+        centre.x + pointerLen * std::cos (ang),
+        centre.y + pointerLen * std::sin (ang));
     g.setColour (accent.withMultipliedAlpha (alpha));
-    g.drawLine (centre.x, centre.y, tip.x, tip.y, pointerW);
-    g.fillEllipse (centre.x - pointerW, centre.y - pointerW, pointerW * 2.0f, pointerW * 2.0f);
+    g.drawLine (origin.x, origin.y, tip.x, tip.y, pointerW);
+
+    const auto valueText = knobValueText (slider);
+    const bool longText = valueText.length() > 4;
+    const float th = juce::jlimit (7.0f, longText ? 9.0f : 11.0f,
+                                   innerR * (longText ? 0.32f : 0.40f));
+    g.setFont (fontUi (th, true));
+    g.setColour (accent.withMultipliedAlpha (alpha));
+    g.drawFittedText (valueText,
+                      juce::Rectangle<float> (centre.x - innerR * 0.92f,
+                                              centre.y - th * (longText ? 0.85f : 0.55f),
+                                              innerR * 1.84f,
+                                              th * (longText ? 1.8f : 1.15f)).toNearestInt(),
+                      juce::Justification::centred, longText ? 2 : 1);
 }
 
 MainComponent::MainComponent()
@@ -400,15 +427,7 @@ MainComponent::MainComponent()
     setupBtn (fixedButton, ink());
     setupBtn (bpmNudgeDown, ink());
     setupBtn (bpmNudgeUp, ink());
-    setupBtn (shakerButton, ink());
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
-    setupBtn (congasButton, ink());
-    setupBtn (cembaloButton, ink());
-    setupBtn (clapButton, ink());
-    shakerButton.getProperties().set ("voiceOnFill", true);
-    congasButton.getProperties().set ("voiceOnFill", true);
-    cembaloButton.getProperties().set ("voiceOnFill", true);
-    clapButton.getProperties().set ("voiceOnFill", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
     setupBtn (dynamicsButton, ink());
@@ -470,13 +489,6 @@ MainComponent::MainComponent()
     fixedButton.onClick = [this] { applyTempoFollow (false); };
     bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
     bpmNudgeUp.onClick = [this] { nudgeFixedBpm (1.0f); };
-    shakerButton.onClick = [this]
-    {
-        const bool on = ! engine.settings().shakerEnabled.load();
-        engine.settings().shakerEnabled.store (on);
-        shakerButton.setToggleState (on, juce::dontSendNotification);
-        savePrefs();
-    };
     debugButton.onClick = [this] {
         debugOpen = ! debugOpen;
         debugButton.setToggleState (debugOpen, juce::dontSendNotification);
@@ -545,30 +557,6 @@ MainComponent::MainComponent()
         selectFollowSource (next);
     };
 
-    congasButton.onClick = [this]
-    {
-        const bool on = ! engine.settings().congasEnabled.load();
-        engine.settings().congasEnabled.store (on);
-        congasButton.setToggleState (on, juce::dontSendNotification);
-        savePrefs();
-    };
-
-    cembaloButton.onClick = [this]
-    {
-        const bool on = ! engine.settings().cembaloEnabled.load();
-        engine.settings().cembaloEnabled.store (on);
-        cembaloButton.setToggleState (on, juce::dontSendNotification);
-        savePrefs();
-    };
-
-    clapButton.onClick = [this]
-    {
-        const bool on = ! engine.settings().clapEnabled.load();
-        engine.settings().clapEnabled.store (on);
-        clapButton.setToggleState (on, juce::dontSendNotification);
-        savePrefs();
-    };
-
     naturalButton.onClick = [this]
     {
         applyShakerNatural (! engine.settings().shakerNatural.load());
@@ -608,10 +596,11 @@ MainComponent::MainComponent()
         name.setText (title, juce::dontSendNotification);
         name.setJustificationType (juce::Justification::centred);
         name.setColour (juce::Label::textColourId, mute());
-        name.setFont (fontUi (11.0f));
+        name.setFont (fontUi (10.0f));
         name.setInterceptsMouseClicks (false, false);
 
         addAndMakeVisible (value);
+        value.setVisible (false);
         value.setJustificationType (juce::Justification::centred);
         value.setColour (juce::Label::textColourId, fuchsia());
         value.setFont (fontUi (13.0f));
@@ -653,6 +642,16 @@ MainComponent::MainComponent()
     setupFader (clapVolSlider, clapVolLabel, clapVolValue, "CLAP",
                 0.0, 1.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().clapVolume.store (v); });
+    auto tapVoice = [this] (std::atomic<bool>& flag)
+    {
+        flag.store (! flag.load());
+        refreshVoiceKnobs();
+        savePrefs();
+    };
+    shakerVolSlider.onTap  = [this, tapVoice] { tapVoice (engine.settings().shakerEnabled); };
+    congaVolSlider.onTap   = [this, tapVoice] { tapVoice (engine.settings().congasEnabled); };
+    cembaloVolSlider.onTap = [this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); };
+    clapVolSlider.onTap    = [this, tapVoice] { tapVoice (engine.settings().clapEnabled); };
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 4.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().inputGain.store (v); },
@@ -708,6 +707,10 @@ MainComponent::MainComponent()
     // a page rather than a set of buttons drawn over the transport.
     addChildComponent (settingsOverlay);
     settingsOverlay.toFront (false);
+    settingsOverlay.addAndMakeVisible (intensitySlider);
+    settingsOverlay.addAndMakeVisible (intensityLabel);
+    settingsOverlay.addAndMakeVisible (reverbSlider);
+    settingsOverlay.addAndMakeVisible (reverbLabel);
 
     auto setupPageBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
@@ -798,10 +801,6 @@ MainComponent::MainComponent()
     engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
-    shakerButton.setToggleState (true, juce::dontSendNotification);
-    congasButton.setToggleState (true, juce::dontSendNotification);
-    cembaloButton.setToggleState (false, juce::dontSendNotification);
-    clapButton.setToggleState (false, juce::dontSendNotification);
 
     // No disk paths on iPad: the manifest and its WAVs are part of the app and
     // are decoded before the audio device is opened. A failed bank leaves the
@@ -933,11 +932,11 @@ void MainComponent::refreshThemeColours()
 {
     juce::TextButton* buttons[] = {
         &startButton, &stopButton, &followButton, &fixedButton,
-        &bpmNudgeDown, &bpmNudgeUp, &shakerButton, &debugButton,
+        &bpmNudgeDown, &bpmNudgeUp, &debugButton,
         &clickButton, &themeButton, &sourceButton, &trackLoadButton,
         &trackPlayButton, &kickButton, &latencyButton,
         &subAuto, &sub4, &sub8,
-        &sub16, &naturalButton, &swingButton, &congasButton, &cembaloButton, &clapButton,
+        &sub16, &naturalButton, &swingButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton,
         &settingsButton, &settingsClose, &procButton,
@@ -953,16 +952,6 @@ void MainComponent::refreshThemeColours()
         button->setColour (juce::TextButton::textColourOffId, text());
         button->setColour (juce::TextButton::textColourOnId, text());
     }
-
-    auto paintVoiceOn = [] (juce::TextButton& b, juce::Colour onFill)
-    {
-        b.setColour (juce::TextButton::buttonOnColourId, onFill);
-        b.setColour (juce::TextButton::textColourOnId, voiceOnText());
-    };
-    paintVoiceOn (shakerButton, voiceShakerOn());
-    paintVoiceOn (congasButton, voiceCongasOn());
-    paintVoiceOn (cembaloButton, voiceCembaloOn());
-    paintVoiceOn (clapButton, voiceClapOn());
 
     auto paintVoiceKnob = [] (juce::Slider& s, juce::Colour fill)
     {
@@ -1005,6 +994,21 @@ void MainComponent::refreshThemeColours()
     refreshSourceButton();
     refreshProcButton();
     refreshLoopModeButton();
+    refreshVoiceKnobs();
+}
+
+void MainComponent::refreshVoiceKnobs()
+{
+    auto paint = [] (juce::Slider& s, juce::Label& name, bool on)
+    {
+        s.getProperties().set ("voiceEnabled", on);
+        name.setAlpha (on ? 1.0f : 0.42f);
+        s.repaint();
+    };
+    paint (shakerVolSlider,  shakerVolLabel,  engine.settings().shakerEnabled.load());
+    paint (congaVolSlider,   congaVolLabel,   engine.settings().congasEnabled.load());
+    paint (cembaloVolSlider, cembaloVolLabel, engine.settings().cembaloEnabled.load());
+    paint (clapVolSlider,    clapVolLabel,    engine.settings().clapEnabled.load());
 }
 
 void MainComponent::startPressed()
@@ -1829,17 +1833,6 @@ void MainComponent::loadPrefs()
     else
         engine.setFixedBpm (storedBpm);
 
-    const bool shakerOn = engine.settings().shakerEnabled.load();
-    shakerButton.setToggleState (shakerOn, juce::dontSendNotification);
-
-    const bool congasOn = engine.settings().congasEnabled.load();
-    congasButton.setToggleState (congasOn, juce::dontSendNotification);
-
-    const bool cembaloOn = engine.settings().cembaloEnabled.load();
-    cembaloButton.setToggleState (cembaloOn, juce::dontSendNotification);
-
-    const bool clapOn = engine.settings().clapEnabled.load();
-    clapButton.setToggleState (clapOn, juce::dontSendNotification);
     refreshLoopModeButton();
 }
 
@@ -2462,48 +2455,30 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 {
     cards.clearQuick();
 
-    // PARTE and STRUMENTI are one row of squares, sized to that row; leftover
-    // height goes to FEEL. Two fat rows of wide buttons is what would not fit
-    // a phone, and stretching the squares to fill leftover height would undo
-    // the space we just recovered.
+    // MISURE is one row (style + squares). Leftover height goes to FEEL, whose
+    // chrome is kept tight so the knobs, not the padding, take the card.
     const int gap = 10;
     const int titleH = 18;
-    auto card = [&] (juce::Rectangle<int> bounds, const char* title)
+    auto card = [&] (juce::Rectangle<int> bounds, const char* title,
+                     int padY = 10, int titleStrip = 18)
     {
         cards.add ({ bounds, juce::String (title) });
-        return bounds.reduced (12, 10).withTrimmedTop (titleH);
+        return bounds.reduced (12, padY).withTrimmedTop (titleStrip);
     };
 
     const int padY = 10;
     const int chrome = padY * 2 + titleH;
     const int btnGap = 5;
     const int innerW = juce::jmax (1, area.getWidth() - 24);
-    auto squareFor = [innerW, btnGap] (int count)
-    {
-        return juce::jlimit (24, 40, (innerW - btnGap * (count - 1)) / juce::jmax (1, count));
-    };
-
-    auto placeSquareRow = [btnGap] (juce::Rectangle<int> body,
-                                    std::initializer_list<juce::TextButton*> bs)
-    {
-        const int nBtn = static_cast<int> (bs.size());
-        const int side = juce::jmin (body.getHeight(),
-                                     (body.getWidth() - btnGap * (nBtn - 1)) / juce::jmax (1, nBtn));
-        const int total = nBtn * side + btnGap * juce::jmax (0, nBtn - 1);
-        auto row = body.withSizeKeepingCentre (total, side);
-        int i = 0;
-        for (auto* b : bs)
-        {
-            b->setBounds (row.removeFromLeft (side));
-            if (++i < nBtn)
-                row.removeFromLeft (btnGap);
-        }
-    };
 
     const int n = area.getHeight();
     const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.20f);
-    const int hInst      = chrome + squareFor (10);
-    const int hPart      = hInst;
+    // Style select is a compact name; leftover width goes to the squares.
+    const int nMisureSq = 7;
+    const int styleW = 68;
+    const int misureSide = juce::jlimit (28, 52,
+        (innerW - styleW - btnGap * nMisureSq) / nMisureSq);
+    const int hMisure = chrome + misureSide;
 
     {
         auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
@@ -2513,67 +2488,64 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     }
 
     {
-        auto body = card (area.removeFromTop (hPart), "PARTE");
-        const int side = juce::jmin (body.getHeight(),
-                                     juce::jmax (24, (body.getWidth() - btnGap) / 4));
-        auto row = body.withSizeKeepingCentre (body.getWidth(), side);
-        dynamicsButton.setBounds (row.removeFromRight (side));
-        row.removeFromRight (btnGap);
-        styleSelect.setBounds (row);
-        area.removeFromTop (gap);
-    }
-
-    {
-        auto body = card (area.removeFromTop (hInst), "STRUMENTI");
-        placeSquareRow (body, { &shakerButton, &congasButton, &cembaloButton, &clapButton,
-                                &subAuto, &sub4, &sub8, &sub16, &naturalButton,
-                                &swingButton });
+        auto body = card (area.removeFromTop (hMisure), "MISURE");
+        auto row = body.withSizeKeepingCentre (body.getWidth(),
+                                               juce::jmin (body.getHeight(), misureSide));
+        styleSelect.setBounds (row.removeFromLeft (styleW));
+        row.removeFromLeft (btnGap);
+        const int sideFit = juce::jmin (row.getHeight(),
+            (row.getWidth() - btnGap * (nMisureSq - 1)) / nMisureSq);
+        juce::TextButton* squares[] = {
+            &dynamicsButton, &subAuto, &sub4, &sub8, &sub16,
+            &naturalButton, &swingButton
+        };
+        for (int i = 0; i < nMisureSq; ++i)
+        {
+            squares[i]->setBounds (row.removeFromLeft (sideFit));
+            if (i + 1 < nMisureSq)
+                row.removeFromLeft (btnGap);
+        }
         area.removeFromTop (gap);
     }
 
     {
         // Each instrument gets its own independent level, then how loud the
-        // tracker hears the room or the aux.
-        auto body = card (area, "FEEL");
-        const int nKnobs = 7;
+        // tracker hears the room or the aux. Value sits inside the knob; the
+        // name sits tight under it. Tap a voice knob to mute that part.
+        // Title paint occupies y+9..y+23 of the card; pad 4 + strip 20 starts
+        // the knobs 1 px under that. Labels are 11 px with a 1 px gap above.
+        auto body = card (area, "FEEL", 4, 20);
+        const int nKnobs = 5;
         const int knobColW = body.getWidth() / nKnobs;
-        auto placeKnob = [&] (juce::Label& val, juce::Label& name, juce::Slider& s)
+        auto placeKnob = [&] (juce::Label& name, juce::Slider& s)
         {
             auto col = body.removeFromLeft (knobColW);
-            val.setBounds (col.removeFromTop (18));
-            name.setBounds (col.removeFromBottom (16));
-            s.setBounds (col.reduced (2, 2));
+            name.setBounds (col.removeFromBottom (11));
+            col.removeFromBottom (1);
+            s.setBounds (col);
         };
-        placeKnob (shakerVolValue, shakerVolLabel, shakerVolSlider);
-        placeKnob (congaVolValue, congaVolLabel, congaVolSlider);
-        placeKnob (cembaloVolValue, cembaloVolLabel, cembaloVolSlider);
-        placeKnob (clapVolValue, clapVolLabel, clapVolSlider);
-        placeKnob (inputGainValue, inputGainLabel, inputGainSlider);
-        placeKnob (intensityValue, intensityLabel, intensitySlider);
-        placeKnob (reverbValue, reverbLabel, reverbSlider);
+        placeKnob (shakerVolLabel, shakerVolSlider);
+        placeKnob (congaVolLabel, congaVolSlider);
+        placeKnob (cembaloVolLabel, cembaloVolSlider);
+        placeKnob (clapVolLabel, clapVolSlider);
+        placeKnob (inputGainLabel, inputGainSlider);
     }
 
-    intensitySlider.setVisible (true);
-    intensityLabel.setVisible (true);
-    intensityValue.setVisible (true);
-    reverbSlider.setVisible (true);
-    reverbLabel.setVisible (true);
-    reverbValue.setVisible (true);
     shakerVolSlider.setVisible (true);
     shakerVolLabel.setVisible (true);
-    shakerVolValue.setVisible (true);
+    shakerVolValue.setVisible (false);
     congaVolSlider.setVisible (true);
     congaVolLabel.setVisible (true);
-    congaVolValue.setVisible (true);
+    congaVolValue.setVisible (false);
     cembaloVolSlider.setVisible (true);
     cembaloVolLabel.setVisible (true);
-    cembaloVolValue.setVisible (true);
+    cembaloVolValue.setVisible (false);
     clapVolSlider.setVisible (true);
     clapVolLabel.setVisible (true);
-    clapVolValue.setVisible (true);
+    clapVolValue.setVisible (false);
     inputGainSlider.setVisible (true);
     inputGainLabel.setVisible (true);
-    inputGainValue.setVisible (true);
+    inputGainValue.setVisible (false);
     return area;
 }
 
@@ -2978,8 +2950,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
 
     // One column at full width in both orientations. Two columns is what the
     // console does, because the console has enough in it to fill them; this page
-    // has five short cards, and split in two neither side had enough to reach
-    // the bottom. Turned, the same five get shorter instead of narrower: the
+    // has six short cards, and split in two neither side had enough to reach
+    // the bottom. Turned, the same six get shorter instead of narrower: the
     // captions stop wrapping.
     const int bodyW = juce::jmax (80, r.getWidth() - 24);
     const int chrome = padY * 2 + titleH;
@@ -2987,12 +2959,13 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // Sized against their contents, placed second - the same order the stage
     // rows are computed in. A share of the column each gave a two-line caption
     // the same room as a seven-line read-out.
-    enum { kClock = 0, kBuffer, kInput, kTests, kStatus, kCards };
+    enum { kClock = 0, kBuffer, kInput, kFeel, kTests, kStatus, kCards };
     int h[kCards] = {
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
         chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0)
             + noteGap + noteHeight (inputNote(), bodyW),
+        chrome + 88,
         chrome + rowH,
         chrome + juce::roundToInt (fontUi (12.0f, false).getHeight() * 1.32f) * kStatusLines
     };
@@ -3062,6 +3035,22 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
             settingsRows.trackWave = {};
 
         settingsRows.inputNote = body.withTrimmedTop (noteGap);
+    }
+
+    {
+        auto body = card (take (h[kFeel]), "FEEL");
+        const int nKnobs = 2;
+        const int colW = juce::jmin (body.getWidth() / nKnobs, juce::jmax (72, body.getHeight() + 12));
+        auto row = body.withSizeKeepingCentre (colW * nKnobs, body.getHeight());
+        auto placeKnob = [&] (juce::Label& name, juce::Slider& s)
+        {
+            auto col = row.removeFromLeft (colW);
+            name.setBounds (col.removeFromBottom (11));
+            col.removeFromBottom (1);
+            s.setBounds (col);
+        };
+        placeKnob (intensityLabel, intensitySlider);
+        placeKnob (reverbLabel, reverbSlider);
     }
 
     buttonRow (card (take (h[kTests]), "PERCUSSIONI / PROVE"),
@@ -3425,7 +3414,7 @@ void MainComponent::StyleSelect::paint (juce::Graphics& g)
             hint = juce::String (vp::toString (detected));
     }
 
-    auto textArea = getLocalBounds().reduced (10, 2).withTrimmedRight (22);
+    auto textArea = getLocalBounds().reduced (6, 2).withTrimmedRight (16);
     const float dim = juce::jmin ((float) getHeight(), (float) juce::jmax (1, getWidth()));
     juce::Font f = fontUi (juce::jmax (9.0f, dim * 0.28f));
     g.setFont (f);
