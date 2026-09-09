@@ -49,6 +49,10 @@ public:
             setFullScreen (true);
            #else
             setResizable (true, true);
+            // Compact layout still needs room for BPM, dots, START/STOP,
+            // MISURE and the five knobs. Smaller than this and they stack off
+            // the page even after dropping SETUP / SEGUI / FISSO.
+            setResizeLimits (320, 420, 8192, 8192);
             centreWithSize (getWidth(), getHeight());
            #endif
             setVisible (true);

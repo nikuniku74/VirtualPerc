@@ -28,6 +28,11 @@ public:
     void setBeatModel (std::unique_ptr<IBeatModel> model) { tracker.setBeatModel (std::move (model)); }
 
     void prepare (double sampleRate, int maxBlock, int numInputChannels) noexcept;
+    /** True when prepare() has already run for this clock and analysis is still
+        alive. A Split View resize re-calls prepareToPlay at the same rate;
+        running prepare() again zeros the leak canceller and BeatTracker::reset,
+        which is the click. */
+    bool isPreparedFor (double sampleRate) const noexcept;
     /** Stop background analysis after the audio device has been closed.
         prepare() starts it again when the device returns. */
     void suspendAnalysis();
@@ -255,6 +260,7 @@ private:
     double sampleRate = 48000.0;
     int maxBlock = 1024;
     int preparedInputs = 2;
+    bool analysisSuspended = false;
 
     std::atomic<float> latencyMs { 0.0f };
     std::atomic<float> lastBpm { 0.0f };

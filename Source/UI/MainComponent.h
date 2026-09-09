@@ -123,6 +123,29 @@ private:
         side. Stacking in both is what used to force the feel controls off the
         screen when the iPad was turned. */
     bool isLandscape() const;
+    /** Too small for the two-pane page: Split View column, Stage Manager tile,
+        or a window dragged down. Then only the live-set row stays on screen.
+        Hysteresis lives in compactLayout so a drag across 560×680 cannot
+        flip full↔compact every pixel. */
+    bool isCompact() const noexcept;
+    void updateCompactLayout() noexcept;
+
+    /** Tighter than safePadded: a narrow column cannot spend 36 pt on a
+        margin the full-screen page needed for the brand. Safe-area insets still
+        win per side. */
+    juce::Rectangle<int> compactPadded (juce::Rectangle<int> area) const;
+    void layoutFull();
+    void layoutCompact();
+    void applyCompactVisibility();
+    void layoutTransport (juce::Rectangle<int> body);
+    void layoutMisure (juce::Rectangle<int> body);
+    void layoutFeelKnobs (juce::Rectangle<int> body);
+
+    struct CompactGeom
+    {
+        juce::Rectangle<int> tempo, transport, misure, knobs;
+    };
+    CompactGeom compactGeom() const;
 
     /** A titled group of controls. The console is a handful of these rather
         than one column of identical rows: what a player reaches for mid-song
@@ -174,6 +197,7 @@ private:
         juce::Rectangle<int> barShift;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
+    StageRows compactTempoRows (juce::Rectangle<int> area) const;
     juce::Rectangle<int> stageArea() const;
 
     /** The metrical level the player picked, and the way back to AUTO. There
@@ -396,6 +420,13 @@ private:
     bool darkMode = true;
     bool themeFollowsSystem = true;
     bool audioReady = false;
+    /** Last layout pass. Enter compact below 560×680; leave only once the
+        window is clearly large enough (600×740) so a Split View drag does not
+        rebuild the page every pixel. */
+    bool compactLayout = false;
+    /** Media-server rebuilds must re-prepare even at the same clock: the
+        previous audio unit no longer exists. A view resize must not. */
+    bool forceEnginePrepare = false;
     bool audioOpened = false;
     bool micGranted = false;
     bool userWantsArmed = false;

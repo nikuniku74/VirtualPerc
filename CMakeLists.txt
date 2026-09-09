@@ -150,6 +150,9 @@ juce_add_gui_app (VirtualPercussionist
     IPHONE_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE
+    # Split View / Stage Manager / a window next to SendSong. The compact
+    # layout is size-based: shrink the window and only the live-set row stays.
+    REQUIRES_FULL_SCREEN FALSE
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

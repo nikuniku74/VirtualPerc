@@ -23,6 +23,10 @@ struct AudioSessionRequest
         analysis wants; the setting exists because a route that misbehaves
         under measurement mode is a real thing on external interfaces. */
     bool   inputProcessing = false;
+    /** Force setActive even when category, mode, rate and buffer already match.
+        Resume after an interruption and a media-server rebuild need it;
+        a Split View resize does not, and a redundant activate is a click. */
+    bool   forceActivate = false;
 };
 
 /** Category, options, mode, rate and buffer, applied before the audio device

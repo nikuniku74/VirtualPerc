@@ -31,6 +31,8 @@ namespace
         }
         return out;
     }
+
+    bool gSessionActive = false;
 }
 
 void requestMicrophoneAccess (std::function<void (bool granted)> callback)
@@ -76,11 +78,14 @@ void prepareAudioSession (const AudioSessionRequest& request)
         | AVAudioSessionCategoryOptionAllowBluetoothA2DP
         | AVAudioSessionCategoryOptionAllowAirPlay;
 
+    bool changed = false;
+
     if (! [s.category isEqualToString: AVAudioSessionCategoryPlayAndRecord]
         || s.categoryOptions != opts)
     {
         [s setCategory: AVAudioSessionCategoryPlayAndRecord withOptions: opts error: &err];
         err = nil;
+        changed = true;
     }
 
     // Measurement is iOS with its hands off the signal: no AGC, no noise
@@ -91,12 +96,14 @@ void prepareAudioSession (const AudioSessionRequest& request)
     {
         [s setMode: wantMode error: &err];
         err = nil;
+        changed = true;
     }
 
     if (request.sampleRate > 8000.0 && ! sameRate (s.sampleRate, request.sampleRate))
     {
         [s setPreferredSampleRate: request.sampleRate error: &err];
         err = nil;
+        changed = true;
     }
 
     if (request.bufferFrames > 0)
@@ -111,10 +118,18 @@ void prepareAudioSession (const AudioSessionRequest& request)
         {
             [s setPreferredIOBufferDuration: wanted error: &err];
             err = nil;
+            changed = true;
         }
     }
 
-    [s setActive: YES error: &err];
+    // A live session that is already on these settings does not need another
+    // setActive:YES. iPadOS answers a redundant activate with a brief IO restart,
+    // which is the crack on a Split View resize or a window reset.
+    if (changed || request.forceActivate || ! gSessionActive)
+    {
+        [s setActive: YES error: &err];
+        gSessionActive = (err == nil);
+    }
 }
 
 double sessionSampleRate()
@@ -181,6 +196,7 @@ void setMediaServicesResetHandler (std::function<void()> handler)
                      queue: [NSOperationQueue mainQueue]
                 usingBlock: ^(NSNotification*)
     {
+        gSessionActive = false;
         if (gResetHandler)
             gResetHandler();
     }];

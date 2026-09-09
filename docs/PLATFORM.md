@@ -113,6 +113,7 @@ and 0.71-0.94 on a phone.
 - USB class-compliant interfaces appear as Core Audio devices
 - Interruption / route change: JUCE device callbacks; engine `prepare()` is re-run; tracking state is not forcibly reset to IDLE unless audio actually stops
 - Background: `UIBackgroundModes = audio` so a live set is not muted when the screen locks (subject to iPadOS policy)
+- Multitasking: `REQUIRES_FULL_SCREEN FALSE`, so Split View and Stage Manager can put this next to SendSong. There is no LIVE/PIENA toggle: below about 560×680 the window stacks the live status (FOLLOWING / IN ASCOLTO), BPM (÷2/×2), the quarter dots, START/STOP, MISURE and the FEEL knobs, and hides SETUP / SEGUI / FISSO. After changing this, regenerate `build-ios/`.
 
 Permissions:
 

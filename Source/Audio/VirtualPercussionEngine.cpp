@@ -203,11 +203,21 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     stretch.prepare (120.0f, sampleRate);
     clickPhase = 0.0;
     lastSr.store (sampleRate, std::memory_order_relaxed);
+    analysisSuspended = false;
+}
+
+bool VirtualPercussionEngine::isPreparedFor (double sr) const noexcept
+{
+    if (analysisSuspended)
+        return false;
+    const double have = lastSr.load (std::memory_order_relaxed);
+    return have > 1.0 && std::abs (have - sr) < 1.0;
 }
 
 void VirtualPercussionEngine::suspendAnalysis()
 {
     tracker.suspendAnalysis();
+    analysisSuspended = true;
 }
 
 void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
