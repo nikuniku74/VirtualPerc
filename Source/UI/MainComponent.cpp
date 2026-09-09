@@ -84,6 +84,30 @@ namespace
     juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
     juce::Colour mute()    { return gDarkMode ? juce::Colour (0xffa8a8b4) : juce::Colour (0xff655e6a); }
 
+    /** Colour and energy the MIC knob paints for a held peak. Fuchsia inside
+        the analysis band, amber then red once it is too hot. */
+    struct MicLevelLook
+    {
+        juce::Colour colour;
+        float glow = 0.0f;
+        float amount = 0.0f;
+    };
+
+    MicLevelLook micLevelLook (float hold) noexcept
+    {
+        const float amount = meterPosition (hold);
+        if (hold <= kInputSilentPeak)
+            return { mute(), 0.05f, 0.0f };
+        if (hold < kInputLowPeak)
+            return { fuchsia(), 0.08f + 0.10f * amount, amount };
+        if (hold <= kInputHighPeak)
+            return { fuchsia().brighter (0.10f), 0.16f + 0.18f * amount, amount };
+        const float over = juce::jlimit (0.0f, 1.0f, (peakToDb (hold) + 1.0f) / 8.0f);
+        const auto amber = juce::Colour (0xffffa726);
+        const auto red   = juce::Colour (0xffff3b30);
+        return { amber.interpolatedWith (red, over), 0.24f + 0.18f * over, amount };
+    }
+
     // FEEL voice knobs. Each part has its own fill so the four tiles read
     // apart without opening the label.
     juce::Colour voiceShakerOn()  { return juce::Colour (0xffaab0b8); } // grigetto
@@ -331,33 +355,104 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         : fuchsia();
     const float alpha = slider.isEnabled() ? (voiceOff ? 0.40f : 1.0f) : 0.45f;
 
-    juce::Path track;
-    track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
-                         rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour (text().withAlpha (0.10f * alpha));
-    g.strokePath (track, juce::PathStrokeType (lineW + 3.0f, juce::PathStrokeType::curved,
+    const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
+    const bool micMeter = (bool) slider.getProperties().getWithDefault ("micMeter", false);
+    const auto micLook = micMeter
+        ? micLevelLook (static_cast<float> (slider.getProperties().getWithDefault ("micHold", 0.0)))
+        : MicLevelLook{};
+
+    if (micMeter)
+    {
+        const float span = rotaryEndAngle - rotaryStartAngle;
+        const float bandFrom = meterPosition (kInputLowPeak);
+        const float bandTo = meterPosition (kInputHighPeak);
+        const float levelAngle = rotaryStartAngle + micLook.amount * span;
+
+        juce::Path track;
+        track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                             rotaryStartAngle, rotaryEndAngle, true);
+        g.setColour (text().withAlpha (0.10f * alpha));
+        g.strokePath (track, juce::PathStrokeType (lineW + 3.0f, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
-    g.setColour (sliderTrack().withMultipliedAlpha (alpha));
-    g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+        g.setColour (sliderTrack().withMultipliedAlpha (alpha));
+        g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
-    if (slider.isEnabled() && sliderPos > 0.002f)
+        // Where the analysis wants to live: the stripe the old bar carried.
+        juce::Path band;
+        band.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                            rotaryStartAngle + bandFrom * span,
+                            rotaryStartAngle + bandTo * span, true);
+        g.setColour (fuchsia().withAlpha ((gDarkMode ? 0.22f : 0.18f) * alpha));
+        g.strokePath (band, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+
+        if (micLook.amount > 0.012f)
+        {
+            juce::Path level;
+            level.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                                rotaryStartAngle, levelAngle, true);
+            g.setColour (micLook.colour.withMultipliedAlpha (alpha));
+            g.strokePath (level, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+        }
+
+        g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
+        g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
+
+        if (micLook.amount > 0.01f)
+        {
+            // Clip to the disc: a glow larger than the knob is cut to the
+            // slider's rectangle and reads as a pink square behind it.
+            juce::Path disc;
+            disc.addEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
+            g.saveState();
+            g.reduceClipRegion (disc);
+            const float glowA = juce::jmin (0.42f, micLook.glow) * alpha;
+            juce::ColourGradient core (
+                micLook.colour.withAlpha (glowA),
+                centre.x, centre.y,
+                micLook.colour.withAlpha (0.0f),
+                centre.x, centre.y + innerR * 0.90f, true);
+            g.setGradientFill (core);
+            g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
+            g.restoreState();
+        }
+
+        g.setColour ((micLook.amount > 0.08f ? micLook.colour : juce::Colour (0xff2a2a30))
+                         .withMultipliedAlpha (alpha));
+        g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
+    }
+    else
     {
-        juce::Path value;
-        value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
-                             rotaryStartAngle, toAngle, true);
-        g.setColour (accent.withMultipliedAlpha (alpha));
-        g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
-                                                   juce::PathStrokeType::rounded));
+        juce::Path track;
+        track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                             rotaryStartAngle, rotaryEndAngle, true);
+        g.setColour (text().withAlpha (0.10f * alpha));
+        g.strokePath (track, juce::PathStrokeType (lineW + 3.0f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+        g.setColour (sliderTrack().withMultipliedAlpha (alpha));
+        g.strokePath (track, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+
+        if (slider.isEnabled() && sliderPos > 0.002f)
+        {
+            juce::Path value;
+            value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                                 rotaryStartAngle, toAngle, true);
+            g.setColour (accent.withMultipliedAlpha (alpha));
+            g.strokePath (value, juce::PathStrokeType (lineW, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+        }
+
+        paintRadial (g, centre, innerR * 1.7f, accent, 0.14f * alpha);
+        g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
+        g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
+        g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
+        g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
     }
 
-    const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
-    paintRadial (g, centre, innerR * 1.7f, accent, 0.14f * alpha);
-    g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
-    g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
-    g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
-    g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
-
+    const juce::Colour needle = micMeter && micLook.amount > 0.08f ? micLook.colour : accent;
     const float pointerInner = innerR * 0.48f;
     const float pointerLen = innerR * 0.82f;
     const float pointerW = juce::jlimit (2.4f, 4.0f, innerR * 0.14f);
@@ -368,7 +463,7 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const auto tip = juce::Point<float> (
         centre.x + pointerLen * std::cos (ang),
         centre.y + pointerLen * std::sin (ang));
-    g.setColour (accent.withMultipliedAlpha (alpha));
+    g.setColour (needle.withMultipliedAlpha (alpha));
     g.drawLine (origin.x, origin.y, tip.x, tip.y, pointerW);
 
     const auto valueText = knobValueText (slider);
@@ -376,7 +471,8 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const float th = juce::jlimit (7.0f, longText ? 9.0f : 11.0f,
                                    innerR * (longText ? 0.32f : 0.40f));
     g.setFont (fontUi (th, true));
-    g.setColour (accent.withMultipliedAlpha (alpha));
+    g.setColour ((micMeter && micLook.amount > 0.18f ? juce::Colours::white : needle)
+                     .withMultipliedAlpha (alpha));
     g.drawFittedText (valueText,
                       juce::Rectangle<float> (centre.x - innerR * 0.92f,
                                               centre.y - th * (longText ? 0.85f : 0.55f),
@@ -676,6 +772,7 @@ MainComponent::MainComponent()
     // could not get there with six. The engine already clamps to 4.
     inputGainSlider.setSkewFactorFromMidPoint (1.0);
     inputGainSlider.setMouseDragSensitivity (600);
+    inputGainSlider.getProperties().set ("micMeter", true);
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -1364,8 +1461,8 @@ namespace
             "file; l'onda sotto (o sul palco) si trascina per saltare. PLAY "
             "mette in pausa. In IPAD l'app toglie shaker e congas "
             "da quello che ascolta. MIC regola quanto sente l'analisi: alzalo "
-            "finche' la barra entra nella striscia chiara, dove scrive LIVELLO "
-            "OK. Sotto la striscia l'analisi sbaglia il tempo, sopra non "
+            "finche' l'anello del knob entra nella fascia fucsia. Sotto, "
+            "l'analisi sbaglia il tempo; sopra, ambra e poi rosso, e non "
             "guadagna piu' niente. "
             "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
             "vuole l'analisi."));
@@ -2205,6 +2302,12 @@ void MainComponent::timerCallback()
     // the last buffer.
     const float peak = juce::jmax (0.0f, snap.inputPeak);
     micHold = peak > micHold ? peak : juce::jmax (peak, micHold * 0.79f);
+    inputGainSlider.getProperties().set ("micHold", (double) micHold);
+    {
+        const auto look = micLevelLook (micHold);
+        inputGainLabel.setColour (juce::Label::textColourId,
+                                  look.amount < 0.02f ? mute() : look.colour);
+    }
     if (trackTransport.hasStreamFinished() && trackTransport.isPlaying())
         trackTransport.stop();
 
@@ -2403,9 +2506,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     //
     // And when there is *less* than the natural height, everything shrinks
     // together instead of the last rows running off the bottom. The minimums
-    // below plus the fixed gaps come to about 340 points, which an iPad always
+    // below plus the fixed gaps come to about 310 points, which an iPad always
     // has and a phone in landscape does not: the stage there is nearer 290, so
-    // without this the meter and the microphone line simply fall off the end.
+    // without this PARTE would simply fall off the end.
     const int naturalBpm = juce::jlimit (72, 156, area.getHeight() / 4);
     const int naturalBeats = juce::jlimit (52, 96, area.getHeight() / 6);
     const bool follow = engine.settings().tempoFollow.load();
@@ -2414,7 +2517,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
     const int natural = 18 + 6 + 36 + 6 + naturalBpm + 16
                         + (follow ? 0 : 28) + 18 + 10
-                        + naturalBeats + 20 + trackExtra + 10 + 10 + 18;
+                        + naturalBeats + 20 + trackExtra;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
                           : 1.0f;
@@ -2466,9 +2569,6 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
         s.trackWave = area.removeFromTop (px (trackWaveformHeight()));
     }
     s.part = area.removeFromTop (px (20));
-    area.removeFromTop (px (10));
-    s.meter = area.removeFromTop (px (10)).reduced (juce::jmax (0, area.getWidth() / 6), 2);
-    s.mic = area.removeFromTop (px (18));
     return s;
 }
 
@@ -2603,7 +2703,7 @@ void MainComponent::resized()
     barButton.setBounds (rows.barShift);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
-                                                         stage.getRight(), rows.meter.getBottom());
+                                                         stage.getRight(), rows.beats.getBottom());
     tapZone.setBounds (tapStrip);
 
     {
@@ -2845,53 +2945,6 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                  : juce::String()),
                       rows.part, juce::Justification::centred, 1);
 
-    // Input. A bar, the band to aim at, and a phrase.
-    //
-    // It used to be `sqrt(peak) * 3.2`, which is full at -20 dBFS: every level
-    // a stage actually produces pinned it, so the only thing it could say was
-    // "something is arriving". The scale is now dB across 48 of them, and the
-    // lighter stripe is where the analysis wants to be - see `kInputLowPeak`.
-    // Answering "am I loud enough" is the whole job of this bar; without the
-    // stripe a player has no way to know what the right answer looks like.
-    const auto meterF = rows.meter.toFloat();
-    g.setColour (sliderTrack());
-    g.fillRoundedRectangle (meterF, 5.0f);
-
-    const float bandFrom = meterPosition (kInputLowPeak);
-    const float bandTo = meterPosition (kInputHighPeak);
-    g.setColour (mute().withAlpha (gDarkMode ? 0.22f : 0.28f));
-    g.fillRect (meterF.getX() + meterF.getWidth() * bandFrom, meterF.getY(),
-                meterF.getWidth() * (bandTo - bandFrom), meterF.getHeight());
-
-    const float pos = meterPosition (micHold);
-    auto fillM = meterF.withWidth (meterF.getWidth() * pos);
-    if (fillM.getWidth() > 2.0f)
-    {
-        // Three states and three colours, because the number itself is not on
-        // screen: under the band it is grey and obviously short of it, inside
-        // it is the brand fuchsia, over it is amber.
-        //
-        // The bright end of the gradient is the *tip*, not the root. It used to
-        // run the other way and end in `text()`, which is white in dark: seen
-        // on screen, every level ended in the same white point and the state
-        // colour survived only at the far left, where nobody is looking. The
-        // eye goes to the end of the bar, so that is where the colour has to be.
-        const juce::Colour lead = micHold < kInputLowPeak  ? mute()
-                                : micHold > kInputHighPeak ? juce::Colour (0xffffa726)
-                                                           : fuchsia().brighter (0.2f);
-        juce::ColourGradient mg (lead.darker (0.55f), fillM.getX(), fillM.getY(),
-                                 lead, fillM.getRight(), fillM.getY(), false);
-        g.setGradientFill (mg);
-        g.fillRoundedRectangle (fillM, 5.0f);
-    }
-
-    // The two edges of the band, drawn over the fill so they stay readable when
-    // the bar is inside it.
-    g.setColour (text().withAlpha (gDarkMode ? 0.45f : 0.35f));
-    for (float mark : { bandFrom, bandTo })
-        g.fillRect (meterF.getX() + meterF.getWidth() * mark - 0.5f, meterF.getY(),
-                    1.0f, meterF.getHeight());
-
     if (tapFlash > 0 && ! tapStrip.isEmpty())
     {
         g.setColour (fuchsia().withAlpha (gDarkMode ? 0.32f : 0.20f));
@@ -2899,33 +2952,6 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.setColour (fuchsia().withAlpha (0.70f));
         g.drawRoundedRectangle (tapStrip.toFloat().reduced (0.5f), 14.0f, 2.4f);
     }
-
-    g.setColour (mute());
-    g.setFont (fontUi (11.5f, false));
-    const bool fromTrack = snap.source == vp::FollowSource::internalPlayer;
-    // And what to do about it, in the same three states the bar is drawn in.
-    // "SENTO LA STANZA" answered whether anything was arriving; it never said
-    // whether what arrives is usable, which is the question a player asks while
-    // holding the trim.
-    const juce::String levelText =
-        snap.inputPeak <= kInputSilentPeak ? "IN ASCOLTO"
-      : micHold < kInputLowPeak            ? "MIC BASSO, ALZA"
-      : micHold > kInputHighPeak           ? "MIC ALTO, ABBASSA"
-                                           : "LIVELLO OK";
-    // A loaded track goes through the same trim and the same analysis bus, so
-    // the level verdict is as useful there as on a microphone - and "BRANO
-    // DIRETTO" only repeated the source label standing next to it.
-    const juce::String micText = fromTrack ? (trackReader != nullptr ? levelText
-                                                                     : "CARICA UN BRANO")
-                               : (! micGranted ? "MICROFONO NEGATO"
-                               : (inputChannels <= 0 ? "MICROFONO SPENTO"
-                                                     : levelText));
-    const juce::String dot (juce::CharPointer_UTF8 ("   \xc2\xb7   "));
-    const juce::String sourceText = fromTrack ? "BRANO"
-                                             : (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER");
-    g.drawFittedText (micText + dot + sourceText
-                          + (snap.aiOnnx ? juce::String() : dot + "AI STUB"),
-                      rows.mic, juce::Justification::centred, 1);
 }
 
 void MainComponent::layoutSettings (juce::Rectangle<int> area)

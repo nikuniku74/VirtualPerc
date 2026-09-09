@@ -166,7 +166,7 @@ private:
     struct StageRows
     {
         juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoNudge,
-                             tempoLine, beats, trackWave, part, meter, mic;
+                             tempoLine, beats, trackWave, part;
         /** The three columns the tempo row is divided into. The number gets the
             middle one and nothing else: given the whole row it grew until it ran
             under the two buttons and out of the column. */
@@ -213,7 +213,7 @@ private:
                                float rotaryEndAngle, juce::Slider&) override;
     };
 
-    /** Invisible hit target over the BPM, the quarters and the input meter.
+    /** Invisible hit target over the BPM and the quarters.
         A press anywhere in that zone is TAP; the flash is painted on the stage
         so it sits on the same numbers the player is looking at. */
     struct TapZone final : juce::Component
