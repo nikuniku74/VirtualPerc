@@ -8,6 +8,33 @@ ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
 
 ## Stato
 
+### Indagine aggancio iniziale — 09/09/2026 (INCOMPLETA)
+
+Richiesto riconoscimento più veloce sul brano/mixer. Il file precedente
+`/Users/nicolamarogna/Desktop/3 INFINITO.mp3` non esiste più; richiesto all'utente
+il brano attuale e il timestamp. Nessuna nuova correzione DSP mantenuta in questa
+indagine: due esperimenti sul solo ingresso diretto sono stati rimossi.
+
+Banco ridotto `probe_matrix --quick`: 12 materiali × 52/120/168 × 2 semi,
+60 s sintetici; misura primo BPM entro 2% che resta tale per 3 s, NON ingresso
+audio. Baseline: media 7.28 s, 18 corse con escursioni, 13.33% fuori soglia.
+1. Consentire picchi fuori griglia durante la sola acquisizione HMM provvisoria
+   senza intervalli: risultati identici, nessun miglioramento dimostrato.
+2. Richiedere coerenza dei due intervalli anche sulla linea: media 7.41 s,
+   20 corse con escursioni, 14.16% fuori. Accordi 7.79 -> 4.94 s, ma rock ottavi
+   8.19 -> 12.40 s: regressione, esperimento rimosso integralmente.
+
+Comando usato per ciascuna variante:
+```
+c++ -std=c++17 -O2 -ISource scripts/probe_matrix.cpp Source/AI/BeatDecoder.cpp Source/AI/TempoEstimator.cpp Source/AI/BeatHmm.cpp -o /tmp/vp-acquire-before
+/tmp/vp-acquire-before --quick
+```
+Gli altri eseguibili temporanei erano `/tmp/vp-acquire-after` (esperimento 1)
+e `/tmp/vp-acquire-coherent` (esperimento 2). Non sono il codice finale.
+Prossimo passo: brano realmente problematico -> dump attivazioni -> distinguere
+prima stima valida, prima stima corretta e ingresso audio; poi test di regressione
+mirato. Non dichiarare risolto l'aggancio lento. Modifiche precedenti preservate.
+
 1. COMPLETATO: sicurezza del rientro (annullamento, reset, prove fresche).
 2. COMPLETATO: contatori indipendenti dal buffer.
 3. COMPLETATO (clock sintetico): recupero dello scarto con fiducia alta.

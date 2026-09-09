@@ -43,6 +43,15 @@ Hard rules, in `docs/ARCHITECTURE.md` and enforced by review:
 
 ## 2. Where the BPM number actually comes from
 
+Acquisition experiment, 2026-09-09: extending the room's 14% consecutive-interval
+check to all unpaired line-feed fast acquisitions was reverted. On the reduced
+`probe_matrix --quick` bank it improved chords (7.79 -> 4.94 s) but worsened rock
+eighths (8.19 -> 12.40 s), mean acquisition 7.28 -> 7.41 s, excursions 18 -> 20.
+Do not equate a stricter interval gate with faster correct acquisition. Letting
+only provisional HMM grids without measured intervals accept off-grid peaks was
+also tried and removed: the same bank was unchanged. Both are synthetic decoder
+measurements; the user's previous INFINITO file was unavailable for this run.
+
 `Source/AI/BeatDecoder.h` - three tempo sources, because no single one is both
 fast and precise:
 
