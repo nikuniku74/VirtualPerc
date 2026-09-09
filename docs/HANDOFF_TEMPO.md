@@ -1179,3 +1179,135 @@ tre sono il minimo teorico per accorgersi del cambio.
 - `scripts/probe_small_steps.cpp` non e' tracciato: va aggiunto a git.
 - Il gate resta **solo su feed diretto** (`lineFeed`). Su microfono non e' mai
   stato provato e non deve esserlo senza una misura sua.
+
+# RECAP — cosa serve per chiudere l'allineamento (09/09/2026)
+
+Scritto su richiesta dell'utente come punto di ripartenza unico. Sostituisce la
+necessità di leggere tutto quello che c'è sopra: sopra ci sono le misure, qui c'è
+la mappa.
+
+## Quattro problemi, non uno
+
+«Non è allineato» in questo progetto vuol dire quattro cose diverse, che
+falliscono per ragioni diverse e che è costato tempo confondere:
+
+1. **Il tempo** — il BPM. Sbagliato = ottava sbagliata, o griglia sbagliata.
+2. **La fase** — dove cade il quarto dentro il tempo giusto. Sbagliata = suona
+   sistematicamente avanti o indietro di qualche decina di millisecondi.
+3. **La battuta** — quale quarto è l'uno. Sbagliata = il tempo è giusto ma
+   l'accento è sul posto sbagliato.
+4. **L'ingresso** — quando la parte comincia a suonare. Sbagliato = entra su
+   evidenza che non c'era.
+
+Un banco che misura il primo non dice niente sugli altri tre. Metà degli errori
+di lettura di questa sessione vengono da lì.
+
+## Cosa è chiuso e misurato
+
+| | stato | banco |
+|---|---|---|
+| Frontend BeatNet: scala, finestra, filterbank | verificato contro madmom, nessun bug | `VPActivations --sweep` |
+| Ottava falsa alta in acquisizione (veto dello state space sopra 180 BPM) | corretto: -12 dB da 94.9 a 91.0 BPM | `VPLive --gain`, `--level` |
+| Pazienza dello snap d'ottava su disaccordi non-ottava | corretto: `probe_tempo_step` −25%, `probe_matrix` uscite 101→99 | `probe_matrix`, `VPAlign` |
+| Livello che cambia l'ottava sotto una parte che suona | corretto: `--level` da 13/3 a 15/1 | `VPTests --level` |
+| `VPTests --bar` che falliva da settimane | era il test, non la battuta | `VPTests --bar` |
+| Gradini piccoli (±2 BPM): il decoder lo dice al clock | rilevati a **3.1 battiti**, che è il minimo teorico | `probe_small_steps` |
+| Barra e trim d'ingresso in dB, con banda bersaglio | corretto, visto su Mac e iPad | — |
+
+## Cosa manca, in ordine di quanto pesa
+
+### 1. L'app non sa dire «non lo so ancora» — è il problema più grande
+
+Su `01 BLUE SKY.mp3` (riferimento, `/tmp/vp-bluesky.wav`): trenta secondi di
+intro senza sezione ritmica, la rete produce risposte **confidenti e sbagliate**
+(52, 57, 171, 120, 163, 133) e **l'app si impegna su una di quelle a 4 secondi**,
+con confidenza 0.52, e suona. Primo aggancio tenuto: **66.1 s**.
+
+Il cancello va costruito **nel motore, prima del guadagno d'analisi**. Misurato
+perché non può stare altrove: la banda bassa dopo il make-up legge 0.65-0.70
+nell'intro contro 0.73-0.79 con la band — non separa, perché il guadagno
+amplifica l'intro 7.5× e a valle «an empty room and a band playing arrive looking
+alike - by design» (`updateAnalysisEpoch`). Prima del make-up la differenza
+esiste ancora: è lo stesso punto che decide l'epoch, e probabilmente sono lo
+stesso lavoro.
+
+Da fare insieme: l'epoch scatta a **53.2 s**, venti secondi dopo l'ingresso della
+band (30-40 s), perché il riferimento era già stato trascinato in alto.
+
+### 2. Il caso senza batteria
+
+Il test armonico con pad fallisce ancora, e a 52 BPM la fonte armonica è troppo
+lenta. È lo stesso materiale del punto 1 visto da un'altra parte. Se BeatNet non
+generalizza serve un modello beat/downbeat addestrato anche su accompagnamenti
+tonali: è il pezzo di lavoro più grosso che resta, ed è una decisione, non un fix.
+
+### 3. La verità di fase
+
+Senza una beat-grid annotata sulla registrazione, i 26-33 ms ai livelli bassi, i
+61.6 ms a -18 dB e i picchi isolati da 85-167 ms non si confrontano con niente.
+Blocca ogni giudizio sul punto 2 della lista dei quattro. Parte dall'utente.
+
+### 4. Quello che resta sui gradini di tempo
+
+- ±2 BPM: rilevati a 3.1 battiti, ma la **fase** rientra dopo. A 120 e 168 il
+  rientro è già immediato; a 52 servono ~5 battiti in tutto. Non è una costante
+  da stringere: l'errore accumulato cresce col quadrato della durata del battito.
+- ±12 BPM: restano lenti (9.3 s a 132, 108 non si stabilizza). È il percorso
+  della transizione ordinaria, non il gate dei gradini piccoli.
+- Il criterio di PASS di `probe_small_steps` (stabile entro 4 battiti **dal
+  cambio**) è sotto il pavimento fisico ai tempi lenti. Va riscritto in
+  battiti-dopo-il-rilevamento, o accettato per quello che è.
+
+### 5. Casi noti e non chiusi
+
+- 52 BPM letto 104 a ogni livello: indecidibile su quel materiale (item 1),
+  misurato e deliberatamente non asserito.
+- 91 BPM a 0 dB: `tryFastAcquire` pubblica 64.55 contro uno state space a 115.38
+  con margine **negativo**. Causa nota; la regola `rawBpm < 90` che la provoca è
+  la stessa che tiene 76 lontano da 152, quindi serve materiale reale a più
+  livelli prima di toccarla.
+- L'1 si allinea da solo, ma dopo **dodici battute** (47 battiti,
+  `kBeatsToMoveTheBar` sotto `kVoteDecay`). Non è un difetto, è il prezzo scelto;
+  è una decisione dell'utente se mezzo minuto è troppo.
+- La suite completa non è mai stata eseguita.
+
+## Ipotesi già escluse per misura — non rifarle
+
+1. **Il knob del MIC «sblocca» il tracker.** No: rimescola. La mappa fra
+   configurazione ed esito è caotica — un tetto di guadagno di 3× e uno di 24×
+   danno lo stesso risultato a sei decimali, 12× ne dà uno dieci volte migliore.
+   Quattro corse identiche danno lo stesso numero: è deterministico, non casuale.
+2. **Il guadagno d'analisi che oscilla è la causa.** No: a 0 dB e −6 dB la rete
+   riceve un segnale identico a tre decimali, e i due agganciano a 66.1 s e 8.5 s.
+3. **Un watchdog sulla griglia «affamata»** (accetta meno del 55% dei battiti che
+   il suo tempo prevede). Funziona e migliora il sintetico (90→120 da 20.7 a
+   10.2 s), ma sul brano vero scambia il crollo a 53 BPM con uno a 131 e arriva
+   allo stesso secondo. Codice in scratch.
+4. **Adottare il pettine invece di ripartire.** Non scatta, correttamente: nei
+   primi 25 s di quel brano il pettine salta 84 → 173 → 87 → 110 → 0.
+5. **`cancelPhaseRecovery` reso condizionato** in `beginTempoTransition`: numeri
+   identici riga per riga.
+6. **La banda bassa come cancello**: non separa dopo il make-up (vedi punto 1).
+
+## I banchi, e cosa ciascuno NON può dire
+
+- `probe_matrix`, `probe_tempo_step`, `probe_small_steps`: pilotano il decoder da
+  solo. Non chiamano `setSounding`, quindi **non vedono** la regola che tiene il
+  livello sotto una parte che suona: non possono regredire su quella e non
+  possono validarla.
+- `VPLive`: pilota `BeatTracker`, **non** `VirtualPercussionEngine`. Niente trim,
+  canceller, guadagno d'analisi, niente epoch. Su materiale reale dà risposte
+  diverse dall'app.
+- `VPTrack` (nuovo, `scripts/probe_track.cpp`): motore completo su un file. È
+  l'unico banco che misura quello che l'utente sente. Usarlo per tutto ciò che
+  riguarda materiale reale.
+- `probe_small_steps`: non è end-to-end; il conteggio corretto dopo l'allineamento
+  di astra è **7 PASS / 4 FAIL**, non 8/3.
+- Nessun banco copre il **timbro** delle voci: solo la regressione d'attacco.
+
+## La regola che è costata di più impararla
+
+In questa sessione **sei ipotesi plausibili sono morte alla misura**, e tre di
+esse erano già state scritte nei documenti come cause prima di essere verificate.
+Misurare prima di correggere, e rimisurare sul percorso giusto: metà del lavoro
+utile di oggi è stato scoprire che stavo misurando mezza catena.

@@ -1548,6 +1548,132 @@ clap che fissa l'anticipo globale: il cembalo cade dove cadeva.
 
 ---
 
+### 29. Su un intro senza batteria l'app si impegna su un tempo sbagliato e ci resta un minuto 🔴 (2026-09-09, misurato su brano reale — causa trovata, non corretta)
+
+Segnalazione: *«spesso non riconosce il bpm del brano»*, *«va fuori e rientra
+subito appena muovo leggermente il knob del mic»*, *«passa da 87 a 65 senza
+senso»*. Brano di riferimento: `01 BLUE SKY.mp3` sul Desktop dell'utente,
+convertito in `/tmp/vp-bluesky.wav` (l'originale non è toccato).
+
+**Banco nuovo: `VPTrack`** (`scripts/probe_track.cpp`). Legge un wav e lo manda
+nel motore **completo** — trim, canceller, guadagno d'analisi e
+`updateAnalysisEpoch` — invece che nel solo `BeatTracker` come fa `VPLive`.
+Serviva: su questo brano i due percorsi danno risposte diverse, e quello vero è
+il peggiore.
+
+```bash
+cmake --build build-host --target VPTrack -j4
+./build-host/VPTrack_artefacts/Release/VPTrack --wav /tmp/vp-bluesky.wav --bpm 87 --trace
+```
+
+**Il brano.** I primi trenta secondi non hanno né batteria né basso: energia
+sotto i 200 Hz da 5.7 a 9.9, che sale a 37 e poi 79.7 fra i 30 e i 40 s quando
+entra la sezione ritmica. Picco d'ingresso nell'intro: 0.013-0.020.
+
+**Cosa fa il motore completo, a livello invariato:**
+
+```
+  t     pubbl   pettine  conf  gAnalisi
+  4.0   52.49     0.00   0.52    7.54
+ 16.0   57.81   173.41   0.83    3.32
+ 20.0  171.29   181.82   0.10    3.40
+ 28.0  118.12   103.45   0.53    4.17
+ 40.0  163.01   170.70   0.68    1.92
+ 53.2  <- qui scatta il restart dell'analisi
+ 68.0   86.97    87.08   0.61    1.00
+ 88.0   86.38    86.58   1.00    1.00   FISSO
+```
+
+Primo aggancio tenuto 3 s: **66.1 s**. Dentro il ±2% solo il 45.6% dei primi
+due minuti.
+
+**Prima ipotesi, sbagliata e corretta subito.** Il guadagno d'analisi nei primi
+50 secondi:
+
+| livello | gAnalisi nei primi 50 s | primo aggancio | dentro il 2% |
+|---|---|---|---|
+| **0 dB** | 7.56 → 7.81 → 4.33 → 3.40 → 6.46 → 3.21 → 4.95 → 1.92 → 1.29 | **66.1 s** | 45.6% |
+| −6 dB | 15.08 → … → 2.57 (saturato in alto) | **8.5 s** | 69.8% |
+| +12 dB | 1.90 → 1.96 → 1.09 → 1.00 → 1.62 → 1.00 → 1.24 → 1.00 | **12.1 s** | 59.5% |
+
+Sembrava la causa. **Non lo è**, e le due misure che l'hanno smontata:
+
+1. A 0 dB e a −6 dB il livello **dopo** il guadagno è identico a tre decimali in
+   ogni istante campionato (0.120 / 0.100 / 0.161 / 0.190 / …): il make-up
+   compensa il trim esattamente come deve. Stesso segnale alla rete, e i due
+   agganciano a 66.1 s e 8.5 s.
+2. Sweep del tetto del guadagno, a livello invariato:
+
+   | tetto | primo aggancio |
+   |---|---|
+   | 24× (attuale) | **66.1 s** |
+   | 12× | 8.2 s |
+   | 6× | 17.8 s |
+   | **3×** | **66.1 s** — identico a 24×, a sei decimali |
+   | 2× | 25.3 s |
+
+   Nessuna monotonia. Non è un livello di soglia: è l'esito che cade in uno di
+   pochi bacini, e 66.1 s è quello in cui finiscono impostazioni lontanissime.
+
+**Quello che succede davvero.** Quattro corse identiche danno lo stesso numero a
+sei decimali: il banco è deterministico. Ma la mappa fra configurazione ed esito
+non lo è in alcun modo utile — **qualunque** perturbazione della catena d'analisi
+fa ricadere il brano su un bacino diverso. Il knob non «sistema» niente: rimescola.
+
+E il motivo per cui esistono bacini così diversi è a monte di tutto: **nei primi
+trenta secondi non c'è una sezione ritmica**, la rete produce risposte
+*confidenti e sbagliate* — 52, 57, 171, 120, 163, 133 — e l'app **si impegna su
+una di quelle a 4 secondi**, con confidenza 0.52, e suona. Da lì in poi il minuto
+successivo è deciso da quale sbagliata le è capitata.
+
+**Il cancello: provato a costruirlo, e la misura dice dove non può stare.**
+
+L'idea era: non impegnarsi finché non c'è pulsazione, usando la banda bassa come
+segnale che una sezione ritmica non c'è. `lowBand` arriva già al decoder a ogni
+frame (`observe(..., lowBand)`), quindi era costruibile. Misurato sul brano:
+
+```
+LB t=  4.02  medio=0.3818   <- intro senza batteria
+LB t= 12.06  medio=0.6547
+LB t= 20.10  medio=0.5177
+LB t= 40.16  medio=0.7782   <- band entrata
+LB t= 72.20  medio=0.7331
+LB t= 96.32  medio=0.7879
+```
+
+**Non separa niente**: 0.65-0.70 nell'intro contro 0.73-0.79 dopo. Il motivo è
+strutturale e sta scritto in `updateAnalysisEpoch`: la banda bassa è misurata
+**dopo** il guadagno d'analisi, che nell'intro amplifica 7.5×, e a valle di quel
+guadagno «an empty room and a band playing arrive looking alike - by design».
+
+Quindi un cancello basato su qualunque cosa misurata dopo il make-up **non può
+vedere** che manca la sezione ritmica. Deve stare prima, cioè dove vive già
+`updateAnalysisEpoch` — l'unico punto in cui la differenza esiste ancora.
+
+- [ ] **Il cancello va costruito nel motore, prima del guadagno d'analisi**, non
+  nel decoder. Lì `rawPeak` e la banda bassa del segnale non amplificato dicono
+  ancora se c'è una sezione ritmica. È lo stesso posto che già decide l'epoch, e
+  probabilmente le due cose sono lo stesso lavoro.
+- [ ] Un cancello basato solo sulla **stabilità del tempo pubblicato** non basta,
+  e la traccia lo dimostra: il decoder resta fermo su 118 BPM per otto secondi
+  (t=28-36) e su 133 per quattro. È confidente, stabile e sbagliato.
+- [ ] L'epoch scatta a **53.2 s**, venti secondi dopo l'ingresso della band
+  (30-40 s), perché il riferimento era già stato trascinato in alto dall'intro
+  amplificata. Da rivedere insieme al punto sopra.
+- [ ] **Non toccare il guadagno d'analisi** sulla base di questo brano: è
+  misurato che non è la causa, e le sue costanti sono tarate altrove.
+
+**Provato e scartato (misurato due volte, tenuto in scratch):** un watchdog che
+si accorge quando la griglia «muore di fame» — accetta meno del 55% dei battiti
+che il suo stesso tempo prevede mentre gli eventi continuano ad arrivare. Scatta
+correttamente e porta `90 → 120` da 20.7 a 10.2 s sul banco sintetico, ma sul
+brano vero scambia il crollo a 53 BPM con uno a 131 e arriva **allo stesso
+secondo**. La variante che adotta il pettine invece di ripartire non scatta, e
+giustamente: nei primi 25 s di questo brano il pettine salta 84 → 173 → 87 →
+110 → 0, non c'è un secondo parere da prendere.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

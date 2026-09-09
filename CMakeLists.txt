@@ -385,6 +385,26 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         juce::juce_recommended_config_flags
     )
 
+    juce_add_console_app (VPTrack
+        PRODUCT_NAME "VPTrack"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPTrack PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPTrack PRIVATE ${VP_CORE_SOURCES} scripts/probe_track.cpp)
+    target_include_directories (VPTrack PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPTrack PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPTrack PRIVATE
+        juce::juce_dsp
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
     juce_add_console_app (VPSing
         PRODUCT_NAME "VPSing"
         NEEDS_WEB_BROWSER FALSE
@@ -683,6 +703,9 @@ if (TARGET VPAlign)
 endif()
 if (TARGET VPLive)
     vp_apply_ai_options (VPLive)
+endif()
+if (TARGET VPTrack)
+    vp_apply_ai_options (VPTrack)
 endif()
 if (TARGET VPSing)
     vp_apply_ai_options (VPSing)
