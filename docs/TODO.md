@@ -1650,18 +1650,125 @@ Quindi un cancello basato su qualunque cosa misurata dopo il make-up **non può
 vedere** che manca la sezione ritmica. Deve stare prima, cioè dove vive già
 `updateAnalysisEpoch` — l'unico punto in cui la differenza esiste ancora.
 
-- [ ] **Il cancello va costruito nel motore, prima del guadagno d'analisi**, non
+- [x] **Il cancello va costruito nel motore, prima del guadagno d'analisi**, non
   nel decoder. Lì `rawPeak` e la banda bassa del segnale non amplificato dicono
   ancora se c'è una sezione ritmica. È lo stesso posto che già decide l'epoch, e
   probabilmente le due cose sono lo stesso lavoro.
 - [ ] Un cancello basato solo sulla **stabilità del tempo pubblicato** non basta,
   e la traccia lo dimostra: il decoder resta fermo su 118 BPM per otto secondi
   (t=28-36) e su 133 per quattro. È confidente, stabile e sbagliato.
-- [ ] L'epoch scatta a **53.2 s**, venti secondi dopo l'ingresso della band
+- [x] L'epoch scatta a **53.2 s**, venti secondi dopo l'ingresso della band
   (30-40 s), perché il riferimento era già stato trascinato in alto dall'intro
   amplificata. Da rivedere insieme al punto sopra.
 - [ ] **Non toccare il guadagno d'analisi** sulla base di questo brano: è
   misurato che non è la causa, e le sue costanti sono tarate altrove.
+
+**COSTRUITO (2026-09-09): la quota di banda bassa, prima del make-up.**
+
+`VirtualPercussionEngine::updateRhythmShare` misura, sul segnale d'analisi non
+amplificato, quanta dell'energia sta sotto i 200 Hz — un **rapporto**, non un
+livello. È l'unica statistica misurata su questo brano che separa l'intro dalla
+band, e sopravvive al make-up perché un guadagno a banda larga non può falsare
+un rapporto. Numeri sul brano, dal motore stesso (colonna `lowS` di `VPTrack`):
+intro 0.10-0.28, band 0.32-0.50.
+
+Due fatti diversi ne escono, e servono a due cose diverse:
+
+- **Il gradino** (share > 2× l'altopiano in cui stava, tenuto 1.5 s, sopra 0.30):
+  «è appena entrata una sezione ritmica». Fa scattare l'epoch, con la stessa
+  uscita del gradino di livello. Sul brano scatta a **39.7 s** invece di 53.2.
+- **`rhythmSeen`** (share sopra 0.30 per 2 s, o il gradino): «adesso ce n'è una».
+  Ora è richiesto, insieme al livello, da `tracker.setSourceAudible` — cioè
+  dall'unico percorso che lascia entrare la parte su musica già in corso
+  (`alreadyPlaying`). Una sorgente che parte dal silenzio entra dal suo epoch e
+  non è toccata da questo.
+
+| | prima | dopo |
+|---|---|---|
+| primo aggancio tenuto 3 s | 66.1 s | **55.0 s** |
+| dentro il ±2% (brano intero) | 67.5% | **71.8%** |
+| epoch | 53.2 s | **39.7 s** |
+| suona durante l'intro | sì, da 4.0 s a 52 BPM | **no, mai** |
+
+È relativo per costruzione, ed è questo che lo rende sicuro altrove: il kit
+sintetico dei banchi sta piatto a 0.17 per tutta la sua durata e il click a
+0.002, quindi nessuno dei due può gradinare, e tutti e due entrano dal loro
+epoch di livello (`quietLeadIn`).
+
+**La costante che è costata la prima versione.** Il primo taglio del cancello
+d'ingresso ha portato `--level` da 15/1 a **13/3** — proprio la colonna
+«ingresso». Non era la soglia: era che `rhythmSeen` non poteva essere vero prima
+di 4 s (2 s di prime più 2 s di tenuta) mentre sui banchi la parte entra **0.41 s
+dopo l'inizio della musica**. Le due energie ora sono innescate al primo blocco
+invece di essere rilasciate, e la tenuta è 0.33 s. I numeri sul brano non
+cambiano di un decimale e `--level` torna a 15/1. Chi tocca queste costanti
+rimisuri quella colonna: è l'unica che le vede.
+
+Regressioni, tutte rimisurate sulla versione finale: `--level` **15/1** (stesso
+unico FAIL, 91 BPM a 0 dB), `--octave` **7/4**, `--bar` **10/0**,
+`--tempo-slow` **10/0**, `probe_matrix` **identico** (99 uscite, aggancio medio
+5.27 s), `probe_tempo_step` invariato, `VPAlign` **identico riga per riga**
+contro un binario ricostruito dai sorgenti puliti. `probe_matrix` e
+`probe_tempo_step` non compilano nemmeno il motore, quindi non potevano
+cambiare; `VPAlign` sì, ed è stato confrontato davvero.
+
+**L'arbitro pettine/rete, nel decoder (stessa data).** Idea dell'utente: «il
+tempo fra due colpi». Un arbitro c'era già — lo snap d'ottava e il watchdog
+della griglia stantia — ma non poteva parlare in tempo, e la traccia a 1 s dice
+esattamente perché:
+
+```
+  39.7  epoch: il fold viene azzerato
+  40-47 il pettine non è pronto (0.00) — non c'è niente da arbitrare
+  47.0  pettine pronto: 89.69, poi 87.72 / 87.85 / 87.98
+  49.0  levelSettled diventa 1
+  53.0  snap: pubblicato 57.5 -> 87.8
+```
+
+`combMayCorrect` aspettava `tempo.levelSettled()`, e **ogni ragione per
+aspettarlo è una ragione d'ottava**: senza, il pettine potrebbe star nominando
+il doppio. Non dice niente su due letture distanti una quinta (55.9 contro
+87.7) — su qualunque ottava sia il pettine, la griglia impegnata non è su
+nessuna delle due. Quindi un disaccordo **non d'ottava**, con pettine saliente,
+non aspetta più. Snap a 49.0 invece che 53.0.
+
+Solo contro un livello **provvisorio**, e quel vincolo è misurato, non
+supposto. Senza, la stessa rilassatezza arriva a una griglia stabilita e
+`VPAlign` dice quanto costa: 132 BPM con 2.2 ms di jitter passa da rms 0.07
+battiti a 0.23 con un peggiore di mezzo battito — il livello sbagliato, preso
+con l'argomento che questo doveva risolvere — e la rampa 100→110 in 12 s perde
+5 ms di fase del decoder. Con il vincolo, entrambe tornano identiche alla base.
+
+| | senza arbitro | con arbitro |
+|---|---|---|
+| primo aggancio tenuto 3 s | 55.0 s | **53.5 s** |
+| dentro il ±2% | 71.8% | **73.6%** |
+| snap dopo il restart | 53.0 s | **49.0 s** |
+| `probe_matrix` uscite | 99 | **96** |
+| `probe_matrix` aggancio medio | 5.27 s | **5.25 s** |
+| `probe_matrix` fuori medio | 9.00% | **8.99%** |
+
+`probe_matrix` **non è identico**, ed è la prima volta che questo cambio lo
+tocca davvero: i tre totali migliorano tutti, ma per materiale il quadro è
+misto — `swing 8vi` 3.91 → 3.67 e peggiore 11.60 → 9.56, `mix che ingoia`
+8.62 → 8.04 con uscite 16 → 14, contro `swing pieno` 4.31 → 4.83 (ma uscite
+2 → 1 ed errore 0.07% → 0.01%) e `solo accordi` 4.86 → 4.90. `probe_tempo_step`
+identico. `VPAlign` differisce ancora su due righe: il 168 a 2.2 di jitter, che
+è **già annotato «livello sbagliato» nella base** (rms 0.2691 → 0.2730, scatti
+8 → 12, ma peggiore 0.4402 → 0.3732), e frazioni di millisecondo sulla rampa
+100→110 in 30 s. `--level` 15/1, `--octave` 7/4, `--bar` 10/0, `--tempo-slow`
+10/0.
+
+- [ ] **Restano 7 s che nessun arbitro può recuperare**: fra l'epoch (39.7) e il
+  momento in cui il pettine è pronto (47.0) non esiste un secondo parere. È il
+  riscaldamento del fold dopo che `notifyInputRestart` lo ha azzerato. Da notare
+  che a 39.0 s, *prima* del restart, il pettine leggeva già **85.71** con
+  `levelSettled` a 1: l'epoch butta via una risposta che era già giusta. Un
+  restart che distingua «stanza → band» (dove l'evidenza è davvero della stanza)
+  da «è entrata la sezione ritmica» (dove gli ultimi secondi contengono già la
+  band) recupererebbe quei 7 s. È il pezzo più grosso che resta su questo brano.
+- [ ] Lo stato pubblicato resta `following` durante l'intro (su un BPM sbagliato)
+  anche se la parte tace. Il display mente ancora; solo il suono no.
 
 **Provato e scartato (misurato due volte, tenuto in scratch):** un watchdog che
 si accorge quando la griglia «muore di fame» — accetta meno del 55% dei battiti

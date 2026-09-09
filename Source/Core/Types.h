@@ -243,6 +243,9 @@ struct EngineSnapshot
     /** Peak left on the analysis bus after leak subtraction, before makeup.
         The ratio of this to `inputPeak` is how much of our own part survived. */
     float leakRemain           = 0.0f;
+    /** Share of the pre-make-up analysis signal below 200 Hz. Diagnostics: it
+        is what says whether the input has a rhythm section in it. */
+    float lowShare             = 0.0f;
     int   badInputSamples      = 0;
     /** Times the analysis lost audio because its worker fell behind. Zero on a
         healthy run; anything else is a dropout in the tracking, not the sound. */

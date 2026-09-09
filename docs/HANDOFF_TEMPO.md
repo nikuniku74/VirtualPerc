@@ -1216,7 +1216,35 @@ di lettura di questa sessione vengono da lì.
 
 ## Cosa manca, in ordine di quanto pesa
 
-### 1. L'app non sa dire «non lo so ancora» — è il problema più grande
+### 1. L'app non sa dire «non lo so ancora» — COSTRUITO il 09/09/2026
+
+Il cancello c'è, nel motore, prima del guadagno d'analisi:
+`VirtualPercussionEngine::updateRhythmShare` legge la **quota** di energia sotto
+i 200 Hz sul segnale non amplificato (un rapporto sopravvive al make-up, un
+livello no). Sul brano di riferimento: intro 0.10-0.28, band 0.32-0.50.
+
+Il **gradino** di quella quota fa scattare l'epoch — 39.7 s invece di 53.2, che
+era anche il «da fare insieme» — e il fatto che ce ne sia una (`rhythmSeen`) è
+ora richiesto da `setSourceAudible`, cioè dall'unico percorso che faceva entrare
+la parte sull'intro. Primo aggancio 66.1 → **55.0 s**, dentro il ±2% 67.5 →
+**71.8%**, e durante l'intro **non suona più**. Regressioni tutte invariate.
+Dettaglio, numeri e cosa resta: `docs/TODO.md` item 29.
+
+**L'arbitro pettine/rete è stato costruito lo stesso giorno**, nel decoder.
+`combMayCorrect` aspettava `tempo.levelSettled()`, e ogni ragione per aspettarlo
+è una ragione d'ottava; fra due letture distanti una quinta non dice niente.
+Ora un disaccordo non d'ottava, con pettine saliente e livello ancora
+provvisorio, non aspetta. Aggancio **55.0 → 53.5 s**, dentro il ±2%
+71.8 → **73.6%**, `probe_matrix` uscite 99 → **96**. Il vincolo «solo se
+provvisorio» è misurato: senza, `VPAlign` perde mezzo battito a 132 BPM.
+
+Quello che **resta** sono 7 s che nessun arbitro può recuperare: fra l'epoch
+(39.7 s) e il momento in cui il pettine è pronto (47.0 s) non esiste un secondo
+parere, perché il restart ha azzerato il fold. E a 39.0 s, prima del restart, il
+pettine leggeva già 85.71 con il livello assestato: l'epoch butta via una
+risposta che era giusta. Vedi item 29.
+
+Il testo originale del problema, per riferimento:
 
 Su `01 BLUE SKY.mp3` (riferimento, `/tmp/vp-bluesky.wav`): trenta secondi di
 intro senza sezione ritmica, la rete produce risposte **confidenti e sbagliate**
@@ -1288,6 +1316,12 @@ Blocca ogni giudizio sul punto 2 della lista dei quattro. Parte dall'utente.
 5. **`cancelPhaseRecovery` reso condizionato** in `beginTempoTransition`: numeri
    identici riga per riga.
 6. **La banda bassa come cancello**: non separa dopo il make-up (vedi punto 1).
+   Precisazione del 09/09/2026: non separa il *livello* della banda bassa, che è
+   quello che era stato misurato. La **quota** (banda bassa / totale), presa
+   prima del make-up, separa — 0.10-0.28 contro 0.32-0.50 — ed è il cancello che
+   è stato costruito. Un rapporto è invariante al guadagno a banda larga; un
+   livello no. L'ipotesi era scartata per la misura giusta ma sulla grandezza
+   sbagliata.
 
 ## I banchi, e cosa ciascuno NON può dire
 

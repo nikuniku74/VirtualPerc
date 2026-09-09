@@ -216,7 +216,13 @@ private:
         BeatDecoder::notifyInputRestart for why it needs telling. Returns true
         on the block the change is called, so the make-up gain can be re-primed
         at the new level instead of gliding to it. */
-    bool updateAnalysisEpoch (int numSamples, float rawPeak) noexcept;
+    bool updateAnalysisEpoch (int numSamples, float rawPeak, bool rhythmArrived) noexcept;
+    /** Share of the un-amplified analysis signal that sits below 200 Hz, and
+        the step up in it that says a rhythm section just walked in. Audio
+        thread, before the make-up gain: a broadband gain leaves the share
+        alone, but everything else here reads a level, and a level after the
+        make-up is the network's operating point rather than the room's. */
+    bool updateRhythmShare (int numSamples) noexcept;
     /** A two-quarter (or longer) hole in the *analysis* level, then music
         again, while already following: open the bar re-entry window. Not an
         epoch - the decoder must not restart. Audio thread. */
@@ -397,6 +403,17 @@ private:
     float levelLoud = 0.0f;
     int   levelStepSamples = 0;
     int   levelPrimeSamples = 0;
+    /** Two-pole 200 Hz state, the two smoothed energies it feeds, the plateau
+        the share has been sitting in, and how long it has been above it. */
+    float lowLp1 = 0.0f, lowLp2 = 0.0f;
+    float lowEnergy = 0.0f, fullEnergy = 0.0f;
+    float shareBase = 0.0f;
+    int   shareStepSamples = 0;
+    int   sharePrimeSamples = 0;
+    int   shareHighSamples = 0;
+    /** Latched: this input has been heard to have a rhythm section in it. */
+    bool  rhythmSeen = false;
+    std::atomic<float> lastLowShare { 0.0f };
     std::atomic<uint32_t> analysisEpoch { 0 };
     /** Message-thread seek (and the audio-thread hole detector) set this;
         process() turns it into BeatTracker::notifyBarReentry. */

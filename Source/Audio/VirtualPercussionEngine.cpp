@@ -109,6 +109,43 @@ namespace
     // starts. The leak comes back late - the device round trip plus, in a room,
     // the flight - and the canceller needs a moment to find it.
     constexpr double kOwnStepBlameSec = 0.75;
+
+    // The rhythm-section watcher, and why it reads a *share* rather than a
+    // level. Measured on the reference song (docs/TODO.md item 29): its first
+    // thirty seconds are voice, guitar and pad with no drums and no bass, and
+    // the energy below 200 Hz is 0.14-0.26 of the whole; from the entrance on
+    // it is 0.53-0.61. A ratio is what survives this path - the make-up gain
+    // downstream is broadband, so it cannot forge one - and it is the only
+    // statistic measured on that song that separates the intro from the band
+    // at all. Absolute level does not: the intro is real music, not a quiet
+    // room, so the level step the epoch watcher looks for never happens.
+    //
+    // It is deliberately a *relative* test, and that is what makes it safe on
+    // everything else. The synthetic kit the benches use sits flat at 0.17 for
+    // its whole length and the click track at 0.002: neither ever steps, so
+    // neither can be delayed or restarted by this. It fires on material that
+    // begins without a rhythm section and then acquires one, which is exactly
+    // the case it was built for.
+    constexpr double kLowBandHz = 200.0;
+    constexpr double kShareSmoothSec = 2.0;
+    constexpr double kSharePrimeSec = 0.5;
+    // The plateau follows the share down within a few seconds and back up over
+    // half a minute: a step has to stay to count, and a slow drift upward must
+    // not quietly raise the bar out from under it.
+    constexpr double kShareFallSec = 4.0;
+    constexpr double kShareRiseSec = 30.0;
+    constexpr float  kShareStepUp = 2.0f;
+    constexpr double kShareStepHoldSec = 1.5;
+    // Below this a low band is a detail of the mix, not a section. The
+    // click track's 0.002 doubles on nothing at all; this is what stops the
+    // ratio from being sensitive where it has no business being.
+    constexpr float  kShareFloor = 0.30f;
+    // The standing fact has to be available before the part is due in, which
+    // on the benches is four tenths of a second after the music starts. So the
+    // energies are primed at the first block rather than released into, and the
+    // hold is a third of a second: long enough that one bass note cannot say
+    // there is a section, short enough not to delay an entrance.
+    constexpr double kShareHighHoldSec = 0.33;
 }
 
 void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChannels) noexcept
@@ -196,6 +233,14 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     levelLoud = 0.0f;
     levelStepSamples = 0;
     levelPrimeSamples = 0;
+    lowLp1 = lowLp2 = 0.0f;
+    lowEnergy = fullEnergy = 0.0f;
+    shareBase = 0.0f;
+    shareStepSamples = 0;
+    sharePrimeSamples = 0;
+    shareHighSamples = 0;
+    rhythmSeen = false;
+    lastLowShare.store (0.0f, std::memory_order_relaxed);
     analysisEpoch.store (0, std::memory_order_relaxed);
     barReentryPending.store (false, std::memory_order_relaxed);
     musicGapSamples = 0;
@@ -1020,7 +1065,84 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         mono[static_cast<size_t> (i)] *= from + step * static_cast<float> (i);
 }
 
-bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak) noexcept
+bool VirtualPercussionEngine::updateRhythmShare (int numSamples) noexcept
+{
+    // Two one-poles at 200 Hz. A biquad would be tidier at the corner and this
+    // does not need a tidy corner: what is being asked is whether the bottom of
+    // the mix carries a comparable amount of energy to the rest of it, and the
+    // answer moves by a factor of three across the entrance being looked for.
+    const float coef = 1.0f - std::exp (-2.0f * 3.14159265f * static_cast<float> (kLowBandHz)
+                                        / static_cast<float> (std::max (1.0, sampleRate)));
+    double lowSum = 0.0, fullSum = 0.0;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float x = mono[static_cast<size_t> (i)];
+        lowLp1 += coef * (x - lowLp1);
+        lowLp2 += coef * (lowLp1 - lowLp2);
+        lowSum += static_cast<double> (lowLp2) * lowLp2;
+        fullSum += static_cast<double> (x) * x;
+    }
+    const float inv = 1.0f / static_cast<float> (std::max (1, numSamples));
+    const float smooth = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                          / std::max (1.0f, static_cast<float> (sampleRate * kShareSmoothSec)));
+    const float lowNow = static_cast<float> (lowSum) * inv;
+    const float fullNow = static_cast<float> (fullSum) * inv;
+    if (fullEnergy <= 0.0f)
+    {
+        lowEnergy = lowNow;
+        fullEnergy = fullNow;
+    }
+    else
+    {
+        lowEnergy += (lowNow - lowEnergy) * smooth;
+        fullEnergy += (fullNow - fullEnergy) * smooth;
+    }
+
+    const float share = fullEnergy > 1.0e-12f ? lowEnergy / fullEnergy : 0.0f;
+    lastLowShare.store (share, std::memory_order_relaxed);
+
+    if (sharePrimeSamples < static_cast<int> (sampleRate * kSharePrimeSec))
+    {
+        // The energies are still filling. Follow, decide nothing.
+        sharePrimeSamples += numSamples;
+        shareBase = share;
+        return false;
+    }
+
+    // Two ways to know there is a rhythm section, and they answer different
+    // questions. The step is "one just walked in" and drives the epoch. This is
+    // the standing fact "there is one now", which is what a track that was
+    // already playing when START was pressed needs: it has no entrance to
+    // detect, so a detector of entrances would leave it mute for ever.
+    if (share > kShareFloor)
+        shareHighSamples += numSamples;
+    else
+        shareHighSamples = 0;
+    if (shareHighSamples > static_cast<int> (sampleRate * kShareHighHoldSec))
+        rhythmSeen = true;
+
+    const bool stepping = share > kShareFloor && share > shareBase * kShareStepUp;
+    if (stepping)
+        shareStepSamples += numSamples;
+    else
+        shareStepSamples = 0;
+
+    if (shareStepSamples > static_cast<int> (sampleRate * kShareStepHoldSec))
+    {
+        shareStepSamples = 0;
+        shareBase = share;
+        rhythmSeen = true;
+        return true;
+    }
+
+    const double towards = share < shareBase ? kShareFallSec : kShareRiseSec;
+    shareBase += (share - shareBase) * (1.0f - std::exp (-static_cast<float> (numSamples)
+                                                         / std::max (1.0f, static_cast<float> (sampleRate * towards))));
+    return false;
+}
+
+bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak,
+                                                  bool rhythmArrived) noexcept
 {
     // The make-up gain exists to hold the analysis at the one level the network
     // was validated at, which means that downstream of it an empty room and a
@@ -1111,6 +1233,20 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     const float loudDecay = 1.0f - std::exp (-static_cast<float> (numSamples)
                                              / std::max (1.0f, static_cast<float> (sampleRate * kLoudMemorySec)));
     levelLoud = std::max (levelFast, levelLoud + (levelFast - levelLoud) * loudDecay);
+
+    // A rhythm section arriving on top of an intro that never had one. The two
+    // conditions below cannot see it and must not be loosened until they can:
+    // the intro is music, so the room was never quiet, and the entrance is a
+    // change of content rather than of level. It is the same event as theirs -
+    // this input is now a different thing to analyse - so it takes the same
+    // exit, and the make-up gain is re-primed at the new level with it.
+    if (rhythmArrived)
+    {
+        levelRef = std::max (levelFast, kMakeupFloor);
+        levelStepSamples = 0;
+        analysisEpoch.fetch_add (1, std::memory_order_relaxed);
+        return true;
+    }
 
     // Two conditions, and both are needed.
     //
@@ -1435,14 +1571,27 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // playing (measured by the room-start regression). A direct/mixer source
     // therefore needs the higher line-level threshold; the iPad acoustic path
     // needs the lower one because its real music is much quieter at the mic.
-    tracker.setSourceAudible (sourcePeak > (speaker ? 0.004f : 0.040f));
+    // And a level alone is not enough to say it. Measured on the reference song
+    // (item 29): its intro is music at a perfectly ordinary level, so this test
+    // passed at four seconds, the decoder had a periodic grid over a guitar
+    // figure, and the part came in on a tempo the song does not have and stayed
+    // on it for a minute. What was missing was not loudness but a rhythm
+    // section. `rhythmSeen` is the second fact, and it is only asked for here:
+    // a source that starts from quiet still enters through its epoch, which is
+    // the ordinary path and is not gated by this.
+    tracker.setSourceAudible (sourcePeak > (speaker ? 0.004f : 0.040f) && rhythmSeen);
     // How much the band is giving. Taken here on purpose: our own part has
     // just been subtracted, so the dynamics cannot follow themselves, and the
     // make-up gain below - which exists to hold the network's operating point
     // and therefore flattens exactly this - has not been applied yet.
     bandDynamics.observe (sourcePeak, numSamples);
 
-    const bool levelJumped = updateAnalysisEpoch (numSamples, sourcePeak);
+    // Before the make-up, and before the level watcher: the share the bottom of
+    // the mix is carrying is the one thing measured on real material that tells
+    // an intro without a rhythm section from the band coming in. See
+    // updateRhythmShare.
+    const bool rhythmArrived = updateRhythmShare (numSamples);
+    const bool levelJumped = updateAnalysisEpoch (numSamples, sourcePeak, rhythmArrived);
     if (barReentryPending.exchange (false, std::memory_order_relaxed))
         tracker.notifyBarReentry();
     else if (! levelJumped)
@@ -1749,6 +1898,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.analysisGain = lastAnalysisGain.load (std::memory_order_relaxed);
     s.inputGain = cfg.inputGain.load (std::memory_order_relaxed);
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
+    s.lowShare = lastLowShare.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
     s.kickChannel = lastKickChannel.load (std::memory_order_relaxed);

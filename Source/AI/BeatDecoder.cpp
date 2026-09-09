@@ -1946,9 +1946,49 @@ void BeatDecoder::updateTempo() noexcept
     // seconds even though the fitted index gap was already exactly two.
     const bool provisionalDoubledGrid = provisional && intervalAcquired
                                         && lastFitIndexGap >= 1.5f;
+    // How far apart the two sources are, and whether the argument is about a
+    // metrical level at all. Computed here rather than beside the snap because
+    // `combMayCorrect` below now needs the answer: the reason it waits for
+    // `levelSettled()` is an octave reason, and it should not be charged for an
+    // argument that is not about an octave.
+    const float disagreement = combRawBpm > kMinBpm && bpm > kMinBpm
+                                   ? std::fabs (std::log2 (bpm / combRawBpm))
+                                   : 0.0f;
+    const bool octaveArgument =
+        std::fabs (disagreement - std::round (disagreement)) < kOctaveArgumentTolerance;
+    // The arbitration between the two tempo sources, for the case where they do
+    // not disagree about an octave.
+    //
+    // `levelSettled()` means the fold's buffer has held enough audio to have
+    // examined the slower octave of its own winner, and every reason to wait for
+    // it is an octave reason: without it the comb may be naming the double, and
+    // adopting that outright is how loud eighths at 76 BPM became 152. None of
+    // that applies when the two are a fifth apart. Whichever octave the comb is
+    // on, the committed grid is on neither, so waiting for the fold to settle
+    // the octave question is waiting for the answer to a question nobody asked.
+    //
+    // Measured through the engine on the reference song (docs/TODO.md item 29),
+    // after the rhythm section walks in and the analysis restarts: the comb is
+    // ready and reading 87.7-88.0 from 47.0 s while the network crawls 55.9 to
+    // 58.2, and `levelSettled()` does not arrive until 49.0. Those two seconds
+    // were being paid for nothing.
+    //
+    // Only against a *provisional* level, and that restriction was measured, not
+    // assumed. Without it the same relaxation reaches an established grid, and
+    // `VPAlign` shows what that costs: 132 BPM at 2.2 ms of jitter went from an
+    // rms of 0.07 beats to 0.23 with a worst case of half a beat - the wrong
+    // metrical level, arrived at by exactly the argument this is meant to
+    // settle - and the 100 to 110 ramp in twelve seconds lost 5 ms of decoder
+    // phase. A level that is still provisional is a guess and has nothing to
+    // defend; one that is established has tenure, and the vote below is what
+    // tenure is for.
+    const bool nonOctaveDisagreement = combReady && provisional && ! octaveArgument
+                                       && disagreement > kOctaveThreshold
+                                       && tempo.salience() > kOctaveSnapSalience;
     const bool combMayCorrect = tempo.levelSettled()
                                 || (provisional && ! intervalAcquired)
-                                || provisionalDoubledGrid;
+                                || provisionalDoubledGrid
+                                || nonOctaveDisagreement;
     // Direction matters. A grid twice too fast can look healthy because every
     // detected beat lands on every other tick. A grid twice too slow cannot:
     // it would have to discard every other event. If this grid was built from
@@ -2069,13 +2109,8 @@ void BeatDecoder::updateTempo() noexcept
     // level. See docs/TODO.md item 24.
     //
     // When the fold agrees, or disagrees by a real octave, the distance is near
-    // zero and both allowances apply exactly as before.
-    const float disagreement = combRawBpm > kMinBpm && bpm > kMinBpm
-                                   ? std::fabs (std::log2 (bpm / combRawBpm))
-                                   : 0.0f;
-    const bool octaveArgument =
-        std::fabs (disagreement - std::round (disagreement)) < kOctaveArgumentTolerance;
-
+    // zero and both allowances apply exactly as before. `disagreement` and
+    // `octaveArgument` are computed above, beside `combMayCorrect`.
     if (octaveArgument && gridHealthy && gridIsDense && tempo.levelSettled())
         snapBeats += kOctaveSnapBeatsHealthy;
 
