@@ -89,7 +89,7 @@ int main (int argc, char** argv)
                  path.c_str(), n / sr, sr, gainDb);
     if (trace)
         std::printf ("#  t     pubbl   rete   pettine  conf  residuo  reg stato suona  "
-                     "restart  gAnalisi  picco  dopoG  lowS  set  cov\n");
+                     "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?\n");
 
     double lastTrace = -1.0e9, rightSince = -1.0, firstRight = -1.0;
     double rightSeconds = 0.0, offSeconds = 0.0;
@@ -126,13 +126,14 @@ int main (int argc, char** argv)
         if (trace && t >= lastTrace + traceStep)
         {
             lastTrace = t;
-            std::printf ("%6.1f %7.2f %7.2f %8.2f  %.2f  %6.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f\n",
+            std::printf ("%6.1f %7.2f %7.2f %8.2f  %.2f  %6.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s\n",
                          t, (double) s.bpm, (double) s.neuralBpm, (double) s.combBpm,
                          (double) s.confidence, (double) s.fitResidual, s.tempoRegime,
                          (int) s.state, s.percussionAudible ? "SI" : "no",
                          s.analysisRestarts, (double) s.analysisGain, (double) s.inputPeak,
                          (double) s.analysisPeak, (double) s.lowShare,
-                         s.levelSettled ? 1 : 0, (double) s.fitCoverage);
+                         s.levelSettled ? 1 : 0, (double) s.fitCoverage,
+                         s.barTrusted ? "SI" : "no");
         }
 
         pos += take;

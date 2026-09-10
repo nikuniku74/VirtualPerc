@@ -2117,6 +2117,66 @@ evidenza che non si è ancora assestata. Lasciarlo stare.
 
 ---
 
+### 33. Il batterista suona solo charleston in quarti 🟢 (2026-09-10, misurato: il tempo è perfetto, il problema è l'uno)
+
+Segnalazione: *«a volte il batterista suona solo il charleston in quarti. L'app
+ha difficoltà a capire e seguire il tempo.»*
+
+**Misurato, e il tempo non è il problema.** Charleston chiuso in quarti, niente
+cassa, niente rullante, tre secondi di silenzio prima come in un brano vero:
+
+| BPM | primo aggancio | dentro il ±2% | ottava |
+|---|---|---|---|
+| 60 | 6.23 s | **100.0%** | giusta |
+| 76 | 6.23 s | **99.1%** | giusta |
+| 96 | 2.56 s | **99.3%** | giusta |
+| 132 | 4.77 s | **99.7%** | giusta |
+
+Confidenza 1.00, pettine esatto a 96.00, residuo 0.002, copertura 1.00. Su
+questo materiale il tempo è tenuto meglio che su quasi tutto il resto del banco.
+
+**Il problema è la battuta.** Colonna `1?` nuova nella traccia di `VPTrack`
+(`barTrusted`): **`no` per tutta la durata**, e resta `no` anche con un accento
+sull'uno. È il comportamento *giusto* — un charleston piatto non contiene
+nessuna informazione sul downbeat, e la rete lo sa — ma le conseguenze si
+sentono:
+
+- il **clap** correttamente non entra (è cancellato da `barTrusted`);
+- la figura delle **congas** deve comunque scegliere un uno, e su un charleston
+  piatto è testa o croce.
+
+Il risultato all'orecchio è: la pulsazione è giusta, gli accenti sono nel posto
+sbagliato. Per un musicista quello suona come «non ha capito il pezzo», anche
+se il BPM è esatto al centesimo. **È quasi certamente questo che l'utente
+sente**, non un errore di tempo.
+
+La risposta è la stessa dell'ottava: quell'informazione non è nell'audio, e
+l'app ha già il comando per riceverla dall'esterno — **TAP / SPOSTA L'1**. Su
+materiale che non porta il downbeat non è un ripiego, è l'unica sorgente
+possibile.
+
+- [ ] **Da verificare all'orecchio**: quando succede, la pulsazione è giusta e
+  l'accento è spostato? Se sì è questo item e la cura è il tap. Se il polso
+  stesso vacilla, è un altro problema e serve una registrazione.
+- [ ] **Buco stretto introdotto dall'item 29**: `rhythmSeen` si aggancia sulla
+  quota di banda bassa, e un charleston ne ha **zero** (`lowS = 0.000` misurato).
+  Un brano che parte dal silenzio entra comunque dal suo epoch — verificato, la
+  parte suona — ma se si preme START **durante** un passaggio di solo charleston,
+  senza nessun momento di quiete prima, `alreadyPlaying` non si apre e la parte
+  non entra finché non arriva qualcosa con del basso. Il TAP la libera.
+  La riparazione onesta sarebbe un secondo modo di agganciare `rhythmSeen` — per
+  esempio una griglia pulita e stabile su cui pettine e rete concordano, che
+  l'intro di BLUE SKY non produce mai — ma va misurata contro `probe_room` e
+  `VPTests --makeup` prima, perché la stanza vuota raggiunge FOLLOWING a 0.91 di
+  confidenza e non deve poter aprire questo cancello.
+
+**Nota sulla priorità del modello.** Questo caso è materiale *senza melodia e
+senza basso*, ed è proprio quello per cui si sarebbe detto «serve un modello
+diverso». Non serve: la rete lo tiene al centesimo. Vale come dato quando si
+rivaluta quanto in alto sta davvero il modello nella lista.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
