@@ -187,6 +187,42 @@ int main (int argc, char** argv)
             poorPassage ? "return" : "persistent",bpm,sign,confirmed,recovered-confirmed,worstAfter,minGap,maxGap,ok?"PASS":"FAIL");
         failures += !ok;
     }
+    // A mixed direct feed often misses one or more quarters even while its two
+    // surviving phase observations agree. The direct path must retain the first
+    // observation across that gap; the room path deliberately keeps the old
+    // short window because reflections can move between hits.
+    for (float bpm : {52.0f, 100.0f, 168.0f})
+    for (float sign : {-1.0f, 1.0f})
+    {
+        vp::TempoFollower direct, room;
+        direct.prepare (48000); direct.forceTempo (bpm); direct.setLocked (true);
+        direct.setFollowStrength (vp::FollowStrength::high);
+        direct.snapPhase (vp::wrap01 (sign * 0.10f));
+        room = direct;
+        const double period = 60.0 / bpm, dt = 256.0 / 48000.0;
+        double time = 0.0;
+        unsigned serial = 0;
+        bool directActive = false, roomActive = false;
+        while (time < period * 2.2)
+        {
+            if (serial == 0 || (serial == 1 && time >= period * 2.0))
+            {
+                const float directError = vp::wrapCentered (direct.beatPhase());
+                const float roomError = vp::wrapCentered (room.beatPhase());
+                ++serial;
+                direct.observeRecoveryBeat (directError, serial, true);
+                room.observeRecoveryBeat (roomError, serial, false);
+            }
+            directActive |= direct.phaseRecoveryActive();
+            roomActive |= room.phaseRecoveryActive();
+            direct.advance (256); room.advance (256);
+            time += dt;
+        }
+        const bool ok = directActive && ! roomActive;
+        std::printf ("missed-beat %.0f sign=%+.0f direct=%d room=%d %s\n",
+                     bpm, sign, directActive, roomActive, ok ? "PASS" : "FAIL");
+        failures += !ok;
+    }
     for (int scenario : {0, 1, 2, 3, 4, 5})
     for (float baseBpm : {52.0f, 120.0f, 168.0f})
     {

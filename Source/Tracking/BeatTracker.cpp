@@ -1106,7 +1106,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     else if (!harmonicSourceActive && hadBeat && hyp.confidence > 0.40f && hyp.analysisSample > 0
              && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
         follower.observeRecoveryBeat (wrapCentered (follower.beatPhase() - songPhase),
-                                      hyp.beatSerial);
+                                      hyp.beatSerial, ! speakerFollow);
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has

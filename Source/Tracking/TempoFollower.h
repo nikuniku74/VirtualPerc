@@ -54,8 +54,12 @@ public:
         accelerando; a band speeding up with its drummer still playing never
         leaves trust below one, so it is never slowed here at all. */
     void setTempoTrust (float trust) noexcept;
-    /** Only fresh accepted neural beats may confirm a phase recovery. */
-    void observeRecoveryBeat (float errorBeats, uint32_t serial) noexcept;
+    /** Only fresh accepted neural beats may confirm a phase recovery.
+
+        A direct feed may keep a candidate across missed quarter detections:
+        its propagation path is stable, while a room needs the tighter window. */
+    void observeRecoveryBeat (float errorBeats, uint32_t serial,
+                              bool allowMissedBeats = false) noexcept;
     void cancelPhaseRecovery() noexcept;
     bool phaseRecoveryActive() const noexcept { return phaseRecoverySamplesRemaining > 0; }
     void resetClock() noexcept;

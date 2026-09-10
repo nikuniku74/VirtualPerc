@@ -239,7 +239,8 @@ void TempoFollower::cancelPhaseRecovery() noexcept
     recoveryCooldownSamples = 0;
 }
 
-void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noexcept
+void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
+                                         bool allowMissedBeats) noexcept
 {
     if (recoverySerialSeen && serial == recoverySerial)
         return;
@@ -261,8 +262,17 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
     // steering so the next eligible beat is compared on the same reference.
     if (recoveryCandidate && recoveryAgeSamples <= sampleRate * period * 0.55)
         return;
+    // A mixed line feed does not reliably give BeatNet every quarter. The old
+    // 1.8-beat ceiling discarded the first of two perfectly coherent phase
+    // observations whenever one quarter was missed, so the fast recovery could
+    // remain unarmed for an entire sparse passage. On a direct path, propagation
+    // is stable enough for persistence across a bar to be stronger evidence,
+    // not weaker; a room retains the short window because reflections can move
+    // the apparent onset between hits. Two fresh serials and phase agreement are
+    // still mandatory, and no single onset can move the clock.
+    const float maximumIndependentBeats = allowMissedBeats ? 4.5f : 1.8f;
     const bool agrees = recoveryCandidate && recoveryAgeSamples > sampleRate * period * 0.55
-        && recoveryAgeSamples < sampleRate * period * 1.8
+        && recoveryAgeSamples < sampleRate * period * maximumIndependentBeats
         && error * expected > 0.0f && std::fabs (error - expected) < 0.025f;
     // Two persistent errors beyond both the phase-noise floor and 20 ms.
     // The expected error subtracts our own steering: correcting the clock
