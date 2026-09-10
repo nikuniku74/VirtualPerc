@@ -2039,6 +2039,84 @@ rincorsa, ed è la rincorsa a sistemare i tempi veloci. Per toglierla basta
 
 ---
 
+### 32. «Sempre in ritardo della stessa quantità, e ci mette molti secondi a rientrare» 🟡 (2026-09-10, causa trovata e metà corretta)
+
+Segnalazione, ed è la descrizione che ha risolto il caso: *«sono sempre in
+ritardo (o sempre in anticipo) e ci impiegano molti secondi a rientrare»*.
+
+Le due metà di quella frase sono **una sola costante**. `TempoFollower` aveva un
+pavimento di fase di `0.012` **di battito**, e una frazione di battito è un
+numero di millisecondi diverso a ogni tempo:
+
+| BPM | 52 | 60 | 75 | 90 | 120 | 168 |
+|---|---|---|---|---|---|---|
+| banda morta | **13.8 ms** | 12.0 | 9.6 | 8.0 | 6.0 | 4.3 |
+
+Il bersaglio dichiarato per dove atterra la parte è **8 ms**, quindi sotto i
+90 BPM la banda morta era **più larga della cosa che deve ottenere**. E viene
+*sottratta* dall'errore, non confrontata:
+
+```cpp
+const float e = phaseErrEma > kPhaseFloor ? phaseErrEma - kPhaseFloor : ...
+```
+
+quindi la correzione svanisce mano a mano che l'errore si avvicina al pavimento.
+Il residuo non si chiude: **converge al pavimento e resta lì**. «Molti secondi a
+rientrare» è l'avvicinamento asintotico; «sempre in ritardo della stessa
+quantità» è dove si ferma.
+
+`probe_recovery --slow-passages` lo diceva già, ed era annotato come aperto:
+tutti e 18 i casi a 52 BPM leggevano `confirm=-1.000 stable=-1.000` — mai
+confermato e mai dentro gli 8 ms.
+
+**Correzione: il pavimento è limitato nel tempo, non in battiti.** Quello da cui
+protegge è il rumore di fase dell'*analisi*, che è un tempo e non una frazione
+di battito: viene da una griglia di frame da 20 ms, che è 20 ms a ogni tempo.
+
+```cpp
+constexpr float kPhaseFloorBeats = 0.012f;
+constexpr float kPhaseFloorSeconds = 0.006f;
+inline float phaseFloorFor (float periodSec)
+{ return std::min (kPhaseFloorBeats, kPhaseFloorSeconds / std::max (0.05f, periodSec)); }
+```
+
+6 ms **è** 0.012 di battito esattamente a 120 BPM, cioè dove la costante
+originale era stata tarata: quindi **da 120 BPM in su non cambia nulla**, il
+valore in battiti è già il più piccolo dei due. Impedisce solo che il pavimento
+si allarghi sotto quel tempo.
+
+| | prima | dopo |
+|---|---|---|
+| `probe_recovery` default (120/168) | 0 FAIL / 84 PASS | **identico** |
+| `--slow-passages`, tutti e 18 i casi a 52 BPM | `stable=-1.000` (mai) | **3.3-4.4 s** |
+| `VPAlign`, aggancio a 70 BPM | 3.61 s | **3.43 s** |
+| `VPAlign`, aggancio a 100 BPM | 3.14 s | **3.05 s** |
+| `VPAlign`, dieci righe di rallentando | — | **~0.2 s meglio ognuna** |
+
+Le uniche righe peggiori di `VPAlign` si muovono di **0.1 ms** (39.8 → 39.9), che
+è rumore numerico. `--level` 15/1, `--octave` 6/5, `--bar` 10/0, `--tempo-slow`
+10/0, `--swing` 3/0, tutte alla base. `probe_matrix` e `probe_tempo_step` non
+compilano `TempoFollower` e non possono cambiare.
+
+**Provato e scartato nella stessa ora.** Dare lo stesso trattamento all'altro
+pavimento, `persistentFloor = max(0.04f, 0.020f/period)` — che a 52 BPM vale
+46 ms — scalandolo con il pavimento tempo-consapevole. Aritmeticamente è lo
+stesso numero a 120 BPM, ma **`probe_recovery` è passato da 0 a 5 FAIL sul gate
+di default** e l'estensione lenta da 18 a 23. I due pavimenti non sono la stessa
+manopola: questo arma una correzione *rapida*, e una soglia più bassa la arma su
+evidenza che non si è ancora assestata. Lasciarlo stare.
+
+- [ ] **Resta `confirm=-1.000` a 52 BPM**: il percorso di recupero rapido non si
+  conferma mai lì, ed è il motivo per cui i 18 casi restano FAIL nonostante
+  `stable` sia passato da mai a 3.4 s. È quel `persistentFloor` da 46 ms, e la
+  prova qui sopra dice che non si tocca da solo.
+- [ ] **3.4 s è ancora tanto** contro una battuta di 4.6 s a 52 BPM. Meglio di
+  «mai», non ancora «subito».
+- [ ] Da riascoltare sul materiale dell'utente: la misura dice che il residuo
+  permanente non c'è più, non dice che l'orecchio sia contento.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

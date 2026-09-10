@@ -11,6 +11,39 @@ namespace
     /** How little the clock may be asked to believe the tempo it is handed. */
     constexpr float kMinTempoTrust = 0.30f;
     constexpr float kRecoveryToleranceSeconds = 0.0075f;
+
+    // The loop's own noise floor, and why it is capped in *time*.
+    //
+    // It was a flat 0.012 of a beat everywhere, and a fraction of a beat is a
+    // different number of milliseconds at every tempo: 4.3 ms at 168 BPM, 6.0
+    // at 120, 9.6 at 75 and **13.8 at 52**. The published target for where the
+    // part lands is 8 ms, so below about 90 BPM the floor was wider than the
+    // thing it exists to achieve - and it is *subtracted* from the error rather
+    // than compared against it, so the correction fades to nothing as the error
+    // approaches it. The residue does not close: it converges to the floor and
+    // stays there. Reported by the listener in exactly those terms - "sono
+    // sempre in ritardo (o sempre in anticipo) e ci impiegano molti secondi a
+    // rientrare" - and `probe_recovery --slow-passages` says the same in
+    // numbers: all 18 cases at 52 BPM read `confirm=-1.000 stable=-1.000`,
+    // never confirmed and never inside 8 ms.
+    //
+    // What the floor protects against is the *analysis's* phase noise, and that
+    // noise is a time, not a fraction of a beat: it comes off a 20 ms frame
+    // grid, which is 20 ms at every tempo. So the floor is capped at a time.
+    //
+    // 6 ms is 0.012 of a beat at exactly 120 BPM, which is where the original
+    // constant was tuned, so **at and above 120 BPM this changes nothing at
+    // all** - the beat-relative value is already the smaller of the two. It
+    // only stops the floor from widening below that.
+    constexpr float kPhaseFloorBeats = 0.012f;
+    constexpr float kPhaseFloorSeconds = 0.006f;
+
+    /** The phase deadband for this tempo, in beats. */
+    inline float phaseFloorFor (float periodSec) noexcept
+    {
+        return std::min (kPhaseFloorBeats,
+                         kPhaseFloorSeconds / std::max (0.05f, periodSec));
+    }
     constexpr float kRecoverySteerRail = 0.20f;
 
     /** And what "not believing it" costs, in seconds: at no trust at all the
@@ -234,12 +267,19 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial) noex
     // Two persistent errors beyond both the phase-noise floor and 20 ms.
     // The expected error subtracts our own steering: correcting the clock
     // must not make two observations of the same displacement disagree.
+    // Deliberately NOT given the same tempo-aware treatment as `phaseFloorFor`,
+    // and that was measured. Scaling `0.04f` by the tempo-aware floor - which
+    // is arithmetically the same number at 120 BPM and above - took
+    // `probe_recovery`'s default gate from 0 FAIL to **5**, and the slow
+    // extension from 18 to 23. The two floors are not the same knob: this one
+    // arms a fast correction and a lower bar arms it on evidence that has not
+    // settled. Leave it alone.
     const float persistentFloor = std::max (0.04f, 0.020f / period);
     const bool persistent = std::fabs (error) > persistentFloor
         && std::fabs (expected) > persistentFloor
         && std::fabs (error - expected) < 0.015f;
     if ((recoveryArmed || persistent) && agrees && recoveryCooldownSamples <= 0
-        && std::fabs (error) > 0.012f
+        && std::fabs (error) > phaseFloorFor (period)
         && std::fabs (error) < 0.25f)
     {
         // Once two independent beats agree, spend the confirmed offset without
@@ -752,7 +792,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // correct, and a loop that keeps pulling on it is only playing back the
         // analysis's noise as a tempo. Subtracted rather than gated, so a real
         // error still crosses it smoothly instead of switching the loop on.
-        constexpr float kPhaseFloor = 0.012f;
+        const float kPhaseFloor = phaseFloorFor (60.0f / std::max (40.0f, tempo));
         const float e = phaseErrEma > kPhaseFloor ? phaseErrEma - kPhaseFloor
                       : (phaseErrEma < -kPhaseFloor ? phaseErrEma + kPhaseFloor : 0.0f);
         // The derivative must see the same dead-banded error as the
@@ -840,8 +880,10 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     if (rapidTransition && haveRawGridPhaseError && std::isfinite (rawGridPhaseError))
     {
         phaseErrEma = rawGridPhaseError;
-        prevPhaseErr = std::copysign (std::max (0.0f, std::fabs (rawGridPhaseError) - 0.012f),
-                                     rawGridPhaseError);
+        prevPhaseErr = std::copysign (
+            std::max (0.0f, std::fabs (rawGridPhaseError)
+                                - phaseFloorFor (60.0f / std::max (40.0f, tempo))),
+            rawGridPhaseError);
     }
 
     if (! rapidTransition && phaseRecoverySamplesRemaining > 0
@@ -878,8 +920,10 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // controller along with it: retaining its pre-return average would
         // steer away again as soon as the fast window ends.
         phaseErrEma = rawGridPhaseError;
-        prevPhaseErr = std::copysign (std::max (0.0f, std::fabs (rawGridPhaseError) - 0.012f),
-                                     rawGridPhaseError);
+        prevPhaseErr = std::copysign (
+            std::max (0.0f, std::fabs (rawGridPhaseError)
+                                - phaseFloorFor (60.0f / std::max (40.0f, tempo))),
+            rawGridPhaseError);
     }
 
     // Phase this block will *not* advance because of the steer. The trim
