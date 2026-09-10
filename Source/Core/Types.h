@@ -365,7 +365,7 @@ struct EngineSettings
     std::atomic<float> humanization    { 0.35f };
     std::atomic<float> swing           { 0.00f };
     std::atomic<float> intensity       { 0.50f };
-    std::atomic<int>   followStrength  { static_cast<int> (FollowStrength::high) };
+    std::atomic<int>   followStrength  { static_cast<int> (FollowStrength::low) };
     std::atomic<int>   subdivision     { static_cast<int> (Subdivision::eighth) };
     // Half or double the tempo the analysis found, when the listener disagrees
     // with it. -1 = half, 0 = as measured, +1 = double. Not a preference the app

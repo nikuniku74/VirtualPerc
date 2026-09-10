@@ -34,7 +34,7 @@ int main (int argc, char** argv)
     std::string path;
     double reference = 0.0, gainDb = 0.0, traceStep = 2.0, until = 1.0e9;
     bool trace = false, speaker = false;
-    std::string pulses;
+    std::string pulses, follow;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -52,6 +52,10 @@ int main (int argc, char** argv)
         // A right tempo and a slipped grid sound completely different and the
         // BPM column cannot tell them apart - see docs/TODO.md item 35.
         else if (a == "--pulses")     pulses = next();
+        // LOW / MEDIUM / HIGH, the phase-steering setting. Default is what
+        // the app ships with; the bench needs it because how tightly the
+        // clock holds a real drummer is exactly what this chooses.
+        else if (a == "--follow")     follow = next();
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -81,6 +85,13 @@ int main (int argc, char** argv)
     eng.prepare (sr, block, 1);
     eng.settings().followSource.store (static_cast<int> (speaker ? vp::FollowSource::speaker
                                                                 : vp::FollowSource::kitMic));
+    if (! follow.empty())
+    {
+        const auto f = follow == "low"  ? vp::FollowStrength::low
+                     : follow == "high" ? vp::FollowStrength::high
+                                        : vp::FollowStrength::medium;
+        eng.settings().followStrength.store (static_cast<int> (f));
+    }
     eng.settings().shakerEnabled.store (true);
     eng.settings().congasEnabled.store (false);
     eng.settings().cembaloEnabled.store (false);

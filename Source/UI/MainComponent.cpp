@@ -926,7 +926,7 @@ MainComponent::MainComponent()
     engine.settings().congaVolume.store (1.00f);
     engine.settings().cembaloVolume.store (1.00f);
     engine.settings().clapVolume.store (1.00f);
-    engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::high));
+    engine.settings().followStrength.store (static_cast<int> (vp::FollowStrength::low));
     engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
     engine.settings().reverbAmount.store (0.30f);
 

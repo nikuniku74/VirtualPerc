@@ -1180,6 +1180,172 @@ tre sono il minimo teorico per accorgersi del cambio.
 - Il gate resta **solo su feed diretto** (`lineFeed`). Su microfono non e' mai
   stato provato e non deve esserlo senza una misura sua.
 
+# RECAP — stato al 10/09/2026
+
+Punto di ripartenza unico. Sostituisce la lettura di tutto quello che c'è sopra:
+sopra ci sono le misure storiche, qui c'è la mappa attuale. Il RECAP precedente
+(09/09) è conservato più sotto ed è **superato**: leggi questo.
+
+## La cosa più importante cambiata dal 09/09
+
+**Esiste materiale vero.** `Flamingo Marco 09.07.26.m4a` sul Desktop
+dell'utente: 97 minuti di concerto registrati **dalla mandata del banco**, cioè
+lo stesso segnale che l'app riceverà sul palco. Più `03 FEEL.mp3` e
+`Promo Dance SOLO ING.mp3`. Fino al 09/09 tutto era misurato su sintetico o su
+un brano solo; da qui in poi non c'è più scusa per farlo.
+
+Segmentazione del live (dai livelli e dal tempo, `scratch/profile.py`):
+
+| # | dal | al | tempo | note dell'utente |
+|---|---|---|---|---|
+| 1 | 0:10 | 4:40 | ~82 | «molta difficoltà», ci mette lo SWING |
+| 2 | 5:10 | 9:30 | ~72/107 | «se il batterista cambia di 2 BPM non riaggancia» |
+| 3 | 10:10 | 14:50 | ~104 | *Sally* — «tiene malissimo, esce spesso» |
+| 4 | 15:10 | 19:40 | ~86 | |
+| 5 | 20:20 | 24:20 | ~89 | |
+| 6 | 25:30 | 27:50 | ~68/103 | |
+| ultimo | 91:48 | fine | ~96 | *Baila* — «costantemente avanti, non rientra» |
+
+## Cosa è stato corretto il 09-10/09, e cosa ha comprato
+
+| | item | misura |
+|---|---|---|
+| Il cancello «non lo so ancora» | 29 | primo aggancio su BLUE SKY 66.1 → 53.5 s; nell'intro non suona più |
+| L'arbitro pettine/rete | 29 | snap dopo il restart 53.0 → 49.0 s |
+| Le derive a tempo costante | 31 | 60 BPM: 6.7 → 4.7 s; 150-170: ~2.0 → 0.7-1.8 s |
+| Il pavimento di fase, in tempo e non in battiti | 32 | 52 BPM: rientro **mai** → 3.4 s; `VPAlign` rallentando −0.2 s |
+| Il cembalo senza layer dinamici | 28 | escursione timbrica fra i colpi 0 Hz |
+| La risposta graduata al drop di griglia | 35 | Sally: la parte si ferma **7 volte → 1** |
+| `FollowStrength` di default LOW invece di HIGH | 37 | fase a 91 BPM 59 → 33 ms; brani veri meglio su tutti e tre gli indicatori |
+
+## I quattro costi del rientro, e chi li possiede
+
+Questa è la mappa da tenere in testa. Il rientro dopo che l'app esce dal tempo
+ha **quattro costi in serie**, indipendenti, con padroni diversi:
+
+1. **Accorgersene** — il fit lungo è 8-24 battiti; a tempo lento la sua finestra
+   è nove secondi. **APERTO, ed è il collo di bottiglia.**
+2. **Decidere** — l'arbitrato rete/pettine: 35% di autorità × 22% per battito =
+   7.7% effettivo, tredici battiti. **APERTO.** Misurato non tarabile su un
+   brano solo (item 34): serve il banco dei sei.
+3. **Muoversi** — l'orologio: salto o steering. **Graduato (item 35).**
+4. **Il pavimento** — quanto vicino può arrivare. **Corretto (item 32).**
+
+**E il pavimento fisico:** l'orologio piega la velocità invece di saltare,
+apposta, perché nessun colpo sia mai suonato due volte o saltato. Chiudere un
+quarto di battito al rail costa ~1.25 battiti. «Immediatamente» ha come
+pavimento un battito, e per avvicinarcisi si lavora sul punto 1.
+
+Corollario misurato (item 37): una spinta del 7% costa 1.2 s per il tempo e
+2.2 s per la griglia, **con una sovraelongazione del 7%** — la fase accumulata
+mentre non ce ne accorgevamo, ripagata. Meno ritardo al punto 1 = meno
+sovraelongazione. Tre strade diverse portano allo stesso punto 1.
+
+## I difetti aperti, in ordine
+
+1. **Punto 1: accorgersene prima.** Vale per tutto il resto.
+2. **L'ottava congelata mentre la parte suona** (item 36): su *Baila* l'app
+   aggancia 192 invece di 96 e `updateAutoOctave` non può correggerlo perché
+   `if (sounding) return;`. Su *FEEL* legge 208 invece di 104 per tutto il
+   brano, con `barTrusted` a SI. La via d'uscita è ÷2 (esiste nell'UI) o
+   STOP/START. Proposta non misurata: far cedere il congelamento quando la
+   lettura è molto oltre `kOctaveTooFast`, non appena oltre.
+3. **La deriva di fase residua** ±60-170 ms sui brani veri.
+4. **Il brano 1 esce senza salti e senza drop**: è il percorso di *steering*,
+   difetto distinto da quello di Sally.
+5. **`gridSerial` fa due lavori** (cambio di pulsazione vero / correzione di
+   fase) e il consumatore non può distinguerli.
+6. **Non c'è nessun controllo per `FollowStrength`**: tre tarature nel codice,
+   nessun modo di sceglierle.
+
+## Gli strumenti nuovi, e cosa ciascuno dice
+
+- **`VPTrack --pulses file`** — scrive la fase dell'orologio (battito e battuta)
+  blocco per blocco. Da lì si ricavano la **velocità istantanea della griglia**
+  (derivata della fase: è quella su cui i colpi cadono davvero, e non è il BPM
+  pubblicato) e i **salti**. È lo strumento che ha trovato l'item 35.
+- **`VPTrack --follow low|medium|high`** — la taratura dell'anello di fase.
+- **`VPTrack --trace`** ha due colonne nuove: `set` (`levelSettled`) e `1?`
+  (`barTrusted`).
+- **`s.clockBpm`** nello snapshot. Nota: **è uguale a `s.bpm`** — `tempoBpm` è
+  il bersaglio, non la velocità istantanea. Non serve a misurare la deriva;
+  quella si ricava dalla fase. Costa un tentativo saperlo.
+- **`scratch/hist.py`** — piega l'energia degli attacchi sulla fase
+  dell'orologio, istogramma a 24 bin: «struttura» = picco/media. **Robusto alle
+  terzine**, che la risultante della prima armonica non è: su materiale swingato
+  l'energia cade a 0, 1/3 e 2/3 e la risultante si annulla *anche con l'aggancio
+  perfetto*. Il primo tentativo dava «FUORI» su tutto ed era un artefatto della
+  metrica.
+- **`scratch/tempocurve.py`** — tempogramma indipendente, per avere un secondo
+  parere sul tempo vero. **Non è verità di fase.**
+- **`scratch/prec.py`** — i tre indicatori di precisione insieme.
+
+Tutti questi vivono ancora in scratch e **vanno portati in `scripts/`**,
+altrimenti il banco reale non esiste.
+
+## Le ipotesi morte alla misura — non rifarle
+
+Alle sei del RECAP precedente (che restano valide, sotto) si aggiungono:
+
+7. **Il pettine come test d'uscita da FISSO** (item 31): funziona sul caso per
+   cui è scritto e **rompe un gradino vero** — 120 → 160 collassa a 53.3 BPM e
+   non torna. Sospenderlo durante una transizione non salva: il gradino non
+   protetto non ne ha una.
+8. **Accorciare `kBeatsToLeaveFixed`** (6 → 4 → 3): durate identiche al decimo.
+   L'attesa è il fit lungo che arriva alla soglia, non il contatore.
+9. **Tarare `kCombPull` su un brano** (item 34): non monotono — 0.35 → 12 s
+   fuori, 0.45 → 34 s, 0.55 → 14 s, 0.65 → 24 s. Bacini, non soglie.
+10. **Abbassare `kStaleGridThreshold`** a 0.070: `probe_matrix` identico *e*
+    Sally identica byte per byte. Il watchdog non arriva a votare per un altro
+    motivo.
+11. **Il rilevatore di cassa sul mix** (item 33): trova un colpo su quattro
+    (129 onset su ~550 attesi). Il difetto è la copertura, non la precisione —
+    dove trova il colpo lo data a 13.3 ms. È costruito per un canale silenzioso
+    fra un colpo e l'altro, e un mix non lo è mai.
+12. **Dare a `persistentFloor` lo stesso trattamento in tempo di
+    `phaseFloorFor`** (item 32): `probe_recovery` da 0 a 5 FAIL. I due pavimenti
+    non sono la stessa manopola.
+13. **Il tetto sugli snap al sito 1561** (item 35): i salti restano identici.
+    Vengono tutti dal sito 1421. Strumentare prima di scegliere il sito.
+
+## Come si misura, adesso
+
+Per **materiale reale**: `VPTrack` con `--pulses`, poi `hist.py` e `prec.py`.
+Il BPM pubblicato da solo **non basta e inganna**: sul brano 1 sta fra 80.5 e 84
+con confidenza 1.00 mentre la griglia scende a 66.
+
+Per il **decoder**: `probe_matrix` (360 corse) e `probe_tempo_step`. Non
+compilano il motore, quindi un cambio nel motore non può toccarli — e
+viceversa, un cambio nel decoder li tocca sempre.
+
+Per l'**orologio**: `probe_recovery` (84 PASS di default; `--slow-passages` ha
+18 FAIL noti a 52 BPM, `confirm` che non arriva mai).
+
+Per il **motore**: `VPTests --level` (15/1), `--octave` (**6/5 su questo HEAD**,
+non 7/4 — è cambiato fuori da questo lavoro), `--bar` (10/0), `--tempo-slow`
+(10/0), `--swing` (3/0), `VPAlign`, `VPBar`.
+
+## Cosa serve dall'utente
+
+Vedi `docs/HANDOFF_LIVE_TRACKING.md`, che è il documento scritto per lui. In
+breve: **una griglia dei battiti** su due o tre brani del live — lui batte il
+tempo a mano in un DAW, noi raffiniamo ogni tap sul transiente di banda bassa
+più vicino. Senza quella non si può misurare la fase su materiale vero, e con
+quella si potrebbe anche **rifinire il modello sulle sue registrazioni**, che è
+la versione piccola e mirata del «serve un modello nuovo».
+
+Vincoli dichiarati: **una sola mandata mista dal vivo**, niente tracce separate,
+niente registrazioni della sola cassa. Il canale cassa dedicato
+(`KickOnsetDetector`, fase 17 → 13 ms rms) è già implementato e **non è
+disponibile in questo setup**.
+
+---
+
+# RECAP precedente — SUPERATO (09/09/2026)
+
+Conservato per le misure che contiene. Per lo stato attuale leggi il RECAP qui
+sopra.
+
 # RECAP — cosa serve per chiudere l'allineamento (09/09/2026)
 
 Scritto su richiesta dell'utente come punto di ripartenza unico. Sostituisce la

@@ -2463,6 +2463,350 @@ era un artefatto della metrica. Va portato in `scripts/`.
 
 ---
 
+### 36. `03 FEEL`: l'ottava doppia su un brano intero, e il bilancio dei tre brani veri 🔴 (2026-09-10)
+
+Terzo file reale, 4:19. **Il tempo vero è ~104 BPM e l'app suona a 205-213 per
+tutto il brano**: conta gli ottavi come battiti. Autocorrelazione della banda
+alta (charleston e piatti) sul tratto 30-150 s:
+
+| periodo | 52 | 86 | **104** | 138 | **208** |
+|---|---|---|---|---|---|
+| autocorrelazione | 0.238 | −0.004 | **0.371** | 0.005 | 0.289 |
+
+104 vince su 208 con margine. La banda bassa è debole ovunque (0.005-0.036): la
+cassa è sparsa o coperta, quindi il livello metrico deve venire dalla banda
+alta, che è piena di ottavi — è **esattamente** il caso che la skill descrive
+come «a dense grid is not a right grid»: il charleston riempie gli ottavi,
+quindi la griglia doppia ha copertura 1.00, residuo 0.03 e sembra sana a ogni
+test che il veto possiede.
+
+Peggio: `barTrusted` è **SI** da 40 s. L'app piazza con fiducia una battuta su
+una griglia doppia, quindi l'uno cade su quello che la band sente come «e».
+
+- [ ] Verificare se `recentStrengthAlternation()` scatta qui. Esiste apposta per
+  questo caso e la misura dice che non ha corretto. Se non scatta, capire
+  perché; se scatta e viene vetata, capire da cosa.
+- [ ] `probe_matrix` ha una riga `rock 8vi` che è lo stesso difetto sintetico
+  (rapporto 1.44 a 81 BPM). Questo file è la sua versione reale e va aggiunto
+  al banco.
+
+#### Il bilancio dei tre brani veri
+
+| | brano 1 (swing, 82) | Sally (104) | FEEL (104) |
+|---|---|---|---|
+| ottava | giusta | giusta | **doppia** |
+| salti di fase | 0 | 7 → **1** | 3, tutti sotto i 15 s |
+| la parte si ferma | 0 | 7 → **1** | 1, in acquisizione |
+| strappi griglia > 4% | 6 | 32 | 4, tutti sotto i 27 s |
+| deriva di fase | ±60-170 ms | ±70-170 ms | ±12-60 ms |
+
+**Tre difetti diversi, non uno.** La correzione dell'item 35 ha chiuso quello di
+Sally e non tocca gli altri due. Chi riprende non deve cercare una causa sola.
+
+#### Cosa costa davvero «rientrare subito», in quattro pezzi indipendenti
+
+Misurato attraverso tutti e tre i brani, il rientro ha quattro costi in serie, e
+ognuno ha un padrone diverso:
+
+1. **Accorgersene.** Il fit lungo è 8-24 battiti, e a tempo lento la sua
+   finestra è nove secondi; il fold è l'altra via. Sul brano 1 è questo il costo
+   vincolante (item 31: quattro secondi solo per uscire da FISSO).
+2. **Decidere.** L'arbitrato rete/pettine: 35% di autorità × 22% per battito =
+   7.7% effettivo, **tredici battiti**. Misurato non tarabile su un brano solo
+   (item 34), serve il banco dei sei.
+3. **Muoversi.** L'orologio: o un salto (istantaneo ma è uno strappo sotto le
+   mani) o lo steering, limitato al 20%. **Graduato nell'item 35.**
+4. **Il pavimento.** Quanto vicino può arrivare: era 13.8 ms a 52 BPM, ora 6 ms
+   a ogni tempo (item 32).
+
+Corretti oggi il 3 e il 4. Aperti l'1 e il 2.
+
+**E il pavimento fisico va detto:** l'orologio piega la velocità invece di
+saltare, apposta, perché nessun colpo venga mai suonato due volte o saltato. Al
+rail del 20%, chiudere un quarto di battito costa **1.25 battiti** — circa un
+secondo a 104 BPM. Quello è il minimo per una correzione che non si senta come
+uno strappo. Più veloce di così è un salto, ed è esattamente quello che l'item
+35 ha appena messo sotto tetto. **«Immediatamente» ha come pavimento un
+battito**, e per avvicinarcisi si lavora sul punto 1, non sul punto 3.
+
+---
+
+### 37. La deriva leggera durante il brano: il default di `FollowStrength` era il peggiore dei tre 🟢 (2026-09-10, misurato su band vera e corretto)
+
+Richiesta: *«risolvere i problemi di drift leggeri delle percussioni durante il
+brano, rendere tutto il più preciso possibile»*.
+
+**Il conto di partenza.** Un errore di tempo dell'1% è una deriva di fase di
+10 ms al secondo. A 82 BPM, l'app che gira a 82.8 invece di 82.0 guadagna 170 ms
+in diciassette secondi — che è l'ordine di grandezza misurato sui brani veri
+(±60-170 ms). La deriva di fase *è* in gran parte il tempo leggermente sbagliato,
+più l'anello che la insegue.
+
+**Quanto stringe l'anello lo decide `FollowStrength`**, e la tabella in
+`TempoFollower` è (tau, steerLim, steerCeil, dGain):
+
+| | tau | steerLim | steerCeil | dGain |
+|---|---|---|---|---|
+| low | 1.60 | 0.018 | 0.10 | 0.3 |
+| medium | 0.90 | 0.035 | 0.18 | 0.8 |
+| high | 0.70 | 0.050 | 0.25 | 1.2 |
+
+`docs/STATUS.md` e la skill registravano già che **HIGH fa escursioni due o tre
+volte più grandi di LOW senza guadagno in rms** su `probe_steer` (6.7% contro
+2.6% di peggiore a 144 BPM), e che il default era stato lasciato su HIGH perché
+*«quel banco non ha dentro nessun cambio di tempo vero, che è l'unica cosa per
+cui HIGH esiste»*.
+
+**Adesso c'è materiale con cambi di tempo veri** — una band dal vivo che
+respira — e **LOW vince lo stesso.** `VPTrack --follow` (nuovo) sui due brani:
+
+| brano 1 (82 BPM) | struttura | spost. mediano | peggiore | strattoni dev.std |
+|---|---|---|---|---|
+| **low** | **3.88** | **30.3 ms** | **182 ms** | **1.77%** |
+| medium | 3.77 | 60.7 ms | 152 ms | 1.81% |
+| high *(default)* | 3.61 | 30.3 ms | **364 ms** | 2.11% |
+
+| Sally (104 BPM) | | | | |
+|---|---|---|---|---|
+| **low** | **3.29** | **47.9 ms** | **240 ms** | **2.86%** |
+| medium | 3.14 | 95.7 ms | 263 ms | 3.00% |
+| high *(default)* | 3.04 | 71.7 ms | 263 ms | **3.57%** |
+
+LOW vince su struttura (entrambi), spostamento mediano (entrambi) e dev.std
+degli strattoni (entrambi).
+
+**E `--level` lo conferma sul sintetico**, sulla colonna della fase a 91 BPM:
+
+| livello | HIGH | LOW |
+|---|---|---|
+| 0 dB | 59.0 ms | **33.1 ms** |
+| −6 dB | 25.6 ms | **14.4 ms** |
+| −12 dB | 32.3 ms | **14.4 ms** |
+| −18 dB | 33.2 ms | 42.8 ms (peggio) |
+
+A 168 BPM è mezzo millisecondo peggio (6.6 → 7.1), su numeri già dentro il
+bersaglio degli 8 ms.
+
+**Corretto: il default passa a LOW.** Era `high` in due punti, entrambi cablati
+— `Types.h:368` e `MainComponent.cpp:929` — e **non esiste nessun controllo
+nell'interfaccia**: non era una manopola, era una scelta fissa.
+
+Regressioni: `--level` **15/1** (stesso unico FAIL), `--bar` 10/0,
+`--tempo-slow` 10/0, `VPAlign` **identico riga per riga** (imposta le tarature
+esplicitamente per riga, quindi il default non lo tocca).
+
+#### Il costo di LOW sui gradini: misurato, ed è zero
+
+Il dubbio lasciato aperto qui sopra è chiuso. Due fixture nuove attraverso il
+motore completo — kick/rullante/charleston, 100 BPM per 63 s poi il gradino,
+`VPTrack --follow` — e si misurano due cose separate: quando il **tempo
+dichiarato** entra nel ±2% e ci resta due secondi, e quando ci entra la
+**velocità istantanea della griglia**, che è quella su cui i colpi cadono.
+
+| gradino | taratura | tempo dichiarato | griglia vera | sovraelongazione |
+|---|---|---|---|---|
+| 100 → 124 (+24%) | high | 16.7 s | 19.1 s | +0.3% |
+| 100 → 124 (+24%) | **low** | **16.7 s** | **19.1 s** | +0.2% |
+| 100 → 107 (+7%) | high | 1.2 s | 2.2 s | +7.1% |
+| 100 → 107 (+7%) | **low** | **1.2 s** | **2.2 s** | +7.7% |
+
+**Identici al decimo di secondo.** LOW non costa niente sui gradini, e il motivo
+è strutturale: `FollowStrength` governa la *fase*, mentre il costo di un gradino
+sta nell'*accorgersene*, che è il decoder e non cambia. Il compromesso che si
+temeva non esiste; LOW è un guadagno netto.
+
+- [x] ~~Il costo di LOW su un gradino di tempo brusco non è misurato~~ — misurato,
+  è zero.
+
+#### Ma le due righe dicono un'altra cosa, e va perseguita
+
+**Una spinta realistica del 7% — un batterista che accelera — costa 1.2 s per il
+tempo e 2.2 s per la griglia, con una sovraelongazione del 7%.** La griglia va a
+~114 BPM quando la band è andata a 107, poi rientra. Segnalato dall'utente in
+due modi diversi: *«quando deve saltare tanto di bpm lo fa accelerando o
+decelerando invece di passarci direttamente»* e *«su Baila e su tanti ci sono
+punti in cui il batterista rallenta o accelera e l'app arranca un po' prima di
+riallinearsi»*.
+
+La sovraelongazione **non è un difetto dell'anello**: è la fase accumulata che
+viene ripagata. Il tempo ci mette 1.2 s a essere notato, in quel tempo la fase
+accumula, e la griglia deve correre più veloce del bersaglio per recuperarla.
+La sua taglia è limitata da `steerCeil` (0.10 a LOW, 0.25 a HIGH).
+
+Quindi la scala è: **meno ritardo nell'accorgersi = meno fase accumulata = meno
+sovraelongazione.** Non si riduce stringendo l'anello — si riduce accorgendosene
+prima, che è il punto 1 del bilancio dell'item 36. È la stessa conclusione da
+tre direzioni diverse.
+
+- [ ] Il gradino da +24% a **16.7 s** è un numero pessimo, ma un salto del 24%
+  è un altro brano, non un batterista. Non confondere i due casi: la riga da
+  perseguire è quella del 7%.
+- [ ] **Non c'è un controllo per questo.** Tre tarature nel codice, nessun modo
+  di sceglierle. Se il palco vuole HIGH per un pezzo e LOW per un altro, oggi
+  non si può.
+- [ ] **La deriva residua resta il punto 1** del bilancio dell'item 36:
+  accorgersi prima. LOW stringe l'anello, non accelera l'accorgersi.
+
+---
+
+### 38. Punto 1, «accorgersene prima»: il banco reale, il numero, e perché non si tara 🔴 (2026-09-10)
+
+Richiesta: *«lavora sul punto 1: accorgersene prima»*. Prima di toccare
+qualunque cosa serviva **misurare il ritardo**, che fino a oggi era solo dedotto.
+
+#### Il banco: `scripts/analysis/bench_live.py`
+
+Cinque brani dal centro del live `Flamingo Marco 09.07.26`, 2:20 ciascuno, presi
+dal **centro** del pezzo per evitare intro e code, che sono un altro problema.
+Per ognuno una stima indipendente del tempo vero (`tempocurve.py`, tempogramma a
+finestra di 12 s). Il batterista deriva del **2.6-4.2% dentro ogni brano**:
+80.7-84.1, 105.0-108.3, 101.6-105.7, 84.4-86.8, 87.6-89.9 BPM.
+
+Riporta tre difetti separati:
+
+- **ritardo** — di quanti secondi l'app è indietro, dal massimo della
+  correlazione incrociata. È il punto 1.
+- **errore** — scarto medio del passo, **ripiegato sull'ottava**, perché
+  altrimenti un errore del 100% seppellirebbe tutto il resto.
+- **strattoni** — deviazione standard della velocità *istantanea* della griglia.
+
+Due cose imparate costruendolo, entrambe costate una corsa:
+
+1. **Serve un lead-in di silenzio.** Tagliando a metà brano non c'è nessun
+   momento di quiete, quindi `alreadyPlaying` non si apre e **la parte non entra
+   mai** — è il buco stretto dell'item 33, che ha morso il mio stesso banco.
+   Tre secondi di silenzio davanti a ogni taglio, e le curve di verità spostate
+   di altrettanto.
+2. **Il ritardo non è misurabile quando la correlazione è bassa.** Con r=0.17 un
+   brano ha riportato **−4.00 s**, cioè l'app *in anticipo* sul batterista, e
+   trascinava la media. Sotto r=0.50 il ritardo si stampa ma non entra
+   nell'aggregato.
+
+#### La base, confermata due volte
+
+| brano | ritardo | r | errore | strattoni | ottava |
+|---|---|---|---|---|---|
+| 1 | +7.75 s | 0.85 | 1.09% | 2.28% | — |
+| 2 | +5.25 s | 0.85 | 0.72% | 1.74% | — |
+| 3 | +3.50 s | 0.49 | 1.12% | 2.25% | — |
+| 4 | +7.50 s | 0.81 | 0.78% | 1.17% | **100%** |
+| 5 | +5.00 s | 0.31 | 0.99% | 1.11% | **100%** |
+| **MEDIA** | **+6.83 s** | 0.66 | **0.94%** | **1.71%** | **40%** |
+
+**Il numero del punto 1 è ~6.8 secondi.** L'app è quasi sette secondi indietro
+rispetto alla deriva del batterista. Il *passo* invece è preciso: 0.94% una
+volta tolta l'ottava.
+
+**E due brani su cinque sono suonati all'ottava sbagliata.** Con *Baila*, *FEEL*
+e questi, fanno **quattro su otto** dei brani veri misurati finora. L'item 36
+non è un caso isolato: è il difetto più frequente sul materiale reale.
+
+#### Il banco è ripetibile, e verificarlo era necessario
+
+Tre corse dello stesso binario danno serie di BPM **byte-identiche**, e la corsa
+completa ripetuta dà la stessa media al centesimo. `VPTrack` aspetta già
+`analysisCompletedSamples()` a ogni hop.
+
+**Ma una base precedente, 5.30 s, non è riproducibile** e non so da quale
+binario venisse: stesso codice, stessi file di verità, banco deterministico, e
+oggi lo stesso comando dà 5.80 (poi 6.83 con il filtro su r). **Quella base è
+scartata e con essa lo sweep che ci era stato misurato contro.** Chi riprende:
+il baseline si rimisura, non si eredita.
+
+#### `kRateLive`: il compromesso è reale e non è un guadagno
+
+L'aritmetica dice che una piegatura del primo ordine a α per battito lascia
+(1−α)/α battiti di ritardo: a 0.22 sono **3.5 battiti**, che spiegano metà del
+ritardo misurato. Alzarla:
+
+| `kRateLive` | ritardo (r≥0.5) | strattoni |
+|---|---|---|
+| **0.22** (base) | **6.83 s** | **1.71%** |
+| 0.32 | 5.67 s | 2.81% |
+
+Guadagna 1.2 s di ritardo e **triplica gli strattoni sul brano 2** (1.74% →
+5.38%). Non è un guadagno pulito, ed è la seconda costante di seguito che si
+comporta così. **Non spedita.**
+
+- [ ] **La strada non è tarare un guadagno.** Due sweep di fila
+  (`kCombPull` item 34, `kRateLive` qui) sono risultati non monotoni o con un
+  costo pari al guadagno. Il ritardo è strutturale: fit centrato + piegatura del
+  primo ordine. Si toglie cambiando la *forma* della stima, non il suo guadagno
+  — per esempio una stima non centrata (fit pesato verso i battiti recenti) o un
+  predittore esplicito della deriva invece di un filtro che la insegue.
+#### `kLiveLead` serve, e il difetto è che esiste in un ramo solo
+
+Strumentato (`VP_LEAD_LOG`, poi rimosso), sul brano 1 che sta in `live` per il
+72% del tempo: `haveLong` è vero al **99%**, l'anticipo applicato vale **0.369
+BPM in media, lo 0.447% del tempo**, e **non viene mai clampato**. Funziona.
+
+Sui brani 2 e 4 il log non stampa nulla: quel ramo non viene quasi mai
+raggiunto. La distribuzione dei regimi sul banco lo spiega:
+
+| brano | CERCO | FISSO | VIVO | ritardo |
+|---|---|---|---|---|
+| 1 | 4% | 23% | **72%** | +7.75 s |
+| 2 | 0% | **63%** | 35% | +5.25 s |
+| 3 | 3% | 27% | 69% | +3.50 s |
+| 4 | **69%** | 0% | 30% | +7.50 s |
+| 5 | 25% | 0% | 73% | +5.00 s |
+
+**L'estrapolazione in avanti esiste solo nel ramo `live`.** Gli altri due usano
+stime senza nessun anticipo, e sono le più in ritardo che ci siano:
+
+- `unknown` prende il **fit lungo grezzo** — 24 battiti, centrato **12 battiti
+  indietro**, che a 86 BPM sono **8.4 s** di puro ritardo di centratura. Il
+  brano 4 ci passa il 69% del tempo e misura +7.50 s. I due numeri sono lo
+  stesso numero.
+- `fixed` prende `fixedAnchorBpm`, una media corrente del fit lungo: ritardo
+  doppio.
+
+#### Provato: dare l'anticipo anche a `unknown`. Misurato bene e misurato male.
+
+| | base | con l'anticipo in `unknown` |
+|---|---|---|
+| **brano 4** | +7.50 s | **+3.00 s** |
+| banco reale, media | 6.83 s | **5.50 s** |
+| correlazione media | 0.66 | **0.70** |
+| errore / strattoni | 0.94% / 1.71% | 0.97% / 1.77% |
+| `probe_matrix` aggancio medio | 5.25 s | **4.88 s** |
+| `probe_matrix` uscite | 98 | **97** |
+| `probe_tempo_step` | — | **identico** |
+| **`VPAlign` a 132 BPM, fase rms** | **6.1 ms** | **118.9 ms** |
+| `VPAlign` scatti a 100 e 132 BPM | 0 e 0 | **27 e 33** |
+
+Il fit lungo è il **preciso**; il corto porta con sé il proprio rumore
+(0.5-1.15 BPM battito-per-battito a tempo fermo). Su materiale pulito quel
+rumore diventa fase, e VPAlign lo dice in modo brutale.
+
+**Provato: gattare l'anticipo su «il tempo si sta muovendo»** (`haveWindow &&
+|trend| > kLiveTrend`, lo stesso test della macchina dei regimi). `VPAlign`
+torna **identico alla base** — e il banco reale torna **identico alla base
+anche lui**: l'anticipo non scatta mai. Ed è circolare per costruzione: quei
+brani stanno in `unknown` **proprio perché** quel test è falso. Ripristinato.
+
+È lo stesso muro documentato nel ramo `live`, raggiunto dall'altra parte: *«il
+movimento del fit corto a tempo fermo è 0.5-1.15 BPM, e una band che accelera da
+118 a 126 in dodici secondi ne muove 0.33 — il segnale sta sotto il rumore di un
+fattore due, quindi nessuna soglia su di esso separa niente»*.
+
+- [ ] **La forma della soluzione non è una soglia, è una contrazione.** Invece
+  di decidere se estrapolare, **pesare** l'anticipo per il rapporto
+  segnale/rumore: `lead × σ²signal/(σ²signal + σ²noise)`, con il rumore stimato
+  da `shortFitRate` (che esiste già come diagnostico proprio perché fu lui a
+  mostrare il muro). A tempo fermo il peso va a zero da solo e la precisione del
+  fit lungo resta; su una deriva vera il peso sale. Non è stato provato.
+- [ ] **Oppure il difetto vero è un altro: `unknown` non è un regime di
+  regime.** Il brano 4 passa il **69%** della sua durata nel regime di
+  *acquisizione*, e il brano 5 il 25%. Un pezzo che per due terzi non è né
+  FISSO né VIVO è una classificazione fallita, e `unknown` è il ramo meno
+  tarato dei tre. Capire perché `mayFix` e `moving` sono entrambi falsi per
+  minuti interi su una band vera potrebbe valere più dell'anticipo.
+- [ ] Il brano 6 non ha una curva di verità utilizzabile (2 punti buoni). Il
+  banco è a cinque.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
