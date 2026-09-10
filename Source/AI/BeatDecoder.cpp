@@ -335,11 +335,16 @@ namespace
     // either misses the first or fires constantly on the second.
     constexpr float kTransitionMinBpmDelta = 1.0f;
 
-    // And the largest. Beyond a quarter the candidate is not this tempo moving,
-    // it is another metrical level or a missed beat - both of which arrive as
-    // exact ratios and are the business of the octave machinery above, which
-    // has the whole buffer to decide with instead of two intervals.
-    constexpr float kTransitionMaxRelativeDelta = 0.25f;
+    // And the largest. A room stays at the old quarter: beyond it, two local
+    // maxima are too easily a subdivision or a swallowed beat. A direct mixer
+    // feed can prove a wider non-metrical jump with the same two coherent,
+    // strong intervals and abrupt-edge test. This closes the old dead zone in
+    // which 120 -> 160 took 23.6 s even though four consecutive quarter peaks
+    // already described 160 exactly. Whole-octave neighbourhoods are still
+    // excluded in `transitionCandidateAllowed`: 60/120 and 75/140 remain a
+    // level decision, because audio alone cannot name which octave is intended.
+    constexpr float kTransitionMaxRelativeDeltaRoom = 0.25f;
+    constexpr float kTransitionMaxRelativeDeltaLine = 0.65f;
 
     // How closely the two intervals have to agree before they are one tempo
     // rather than two accidents. A line feed places its peaks to a couple of
@@ -1307,12 +1312,24 @@ bool BeatDecoder::transitionCandidateAllowed (float candidatePeriodSec) const no
     const float candidateBpm = applyUserOctave (60.0f / candidatePeriodSec);
     if (candidateBpm < kMinBpm || candidateBpm > kMaxBpm)
         return false;
-    // Inside the metrical level in use. A period that is not is a subdivision
-    // or a missed beat wearing a tempo's clothes, and the octave machinery -
-    // which has the whole fold buffer rather than two intervals - owns that
-    // question.
-    return bpm >= kMinBpm
-           && std::fabs (std::log2 (candidateBpm / bpm)) <= kOctaveThreshold;
+    if (bpm < kMinBpm)
+        return false;
+
+    const float apart = std::fabs (std::log2 (candidateBpm / bpm));
+    if (apart <= kOctaveThreshold)
+        return true;
+
+    // On the line path, a large jump which is *not* near a whole octave has an
+    // owner: the causal interval detector. Previously everything beyond a
+    // quarter octave was delegated to octave correction, although that path
+    // quite correctly only understands metrical levels. The gap left ordinary
+    // 120 -> 160 and 160 -> 100 changes with no fast recovery at all.
+    //
+    // Do not weaken the octave boundary itself. Near 1x/2x the same sound has
+    // two valid tempo names and must stay with the fold/user control, however
+    // clean the feed is.
+    const float octaveDistance = std::fabs (apart - std::round (apart));
+    return lineFeed && octaveDistance >= kOctaveArgumentTolerance;
 }
 
 bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
@@ -1390,7 +1407,9 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
         && transitionFirstSec >= 0.0
         && std::fabs (prevEvent - transitionLastSec) < 1.0e-9)
     {
-        const float first = static_cast<float> (transitionLastSec - transitionFirstSec);
+        const float first = transitionIntervals >= 2
+                                ? transitionPeriodSec
+                                : static_cast<float> (transitionLastSec - transitionFirstSec);
         const float mean = 0.5f * (first + interval);
         // Two intervals of one new period differ only by the material's own
         // scatter, and two draws with relative spread `jitter` differ by about
@@ -1466,7 +1485,26 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
         if (deviation <= tolerance && strongEnough && meanDelta >= meanNeeded
             && transitionCandidateAllowed (mean))
         {
-            // The two peaks that measured this are behind us and the fits would
+            const float apart = std::fabs (std::log2 (
+                meanBpm / std::max (kMinBpm, bpm)));
+            // Wider-than-ordinary line changes get one extra causal interval.
+            // That still answers 120 -> 160 in about one second, while making
+            // a triplet/fill pair insufficient to move the whole grid. The
+            // ordinary 5-25% path keeps its measured two-interval latency.
+            if (lineFeed && apart > kOctaveThreshold && transitionIntervals < 2)
+            {
+                transitionPeriodSec = mean;
+                transitionIntervals = 2;
+                transitionFirstSec = transitionLastSec;
+                transitionFirstStrength = transitionLastStrength;
+                transitionLastSec = eventTimeSec;
+                transitionLastStrength = strength;
+                return false;
+            }
+
+            const int confirmedIntervals = transitionIntervals >= 2 ? 3 : 2;
+            // The last two peaks that measured this are behind us and the fits
+            // would
             // otherwise have to re-form over eight beats of the tempo just
             // left. They go into the history; the beat *event* for the current
             // peak is still `registerBeat`'s to announce, so nothing downstream
@@ -1494,7 +1532,7 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
             // half/double request included, so a consumer can hand it straight
             // to a clock. `mean` is a measured interval and is not that.
             transitionPeriodSec = 60.0f / bpm;
-            transitionIntervals = 2;
+            transitionIntervals = confirmedIntervals;
             transitionConfidence = tolerance > 0.0f
                                        ? std::clamp (1.0f - deviation / tolerance, 0.0f, 1.0f)
                                        : 0.0f;
@@ -1574,7 +1612,9 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
         if (edgeDelta < kTransitionAbruptEdge)
             return false;
     }
-    if (delta > kTransitionMaxRelativeDelta)
+    const float maxDelta = lineFeed ? kTransitionMaxRelativeDeltaLine
+                                    : kTransitionMaxRelativeDeltaRoom;
+    if (delta > maxDelta)
     {
         dropTransitionCandidate (TempoTransitionReason::outsideRange);
         return false;
@@ -2081,7 +2121,16 @@ void BeatDecoder::updateTempo() noexcept
     // it is still answered by salience, by repeated agreement over
     // `snapBeats`, and now by a grid that admits it is using every other tick.
     // See docs/TODO.md item 22.
+    // A confirmed causal transition owns the rate until its eight-beat fit has
+    // re-formed. The fold averages seconds of activations and necessarily still
+    // names the tempo just left during this window. Letting that stale answer
+    // enter the snap vote undid a newly proven 120 -> 160 change after six
+    // beats, sent the decoder to 53 BPM and never recovered. This is not an
+    // octave veto: once fresh fits exist the ordinary level arbitration resumes.
+    const bool transitionOwnsRate = transitionState == TempoTransitionState::rapid
+                                    || transitionRefitBeats > 0;
     const bool combDisagrees = combReady && combMayCorrect && ! unprovenSlowerOctave
+                               && ! transitionOwnsRate
                                && bpm > kMinBpm
                                && std::fabs (std::log2 (bpm / combRawBpm)) > kOctaveThreshold;
 

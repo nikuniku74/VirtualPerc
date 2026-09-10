@@ -2811,7 +2811,54 @@ fattore due, quindi nessuna soglia su di esso separa niente»*.
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
 
-### 19. Salto di tempo: il decoder resta incastrato sul vecchio BPM (2026-09-04, APERTO — riprodotto)
+### 39. Cambio violento: il buco fra transizione e ottava è chiuso sulla mandata 🟢 (2026-09-10)
+
+Il percorso rapido accettava al massimo il 25% e solo entro un quarto d'ottava;
+quello d'ottava, correttamente, decideva soltanto relazioni metriche. Un salto
+come 120→160 non apparteneva a nessuno: arrivava al watchdog dopo **23.6 s**.
+
+Su linea/mixer il detector può ora accettare fino al 65%, ma solo lontano almeno
+0.15 ottave da una relazione ×2/÷2 e dopo **tre** intervalli causali coerenti.
+Restano invariati bordo brusco, scatter, range e percorso microfono. Dopo la
+conferma il pettine vecchio è escluso finché il fit da otto battiti non è stato
+ricostruito: senza questa quarantena 120→160 veniva riconosciuto e poi ributtato
+a 53.3 BPM dal pettine ancora fermo sul tempo precedente.
+
+| salto | prima | dopo |
+|---|---:|---:|
+| 120→150 | 12.8 s | **1.2 s** |
+| 120→160 | 23.6 s | **1.1 s** |
+| 100→160 | 10.1 s | **1.1 s** |
+| 160→100 | 12.0 s | **1.8 s** |
+| 120→90 | 10.7 s | **2.0 s** |
+| 90→120 | 20.7 s | **2.2 s** |
+
+`probe_tempo_step` ora fallisce oltre 2.5 s o oltre 1 BPM. `probe_matrix
+--quick` è identico byte per byte a HEAD: 7.37 s, 18 uscite, 13.37% fuori.
+`VPTests --tempo-step` 9/0; `VPTests --tempo-slow` 10/0; `VPTests --bar` 10/0.
+Su 300 s × 10 semi:
+120 BPM 0 uscite e 160 BPM 0.1% fuori.
+
+I salti 120↔60 e 140↔75 restano fuori apposta: sono relazioni quasi/esattamente
+d'ottava e l'audio non può dire se è cambiato il BPM o la suddivisione. Lì la
+risposta deterministica resta TAP o ÷2/×2. Il ritardo delle derive continue è
+separato: due predittori provati in questa sessione hanno peggiorato il banco
+materiali o la fase e sono stati rimossi; non dichiararlo risolto da questo fix.
+
+La serata completa `Flamingo Marco 09.07.26.m4a` (97 minuti, mandata mixer) è
+stata campionata in cinque centri-brano riproducibili con
+`scripts/analysis/extract_live.swift`. Solo due curve tempogramma erano abbastanza
+affidabili come riferimento (ritardo medio 5.12 s), quindi non sono verità
+annotata. Sul centro di Sally la catena finale non ha fatto restart aggiuntivi e
+ha chiuso a 102.51 BPM, ma `prec.py` misura ancora 94 ms di spostamento mediano
+fra finestre e 258.4 ms nel caso peggiore: conferma che la deriva graduale resta
+un problema distinto.
+
+### 19. Salto di tempo: il decoder resta incastrato sul vecchio BPM (2026-09-04, SUPERATO dall'item 39 per i salti non d'ottava su linea)
+
+Stato attuale: l'item 39 chiude il blocco per la mandata diretta; questa sezione
+resta come cronologia della causa e dei tentativi precedenti. Restano aperte le
+relazioni d'ottava e la validazione su microfono/stanza.
 
 Segnalato dall'utente: *«se salto da una velocità all'altra sembra che non trovi
 a volte il tempo. Lo ritrova solo se muovo il volume del mic alzandolo o

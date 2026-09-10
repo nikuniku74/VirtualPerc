@@ -2366,6 +2366,29 @@ void vpRunAiBeatTests (int& passed, int& failed)
                          : "the microphone transition publishes its reason, interval count and confidence");
         }
 
+        // A direct feed also owns large changes which are not metrical levels.
+        // This was a real hole between the ordinary transition and octave
+        // paths: 120->160 took 23.6 s and could previously stay on 120 forever.
+        // One extra interval buys protection from a two-hit fill while keeping
+        // every non-ambiguous jump below about two seconds.
+        for (const auto pair : { std::pair<float, float> { 120.0f, 160.0f },
+                                 std::pair<float, float> { 160.0f, 100.0f },
+                                 std::pair<float, float> { 90.0f, 120.0f } })
+        {
+            const auto wide = runDecoderStep (pair.first, pair.second, true);
+            const double thirdIntervalDeadline =
+                wide.deadlineSec + 60.0 / static_cast<double> (pair.second) + 0.021;
+            expect (wide.rapidAtSec >= 0.0
+                        && wide.rapidAtSec <= thirdIntervalDeadline,
+                    "line confirms a non-octave violent tempo change in three intervals");
+            expect (wide.reasonAtConfirm == vp::TempoTransitionReason::confirmed
+                        && wide.intervalsAtConfirm == 3
+                        && wide.serialIncrements == 1,
+                    "violent line change publishes one three-interval transition");
+            expect (std::fabs (wide.bpmLate - pair.second) <= 1.0f,
+                    "violent line change survives the stale fold and holds its new tempo");
+        }
+
         expect (! pulseCountMatches (0.24, 0.26, 4, 0)
                     && ! pulseCountMatches (0.24, 0.26, 4, 2)
                     && pulseCountMatches (0.24, 0.26, 4, 1),
@@ -9400,6 +9423,28 @@ void vpRunStateTimingTest (int& passed, int& failed)
         const bool ok = seconds > 4 && seconds <= 4 + block / 48000.0;
         std::printf ("state-timing buffer=%d low-confidence=%.6fs %s\n", block, seconds, ok ? "PASS" : "FAIL");
         (ok ? passed : failed)++;
+    }
+}
+
+void vpRunWideTempoStepTest (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    for (const auto pair : { std::pair<float, float> { 120.0f, 160.0f },
+                             std::pair<float, float> { 160.0f, 100.0f },
+                             std::pair<float, float> { 90.0f, 120.0f } })
+    {
+        const auto wide = runDecoderStep (pair.first, pair.second, true);
+        const double thirdIntervalDeadline =
+            wide.deadlineSec + 60.0 / static_cast<double> (pair.second) + 0.021;
+        expect (wide.rapidAtSec >= 0.0 && wide.rapidAtSec <= thirdIntervalDeadline,
+                "line confirms a non-octave violent tempo change in three intervals");
+        expect (wide.reasonAtConfirm == vp::TempoTransitionReason::confirmed
+                    && wide.intervalsAtConfirm == 3
+                    && wide.serialIncrements == 1,
+                "violent line change publishes one three-interval transition");
+        expect (std::fabs (wide.bpmLate - pair.second) <= 1.0f,
+                "violent line change survives the stale fold and holds its new tempo");
     }
 }
 

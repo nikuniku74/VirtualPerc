@@ -90,6 +90,34 @@ Abrupt 5-10% steps use a separate bounded transition path: two completed causal
 intervals must agree, and the first changed interval must differ by at least 3%
 from the immediately preceding accepted interval.
 
+**Wide non-octave line steps (2026-09-10).** The old transition path stopped at
+25% and also required the candidate to remain within a quarter octave. The
+octave machinery was supposed to own everything beyond that, but it only knows
+how to decide metrical levels: a real 120 -> 160 change is neither a level nor
+inside the transition window. It therefore took 23.6 s through the stale-grid
+watchdog; 120 -> 150 took 12.8 s and 90 -> 120 took 20.7 s.
+
+On a direct mixer/file feed, coherent candidates may now reach 65% provided
+their log-distance is not within 0.15 of a whole octave. They require **three**
+causal intervals rather than two, retain the abrupt-edge and jitter checks, and
+the stale fold is quarantined until the new eight-beat fit has formed. Measured
+with `probe_tempo_step`: 120->150 1.2 s, 120->160 1.1 s, 100->160 1.1 s,
+160->100 1.8 s, 120->90 2.0 s, 90->120 2.2 s; all finish within 1 BPM and the
+probe asserts a 2.5 s ceiling. The room path is unchanged. Exact/near octaves
+(120/60, 140/75, 75/140) remain with the octave/TAP path because the sound does
+not say whether the player changed tempo or subdivision. `probe_matrix --quick`
+is byte-identical to HEAD (7.37 s mean acquisition, 18 excursions, 13.37% out),
+and the slow-tempo and bar gates remain 10/0 each.
+
+The 97-minute `Flamingo Marco 09.07.26.m4a` mixer feed was also sampled at five
+song centres with `extract_live.swift`. Only two of the five tempogram curves
+were reliable enough to act as a loose BPM reference (mean lag 5.12 s), so this
+is evidence of the remaining continuous-drift problem, not ground truth for a
+decoder threshold. On the centre of Sally the final chain needed no extra
+restart and finished at 102.51 BPM, but `prec.py` still measured 94 ms median
+phase-window movement and 258.4 ms worst movement. Do not cite the wide-step
+fix as solving gradual breathing: that path remains separate.
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with
@@ -1043,6 +1071,7 @@ cmake --build build-host --target <target>
 | `probe_matrix` | `scripts/probe_matrix.cpp` | twelve kinds of material x five tempos: time to lock, and time spent off the tempo. The bank to A/B a decoder change against - **not** one song. No CMake target; build line in its header. `--ratio` prints reported/true, so an octave error is told apart from a wobble |
 | `VPTests` | `Tests/` | the TAP suite; `StubBeatModel` when no ONNX assets |
 | `VPTests --bar` | `Tests/TestAiBeat.cpp` | two-quarter cut / seek re-entry of the one (item 2) |
+| `VPTests --tempo-step` | `Tests/TestAiBeat.cpp` | wide non-octave line steps confirm once in three intervals and hold against the stale fold |
 | `VPTests --swing` | `Tests/TestMain.cpp` | the swing warp's geometry alone: straight where written, swung on 0/⅓/⅔/⅚, never early (item 7) |
 | `VPTests --leak` | `Tests/TestMain.cpp` | the canceller alone in twenty seconds: 54 style x subdivision x path rows, the no-leak feed at three buffer sizes, the output A/B, the restart, three rooms |
 | `VPTests --makeup` | `Tests/TestAiBeat.cpp` | the other half of the same subject: does our own output move our own analysis. Six benches - `a` phase and the analysis chain with the fader up against down at five tempos, `b` the chain block for block, `c` a real band start with the part playing, `d` our own return not being called one plus the eighteen-row veto margin, `e`/`f` what `prepare()` clears, inside and outside. Name one to run one; naming something that is not a bench fails non-zero rather than passing nothing. `dist`, `sweep` and `epoch` are probes, assert nothing and run only when named |

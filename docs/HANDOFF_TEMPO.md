@@ -1217,6 +1217,7 @@ Segmentazione del live (dai livelli e dal tempo, `scratch/profile.py`):
 | Il cembalo senza layer dinamici | 28 | escursione timbrica fra i colpi 0 Hz |
 | La risposta graduata al drop di griglia | 35 | Sally: la parte si ferma **7 volte → 1** |
 | `FollowStrength` di default LOW invece di HIGH | 37 | fase a 91 BPM 59 → 33 ms; brani veri meglio su tutti e tre gli indicatori |
+| Salti violenti non d'ottava su linea | 39 | 120→160 **23.6 → 1.1 s**; 160→100 12.0→1.8 s; nessuna variazione nel banco materiali |
 
 ## I quattro costi del rientro, e chi li possiede
 
@@ -1257,6 +1258,10 @@ sovraelongazione. Tre strade diverse portano allo stesso punto 1.
    fase) e il consumatore non può distinguerli.
 6. **Non c'è nessun controllo per `FollowStrength`**: tre tarature nel codice,
    nessun modo di sceglierle.
+
+Il vecchio blocco sui cambi violenti dell'item 19 è chiuso per la mandata
+diretta quando il salto non è una relazione d'ottava. I salti ×2/÷2 restano
+deliberatamente fuori: non sono distinguibili da un cambio di suddivisione.
 
 ## Gli strumenti nuovi, e cosa ciascuno dice
 

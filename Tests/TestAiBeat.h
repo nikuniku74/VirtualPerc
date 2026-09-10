@@ -35,6 +35,8 @@ void vpRunLevelSweepTest (int& passed, int& failed, const char* only = nullptr);
 /** Fast decoder-only regressions for slow acquisition, octave-anchor feedback
     and re-entry after a musical gap. Also `VPTests --tempo-slow`. */
 void vpRunSlowTempoRegressionTest (int& passed, int& failed);
+/** Wide non-octave line-feed changes, also `VPTests --tempo-step`. */
+void vpRunWideTempoStepTest (int& passed, int& failed);
 void vpRunStateTimingTest (int& passed, int& failed);
 void vpRunHarmonicEntryTest (int& passed, int& failed);
 void vpRunHarmonicAudioTest (int& passed, int& failed);

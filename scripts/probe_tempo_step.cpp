@@ -25,7 +25,14 @@ static const double changeAt = 18.0;
 static const double duration = 150.0;  // long enough to see the stale-grid watchdog fire
 static const float  kStrongPeak = 0.94f;
 
-struct Res { double lockSec; float finalBpm; bool everLocked; };
+struct Res
+{
+    double lockSec;
+    float finalBpm;
+    bool everLocked;
+    int confirmedIntervals;
+    int transitions;
+};
 
 static Res run (float fromBpm, float toBpm, bool lineFeed, bool restartAtChange)
 {
@@ -45,9 +52,10 @@ static Res run (float fromBpm, float toBpm, bool lineFeed, bool restartAtChange)
     std::sort (beats.begin(), beats.end(),
                [](const auto&a, const auto&b){ return a.first < b.first; });
 
-    Res r { -1.0, 0.0f, false };
+    Res r { -1.0, 0.0f, false, 0, 0 };
     bool restarted = false;
     double heldSince = -1.0;
+    uint32_t lastTransitionSerial = 0;
     for (int frame = 0; frame < (int)(duration * fps); ++frame)
     {
         const double now = (double) frame / fps;
@@ -67,6 +75,12 @@ static Res run (float fromBpm, float toBpm, bool lineFeed, bool restartAtChange)
         const vp::BeatHypothesis h = dec.observe (activation, 0.02f, 1.0f - activation);
         if (h.valid)
         {
+            if (h.transitionSerial != lastTransitionSerial)
+            {
+                lastTransitionSerial = h.transitionSerial;
+                ++r.transitions;
+                r.confirmedIntervals = h.transitionIntervals;
+            }
             r.finalBpm = h.bpm;
             const bool onTarget = std::fabs (h.bpm - toBpm) / toBpm < 0.02f;
             if (now > changeAt)
@@ -84,6 +98,7 @@ static Res run (float fromBpm, float toBpm, bool lineFeed, bool restartAtChange)
 
 int main()
 {
+    int failures = 0;
     printf ("%-16s %-6s | %-22s | %-22s\n", "salto", "delta", "normale", "con input-restart");
     printf ("%s\n", "-------------------------------------------------------------------------------");
     struct P { float a, b; };
@@ -96,14 +111,27 @@ int main()
             Res n = run (p.a, p.b, line, false);
             Res e = run (p.a, p.b, line, true);
             auto fmt = [] (const Res& r, char* buf) {
-                if (r.everLocked) std::sprintf (buf, "%5.1f s  (bpm %.1f)", r.lockSec, r.finalBpm);
-                else              std::sprintf (buf, "MAI     (bpm %.1f)", r.finalBpm);
+                if (r.everLocked) std::snprintf (buf, 64, "%5.1f s  (bpm %.1f)", r.lockSec, r.finalBpm);
+                else              std::snprintf (buf, 64, "MAI     (bpm %.1f)", r.finalBpm);
             };
             char b1[64], b2[64];
             fmt (n, b1); fmt (e, b2);
-            char lab[32]; std::sprintf (lab, "%.0f -> %.0f", p.a, p.b);
+            char lab[32]; std::snprintf (lab, 32, "%.0f -> %.0f", p.a, p.b);
             printf ("%-16s %+5.0f%% | %-22s | %-22s\n", lab, delta, b1, b2);
+
+            const float octaveDistance = std::fabs (
+                std::fabs (std::log2 (p.b / p.a))
+                - std::round (std::fabs (std::log2 (p.b / p.a))));
+            const bool wideNonOctave = std::fabs (delta) >= 25.0f
+                                       && std::fabs (delta) <= 65.0f
+                                       && octaveDistance >= 0.15f;
+            if (wideNonOctave
+                && (! n.everLocked || n.lockSec > 2.5
+                    || std::fabs (n.finalBpm - p.b) > 1.0f
+                    || n.transitions != 1 || n.confirmedIntervals != 3))
+                ++failures;
         }
     }
-    return 0;
+    printf ("\nviolent non-octave changes: %s\n", failures == 0 ? "PASS" : "FAIL");
+    return failures == 0 ? 0 : 1;
 }

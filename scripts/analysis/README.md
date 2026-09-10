@@ -15,6 +15,7 @@ da `VPTrack --pulses`.
 | `hist.py wav pulses [W]` | l'energia degli attacchi piegata sulla fase dell'orologio, istogramma a 24 bin. «struttura» = picco/media: sopra 2 la griglia è sulla musica. Dove sta il picco e di quanto si sposta fra finestre. |
 | `prec.py wav pulses lo hi` | i tre indicatori di precisione insieme: struttura, spostamento di fase fra finestre, deviazione degli strattoni della griglia. |
 | `score.py trace` | il BPM pubblicato contro una curva di riferimento: errore medio, uscite oltre il 4% e loro durata. |
+| `extract_live.swift input.m4a dir` | crea i cinque estratti centrali, con 3 s di silenzio iniziale, usati da `bench_live.py` sulla serata Flamingo. |
 
 ## Due trappole, misurate
 
