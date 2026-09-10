@@ -435,6 +435,7 @@ private:
         still answerable for a rise on the input. What we play comes back on the
         microphone, the canceller does not always find it, and a level that rose
         because we started playing is not the room turning into a band. */
+    std::atomic<float> lastClockBpm { 0.0f };
     std::atomic<uint32_t> lastRestarts { 0 };
     float ownPeakLast = 0.0f;
     float ownFast = 0.0f;

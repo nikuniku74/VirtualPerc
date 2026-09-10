@@ -34,6 +34,7 @@ int main (int argc, char** argv)
     std::string path;
     double reference = 0.0, gainDb = 0.0, traceStep = 2.0, until = 1.0e9;
     bool trace = false, speaker = false;
+    std::string pulses;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -46,6 +47,11 @@ int main (int argc, char** argv)
         else if (a == "--step")       traceStep = std::atof (next());
         else if (a == "--until")      until = std::atof (next());
         else if (a == "--speaker")    speaker = true;
+        // Where the clock actually *is*, block by block, so the strokes can be
+        // scored against the drummer instead of against the published BPM.
+        // A right tempo and a slipped grid sound completely different and the
+        // BPM column cannot tell them apart - see docs/TODO.md item 35.
+        else if (a == "--pulses")     pulses = next();
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -91,6 +97,10 @@ int main (int argc, char** argv)
         std::printf ("#  t     pubbl   rete   pettine  conf  residuo  reg stato suona  "
                      "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?\n");
 
+    std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
+    if (pulseFile != nullptr)
+        std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona\n");
+
     double lastTrace = -1.0e9, rightSince = -1.0, firstRight = -1.0;
     double rightSeconds = 0.0, offSeconds = 0.0;
     int pos = 0, inHop = 0, restartsSeen = 0;
@@ -122,6 +132,11 @@ int main (int argc, char** argv)
             }
             else rightSince = -1.0;
         }
+
+        if (pulseFile != nullptr)
+            std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d\n", t,
+                          (double) s.beatPhase, (double) s.barPhase, (double) s.bpm,
+                          (double) s.clockBpm, s.percussionAudible ? 1 : 0);
 
         if (trace && t >= lastTrace + traceStep)
         {
@@ -161,5 +176,7 @@ int main (int argc, char** argv)
                      tot > 0.0 ? rightSeconds / tot * 100.0 : 0.0, rightSeconds, tot);
     }
     std::printf ("bpm finale %.2f  restart %d\n", (double) s.bpm, s.analysisRestarts);
+    if (pulseFile != nullptr)
+        std::fclose (pulseFile);
     return 0;
 }

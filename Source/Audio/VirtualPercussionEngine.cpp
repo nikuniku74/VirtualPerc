@@ -1781,6 +1781,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
     lastTarget.store (tr.targetBpm, std::memory_order_relaxed);
+    lastClockBpm.store (tr.clock.tempoBpm, std::memory_order_relaxed);
     lastConf.store (tr.confidence, std::memory_order_relaxed);
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
@@ -1882,6 +1883,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.source = static_cast<FollowSource> (cfg.followSource.load (std::memory_order_relaxed));
     s.bpm = lastBpm.load (std::memory_order_relaxed);
     s.targetBpm = lastTarget.load (std::memory_order_relaxed);
+    s.clockBpm = lastClockBpm.load (std::memory_order_relaxed);
     s.confidence = lastConf.load (std::memory_order_relaxed);
     s.beatPhase = lastBeat.load (std::memory_order_relaxed);
     s.barPhase = lastBar.load (std::memory_order_relaxed);

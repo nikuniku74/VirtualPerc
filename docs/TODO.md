@@ -2177,6 +2177,292 @@ rivaluta quanto in alto sta davvero il modello nella lista.
 
 ---
 
+### 34. Prima misura su una band vera: `Flamingo Marco 09.07.26` 🔴 (2026-09-10, misurato, non corretto)
+
+Registrazione di una serata intera, **97 minuti, mandata del banco** — cioè lo
+stesso tipo di segnale che l'app riceverà sul palco. È il primo materiale vero
+che questo progetto abbia mai misurato. Segmentazione dai livelli e dal tempo:
+
+| # | dal | al | tempo |
+|---|---|---|---|
+| 1 | 0:10 | 4:40 | ~82 (l'utente ci mette lo SWING) |
+| 2 | 5:10 | 9:30 | ~72 / 107 |
+| 3 | 10:10 | 14:50 | ~104 — *Sally*, segnalato come il peggiore |
+| 4 | 15:10 | 19:40 | ~86 |
+| 5 | 20:20 | 24:20 | ~89 |
+| 6 | 25:30 | 27:50 | ~68 / 103 |
+
+#### Brano 3 (Sally): l'app oscilla il 40% più del batterista
+
+Stima indipendente del tempo vero con un tempogramma a finestra di 12 s
+(autocorrelazione del flusso spettrale, solo i punti con nitidezza > 0.15).
+**Non è verità di fase** — è un secondo parere — ma basta per il tempo:
+
+| | |
+|---|---|
+| il batterista | 101.4-107.2 BPM, dev.std **1.6%** |
+| l'app | 95.4-109.0 BPM, dev.std **2.2%** |
+| errore medio dell'app | **1.34%**, peggiore **7.78%** |
+| errore medio del **pettine** | **0.96%** |
+| uscite oltre il 4% | 2, di cui una da **10 secondi** |
+
+Il batterista oscilla davvero — è esattamente «un batterista non professionista
+senza clic» — ma l'app amplifica. E **il pettine è più vicino al vero del numero
+che l'app pubblica**: una delle sue sorgenti batte il suo risultato.
+
+L'uscita da 10 secondi, per battito:
+
+```
+ 18.0  pubbl 103.43   rete 103.43   pettine 102.92   cop 1.00
+ 20.0  pubbl  95.64   rete  95.64   pettine 103.27   cop 1.00   <- la rete crolla
+ 22.0  pubbl  95.57   rete  95.50   pettine 102.92   cop 0.80
+ 26.0  pubbl  95.37   rete  95.63   pettine 102.21   cop 0.62
+ 28.0  pubbl  95.59   rete  95.60   pettine 102.56   cop 0.00
+ 30.0  pubbl 101.38   rete 101.47   pettine 104.35   cop 0.00
+ 34.0  pubbl 102.47   rete 102.45   pettine 103.63   cop 1.00
+```
+
+La rete scende a 95.6 e ci resta dieci secondi; **il pettine dice 102-104 per
+tutti e dieci**, e la copertura della griglia crolla a zero — la griglia a 95.6
+sta rifiutando i battiti veri. Il disaccordo è `log2(103.27/95.64) = 0.111`,
+cioè l'**8.0%**: sopra `kCombPullThreshold` (3%) e **sotto**
+`kStaleGridThreshold` (8.7%). Nessuno dei due meccanismi decisivi lo possiede;
+agisce solo la trazione lenta verso il pettine, 35% di autorità × 22% per
+battito = **7.7% effettivo, tredici battiti, tre battute**. Che sono i dieci
+secondi.
+
+#### Due tentativi, entrambi misurati e scartati
+
+**1. Dare più autorità al pettine (`kCombPull`).** Non è monotono:
+
+| `kCombPull` | uscite | durate | totale fuori | errore medio |
+|---|---|---|---|---|
+| **0.35** (base) | 2 | 10 / 2 s | 12 s | 1.34% |
+| 0.45 | 4 | 22 / 4 / 6 / 2 s | **34 s** | 1.64% |
+| 0.55 | 3 | 6 / 6 / 2 s | 14 s | 1.30% |
+| 0.65 | 3 | 10 / 12 / 2 s | 24 s | 1.31% |
+
+È lo stesso fenomeno a bacini già documentato nell'item 29 per il guadagno
+d'analisi. **Su un brano solo una costante non si tara: si fitta il rumore.**
+Ripristinato a 0.35.
+
+**2. Abbassare `kStaleGridThreshold`** da 0.120 a 0.070, per coprire la banda
+5-8.7% in cui questo caso cade. `probe_matrix` **identico** (98 uscite, 5.25 s,
+8.98%) — su quel banco la banda non scatta mai — ma anche la traccia di Sally è
+**identica byte per byte**: il watchdog non arriva comunque a votare, e il
+motivo non è la soglia. Ripristinato a 0.120.
+
+#### Brano 1 (swing): ottimo dentro, difficile all'inizio
+
+Da 30 s a 270 s tiene **82 BPM** con confidenza fino a 1.00, copertura 1.00 e
+`barTrusted` = SI. Il problema sono i primi venti secondi:
+
+```
+   2.0  gAnalisi 23.99   picco 0.001            <- guadagno al tetto, ingresso muto
+   6.0  pubbl 105.27     picco 0.000            <- pubblica 105 sul nulla
+  16.0  pubbl 116.01     picco 0.050  suona SI  <- entra la band, e la parte entra su 116
+  16.7  epoch
+  20.0  pubbl  81.53                            <- giusto
+```
+
+Sedici secondi di ingresso praticamente muto (`picco` 0.000-0.001), il make-up
+al tetto di 24×, e la rete che risponde al rumore amplificato con 105 BPM a
+confidenza 0.62. Poi **quattro secondi di parte suonata su 116 BPM** prima che
+l'epoch la corregga.
+
+- [ ] **Difetto del cancello dell'item 29, misurato qui.** Con il guadagno a 24×
+  su un ingresso muto, `lowS` legge **0.34-0.46** — cioè la quota di banda bassa
+  del *rumore amplificato*, che è alta perché il rumore è tutto in basso. Quindi
+  `rhythmSeen` si aggancia sul silenzio. Qui non è stato lui a far entrare la
+  parte (l'ha tenuta fuori il test di livello, `picco` 0.001 < 0.040), ma è un
+  aggancio falso che va tolto: `updateRhythmShare` deve rifiutare di votare
+  quando l'energia pre-make-up è sotto il pavimento dell'udibile.
+- [ ] **I quattro secondi su 116 BPM** non li avrebbe evitati: dopo l'epoch il
+  cancello è aperto comunque da `sawInputStart`, e il decoder ha bisogno di quei
+  secondi per riacquisire. È un problema diverso.
+
+#### Cosa serve adesso, ed è la conclusione operativa
+
+L'utente chiede: *«se succedono live troppe uscite crea difficoltà; dovrebbe
+almeno essere velocissimo a riprendersi»*. La velocità di rientro **è** quella
+trazione da 7.7% per battito, e la misura qui sopra dice che non si può tarare
+su un brano.
+
+- [ ] **Costruire un banco dai sei brani di questa registrazione**, con la stima
+  indipendente del tempo per ciascuno, e tarare contro quello. È la prima volta
+  che c'è materiale per farlo. `probe_matrix` resta il banco sintetico; questo
+  diventa il banco reale, e i due vanno guardati insieme.
+- [ ] Il tempogramma indipendente (`scratch/tempocurve.py`) va portato in
+  `scripts/` e reso ripetibile, altrimenti il banco non esiste.
+
+---
+
+### 35. I salti di fase mentre la parte suona, e come diventano «il clap in battere» 🔴 (2026-09-10, misurato su band vera — causa trovata, non corretta)
+
+Segnalazione, sul live `Flamingo Marco 09.07.26`: *«se il batterista rallenta o
+velocizza tipo di 2 bpm, l'app non riaggancia immediatamente, nonostante si
+senta che la percussione è fuori da cassa o rullo. Poi a un certo punto
+addirittura l'app accelera talmente tanto che sposta l'uno al quarto successivo,
+quindi il clap suona addirittura in battere.»* E sul brano 1: *«esce
+costantemente e resta spesso fuori, in certi punti aumenta senza senso
+esageratamente.»*
+
+**Il BPM pubblicato non spiega niente di tutto questo**, ed è per questo che
+non si era mai visto: sul brano 1 sta fra 80.5 e 84 per tutto il corpo del pezzo,
+con confidenza fino a 1.00 e copertura 1.00. La colonna che l'utente sente è
+un'altra.
+
+#### Lo strumento che mancava
+
+`VPTrack --pulses file` scrive, blocco per blocco, la **fase dell'orologio**
+(battito e battuta) accanto al tempo pubblicato. Da lì si ricavano due cose che
+prima non si potevano vedere:
+
+- la **velocità istantanea della griglia**, cioè quella su cui i colpi sono
+  davvero programmati, come derivata della fase;
+- i **salti**, cioè i blocchi in cui la fase si sposta molto più di quanto il
+  tempo preveda.
+
+E `s.clockBpm` è stato aggiunto allo snapshot. Nota: **è uguale a `s.bpm`** —
+`tr.clock.tempoBpm` è il bersaglio, non la velocità istantanea — quindi la
+deriva va ricavata dalla fase, non da lì. Costa un tentativo saperlo.
+
+#### Cosa dicono i numeri
+
+Velocità istantanea della griglia contro il tempo dichiarato:
+
+| | dichiarato | griglia istantanea | strappi oltre il 4% |
+|---|---|---|---|
+| brano 1 (swing) | 82.3 | **65.7 - 92.2** | 6 volte, 7 s su 245 |
+| brano 3 (Sally) | 104.4 | **23.4 - 123.8** | **32 volte, 27 s su 269** |
+
+E i salti veri, letti sulla fase grezza — ognuno in **un solo blocco da 2.6 ms**,
+con la parte che suona:
+
+| a | salto fase battito | in ms | salto fase battuta |
+|---|---|---|---|
+| 27.42 s | −0.438 battiti | **−275 ms** | −0.109 |
+| 49.08 s | −0.302 battiti | **−169 ms** | −0.074 |
+| 216.54 s | −0.214 battiti | −124 ms | −0.052 |
+| 264.60 s | +0.373 battiti | +205 ms | +0.094 |
+
+Il brano 1 ne ha **zero**: il suo problema è la deriva continua, non i salti.
+
+#### Come si diventa «il clap in battere»
+
+La fase della battuta si sposta ogni volta di **esattamente un quarto** del
+salto del battito (−0.438/4 = −0.109, −0.302/4 = −0.076, +0.373/4 = +0.093):
+il conteggio viene trascinato con la griglia, com'è giusto per un singolo
+salto — ognuno è sotto il mezzo battito, quindi preso da solo è una correzione
+di fase legittima.
+
+**Ma si sommano.** I tre salti all'indietro fanno **0.954 battiti**, meno 0.373
+in avanti: **0.58 battiti netti** di spostamento del conteggio rispetto alla
+musica, in un brano solo. Ripetuto, l'uno arriva sul quarto successivo. Nessun
+salto singolo è illegittimo; la somma sì, e niente la sorveglia.
+
+#### Dove sta nel codice
+
+Due punti chiamano `snapPhase` con la parte in corso:
+
+- `BeatTracker.cpp:1421` — dopo una ricostruzione della griglia. Ben educato:
+  mette `sounding = false` e `waitForQuantize`, cioè **ferma la parte e la fa
+  rientrare quantizzata**.
+- `BeatTracker.cpp:1561` — sulla transizione in FOLLOWING:
+  `follower.snapPhase (songPhase, ! sounding)`, con l'unica condizione
+  `|errore| > 0.12` battiti. **Nessun limite superiore, e la parte non viene
+  fermata.** È da qui che passano i 275 ms.
+
+Il commento accanto dice: *«Sounding, a snap is a stroke... Above the size the
+steering loop would take seconds over, it is worth the stroke»*. Il ragionamento
+regge per 0.15 battiti. Per 0.44 non regge: quello non è un flam, è la parte che
+si sposta di un quarto di battito sotto le mani di chi suona.
+
+#### CORRETTO: la risposta al drop di griglia è graduata (10/09/2026)
+
+**Prima due correzioni a quello che c'è scritto sopra**, entrambe trovate
+strumentando invece di ragionare:
+
+1. **Non è l'accumulo.** Avevo scritto che i salti nella stessa direzione si
+   sommano fino a spostare l'uno. Falso: al sito che li produce
+   `keepBarInStep` è già `true`, quindi **il conteggio segue la griglia**. Il
+   rilevatore di «battuta ruotata» che avevo scritto scattava proprio quando il
+   conteggio seguiva *correttamente*. Era sbagliato lo strumento.
+2. **Non è il sito 1561.** Ci ho messo il tetto per primo e i salti sono rimasti
+   **identici**: `VP_SNAP_LOG` su ogni chiamata dice che **tutti e sette** i
+   salti grossi vengono dal sito **1421**, il percorso di ricostruzione della
+   griglia.
+
+**La catena vera.** `BeatDecoder::checkGridPhase` fa scorrere l'ancora della
+griglia sulla fase del fold — è una correzione di *fase*, non un tempo nuovo —
+e incrementa `gridSerial`. Il tracker legge `gridSerial` come «pulsazione
+nuova» e reagisce nel modo previsto per quel caso: **ferma la parte, mette la
+griglia esattamente sul battito accettato, rientra quantizzato**. E
+`checkGridPhase` piega il suo scarto sulla griglia più vicina, quindi può
+legittimamente valere **fino a mezzo battito**.
+
+Strumentato su Sally, tutte e sette le uscite vengono da lì:
+
+```
+GRID DROP [reset] t= 27.4  bpm= 95.5  comb=102.2
+GRID DROP [reset] t= 49.0  bpm=109.3  comb=104.3
+GRID DROP [reset] t=216.5  bpm=102.7  comb=101.5
+GRID DROP [reset] t=264.5  bpm=107.8  comb=103.8   ... e altre tre
+```
+
+**La correzione: la risposta è graduata come quella di un musicista.** Sopra un
+terzo di battito la griglia è davvero altrove e fermarsi per rientrare è
+giusto. Fra un ottavo e un terzo è una piegata: si sposta subito una parte, con
+un tetto di 0.20 battiti, e il resto lo chiude l'anello di fase — **senza
+fermare la parte**, perché un percussionista che è un quinto di battito fuori
+non si ferma, si appoggia.
+
+| Sally | prima | dopo |
+|---|---|---|
+| salti di fase | **7** | **3** |
+| la parte si ferma e rientra | **7 volte** | **1 volta** |
+| correzioni di mezza taglia | 0.31-0.39 battiti | **tagliate a 0.195** (116 ms) |
+
+Il salto da 0.438 resta e prende la strada del fermarsi-e-rientrare, che per
+quella taglia è la cosa giusta.
+
+Regressioni: `VPAlign` **identico**, `--bar` 10/0, `--tempo-slow` 10/0,
+`--level` 15/1, `probe_bar` con **un battito su 2831** che cambia casella
+(0:1793→1792, 1:399→400) e tutto il resto invariato, ingresso sull'uno e
+rotazioni comprese.
+
+Il tetto messo anche al sito 1561 è rimasto: non è lui a produrre questi salti,
+ma passava `! sounding` a `keepBarInStep`, e `snapPhase` documenta da sé che
+così «the count is silently rotated by a quarter». Ora passa `true` in entrambi
+i casi.
+
+- [ ] **Il brano 1 non ha salti** e sta comunque fuori: 6 strappi oltre il 4%
+  con la griglia che scende a 66 BPM contro 82 dichiarati, e nessun drop di
+  griglia nel corpo del pezzo. Quello è il percorso di *steering*, ed è un
+  secondo difetto, indipendente da questo.
+- [ ] **Perché `checkGridPhase` scatta sette volte** in un brano resta da
+  capire: è il fold che continua a dire che la griglia è sfasata. Se il fold ha
+  ragione, il vero difetto è a monte; se ha torto, va guardata la sua soglia.
+- [ ] **`gridSerial` fa due lavori.** Lo incrementano sia un cambio di
+  pulsazione vero (snap d'ottava, watchdog) sia una correzione di fase. Il
+  consumatore non può distinguerli e la risposta giusta è diversa. Separarli
+  sarebbe più pulito di graduare a valle sulla taglia dello scarto.
+- [ ] **Il brano 1 non ha salti** e sta comunque fuori: 6 strappi oltre il 4%
+  con la griglia che scende a 66 BPM contro 82 dichiarati. Quello è il percorso
+  di steering, non lo snap, ed è un secondo difetto da misurare a parte.
+
+#### Il banco nuovo
+
+`scratch/hist.py` piega l'energia degli attacchi sulla fase dell'orologio e
+misura quanto la griglia sta sulla musica (struttura = picco/media
+dell'istogramma a 24 bin) e dove sta il picco. È robusto alle terzine, che il
+primo tentativo — la risultante della prima armonica — non era: su materiale
+swingato l'energia cade a 0, 1/3 e 2/3 e la risultante si annulla **anche con
+l'aggancio perfetto**. Il primo tentativo dava «FUORI» su tutto il brano 1 ed
+era un artefatto della metrica. Va portato in `scripts/`.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

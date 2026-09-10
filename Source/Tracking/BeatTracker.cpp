@@ -1411,14 +1411,49 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // marks the re-anchor so PercussionEngine can discard only not-yet-heard
         // strokes from the old grid.
         const float rebuiltGridError = wrapCentered (follower.beatPhase() - songPhase);
+        // Two different events arrive here wearing the same clothes, and until
+        // this was measured on a live band they got the same answer.
+        //
+        // `gridSerial` moves for a genuinely new pulse - the octave snap, the
+        // stale-grid watchdog - and it *also* moves for `checkGridPhase`, which
+        // only slides the decoder's anchor onto the fold's phase. That second
+        // one is a phase nudge, not a new song, and it is by far the commoner:
+        // measured on the reference live recording (docs/TODO.md item 35), all
+        // seven grid drops in one four-minute song came from `checkGridPhase`,
+        // and `checkGridPhase` folds its shift onto the nearest grid, so it can
+        // legitimately be anything up to **half a beat**.
+        //
+        // The response here was written for the first case: stop the part, put
+        // the grid exactly on the accepted beat, come back in quantised. On a
+        // real band that fired seven times in four and a half minutes - the
+        // part stopping and re-entering seven times, with grid jumps of 0.44,
+        // 0.38, 0.38, 0.37, 0.31, 0.23 and 0.22 of a beat. The listener
+        // reported it as the app going out constantly and lurching.
+        //
+        // So the response is now graded the way a player's is. Past a third of
+        // a beat the grid really is somewhere else and stopping to rejoin is
+        // right. Between an eighth and a third it is a lean: move part of the
+        // way at once, cap that move, and leave the rest to the phase loop -
+        // without stopping, because a percussionist who is a fifth of a beat
+        // out does not drop out, they lean.
+        constexpr float kRegrabBeats = 0.33f;    // stop and rejoin above this
+        constexpr float kNudgeCeiling = 0.20f;   // and never move more than this while playing
         if (armed && sounding && periodic && nnConf > 0.40f
             && std::fabs (rebuiltGridError) > 0.12f)
         {
-            waitForQuantize = true;
-            quantizeWaitSamples = 0;
-            waitForSongBeat = true;
-            sounding = false;
-            follower.snapPhase (songPhase, true);
+            if (std::fabs (rebuiltGridError) > kRegrabBeats)
+            {
+                waitForQuantize = true;
+                quantizeWaitSamples = 0;
+                waitForSongBeat = true;
+                sounding = false;
+                follower.snapPhase (songPhase, true);
+            }
+            else
+            {
+                const float move = std::clamp (rebuiltGridError, -kNudgeCeiling, kNudgeCeiling);
+                follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
+            }
         }
     }
 
@@ -1556,9 +1591,46 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // nothing. Above the size the steering loop would take seconds
             // over, it is worth the stroke - which is the same threshold the
             // re-tune path beside this one already used, and this one did not.
-            if (! sounding
-                || std::fabs (wrapCentered (follower.beatPhase() - songPhase)) > 0.12f)
-                follower.snapPhase (songPhase, ! sounding);
+            //
+            // Two ceilings on that stroke, both measured on a live band from a
+            // desk send (docs/TODO.md item 35), and both about what the snap
+            // does to somebody who is already playing along with it.
+            //
+            // **How far it may move.** Unbounded, this reached 0.438 of a beat
+            // - 275 ms at 95 BPM - inside a single 2.6 ms block, four times in
+            // one song. The reasoning above holds for a fifth of a beat: past
+            // that it is not a flam, it is the part moving a quarter beat under
+            // the player's hands, and the listener reported exactly that
+            // ("accelera talmente tanto"). So the snap is capped and the
+            // remainder is left to the ordinary phase loop, which spends it
+            // through the rate instead of in one block.
+            //
+            // **What happens to the count.** This passed `! sounding`, so while
+            // playing the bar was deliberately not carried across a boundary
+            // the snap crossed. `snapPhase`'s own comment says what that costs:
+            // "the count is silently rotated by a quarter, and nothing
+            // downstream can tell that from the song genuinely being counted
+            // from somewhere else". Measured at 264.60 s of the reference song,
+            // phase 0.948 -> 0.326 the short way is +0.378 and crosses 1.0:
+            // the bar rotated by a quarter in one block, and the clap moved to
+            // the offbeat. That is the listener's report, and it is a single
+            // event rather than an accumulation.
+            //
+            // Between renumbering the count audibly and playing the accents on
+            // the wrong quarter silently, the renumber is the lesser harm - and
+            // it is the same conclusion the silent case reached, with the bar
+            // entry going from 4 in 25 to 8 in 25 through a room when it was
+            // fixed there. So the count is carried in both cases now.
+            const float snapErr = wrapCentered (follower.beatPhase() - songPhase);
+            if (! sounding || std::fabs (snapErr) > 0.12f)
+            {
+                constexpr float kSoundingSnapCeiling = 0.20f;
+                const float move = sounding
+                                       ? std::clamp (snapErr, -kSoundingSnapCeiling,
+                                                     kSoundingSnapCeiling)
+                                       : snapErr;
+                follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
+            }
         }
     }
 

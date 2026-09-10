@@ -208,6 +208,11 @@ struct EngineSnapshot
     FollowSource  source       = FollowSource::kitMic;
     float bpm                  = 0.0f;
     float targetBpm            = 0.0f;
+    /** What the *clock* is actually running at, which is not `bpm`: the
+        follower bends its rate to close a phase error, so the grid can be
+        four per cent fast for a beat while the reported tempo sits still.
+        The listener hears this one. See docs/TODO.md item 35. */
+    float clockBpm             = 0.0f;
     float confidence           = 0.0f;
     float beatPhase            = 0.0f;
     float barPhase             = 0.0f;
