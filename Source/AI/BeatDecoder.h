@@ -414,6 +414,10 @@ private:
     int   fixedSamples = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;
+    /** Beats of catch-up still owed after leaving FISSO. The number held
+        there is stale by definition - that is why the regime was left - so
+        the first bar back is spent at the acquiring rate. */
+    int   leftFixedBeats = 0;
 
     // The abrupt-change detector. Everything here is a scalar with a fixed
     // lifetime: the whole point of it is to answer inside two beats, and it

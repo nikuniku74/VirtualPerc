@@ -1915,6 +1915,130 @@ al contatore: `riavvii 1 device open but never prepared` è una cosa diversa da
 
 ---
 
+### 31. Ogni tanto deriva e ci mette troppo a rientrare 🟡 (2026-09-09, misurato e dimezzato — non ancora dentro la battuta ovunque)
+
+Segnalazione: *«ogni tanto deriva troppo e ci mette tanto a riprendere (anche 5
+secondi — deve rientrare in una battuta)»*, con la domanda giusta attaccata:
+*«ogni battuta, o ogni tot secondi o millisecondi?»*.
+
+**La risposta alla domanda è la parte più utile di questo item.** Il controllo
+esiste già ed è **per battito**. Il problema non è la cadenza: è che due dei
+budget sono espressi in battiti, e un battito è un secondo a 60 BPM e 0.375 s a
+160. Lo stesso numero è una scadenza diversa a ogni tempo, e la scadenza che
+l'ascoltatore sente è la **battuta**.
+
+**Dove vanno i secondi**, `probe_steady_tempo` (tempo costante, deriva 3 BPM,
+jitter 10 ms, 11 tempi × 10 semi × 300 s). Sette uscite su 110 corse, e sono due
+difetti diversi:
+
+| BPM | battuta | quanto | letto | pettine | fit corto | fit lungo |
+|---|---|---|---|---|---|---|
+| 60 | 4.00 s | **6.5 / 1.4 / 6.7 s** | 61.08 | 59.70 | 59.67 | 60.87 |
+| 150 | 1.60 s | **2.0 s** | 142.90 | 150.38 | **0** | **0** |
+| 160 | 1.50 s | **1.9 / 2.2 s** | 152.06 | 159.15 | **0** | **0** |
+| 170 | 1.41 s | **1.8 s** | 178.53 | 170.94 | **0** | **0** |
+
+- **Ai tempi veloci** l'uscita segue una transizione che ha **azzerato i fit** e
+  pubblicato un numero sbagliato. Il pettine ha ragione per tutta la durata. Il
+  numero rientra a 0.7 BPM per battito: `pullTowardsComb` dà al pettine il 35%
+  di autorità e `kRateLive` ne applica il 22% per battito — **7.7% effettivo,
+  cioè 13 battiti (tre battute) per chiudere**.
+- **A 60 BPM** il regime è **FISSO**, e in FISSO il pettine non era consultato
+  affatto: `live` e `unknown` passano il loro bersaglio per `pullTowardsComb`,
+  quel ramo seguiva `fixedAnchorBpm` e nient'altro. Traccia per battito:
+
+```
+  26.76  read=61.08  short=59.48  comb=59.70  FISSO   <- congelato
+  27.78  read=61.08  short=59.32  comb=59.46  FISSO
+  28.82  read=61.01  short=59.10  comb=59.29  FISSO
+  30.86  read=59.84  short=58.72  comb=58.82  LIVE    <- esce solo qui
+```
+
+**Due correzioni, entrambe misurate.**
+
+1. **Il pettine entra in FISSO**, limitato bene dentro l'ottava. Non
+   `pullTowardsComb` così com'è: il suo tetto è `kOctaveThreshold`, quindi tira
+   anche fra l'8 e il 19%, che è dove vive un argomento sul livello metrico e di
+   cui lo snap è padrone. Sotto `kStaleGridThreshold` non c'è nessun livello da
+   confondere, e il caso a 60 BPM sta al 2-3%. Sotto il 3% non fa niente, quindi
+   un disco tagliato a click non viene toccato.
+2. **La battuta dopo uno stato stantio si spende a rincorrere**, non a inclinare:
+   uscendo da FISSO (il numero tenuto è stale per definizione, è il motivo per
+   cui si esce) e mentre `transitionRefitBeats` dice che i fit si stanno
+   ricostruendo dopo una transizione. **Non cambia dove va il tempo, solo quanto
+   ci mette**: il bersaglio è lo stesso fit ricostruito in entrambi i casi, ed è
+   questo che la rende sicura su un gradino vero. Con la guardia del 2%, perché
+   senza scattava anche quando il numero era già giusto.
+
+| BPM | battuta | prima | dopo |
+|---|---|---|---|
+| 60 | 4.00 s | 6.5 / 1.4 / 6.7 | **4.4 / 1.4 / 4.7** |
+| 150 | 1.60 s | 2.0 | **0.8** |
+| 160 | 1.50 s | 1.9 / 2.2 | **1.1 / 1.8** |
+| 170 | 1.41 s | 1.8 | **0.7** |
+
+Dentro la battuta: **1 uscita su 8 prima, 4 su 8 dopo**; la peggiore da 6.7 a
+4.7 s. Errore medio del banco migliorato a 8 tempi su 11 e peggiorato a nessuno.
+
+**Tre ipotesi morte alla misura, e vanno lette prima di ritentarle.**
+
+1. **Il pettine come test d'uscita da FISSO.** `anchorError` confronta il fit
+   lungo con una media corrente del fit lungo: entrambi i lati vengono dal
+   numero che il tempo tenuto produce, quindi un fit lungo in ritardo alimenta
+   l'anchor *e* lo certifica. La riparazione ovvia è chiedere al pettine, che è
+   fuori da quel ciclo. Funziona sul caso per cui è scritta e **rompe un gradino
+   vero**: sul 120 → 160 non protetto di `probe_tempo_step` il pettine nomina
+   120 per secondi dopo il cambio, il test legge 25% dalla parte sbagliata, il
+   regime viene rilasciato con il pettine stantio come voce più forte, e la
+   corsa **collassa a 53.3 BPM e non torna più**, contro 23.6 s per arrivare al
+   tempo giusto. Sospenderlo durante una transizione confermata non lo salva: il
+   gradino non protetto non ha nessuna transizione da sospendere. È lo stesso
+   muro che la skill registra per il gate delle transizioni.
+2. **Accorciare il budget d'uscita da FISSO** (`kBeatsToLeaveFixed`, 6 → 4 → 3).
+   Durate identiche al decimo di secondo in tutte e tre. L'attesa non è il
+   contatore: è il fit lungo che arriva alla linea del 2%, e la sua finestra a
+   tempo lento è lunga nove secondi. Ripristinato a 6.
+3. **Il fit corto nel test d'uscita.** Era già 2.7% sotto al primo battito. Non
+   provato fino in fondo perché la misura che c'è già lo esclude: la skill
+   riporta che il movimento battito-per-battito del fit corto è 0.5-1.15 BPM a
+   tempo fermo, che a 60 BPM è fino all'1.9% — contro una soglia del 2%.
+
+**Cosa costa, e va deciso dall'utente.** La rincorsa (punto 2) è la metà cara:
+
+- `probe_matrix`: uscite **96 → 98**, tutte e due su `band larga` (banda
+  sfilacciata, 25 ms di scatter). In compenso `fuori medio` 8.99% → **8.98%** e
+  cinque materiali migliorano la loro percentuale fuori tempo — metronomo
+  0.05 → 0.02, backbeat secco 0.42 → 0.30, shuffle 16mi 0.05 → 0.02 — con i
+  rapporti più vicini a 1.00. Aggancio medio invariato a 5.25 s.
+- `VPAlign`: due righe **migliorano** (a t=32 il tempo passa da 117.91 a 119.32
+  contro un vero 120, con la fase da 12.8 a 7.3 ms; `fase media` 14.8 → 14.4) e
+  sette righe della media su otto brani **peggiorano di 0.5-3 ms** attraverso il
+  buco senza batteria e l'accelerando, su numeri che stanno già a 20-40 ms.
+- Invariati: `probe_tempo_step` identico riga per riga, `--level` 15/1,
+  `--octave` 6/5, `--bar` 10/0, `--tempo-slow` 10/0, `--swing` 3/0.
+
+Isolato per bisezione: il punto 1 da solo non costa niente (`probe_matrix` 96 e
+due righe migliori, `VPAlign` solo le due righe migliori). Tutto il costo è la
+rincorsa, ed è la rincorsa a sistemare i tempi veloci. Per toglierla basta
+`const bool far = false && ...` in `updateTempo`.
+
+- [ ] **Restano fuori 3 uscite su 8.** A 60 BPM 4.4 e 4.7 s contro 4.0, e a
+  160 BPM una da 1.8 s contro 1.50. Quella a 160 è istruttiva: fra due battiti
+  accettati passano **1.48 s** — quattro battiti che la griglia rifiuta dopo la
+  transizione. Un controllo per battito non può fare niente quando i battiti non
+  arrivano, ed è lì che serve la seconda metà della domanda dell'utente: un
+  fondo a tempo d'orologio, non a battiti.
+- [ ] **A 60 BPM il vincolo è il ritardo del fit lungo**, non il budget. Nove
+  secondi di finestra su materiale che deriva, e nessuna delle tre sorgenti
+  legge il vero (58.73): il fit lungo dice 60.87, il pettine 59.70, il corto
+  59.48. La strada è probabilmente non entrare in FISSO su materiale che deriva,
+  cioè `mayFix`, e ha un raggio d'azione molto più largo di questo item.
+- [ ] `--octave` è **6/5 su questo HEAD**, non 7/4: è cambiato fuori da questo
+  lavoro (le modifiche a `NeuralBeatTracker`/`BeatTracker` di un'altra sessione).
+  Ri-baselinare prima di attribuirlo a un cambio del decoder.
+
+---
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

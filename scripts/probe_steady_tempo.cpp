@@ -66,7 +66,7 @@ static Out run (float nominal, double duration, float driftBpm, float jitterMs,
                 a = std::max (a, b.second * (float) std::exp (-0.5*d*d));
         }
         const auto h = dec.observe (a, 0.02f, 1.0f - a);
-        if (verbose && h.peak && now < 16.0)
+        if (verbose && h.peak && (now < 16.0 || out))
         {
             const auto d = dec.diagnostics();
             printf ("      beat %5.2f  read=%6.2f regime=%d short=%6.2f comb=%6.2f settled=%d gap=%.1f vote=%d\n",

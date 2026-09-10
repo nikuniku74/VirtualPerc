@@ -59,6 +59,18 @@ namespace
 
     // Sustained disagreement between the committed tempo and the long fit. This
     // is the slow, certain way out of a held tempo; the fast way is below.
+    //
+    // Shortening this budget was tried and buys nothing, which is worth knowing
+    // because it is the obvious lever. Measured with `probe_steady_tempo` at
+    // 60 BPM on the ordinary 3 BPM drift, six beats against four and three: the
+    // excursion durations are identical to the tenth of a second in all three.
+    // The wait is not the counter, it is the long fit reaching the 2% line -
+    // at a slow tempo its window is nine seconds long, so on drifting material
+    // it takes about four seconds to fall that far while the short fit is
+    // already 2.7% away on the first beat. What actually shortened the
+    // excursion is in `updateTempo`: the fold now has a say in FISSO at all,
+    // and the bar after the regime is left is spent catching up rather than
+    // leaning. See both comments there.
     constexpr float kLeaveFixedError = 0.020f;
     constexpr int   kBeatsToLeaveFixed = 6;
 
@@ -470,6 +482,7 @@ void BeatDecoder::reset() noexcept
     fixedSamples = 0;
     beatsInRegime = 0;
     fixedErrorBeats = 0;
+    leftFixedBeats = 0;
     std::fill (longHist, longHist + kLongHistory, 0.0f);
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
     std::fill (beatStrength, beatStrength + kBeatHistory, 0.0f);
@@ -767,6 +780,7 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
     tempoRegime = r;
     beatsInRegime = 0;
     fixedErrorBeats = 0;
+    leftFixedBeats = 0;
     fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
     fixedSamples = 0;
 }
@@ -2490,6 +2504,29 @@ void BeatDecoder::updateTempo() noexcept
             const float anchorError = fixedAnchorBpm > kMinBpm
                                           ? (longFitBpm - fixedAnchorBpm) / fixedAnchorBpm
                                           : 0.0f;
+            // The fold is deliberately NOT consulted here, and that was
+            // measured twice rather than assumed.
+            //
+            // `anchorError` is the long fit against a running mean of the long
+            // fit, so both sides come from the number the held tempo is derived
+            // from; the obvious repair is to ask the one source outside that
+            // loop, which is what the stale-grid watchdog's own comment says
+            // the fold is for. It works on the case it was written for - at
+            // 60 BPM the fold and the short fit both sat 2.7% under a frozen
+            // 61.08 for seconds while `anchorError` read 0.34% - and it breaks
+            // a genuine step. On `probe_tempo_step`'s unprotected 120 -> 160
+            // the fold names 120 for seconds after the change, so this test
+            // reads 25% the wrong way, the regime is released with the stale
+            // fold as the loudest voice, and the run collapses to 53.3 BPM and
+            // never returns, against 23.6 s to the right tempo. Standing the
+            // term down during a confirmed transition does not save it: the
+            // unprotected step has no transition to stand down for.
+            //
+            // This is the same wall the skill records for the transition gate -
+            // at a change the fold is right about the tempo that has been left,
+            // and nothing in it separates that from being right about a tempo
+            // that never moved. The exit budget below is a bar instead, which
+            // costs no discrimination at all.
             const bool wandered = haveLong && std::fabs (anchorError) > kLeaveFixedError;
             // A vote over the last few bars, not a run of consecutive beats -
             // the same lesson the octave snap below already learned, in the
@@ -2579,6 +2616,14 @@ void BeatDecoder::updateTempo() noexcept
             {
                 enterRegime (TempoRegime::live);
                 fixedErrorBeats = 0;
+                // Every way out of here means the same thing: the number being
+                // held is stale. `moving`, the accumulated error, the fast
+                // drift release and the 6% anchor error are four ways of saying
+                // it. So the first bar back is spent catching up rather than
+                // leaning, which is what the ordinary live rate is for once the
+                // clock is already with the band. Bounded to a bar: past that
+                // it is ordinary following again.
+                leftFixedBeats = kBeatsToLeaveFixed;
             }
             break;
         }
@@ -2681,10 +2726,54 @@ void BeatDecoder::updateTempo() noexcept
             }
             if (fixedAnchorBpm > kMinBpm)
             {
-                const float step = (fixedAnchorBpm - bpm) / std::max (kMinBpm, bpm);
-                if (std::fabs (fixedAnchorBpm - bpm) > kFixedDeadband
+                // And the fold gets a say here too, which it did not have.
+                //
+                // FISSO was the one regime with no second opinion at all:
+                // `live` and `unknown` both hand their target through
+                // `pullTowardsComb`, this branch followed `fixedAnchorBpm` and
+                // nothing else. The anchor is a running mean of the *long* fit,
+                // which at a slow tempo spans nine seconds, so on material that
+                // drifts - which is most material, and which FISSO is entered on
+                // anyway when the drift is slow enough - the anchor follows a
+                // number that is itself behind, and no third source ever
+                // contradicts it.
+                //
+                // Measured with `probe_steady_tempo` at 60 BPM, constant tempo
+                // with the ordinary 3 BPM drift: the reading sat at 61.08 while
+                // the truth was 58.73 and the fold said 59.70, for **6.5 s** -
+                // against a bar of 4.0 s. The fold was right and was not being
+                // asked. Three of the bench's seven excursions were this.
+                //
+                // `pullTowardsComb` is the same function the other two regimes
+                // use and carries its own guards: under `kCombPullThreshold`
+                // (3%) it returns the target untouched, so a record cut to a
+                // click - where the fold reads the tempo to a tenth at salience
+                // 1.00 - is not moved by this at all, which is the whole point
+                // of the regime. Past an octave it also stands down and leaves
+                // the argument to the snap. What is left is exactly the band
+                // where FISSO had nothing: a fold that disagrees by more than
+                // its own scatter and less than a metrical level.
+                // Bounded well inside an octave, which `pullTowardsComb`'s own
+                // limit is not. Reusing it here as-is took `VPTests --octave`
+                // from 7/4 to 6/5: its ceiling is `kOctaveThreshold`, so it
+                // will pull across eight to nineteen per cent, which is where
+                // an argument about the metrical level lives and which the
+                // octave snap owns. Below `kStaleGridThreshold` there is no
+                // level to confuse - that constant exists for exactly this
+                // band - and the 60 BPM case this is for sits at 2 to 3%.
+                float anchored = fixedAnchorBpm;
+                if (combReady && tempo.levelSettled()
+                    && combBpm > kMinBpm && fixedAnchorBpm > kMinBpm)
+                {
+                    const float apart = std::fabs (std::log2 (combBpm / fixedAnchorBpm));
+                    const float rel = (combBpm - fixedAnchorBpm) / fixedAnchorBpm;
+                    if (std::fabs (rel) > kCombPullThreshold && apart < kStaleGridThreshold)
+                        anchored = fixedAnchorBpm + (combBpm - fixedAnchorBpm) * kCombPull;
+                }
+                const float step = (anchored - bpm) / std::max (kMinBpm, bpm);
+                if (std::fabs (anchored - bpm) > kFixedDeadband
                     && std::fabs (step) <= kFixedMaxStep)
-                    bpm = std::clamp (fixedAnchorBpm, kMinBpm, kMaxBpm);
+                    bpm = std::clamp (anchored, kMinBpm, kMaxBpm);
             }
             break;
         }
@@ -2722,7 +2811,49 @@ void BeatDecoder::updateTempo() noexcept
             // The blend fades to zero by 75 BPM, leaving the faster-tempo
             // stability tuning untouched.
             target = bringSlowFitCurrent (target);
-            commit (pullTowardsComb (target, combReady, combBpm), kRateLive);
+            // Two states in which the committed number is stale by
+            // construction, and in both the ordinary live rate is the wrong
+            // tool: it exists for a clock that is already with the band.
+            //
+            // Leaving FISSO is the first. Measured at 60 BPM, the exit now
+            // costs two beats and the rest of the 4.4 s excursion was the lean
+            // back from 61.08 to 58.7 at 22% a beat while the short fit and the
+            // fold both already said 59.1.
+            //
+            // The second is the bar after a confirmed tempo transition, while
+            // `transitionRefitBeats` says the fits are still being rebuilt from
+            // the beats after the change. Measured at 160 BPM, where a
+            // transition that should not have been confirmed drops both fits
+            // and publishes 166.9: the fold read 159.6-160.0 from the first
+            // beat and the committed number walked down 166.9, 166.2, 165.5,
+            // 164.6, 164.0, 163.4 - 0.7 BPM a beat, five and a half beats to
+            // come back against a bar of four.
+            //
+            // This does not change *where* the tempo goes, only how fast it
+            // gets there: the target is the same rebuilt short fit either way.
+            // That is what makes it safe on a genuine step, where the same
+            // rebuilt fit is converging on the real new tempo and arriving
+            // sooner is the point - and it is why the fold is deliberately not
+            // given more authority here. After a real step the fold names the
+            // tempo that has been left for seconds, and `pullTowardsComb`'s 35%
+            // cap is exactly what stops it dragging a true change back.
+            const bool stale = leftFixedBeats > 0 || transitionRefitBeats > 0;
+            const float wanted = pullTowardsComb (target, combReady, combBpm);
+            // And only while the gap is actually one a stale number would leave.
+            //
+            // Without this the catch-up fires on every beat of the window,
+            // including the ones where the committed tempo is already right and
+            // the target is moving by jitter, and on loose material that is
+            // most of them: `probe_matrix` went from 96 time-outs to 100, all
+            // of the cost on `band larga` (25 ms of scatter), `swing pieno` and
+            // `shuffle 16mi`. The same 2% line the FISSO exit uses separates
+            // them - a number left behind by a regime or a transition is four
+            // to five per cent out, a fit wandering under a loose band is not.
+            const bool far = stale && bpm > kMinBpm
+                             && std::fabs ((wanted - bpm) / bpm) > kLeaveFixedError;
+            if (leftFixedBeats > 0)
+                --leftFixedBeats;
+            commit (wanted, far ? kRateAcquiring : kRateLive);
             break;
         }
 
