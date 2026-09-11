@@ -2796,14 +2796,170 @@ fattore due, quindi nessuna soglia su di esso separa niente»*.
   da `shortFitRate` (che esiste già come diagnostico proprio perché fu lui a
   mostrare il muro). A tempo fermo il peso va a zero da solo e la precisione del
   fit lungo resta; su una deriva vera il peso sale. Non è stato provato.
-- [ ] **Oppure il difetto vero è un altro: `unknown` non è un regime di
-  regime.** Il brano 4 passa il **69%** della sua durata nel regime di
-  *acquisizione*, e il brano 5 il 25%. Un pezzo che per due terzi non è né
-  FISSO né VIVO è una classificazione fallita, e `unknown` è il ramo meno
-  tarato dei tre. Capire perché `mayFix` e `moving` sono entrambi falsi per
-  minuti interi su una band vera potrebbe valere più dell'anticipo.
+#### CORRETTO: `unknown` serviva due popolazioni e dava a entrambe la risposta della prima
+
+`unknown` non è un regime di passaggio. `mayFix` vuole `spread < 0.015`,
+`moving` vuole `|trend| > 0.018`: **una band dal vivo cade nel mezzo** — lo
+scatter umano è troppo largo per essere chiamata fissa, la deriva troppo lenta
+dentro la finestra per essere chiamata in movimento. Ci resta, e ci vive.
+
+Le due popolazioni si separano **senza nessuna soglia sul segnale** — che è il
+muro documentato — perché si separano su **da quanto tempo siamo qui**. Chi
+acquisisce ha pochi battiti in regime; chi ci vive ne ha centinaia. Sotto una
+finestra lunga intera (`beatsInRegime > kLongFit`) resta il fit lungo e la sua
+precisione; oltre, si applica lo stesso anticipo che il ramo `live` usa già.
+
+| | base | dopo |
+|---|---|---|
+| **`probe_tempo_step` 120 → 150** | 12.8 s | **1.2 s** |
+| **120 → 160** | 23.6 s | **1.1 s** |
+| **100 → 160** | 10.1 s | **1.1 s** |
+| **160 → 100** | 12.0 s | **1.8 s** |
+| **120 → 90** | 10.7 s | **2.0 s** |
+| **90 → 120** | 20.7 s | **2.2 s** |
+| banco reale, ritardo medio | 6.83 s | **5.33 s** |
+| banco reale, errore | 0.94% | 0.94% |
+| banco reale, strattoni | 1.71% | 1.86% |
+| `VPAlign` 100 → 140, tempo | 11.26 s | **1.30 s** |
+| `VPAlign` 100 BPM jitter 2.2, scatti | 3 | **0** |
+| `probe_matrix` uscite | 98 | 100 |
+| `probe_matrix` fuori medio | 8.98% | 9.04% |
+
+`probe_tempo_step` guadagna anche una riga: `violent non-octave changes: PASS`.
+`--level` 15/1, `--octave` 6/5, `--bar` 10/0, `--tempo-slow` 10/0, `--swing`
+3/0, tutte alla base.
+
+**Il costo, e va guardato in faccia.** `VPAlign` segna **FAIL** sulla riga
+`100 -> 140`: il tempo ci arriva 8.7 volte più in fretta (11.26 → 1.30 s) ma la
+colonna `trans ok` passa da 4/4 a **0/4**. Il percorso ordinario adesso arriva
+prima della macchina delle transizioni, che quindi non conferma più. La fase su
+quella riga è **identica** (57.1 ms, `fase ok` 0/4 in entrambi), quindi il danno
+misurabile è zero — ma la conseguenza architetturale è vera e va detta:
+
+- [ ] **Il gate delle transizioni diventa in gran parte ridondante sui
+  gradini**, perché il percorso ordinario è ora altrettanto rapido. Quel gate
+  però ha protezioni che l'ordinario non ha (due intervalli coerenti, almeno il
+  3%, il bordo), e arrivare in fretta senza quelle vuol dire seguire in fretta
+  anche un gradino **falso**. Le due uscite in più di `probe_matrix` sono
+  probabilmente quello. Da decidere: o si accetta, o l'anticipo va sospeso
+  mentre una transizione è in valutazione.
+- [ ] `probe_matrix`: uscite 98 → 100 e fuori medio +0.06. Il resto del banco
+  reale non peggiora, quindi il baratto è responsività contro due time-out su
+  360. Rimisurare se si tocca ancora.
 - [ ] Il brano 6 non ha una curva di verità utilizzabile (2 punti buoni). Il
   banco è a cinque.
+
+---
+
+### 39. Il rallentando: perché ci mette sei secondi, e perché «al primo colpo» non è possibile 🔴 (2026-09-11)
+
+Segnalazione, ascoltando il live: *«se c'è un rallentando del batterista, tipo
+di 4 bpm, ci impiega circa 6 secondi ad allinearsi, invece di adattarsi al primo
+colpo di batteria successivo»*.
+
+#### Prima: l'item 37 era sbagliato, e l'ho scoperto qui
+
+Fixture nuova, il caso esatto: 90 BPM, rallentando musicale a 86 in quattro
+secondi, poi fermo.
+
+| taratura | tempo dichiarato | **griglia vera** |
+|---|---|---|
+| **low** (il default messo nell'item 37) | 13.4 s | **11.9 s** |
+| medium | 3.1 s | **7.0 s** |
+| high | 3.1 s | **7.0 s** |
+
+**LOW è quattro volte peggio su un rallentando.** L'item 37 aveva misurato LOW
+contro HIGH sulla precisione a regime e sui **gradini**, e aveva concluso che il
+caveat era chiuso. Era sbagliato: **un gradino passa per la macchina delle
+transizioni, un rallentando no** — deve essere seguito dall'anello ordinario,
+che è dove vive il limite di piegatura. Il caveat non era chiuso, era stato
+provato sul caso sbagliato.
+
+E con la correzione dell'item 38 in piedi, anche il banco reale si rovescia:
+
+| taratura | ritardo | errore | strattoni | rallentando |
+|---|---|---|---|---|
+| low | 5.33 s | 0.94% | **1.86%** | 11.9 s |
+| medium | 5.12 s | 1.07% | 2.23% | 7.0 s |
+| **high** | **4.12 s** | **0.94%** | 2.23% | **7.0 s** |
+
+**Default ripristinato a HIGH.** L'unico costo è lo strattonamento (2.23 contro
+1.86) e il peggior spostamento di fase sul brano 1 (364 contro 182 ms); su Sally
+le due tarature sono pari (struttura 3.13 contro 3.12).
+
+L'item 37 resta a documento **superato**: la sua misura era valida per quello
+che misurava e insufficiente per decidere.
+
+#### «Adattarsi al primo colpo» non è possibile, ed ecco il numero
+
+A 90 BPM un intervallo dura 667 ms. Un rallentando di 4 BPM lo allunga del
+**4.4%**. Lo scatter umano su un singolo intervallo:
+
+| jitter | in percentuale dell'intervallo |
+|---|---|
+| 10 ms | 1.5% |
+| 20 ms | **3.0%** |
+| 30 ms | **4.5%** |
+
+**Un intervallo solo non distingue il rallentando dal jitter del batterista.**
+Servono due intervalli come minimo teorico e realisticamente tre o quattro per
+esserne sicuri: a 90 BPM sono **2-3 secondi**. Quello è il pavimento fisico, e
+non è un limite di implementazione.
+
+Ma siamo a **7 secondi**, non a 2-3. C'è un fattore due o tre da recuperare, e
+si sa dove.
+
+#### La lacuna strutturale: non esiste un percorso rapido per una rampa
+
+Il gate delle transizioni rapide vuole che **il primo intervallo cambiato
+differisca di almeno il 3%** dal precedente (`kTransitionSmallestStep = 0.05`,
+e la soglia del candidato non scende sotto quello). Un rallentando di 4 BPM
+distribuito su quattro secondi — sei battiti — cambia **ogni intervallo dello
+0.7%**. Non supera mai il gate.
+
+Quindi: **un gradino ha un percorso rapido (3.1 battiti). Una rampa non ne ha
+nessuno** e resta ai fit, 8-24 battiti. È per costruzione, non per difetto di
+taratura, ed è esattamente il caso che l'utente sente.
+
+#### Il rilevatore di rampa: costruito, misurato, scartato — e ha spostato il bersaglio
+
+Costruito come previsto: `fastDriftBeats >= 3` con segno coerente, transizione
+ferma, livello non provvisorio, e uno scarto sotto il 5.7% (oltre è un gradino o
+un'ottava, che hanno i loro percorsi). Due forme provate, entrambe peggiori:
+
+| | tempo dichiarato | griglia |
+|---|---|---|
+| base | **3.1 s** | **7.0 s** |
+| rampa **sommata** al commit del regime | 12.5 s | 8.2 s |
+| rampa che **sostituisce** il commit | 13.8 s | 8.0 s |
+
+La prima forma è annullata dal ramo del regime, che subito dopo tira verso il
+proprio fit — in ritardo durante una rampa — a `kRateAcquiring` (0.70). La
+seconda è più lenta della cosa che sostituisce: la mediana di tre intervalli a
+0.35 per battito **è più lenta** del fit estrapolato a 0.70. Rimosso.
+
+**E i due numeri della base dicono perché era destinata a non servire.** Il
+tempo *dichiarato* arriva in **3.1 s**, che è già dentro il pavimento fisico di
+2-3 s calcolato sopra: **il decoder si accorge già quasi subito.** I **3.9 s che
+restano sono nell'orologio**, non nel decoder — sono la fase accumulata durante
+la rampa, che va ripagata attraverso la velocità e al rail costa tempo.
+
+Dopo la correzione dell'item 38 il decoder ha già un percorso rapido per le
+rampe: il ramo `unknown` estrapola in avanti a 0.70 per battito. Il rilevatore
+di rampa arrivava a cose fatte.
+
+- [ ] **Il lavoro è in `TempoFollower`, non in `BeatDecoder`.** I 3.9 s sono il
+  rimborso della fase: `steerLim` / `steerCeil` decidono quanto in fretta si
+  paga, e pagare più in fretta è esattamente il baratto con lo strattonamento
+  già misurato nell'item 37. La strada che resta non è alzare il rail: è
+  **ridurre la fase che si accumula**, cioè far arrivare al clock il tempo nuovo
+  prima che la fase cresca — o dare al clock il tempo *e* la fase insieme
+  quando il decoder cambia idea, invece di lasciargliela scoprire.
+- [ ] Da rimisurare con `scripts/analysis/rall4.wav`, che è la fixture di questo
+  caso ed è ripetibile.
+- [ ] Da misurare contro `probe_tempo_step`, `probe_matrix` e la fixture
+  `rall4.wav` insieme: un rilevatore di rampa troppo sensibile insegue il jitter,
+  che è il difetto opposto e si sente di più.
 
 ---
 

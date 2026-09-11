@@ -89,6 +89,7 @@ namespace
     constexpr int   kFastBeatsAlone = 5;
 
 
+
     // How fast the committed tempo moves per beat in each regime.
     //
     // The live rate used to be 0.35 and that was a third too fast for what it
@@ -2907,11 +2908,44 @@ void BeatDecoder::updateTempo() noexcept
         }
 
         case TempoRegime::unknown:
-            commit (pullTowardsComb (bringSlowFitCurrent (
-                                         haveLong ? longFitBpm : shortFitBpm),
-                                     combReady, combBpm),
+        {
+            // Questo ramo serve due popolazioni diverse, e finora dava a
+            // entrambe la risposta della prima.
+            //
+            // La prima e' l'acquisizione vera, per cui il regime esiste: pochi
+            // battiti di storia, e il fit **lungo** e' il piu' preciso che ci
+            // sia. La seconda l'ha trovata il banco reale (docs/TODO.md item
+            // 38): una band dal vivo che sta qui per *minuti*, perche' il suo
+            // scatter umano e' troppo largo perche' `mayFix` la chiami fissa
+            // (spread oltre 0.015) e la sua deriva troppo lenta dentro la
+            // finestra perche' `moving` la chiami in movimento (trend sotto
+            // 0.018). Cade nel mezzo e ci resta: il brano 4 del banco ci passa
+            // il **69%** della sua durata.
+            //
+            // Per quella seconda popolazione il fit lungo grezzo e' la stima
+            // peggiore possibile: ventiquattro battiti, centrata dodici battiti
+            // indietro, che a 86 BPM sono **8.4 s** di puro ritardo di
+            // centratura - e il brano 4 misura +7.50 s di ritardo sulla deriva
+            // del batterista.
+            //
+            // Le due si separano senza nessuna soglia sul segnale, che e' il
+            // muro documentato nel ramo `live` qui sotto: si separano su **da
+            // quanto tempo siamo qui**. Chi sta acquisendo ha pochi battiti in
+            // regime; chi vive qui ne ha centinaia. Sotto una finestra lunga
+            // intera resta il fit lungo e la sua precisione; oltre, si applica
+            // lo stesso anticipo che il ramo `live` usa gia' - misurato
+            // funzionante li' (0.447% del tempo, mai clampato).
+            float target = haveLong ? longFitBpm : shortFitBpm;
+            if (haveLong && haveShort && beatsInRegime > kLongFit)
+            {
+                const float lead = kLiveLead * (shortFitBpm - longFitBpm);
+                target = shortFitBpm
+                       + std::clamp (lead, -0.04f * shortFitBpm, 0.04f * shortFitBpm);
+            }
+            commit (pullTowardsComb (bringSlowFitCurrent (target), combReady, combBpm),
                     kRateAcquiring);
             break;
+        }
     }
 }
 
