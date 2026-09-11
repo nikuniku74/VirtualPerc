@@ -3129,8 +3129,8 @@ bersaglio si muove — e lì durano due secondi, cioè sotto il pavimento fisico
   distingue un *tempo che si piega* da *beat suonati male* prima che il residuo
   del fit lungo li confonda. Candidato non provato: il segno e la persistenza
   dello scarto fra fit corto e fit lungo, che su un calo si apre e su un lean no.
-- [ ] Rimisurare qualunque candidato su **entrambi** i banchi, e sulla fase
-  (`prec.py`) non solo sul tempo.
+- [x] Rimisurare qualunque candidato su **entrambi** i banchi, e sulla fase
+  (`prec.py`) non solo sul tempo. **Fatto l'11/09/2026**, sotto.
 - [x] La diagnosi iniziale non aveva ancora un cambio di codice; la chiusura
   misurata che segue risolve la memoria falsa senza rimuovere la protezione.
 
@@ -3162,6 +3162,41 @@ invariata. Il massimo a finestre da 10 s 156→208 ms non è certificabile come
 fase assoluta: in quella finestra l'istogramma cambia accento musicale; a 20 s
 la stessa zona passa 126→102 ms e resta debole. Non usare questo dato come
 verità senza una beat-grid annotata.
+
+**Verifica indipendente della chiusura, 11/09/2026.** La chiusura sopra era
+misurata su `VPAlign`, sul dip e su un tratto nuovo del Flamingo, ma non sui
+cinque estratti di `bench_live` né con `prec.py` — cioè proprio il banco che
+aveva bocciato il tentativo (a). Rifatto l'A/B completo `c21e6b1` → `2aa1653`,
+stesso `build-host`, revert del solo `Source/`+`Tests/` e ripristino:
+
+| | prima | dopo |
+|---|---|---|
+| `VPTests --level` | 15/1 | 15/1 |
+| `VPTests --octave` | 6/5 | **7/4** (stabile su due corse) |
+| `--bar` / `--tempo-slow` / `--swing` | 10/0, 10/0, 3/0 | identici |
+| `VPTests --evidence` | — | 2/0 |
+| `probe_recovery` | 90 PASS / 0 FAIL | identico |
+| `probe_recovery --slow-passages` | 90 / 18 noti | identico |
+| `probe_tempo_step` | PASS | PASS |
+| `probe_matrix` aggancio / uscite / fuori | 5.24 s / 100 / 9.04% | 5.23 s / **98** / 9.08% |
+| `bench_live` ritardo / errore / strattoni | +4.12 s (4/5) / 0.94% / 2.23% | +4.20 s (5/5) / 0.94% / **2.01%** |
+| `score_dip.py` rientro | 12.1 s | **9.5 s** |
+
+`prec.py` sui cinque estratti, spostamento **mediano** della fase fra finestre:
+45.7→30.4, 71.0→59.2, 71.5→36.0, 22.0→22.0, 49.3→42.2 ms — **meglio o uguale
+su tutti e cinque**, media 51.9→38.0. La struttura scende leggermente su quattro
+su cinque (3.11→3.06, 3.37→3.22, 3.40→3.01, 2.96→3.09, 3.87→3.60): è il costo, ed
+è molto minore di quello del tentativo (a). **Nessuna regressione; `--octave` e
+le uscite di `probe_matrix` migliorano.** La chiusura regge.
+
+**Trappola di misura scoperta qui, non rifarla.** Un A/B fatto costruendo il
+commit precedente in un `git worktree` con un `cmake` fresco **dà numeri falsi**:
+lo *stesso* commit `2aa1653` misura 0.94% di errore e 2.01% di strattoni in
+`build-host` e **5.21% / 6.76%** nel worktree, riproducibile byte a byte in
+entrambi. Non è cache fredda e non è il modello (stesso sha1): è la
+configurazione del build. Un confronto su `bench_live` vale **solo** dentro lo
+stesso `build-host`; per il «prima» usare `git checkout <sha> -- Source/ Tests/`
+e ricostruire lì, poi `git checkout HEAD -- Source/ Tests/ scripts/`.
 
 Tentativi esclusi nella stessa sessione, per non rifarli: compensare anche il
 ritardo del commit IIR nel lead del decoder ha portato il peggiore reale

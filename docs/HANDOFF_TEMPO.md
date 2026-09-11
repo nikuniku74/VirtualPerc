@@ -1333,6 +1333,11 @@ Alle sei del RECAP precedente (che restano valide, sotto) si aggiungono:
 ## Come si misura, adesso
 
 Per **materiale reale**: `VPTrack` con `--pulses`, poi `hist.py` e `prec.py`.
+**Un A/B su `bench_live` vale solo dentro lo stesso `build-host`.** Lo stesso
+commit misura 0.94% di errore lì e 5.21% costruito in un `git worktree` con un
+`cmake` fresco, riproducibile in entrambi. Per il «prima» usare
+`git checkout <sha> -- Source/ Tests/`, ricostruire, poi ripristinare.
+
 **`bench_live.py` da solo non decide**: la sua colonna «ritardo» è il ritardo
 del tempo, e più di un meccanismo lo aumenta di proposito per guadagnare fase.
 Un candidato si giudica su `prec.py` (fase) **e** `VPAlign`, non su quello.
@@ -1346,7 +1351,7 @@ viceversa, un cambio nel decoder li tocca sempre.
 Per l'**orologio**: `probe_recovery` (84 PASS di default; `--slow-passages` ha
 18 FAIL noti a 52 BPM, `confirm` che non arriva mai).
 
-Per il **motore**: `VPTests --level` (15/1), `--octave` (**6/5 su questo HEAD**,
+Per il **motore**: `VPTests --level` (15/1), `--octave` (**7/4 da `2aa1653`**, era 6/5,
 non 7/4 — è cambiato fuori da questo lavoro), `--bar` (10/0), `--tempo-slow`
 (10/0), `--swing` (3/0), `VPAlign`, `VPBar`.
 

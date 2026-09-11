@@ -18,7 +18,14 @@ da `VPTrack --pulses`.
 | `score.py trace` | il BPM pubblicato contro una curva di riferimento: errore medio, uscite oltre il 4% e loro durata. |
 | `extract_live.swift input.m4a dir [start-sec duration-sec]` | senza intervallo crea i cinque estratti centrali usati da `bench_live.py`; con intervallo estrae un tratto preciso. Aggiunge 3 s di silenzio iniziale. |
 
-## Due trappole, misurate
+## Tre trappole, misurate
+
+**Un A/B fatto in un `git worktree` dà numeri falsi.** Lo stesso commit misura
+0.94% di errore e 2.01% di strattoni in `build-host`, e **5.21% / 6.76%**
+costruito in un worktree con un `cmake` fresco — riproducibile byte a byte in
+entrambi, stesso `beatnet.onnx`. Confrontare sempre dentro lo stesso
+`build-host`: `git checkout <sha> -- Source/ Tests/`, ricostruire, misurare,
+poi `git checkout HEAD -- Source/ Tests/ scripts/`.
 
 **La risultante della prima armonica non funziona su materiale swingato.**
 `fold.py` e `phase2.py` sono i due tentativi falliti, tenuti apposta: su
