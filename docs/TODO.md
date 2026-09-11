@@ -3208,6 +3208,102 @@ sono stati rimossi.
 
 ---
 
+### 41. La causa dell'uscita dopo un'inflessione: la finestra a 24 battiti che la contiene ancora 🟡 (2026-09-11)
+
+Richiesta: «se il tempo rallenta o si velocizza, la ripresa dell'app sul tempo
+deve essere immediata... è ancora lenta».
+
+**Dove se ne va il tempo, misurato sull'item 40 dopo la correzione di ChatGPT.**
+Strumentando l'anello di fase sul calo (`VP_LOOP_LOG`, poi rimosso):
+
+- **Non è la rotaia dello sterzo.** `|steer|` sta al 21-40% del suo `lim`, mai al
+  binario, per tutta la correzione.
+- **Non è il tappo `kPoorLeanBeats`.** Tolto da solo (interruttore `VP_NO_LEAN`,
+  poi rimosso): `ema` 0.0199 → 0.0249, rientro **invariato**.
+- **Non è lo smorzamento**, ma quello è un difetto vero e separato, sotto.
+- **L'anello esegue correttamente un ordine sbagliato.** A t=65.7 l'errore vero è
+  **+80 ms** e il bersaglio che il decoder gli dà ne dichiara **+10**; a t=69.8 il
+  decoder dice 0.6 ms mentre la verità è +44.6.
+
+**La causa.** Il regime è **FISSO**, dove *sia* il tempo (`fixedAnchorBpm`) *sia*
+l'ancora di fase (`gridAnchorSec = longAnchor`) vengono dal fit a **24 battiti** —
+sedici secondi a 90 BPM. Un calo di due secondi ci resta dentro per tutti e
+sedici. Dalla traccia, otto secondi dopo che il tempo vero era tornato a 90.00:
+
+| | corto (8 battiti) | lungo (24) |
+|---|---|---|
+| BPM | 90.00 | **89.26** |
+| residuo | 0.004 | **0.030** |
+
+e il tempo pubblicato segue quello lungo giù fino a **89.61**. La griglia gira a
+**89.10** di media per dodici secondi e fabbrica **120 ms** di errore di fase che
+nessun anello di sterzo può rifiutare. È questo che si sente: le percussioni
+escono **dopo** l'inflessione, non durante.
+
+**La correzione.** `longWindowStraddles`: le due finestre lo dicono da sole quando
+una sta a cavallo di un evento — non sono d'accordo sul tempo **e** la corta fitta
+molto meglio. Entrambe le metà servono: su materiale fermo i residui da soli si
+separano di tre a uno con i due fit dentro un centesimo di BPM. Un passaggio senza
+batteria fallisce la metà del residuo per costruzione (lì anche il fit corto è
+cattivo: 0.046-0.052 contro 0.054), che è la stessa separazione su cui è costruito
+`shortFitResidual` di ChatGPT — questa la riusa.
+
+L'ancora di fase **sfuma** fra le due in mezzo secondo, non commuta. Commutare è
+un *gradino* nel bersaglio pubblicato, e `BeatTracker` si stacca e riaggancia sopra
+un terzo di battito: preso come interruttore è costato strattoni sul brano 1
+(2.40 → 2.73% rms) e sul 3 (2.65 → **4.66%**, peggiore 15.2 → **44.8%**) — cioè lo
+strappo che questo serve a togliere, rimesso dalla sua stessa rimozione. Provata
+anche l'isteresi (rilascio tre volte più lento): peggiore dello sfumato simmetrico
+su entrambi i brani, scartata.
+
+**Misure.** Calo (`makedip.py`), contro l'allineamento proprio dell'app:
+
+| | rientro | sovraelongazione | residuo permanente | jitter a regime |
+|---|---|---|---|---|
+| prima | 18.0 s | −31.7 ms | **+10.0 ms** | 1.5 ms |
+| dopo | **16.2 s** | **−23.7 ms** | **+1.9 ms** | 1.5 ms |
+
+Lo spostamento *permanente* che un calo lasciava è praticamente sparito.
+
+Cinque estratti live, `prec.py`:
+
+| brano | struttura | spost. peggiore | strattoni rms | strattoni peggio |
+|---|---|---|---|---|
+| 1 | 3.06 → **3.25** | 182.5 → **121.7** | 2.40 → **2.37** | 16.4 → **14.9** |
+| 2 | 3.22 → **3.26** | 236.6 → 236.7 | 1.52 → **2.40** | 11.9 → **15.2** |
+| 3 | 3.01 → **3.17** | 264.0 → **48.0** | 2.65 → **2.56** | 15.2 → 15.3 |
+| 4 | invariato | invariato | invariato | invariato |
+| 5 | invariato | invariato | invariato | invariato |
+
+Il brano 3 è quello segnalato come «tiene malissimo il tempo, esce spesso»: il suo
+spostamento di fase **peggiore** passa da 264 a 48 ms. **Il brano 2 peggiora sugli
+strattoni** ed è il costo dichiarato di questo cambio.
+
+Regressioni, tutte al riferimento: `probe_matrix` 5.23 s / 98 uscite / 9.08%
+(identico), `probe_tempo_step` PASS, `VPTests --level` 15/1, `--bar` 10/0,
+`--tempo-slow` 10/0, `--swing` 3/0, `--octave` 7/4, `--evidence` 2/0.
+`bench_live` +4.20 → +4.05 s, errore 0.94% invariato, strattoni 2.01 → 2.15%.
+
+**Difetto separato, trovato e NON spedito.** Il termine derivativo dell'anello di
+fase è una differenza **per blocco**, non una velocità:
+`dErr = wrapCentered (e - prevPhaseErr)`. A 256 campioni vale 5.8e-5 contro un
+termine proporzionale di 0.020 — lo **0.35%** del comando — e quattro volte tanto a
+1024, quindi lo smorzamento dipende silenziosamente dalla dimensione del buffer
+dell'host e sul banco non c'è mai stato. Reso una velocità (`/dt`, con `dGain` che
+diventa secondi di anticipo contro il ritardo della media) migliora la
+sovraelongazione (−31.7 → −35.8 sul picco ma residuo permanente 10.0 → 1.4 ms) e
+**raddoppia il jitter di fase a regime, 1.5 → 3.7 ms rms**: differenzia il rumore.
+Revertito. Va ripreso con un limite di banda sulla derivata, non così.
+
+- [ ] «Immediata» **non è raggiunta**: 16.2 s contro 18.0. Il guadagno grosso
+  (8.3 s) esiste ed è la variante a commutazione secca, che costa lo strappo. Il
+  pezzo che manca è dare al decoder una fase che non venga da una finestra a
+  cavallo, **senza** cambiare sorgente — cioè rifittare l'ancora escludendo i
+  battiti dentro l'evento, invece di scegliere fra due fit.
+- [ ] Il costo sul brano 2 va capito prima di considerare chiuso l'item.
+- [ ] `VPAlign` non è stato rimisurato su questo cambio: il confronto salvato è
+  anteriore alle colonne aggiunte da `2aa1653`. Da rifare prima di spedire.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

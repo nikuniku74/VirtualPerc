@@ -176,6 +176,31 @@ namespace
     // tape transfer - would never be caught up with.
     constexpr float kFixedAnchorFloor = 0.02f;
 
+    /** How much better the eight-beat line has to fit than the twenty-four
+        beat one before the long window is presumed to be lying across a tempo
+        event. Two to one. Measured on `makedip.py`: after the dip the two read
+        0.004 against 0.030, seven to one; on the steady stretch of the same
+        file they read 0.004 against 0.004, and on a drummerless passage both
+        are bad together. */
+    constexpr float kStraddleResidualRatio = 2.0f;
+
+    /** And how far apart the two have to be on the tempo itself. Four tenths
+        of a per cent: the same file reads 0.011% apart when steady and 0.82%
+        apart with the dip inside the long window only. */
+    constexpr float kStraddleBpmDisagree = 0.004f;
+
+    /** And how long both halves have to agree before it is acted on. */
+    constexpr double kStraddleHoldSec = 0.40;
+
+    /** How long the phase anchor takes to walk from the long fit's to the
+        short fit's, and back. Half a second: long enough to have no edge,
+        short enough to be there while the event is still inside the long
+        window. */
+    constexpr double kAnchorBlendSec = 0.50;
+
+    /** `updateTempo` runs once per analysis frame, and a frame is 20 ms. */
+    constexpr double kFramesPerSecond = 50.0;
+
     // Beats a regime must last before it may be left, so the machine cannot
     // oscillate between two verdicts on adjacent beats.
     constexpr int kRegimeMinBeats = 4;
@@ -478,6 +503,9 @@ void BeatDecoder::reset() noexcept
     staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
+    straddleSinceSec = -1.0;
+    anchorBlend = 0.0;
+    longWindowStraddles = false;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
@@ -560,6 +588,9 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
+    straddleSinceSec = -1.0;
+    anchorBlend = 0.0;
+    longWindowStraddles = false;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
@@ -845,6 +876,9 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
     lastFitResidual = 1.0f;
+    straddleSinceSec = -1.0;
+    anchorBlend = 0.0;
+    longWindowStraddles = false;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
@@ -906,6 +940,9 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     staleGridBpm = 0.0f;
     beatsOnLevel = 0;
     lastFitResidual = 1.0f;
+    straddleSinceSec = -1.0;
+    anchorBlend = 0.0;
+    longWindowStraddles = false;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
@@ -1152,6 +1189,9 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     longWrite = 0;
     longFilled = 0;
     lastFitResidual = 1.0f;
+    straddleSinceSec = -1.0;
+    anchorBlend = 0.0;
+    longWindowStraddles = false;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
@@ -2301,6 +2341,9 @@ void BeatDecoder::updateTempo() noexcept
         // Nothing measured about the grid we just left describes the new one, and
         // a stale clean bill of health would let it defend itself immediately.
         lastFitResidual = 1.0f;
+        straddleSinceSec = -1.0;
+        anchorBlend = 0.0;
+        longWindowStraddles = false;
         lastFitCoverage = 0.0f;
         lastFitIndexGap = 1.0f;
         longFitBpm = 0.0f;
@@ -2375,6 +2418,9 @@ void BeatDecoder::updateTempo() noexcept
             fastDriftLargeBeats = 0;
             fastDriftSign = 0;
             lastFitResidual = 1.0f;
+            straddleSinceSec = -1.0;
+            anchorBlend = 0.0;
+            longWindowStraddles = false;
             lastFitCoverage = 0.0f;
             lastFitIndexGap = 1.0f;
             longFitBpm = 0.0f;
@@ -2419,8 +2465,47 @@ void BeatDecoder::updateTempo() noexcept
     // carried 22 ms rms of it, in jumps of up to 0.18 of a beat. Which of the
     // two fits carries it follows the regime, exactly as the tempo does: a held
     // tempo can average over twenty-four beats, a live one cannot.
+    // Whether the twenty-four beat window is lying across a tempo event.
+    // See kStraddleResidualRatio; computed here because the *phase* anchor
+    // has the same problem as the tempo and for the same reason. On the dip
+    // fixture the true displacement peaks at 107 ms and the decoder reported
+    // 46 - the clock cannot give back what it is not told about, and what it
+    // was being told came from the straddling line.
+    const bool straddleNow =
+        haveLong && haveShort && longPeriod > 0.0f && shortPeriod > 0.0f
+        && shortResidual * kStraddleResidualRatio < longResidual
+        && std::fabs (shortPeriod - longPeriod)
+               > kStraddleBpmDisagree * longPeriod;
+    // Held, not taken on sight. Both halves can line up for a frame or two
+    // on perfectly steady material - the eight-beat line genuinely does fit
+    // its own eight beats better now and then - and acting on that put 2.5
+    // times more jitter into the phase of a click-steady fixture (1.5 ms
+    // rms to 3.7). A real straddle lasts as long as the event is inside the
+    // long window, which is seconds. Noise does not hold for four tenths of
+    // one, which is the same argument the trim's kDriftAgreeing makes.
+    if (! straddleNow)
+        straddleSinceSec = -1.0;
+    else if (straddleSinceSec < 0.0)
+        straddleSinceSec = timeSec;
+    longWindowStraddles = straddleNow && straddleSinceSec >= 0.0
+                          && timeSec - straddleSinceSec >= kStraddleHoldSec;
+
+    // Eased between the two, never switched between them.
+    //
+    // Changing which fit names the phase is a *step* in the published
+    // target, and a step is the one thing this chain is built never to
+    // make: `BeatTracker` stops and rejoins above a third of a beat. Taken
+    // as a switch it cost grid jerk on two of the five live extracts
+    // (2.40% -> 2.73% and 2.65% -> 3.39% rms) - the lurch this exists to
+    // remove, reintroduced by the removal. A weight that walks across in
+    // about half a second is the same correction with no edge in it.
+    const double step = 1.0 / std::max (1.0, kAnchorBlendSec * kFramesPerSecond);
+    anchorBlend = std::clamp (anchorBlend + (longWindowStraddles ? step : -step),
+                              0.0, 1.0);
     if (tempoRegime == TempoRegime::fixed && haveLong)
-        gridAnchorSec = longAnchor;
+        gridAnchorSec = haveShort
+                            ? longAnchor + (shortAnchor - longAnchor) * anchorBlend
+                            : longAnchor;
     else if (haveShort)
         gridAnchorSec = shortAnchor;
     else if (haveLong)
@@ -2779,6 +2864,36 @@ void BeatDecoder::updateTempo() noexcept
             // follows. The deadband is what actually stops the number moving:
             // without it the tempo takes a hundredth of a BPM step on every
             // beat forever, which is a clock that is never quite still.
+            // But not from a window that is lying across a tempo event.
+            //
+            // A twenty-four beat line spans sixteen seconds at 90 BPM, so a
+            // two-second dip stays inside it - and inside this running mean -
+            // for all sixteen, long after the band has recovered. Measured on
+            // `scripts/analysis/makedip.py`: eight seconds after the tempo was
+            // back at 90.00 the short fit read 90.00 with a residual of 0.004
+            // while the long fit read 89.26 with 0.030, and the published
+            // tempo followed the long one down to 89.61. The grid then ran at
+            // 89.10 for twelve seconds and manufactured 120 ms of phase error
+            // that no steering loop had any way to refuse - which is what a
+            // listener hears as the percussion going out *after* an
+            // inflection, not during it.
+            //
+            // The two windows say so themselves when one of them straddles
+            // something: they disagree about the tempo *and* the short one
+            // fits far better. Neither half is enough on its own - on steady
+            // material the residuals alone separate by three to one with the
+            // two fits inside a hundredth of a BPM of each other - so both
+            // are required. A passage with the drummer out fails the
+            // residual half by construction: there the short fit is bad too
+            // (0.046-0.052 against 0.054, measured in `VPAlign`), which is
+            // the same separation ChatGPT's `shortFitResidual` was built on
+            // and is why this can reuse it.
+            //
+            // It only ever *withholds* an update. The anchor holds the value
+            // it already had, which in FISSO - a record cut to a click - is
+            // the tempo that is actually true. Nothing jumps, no stroke can
+            // be doubled or skipped, and the moment the long window clears
+            // the event the two fits agree again and this stands down.
             if (haveLong)
             {
                 if (fixedSamples == 0)

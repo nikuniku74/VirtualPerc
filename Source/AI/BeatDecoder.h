@@ -384,6 +384,11 @@ private:
         there a pulse, and is its level unambiguous" during the seconds before
         the fold has enough buffer to answer anything. */
     float anchorStrength = 0.0f;
+    /** The twenty-four beat window is lying across a tempo event: the two
+        fits disagree on the tempo and the short one fits far better. */
+    bool  longWindowStraddles = false;
+    double straddleSinceSec = -1.0;
+    double anchorBlend = 0.0;
     float lastFitResidual = 1.0f;
     float lastFitCoverage = 0.0f;
     /** Median step between grid indices of the fitted beats: 1 on a grid at the
