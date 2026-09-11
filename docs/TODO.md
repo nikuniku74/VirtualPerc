@@ -2948,13 +2948,50 @@ Dopo la correzione dell'item 38 il decoder ha già un percorso rapido per le
 rampe: il ramo `unknown` estrapola in avanti a 0.70 per battito. Il rilevatore
 di rampa arrivava a cose fatte.
 
-- [ ] **Il lavoro è in `TempoFollower`, non in `BeatDecoder`.** I 3.9 s sono il
-  rimborso della fase: `steerLim` / `steerCeil` decidono quanto in fretta si
-  paga, e pagare più in fretta è esattamente il baratto con lo strattonamento
-  già misurato nell'item 37. La strada che resta non è alzare il rail: è
-  **ridurre la fase che si accumula**, cioè far arrivare al clock il tempo nuovo
-  prima che la fase cresca — o dare al clock il tempo *e* la fase insieme
-  quando il decoder cambia idea, invece di lasciargliela scoprire.
+#### Provato: dare al clock la fase insieme al tempo. Misurato no-op, e dice qual è il vero collo di bottiglia.
+
+Il meccanismo esisteva già a metà: `phaseTau = tempoTransitionActive() ?
+kGridTauRapid : gridPhaseTau(...)`. Quando una transizione è confermata la fase
+viene presa quasi diretta (0.10 s invece di 0.90). Ma è legato al percorso dei
+**gradini**, e una rampa non conferma mai una transizione.
+
+Esteso a «il tempo si sta muovendo», misurato sul numero che il decoder ha già
+deciso e non su evidenza rumorosa: un riferimento del tempo impegnato con
+costante 1.5 s, e `refMoved > 0.008` come test.
+
+**Scatta** — strumentato, 1908 blocchi su 23400 (8.2%), cioè tutta la rampa. E
+non cambia niente:
+
+| | tempo | griglia | sovraelongazione |
+|---|---|---|---|
+| base | 3.1 s | **7.0 s** | +18.7% |
+| con la fase diretta | 3.1 s | **7.0 s** | +21.5% |
+
+Rimosso, e la traccia è tornata identica alla base.
+
+**Il perché è la cosa da portarsi via.** `setGridPhase` fissa un *bersaglio*:
+`phaseTau` governa quanto in fretta il clock **stima** l'errore di fase.
+`steerLim` / `steerCeil` governano quanto in fretta può **agire**. Stimare più
+in fretta non serve se il rail è lo stesso — e infatti la sovraelongazione
+peggiora, perché il clock arriva al rail prima e ci resta più a lungo.
+
+**Siamo al pavimento del progetto.** L'unico modo di muovere la fase più in
+fretta del rail è un salto, e i salti sono stati messi sotto tetto nell'item 35
+proprio perché si sentono come strappi. Il rail esiste perché nessun colpo venga
+mai suonato due volte o saltato.
+
+- [ ] Resta una sola strada onesta, ed è **non accumulare** la fase invece di
+  ripagarla: i 3.9 s nascono dai 3.1 s in cui il clock gira ancora sul tempo
+  vecchio mentre la band è su quello nuovo. Ma i 3.1 s del decoder sono già
+  dentro il pavimento fisico di 2-3 s (un intervallo solo non distingue un
+  rallentando di 4 BPM dal jitter di 20-30 ms del batterista). **Il margine
+  residuo è circa un secondo, non quattro.**
+- [ ] Una cosa **non** provata e sicura in linea di principio: un cambio di
+  *velocità* non salta né duplica nessun colpo — solo un salto di *fase* lo fa.
+  Il clock fa scivolare anche il tempo (tau 0.22-0.28 s da agganciato).
+  Prenderlo diretto quando il decoder lo muove in modo netto è lecito e
+  toglierebbe qualche decimo di fase accumulata. Piccolo, ma è il solo pezzo
+  rimasto che non costi uno strappo.
 - [ ] Da rimisurare con `scripts/analysis/rall4.wav`, che è la fixture di questo
   caso ed è ripetibile.
 - [ ] Da misurare contro `probe_tempo_step`, `probe_matrix` e la fixture
