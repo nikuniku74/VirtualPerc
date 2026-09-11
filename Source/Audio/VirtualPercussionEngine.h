@@ -347,6 +347,9 @@ private:
     std::atomic<bool>  lastLevelSettled { false };
     std::atomic<float> lastFitResidual { 1.0f };
     std::atomic<float> lastFitCoverage { 0.0f };
+    std::atomic<float> lastShortFitBpm { 0.0f };
+    std::atomic<float> lastLongFitBpm { 0.0f };
+    std::atomic<float> lastShortFitResidual { 1.0f };
     std::atomic<int>   lastTempoTransitionState { 0 };
     std::atomic<int>   lastTempoTransitionReason { 0 };
     std::atomic<float> lastTempoTransitionBpm { 0.0f };

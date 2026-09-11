@@ -482,6 +482,7 @@ void BeatDecoder::reset() noexcept
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    shortFitResidual = 1.0f;
     longWrite = 0;
     longFilled = 0;
     fixedAnchorBpm = 0.0f;
@@ -563,6 +564,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    shortFitResidual = 1.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
 }
@@ -847,6 +849,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    shortFitResidual = 1.0f;
     longWrite = 0;
     longFilled = 0;
 
@@ -907,6 +910,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     lastFitIndexGap = 1.0f;
     longFitBpm = 0.0f;
     shortFitBpm = 0.0f;
+    shortFitResidual = 1.0f;
     longWrite = 0;
     longFilled = 0;
     established = false;
@@ -1150,6 +1154,9 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     lastFitResidual = 1.0f;
     lastFitCoverage = 0.0f;
     lastFitIndexGap = 1.0f;
+    longFitBpm = 0.0f;
+    shortFitBpm = 0.0f;
+    shortFitResidual = 1.0f;
 }
 
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
@@ -2296,6 +2303,9 @@ void BeatDecoder::updateTempo() noexcept
         lastFitResidual = 1.0f;
         lastFitCoverage = 0.0f;
         lastFitIndexGap = 1.0f;
+        longFitBpm = 0.0f;
+        shortFitBpm = 0.0f;
+        shortFitResidual = 1.0f;
         return;
     }
 
@@ -2366,7 +2376,10 @@ void BeatDecoder::updateTempo() noexcept
             fastDriftSign = 0;
             lastFitResidual = 1.0f;
             lastFitCoverage = 0.0f;
-    lastFitIndexGap = 1.0f;
+            lastFitIndexGap = 1.0f;
+            longFitBpm = 0.0f;
+            shortFitBpm = 0.0f;
+            shortFitResidual = 1.0f;
             enterRegime (TempoRegime::unknown);
             return;
         }
@@ -2415,6 +2428,7 @@ void BeatDecoder::updateTempo() noexcept
 
     longFitBpm = haveLong ? 60.0f / longPeriod : 0.0f;
     shortFitBpm = haveShort ? 60.0f / shortPeriod : 0.0f;
+    shortFitResidual = haveShort ? shortResidual : 1.0f;
     if (haveShort)
     {
         if (prevShortFitBpm > kMinBpm)
@@ -3210,6 +3224,9 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.metricalOctaveHintValid = metricalOctaveHintValid;
     hyp.fitResidual = lastFitResidual;
     hyp.fitCoverage = lastFitCoverage;
+    hyp.shortFitBpm = shortFitBpm;
+    hyp.longFitBpm = longFitBpm;
+    hyp.shortFitResidual = shortFitResidual;
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

@@ -391,6 +391,7 @@ private:
     float lastFitIndexGap = 1.0f;
     float longFitBpm = 0.0f;
     float shortFitBpm = 0.0f;
+    float shortFitResidual = 1.0f;
     /** How fast the short fit is itself moving, in BPM per beat, smoothed.
         The gap between the two fits means one thing on a ramp and another on a
         step, and this is what separates them - see the live branch. */

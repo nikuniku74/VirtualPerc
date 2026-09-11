@@ -65,6 +65,11 @@ struct BeatHypothesis
         under a tempo decision was worth anything. */
     float    fitResidual = 1.0f;
     float    fitCoverage = 0.0f;
+    /** Responsive and stable fits behind this publication. Diagnostics used to
+        tell a curved tempo from a merely loose long-window fit. */
+    float    shortFitBpm = 0.0f;
+    float    longFitBpm  = 0.0f;
+    float    shortFitResidual = 1.0f;
 
     TempoRegime regime   = TempoRegime::unknown;
 

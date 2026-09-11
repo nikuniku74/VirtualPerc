@@ -263,6 +263,9 @@ public:
         bool          levelSettled = false;
         float         fitResidual = 1.0f;
         float         fitCoverage = 0.0f;
+        float         shortFitBpm = 0.0f;
+        float         longFitBpm = 0.0f;
+        float         shortFitResidual = 1.0f;
         TempoTransitionState tempoTransitionState = TempoTransitionState::stable;
         TempoTransitionReason tempoTransitionReason = TempoTransitionReason::none;
         float         tempoTransitionBpm = 0.0f;

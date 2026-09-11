@@ -6485,6 +6485,22 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (after > 0.99f,
                 "and the moment they are well placed again it is believed whole again");
 
+        // A short tempo bend makes the old 24-beat line bad after the newest
+        // eight beats are coherent again. That stale history must not keep the
+        // clock in its drummerless protection. If both windows are bad, it is
+        // still genuinely poor evidence and the protection remains.
+        vp::EvidenceTrust curved = accel;
+        vp::EvidenceTrust diffuse = accel;
+        for (int i = 0; i < 50; ++i)
+        {
+            curved.observe (0.075f, 1.0f, 0.020, 0.030f);
+            diffuse.observe (0.075f, 1.0f, 0.020, 0.065f);
+        }
+        expect (curved.trust() > 0.80f,
+                "a clean recent fit releases stale long-window bend memory");
+        expect (diffuse.trust() < 0.60f,
+                "a recent fit that is also poor does not bypass protection");
+
         // A new song is not this song fitting badly. The baseline goes with the
         // grid, or a track that fits worse than the last would read as poor
         // evidence for its whole length - and the clock would be slowest to
@@ -8631,6 +8647,29 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "and the tempo survives it");
     }
 #endif
+}
+
+void vpRunEvidenceTrustTest (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+
+    vp::EvidenceTrust baseline;
+    for (int i = 0; i < 2000; ++i)
+        baseline.observe (0.045f, 1.0f, 0.020, 0.035f);
+
+    vp::EvidenceTrust curved = baseline;
+    vp::EvidenceTrust diffuse = baseline;
+    for (int i = 0; i < 50; ++i)
+    {
+        curved.observe (0.075f, 1.0f, 0.020, 0.030f);
+        diffuse.observe (0.075f, 1.0f, 0.020, 0.065f);
+    }
+
+    expect (curved.trust() > 0.80f,
+            "a clean recent fit releases stale long-window bend memory");
+    expect (diffuse.trust() < 0.60f,
+            "a recent fit that is also poor does not bypass protection");
 }
 
 // ===========================================================================

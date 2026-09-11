@@ -593,8 +593,8 @@ clock bench is unchanged because no poor-to-clean edge exists there.
 | | tau | steerLim | steerCeil | dGain |
 |---|---|---|---|---|
 | low | 1.60 | 0.018 | 0.10 | 0.3 |
-| medium (default) | 0.90 | 0.035 | 0.18 | 0.8 |
-| high | 0.70 | 0.050 | 0.25 | 1.2 |
+| medium | 0.90 | 0.035 | 0.18 | 0.8 |
+| high (default) | 0.70 | 0.050 | 0.25 | 1.2 |
 
 The rate needed is *derived* from tau, not tuned per tempo - the same phase
 error is a longer time at a slower tempo. History worth knowing: HIGH used to
@@ -609,6 +609,21 @@ tempo was fitted through are worse placed than this song's own
 five attempts at holding the tempo instead, and all five cost half a bar on an
 accelerando. A band speeding up with the drummer playing never drops below trust
 1, so it is never slowed here at all.
+
+**Short-versus-long residual release (2026-09-11).** A brief bend can make the
+24-beat straight-line residual look poor for roughly its whole 16-second window
+after the drummer is already coherent again. Do not replace the long fit with
+the eight-beat fit: that was measured on real material and made phase worse.
+`EvidenceTrust::observe` instead accepts the recent residual as a narrow
+release signal only when it is good against the song baseline *and* 25–50%
+smaller than the long residual. When both fits are poor, drummerless protection
+is unchanged. Exact `makedip.py`/`score_dip.py` A/B: stable return within 15 ms
+12.1→9.5 s, peak unchanged. `VPAlign` keeps the 44 ms drummerless worst at
+39.2 ms and improves its mean 24.1→22.5 ms. On the last 5:07 of Flamingo the
+10-second-window median phase movement is 39→26 ms and grid-rate rms jerk
+2.15→2.02%, with one analysis restart in both runs. Run `VPTests --evidence`
+for the two discriminant cases; `shortFitBpm`, `longFitBpm` and the recent
+residual are diagnostic snapshot fields.
 
 **Lateness only.** `GrooveEvent::delayBeats` is always >= 0. The clock hands out
 grid positions as they pass and there is no going back for one, so feel and

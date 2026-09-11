@@ -536,7 +536,8 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
         // --- the clock, steered exactly as BeatTracker steers it ---
         if (hy.valid)
         {
-            trust.observe (hy.fitResidual, hy.fitCoverage, 1.0 / kFps);
+            trust.observe (hy.fitResidual, hy.fitCoverage, 1.0 / kFps,
+                           hy.shortFitResidual);
             if (! seenSerial)
             {
                 lastBeatSerial = hy.beatSerial;
@@ -623,10 +624,13 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
             {
                 lastPrinted = sec;
                 std::printf ("   t=%-4d %-6s bpm=%-8.2f fase=%-7.1f res=%-7.3f "
-                             "cop=%-6.2f sal=%-6.3f conf=%-6.2f %s\n",
+                             "corto=%-7.2f lungo=%-7.2f resS=%-7.3f cop=%-6.2f sal=%-6.3f conf=%-6.2f %s\n",
                              sec, inHole ? "BUCO" : "kit",
                              static_cast<double> (hy.bpm), err,
                              static_cast<double> (hy.fitResidual),
+                             static_cast<double> (hy.shortFitBpm),
+                             static_cast<double> (hy.longFitBpm),
+                             static_cast<double> (hy.shortFitResidual),
                              static_cast<double> (hy.fitCoverage),
                              static_cast<double> (diag.combSalience),
                              static_cast<double> (hy.confidence),

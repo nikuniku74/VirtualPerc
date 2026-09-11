@@ -1020,7 +1020,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // the clock averages the phase before steering on it.
     if (haveHyp && hyp.valid)
         evidence.observe (hyp.fitResidual, hyp.fitCoverage,
-                          static_cast<double> (numSamples) / sampleRate);
+                          static_cast<double> (numSamples) / sampleRate,
+                          hyp.shortFitResidual);
 
     // The worker publishes one hypothesis per 20 ms analysis frame into a
     // single slot, while this runs once per audio block. Reading `peak` would
@@ -1781,6 +1782,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.levelSettled = haveHyp && hyp.levelSettled;
     out.fitResidual = haveHyp ? hyp.fitResidual : 1.0f;
     out.fitCoverage = haveHyp ? hyp.fitCoverage : 0.0f;
+    out.shortFitBpm = haveHyp ? hyp.shortFitBpm : 0.0f;
+    out.longFitBpm = haveHyp ? hyp.longFitBpm : 0.0f;
+    out.shortFitResidual = haveHyp ? hyp.shortFitResidual : 1.0f;
     out.setTempoTransitionDiagnostics (
         haveHyp && transitionConsumer.transitionDiagnosticsAllowed() ? &hyp : nullptr);
     if (! armed)

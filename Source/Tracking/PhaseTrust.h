@@ -95,7 +95,8 @@ public:
         measured over a fit hardly any beats landed in describes too little to
         move what "good" means, but it is still the residual in force and still
         decides the trust. */
-    void observe (float residual, float coverage, double seconds) noexcept
+    void observe (float residual, float coverage, double seconds,
+                  float recentResidual = -1.0f) noexcept
     {
         if (! std::isfinite (residual) || residual <= 0.0f || residual >= 1.0f)
             return;
@@ -126,6 +127,38 @@ public:
         // it can switch back and forth.
         const float t = (kRatioTolerated - ratio) / (kRatioTolerated - 1.0f);
         current = std::clamp (t, kMinTrust, 1.0f);
+
+        // A curved tempo poisons the 24-beat straight-line residual long after
+        // the drummer has already supplied a clean recent grid. Treating that
+        // mechanical memory as "the kit disappeared" held the clock at its
+        // poor-evidence cap for roughly 16 seconds after a two-second 90->86
+        // ->90 dip. The eight-beat fit is not precise enough to replace the
+        // long fit (that experiment made real songs worse), but it can answer
+        // the narrower question: are the newest beats coherent while only the
+        // old window is bad?
+        //
+        // Require both facts continuously: the recent residual must be good
+        // against this song's long-window baseline, and substantially smaller
+        // than the long residual. A drummerless passage makes both fits bad;
+        // after the drummer returns, or after a tempo bend, the recent fit
+        // becomes clean first. The 0.75..0.50 ramp was measured on VPAlign's
+        // 44 ms drummerless passage and on the 90->86->90 dip: it preserves the
+        // former while removing the latter's stale 24-beat memory.
+        if (coverage > kCoverageToLearn
+            && std::isfinite (recentResidual) && recentResidual > 0.0f
+            && recentResidual < 1.0f && residual > kResidualFloor)
+        {
+            const float recentRatio = recentResidual / base;
+            const float recentT = std::clamp (
+                (kRatioTolerated - recentRatio) / (kRatioTolerated - 1.0f),
+                kMinTrust, 1.0f);
+            const float separation = recentResidual / residual;
+            const float authority = std::clamp ((kRecentSeparateHigh - separation)
+                                                / (kRecentSeparateHigh - kRecentSeparateFull),
+                                                0.0f, 1.0f);
+            if (recentT > current)
+                current += (recentT - current) * authority;
+        }
     }
 
     /** The analysis has thrown its grid away and built another - a new song, a
@@ -161,6 +194,8 @@ private:
     static constexpr double kBaselineRiseSec = 30.0;
     static constexpr double kBaselineFallSec = 3.0;
     static constexpr float kRatioTolerated = 1.60f;
+    static constexpr float kRecentSeparateHigh = 0.75f;
+    static constexpr float kRecentSeparateFull = 0.50f;
     static constexpr float kMinTrust = 0.30f;
 
     float baselineResidual = 0.0f;

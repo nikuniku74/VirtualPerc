@@ -1831,6 +1831,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastFitResidual.store (tr.fitResidual, std::memory_order_relaxed);
     lastFitCoverage.store (tr.fitCoverage, std::memory_order_relaxed);
+    lastShortFitBpm.store (tr.shortFitBpm, std::memory_order_relaxed);
+    lastLongFitBpm.store (tr.longFitBpm, std::memory_order_relaxed);
+    lastShortFitResidual.store (tr.shortFitResidual, std::memory_order_relaxed);
     lastTempoTransitionState.store (static_cast<int> (tr.tempoTransitionState),
                                     std::memory_order_relaxed);
     lastTempoTransitionReason.store (static_cast<int> (tr.tempoTransitionReason),
@@ -1942,6 +1945,9 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.levelSettled = lastLevelSettled.load (std::memory_order_relaxed);
     s.fitResidual = lastFitResidual.load (std::memory_order_relaxed);
     s.fitCoverage = lastFitCoverage.load (std::memory_order_relaxed);
+    s.shortFitBpm = lastShortFitBpm.load (std::memory_order_relaxed);
+    s.longFitBpm = lastLongFitBpm.load (std::memory_order_relaxed);
+    s.shortFitResidual = lastShortFitResidual.load (std::memory_order_relaxed);
     s.tempoTransitionState = static_cast<TempoTransitionState> (
         lastTempoTransitionState.load (std::memory_order_relaxed));
     s.tempoTransitionReason = static_cast<TempoTransitionReason> (

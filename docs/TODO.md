@@ -3131,8 +3131,43 @@ bersaglio si muove — e lì durano due secondi, cioè sotto il pavimento fisico
   dello scarto fra fit corto e fit lungo, che su un calo si apre e su un lean no.
 - [ ] Rimisurare qualunque candidato su **entrambi** i banchi, e sulla fase
   (`prec.py`) non solo sul tempo.
-- [ ] Nessun cambio di codice è sopravvissuto a questo item: l'albero è tornato a
-  HEAD. Quello che resta è la diagnosi, ed è precisa.
+- [x] La diagnosi iniziale non aveva ancora un cambio di codice; la chiusura
+  misurata che segue risolve la memoria falsa senza rimuovere la protezione.
+
+**Chiusura della memoria falsa, 11/09/2026.** Il discriminante utile non è il
+BPM corto contro quello lungo: anche l'ingresso e l'uscita da un passaggio senza
+batteria producono i due lobi opposti. È la *qualità* dei due fit. Dopo il calo
+90→86→90 il residuo lungo resta 0.030–0.037 mentre quello sugli ultimi otto beat
+è già tornato 0.003–0.005; nel passaggio senza batteria con 44 ms di ritardo i
+due restano invece entrambi cattivi (0.054/0.046, 0.054/0.049, 0.054/0.052).
+
+`EvidenceTrust` ora lascia decadere la memoria del fit lungo soltanto quando il
+fit recente è contemporaneamente buono rispetto alla baseline del brano e fra
+il 25% e il 50% migliore del lungo. L'autorità è continua, non un latch. Il fit
+corto non sostituisce tempo o fase e non può saltare o duplicare colpi; risponde
+solo alla domanda «i beat recenti sono di nuovo coerenti?». I valori sono
+pubblicati nello snapshot come diagnostica e `VPTests --evidence` blocca i due
+casi opposti.
+
+Misura A/B con lo stesso audio, la stessa rete e `score_dip.py`: rientro entro
+15 ms tenuto quattro secondi **12.1→9.5 s**; picco invariato +105.9 ms; minimo
+-5.5→-14.3 ms, ancora dentro la banda di 15 ms. `VPAlign`, otto semi: il buco
+senza batteria migliora 24.1→22.5 ms medio con peggiore invariato 39.2; la rampa
+resta entro un millisecondo dal riferimento nel percorso completo.
+
+Ultimi 5:07 della serata Flamingo, catena completa, 20–300 s: restart invariati
+a uno (3.3 s); spostamento mediano della fase fra finestre **39→26 ms** e
+strattoni 2.15→2.02% rms. La struttura degli attacchi 3.17→3.13 è sostanzialmente
+invariata. Il massimo a finestre da 10 s 156→208 ms non è certificabile come
+fase assoluta: in quella finestra l'istogramma cambia accento musicale; a 20 s
+la stessa zona passa 126→102 ms e resta debole. Non usare questo dato come
+verità senza una beat-grid annotata.
+
+Tentativi esclusi nella stessa sessione, per non rifarli: compensare anche il
+ritardo del commit IIR nel lead del decoder ha portato il peggiore reale
+155.9→285.8 ms; una fase da fit a quattro beat non ha dato un vantaggio coerente
+su `VPAlign`; rendere `live` appiccicoso ha peggiorato i tempi fissi. Tutti e tre
+sono stati rimossi.
 
 
 

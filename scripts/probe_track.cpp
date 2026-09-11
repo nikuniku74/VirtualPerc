@@ -105,7 +105,7 @@ int main (int argc, char** argv)
     std::printf ("# %s  %.1f s  %.0f Hz  guadagno %+.1f dB\n",
                  path.c_str(), n / sr, sr, gainDb);
     if (trace)
-        std::printf ("#  t     pubbl   rete   pettine  conf  residuo  reg stato suona  "
+        std::printf ("#  t     pubbl   rete   pettine  corto  lungo  conf  resL resS  reg stato suona  "
                      "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?\n");
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
@@ -152,9 +152,11 @@ int main (int argc, char** argv)
         if (trace && t >= lastTrace + traceStep)
         {
             lastTrace = t;
-            std::printf ("%6.1f %7.2f %7.2f %8.2f  %.2f  %6.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s\n",
+            std::printf ("%6.1f %7.2f %7.2f %8.2f %7.2f %7.2f  %.2f  %5.3f %5.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s\n",
                          t, (double) s.bpm, (double) s.neuralBpm, (double) s.combBpm,
-                         (double) s.confidence, (double) s.fitResidual, s.tempoRegime,
+                         (double) s.shortFitBpm, (double) s.longFitBpm,
+                         (double) s.confidence, (double) s.fitResidual,
+                         (double) s.shortFitResidual, s.tempoRegime,
                          (int) s.state, s.percussionAudible ? "SI" : "no",
                          s.analysisRestarts, (double) s.analysisGain, (double) s.inputPeak,
                          (double) s.analysisPeak, (double) s.lowShare,

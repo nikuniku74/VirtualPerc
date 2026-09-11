@@ -4,8 +4,8 @@ import Foundation
 // One-off/reproducible fixture builder for the full mixer-send recording.
 // Each output contains three seconds of silence followed by 140 seconds from
 // the middle of a song, matching bench_live.py's acquisition assumptions.
-guard CommandLine.arguments.count == 3 else {
-    fputs("usage: swift extract_live.swift input.m4a output-dir\n", stderr)
+guard CommandLine.arguments.count == 3 || CommandLine.arguments.count == 5 else {
+    fputs("usage: swift extract_live.swift input.m4a output-dir [start-sec duration-sec]\n", stderr)
     exit(2)
 }
 
@@ -14,9 +14,13 @@ let destination = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: tr
 try FileManager.default.createDirectory(at: destination,
                                         withIntermediateDirectories: true)
 
-let starts: [Double] = [75, 370, 680, 975, 1270]
+let starts: [Double] = CommandLine.arguments.count == 5
+    ? [Double(CommandLine.arguments[3]) ?? 0.0]
+    : [75, 370, 680, 975, 1270]
 let leadSeconds = 3.0
-let bodySeconds = 140.0
+let bodySeconds = CommandLine.arguments.count == 5
+    ? (Double(CommandLine.arguments[4]) ?? 140.0)
+    : 140.0
 
 for (index, start) in starts.enumerated() {
     let input = try AVAudioFile(forReading: source)

@@ -1094,6 +1094,12 @@ int main (int argc, char** argv)
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }
+    if (argc > 1 && std::string (argv[1]) == "--evidence")
+    {
+        vpRunEvidenceTrustTest (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
 
     // The swing grid on its own: sixteen calls into GrooveEngine and no engine at
     // all. See docs/TODO.md item 7.
