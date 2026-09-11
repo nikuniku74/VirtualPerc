@@ -2998,6 +2998,144 @@ mai suonato due volte o saltato.
   `rall4.wav` insieme: un rilevatore di rampa troppo sensibile insegue il jitter,
   che è il difetto opposto e si sente di più.
 
+### 40. Il calo di uno-due secondi: il decoder non lo vede, e la fiducia si chiude per sedici 🔴 (2026-09-11)
+
+Segnalato dall'ascolto: «a volte c'è un calo di tempo di uno o due secondi e poi
+una ripresa, e in quei casi si nota l'uscita delle percussioni». È una forma
+diversa dal rallentando dell'item 39 e va misurata a parte.
+
+**Fixture nuova.** `dip.wav`: 90 BPM, calo a 86 in un secondo, tenuto un secondo,
+ripresa a 90 in un secondo, poi fermo. Cassa/rullo su 1-2-3-4, charleston sugli
+ottavi. Generata da `scripts/analysis/makedip.py`; il wav non è versionato, come
+`rall4.wav`.
+
+**Quanto costa, misurato.** Picco di fase **+88 ms**, rientro sotto 15 ms tenuto
+quattro secondi dopo **18.1 s**, sovraelongazione **-22 ms** dall'altra parte.
+Contro i 7.0 s del rallentando: il calo breve costa più del doppio.
+
+**Dove NON è il collo di bottiglia** (tre cose escluse per misura, non per teoria):
+
+- **Non è la rotaia dello sterzo.** `|steer|` massimo 0.0154 contro un `lim` di
+  0.050: l'anello sta al **31%** del suo permesso, e ci sta per tutti i dieci
+  secondi. Lo 0% del tempo al binario.
+- **Non è il tau della fase.** Vedi item 39: già provato ed è un no-op.
+- **Non è il glide del tempo, e «prendere il tempo diretto» non ha niente da
+  prendere.** Il decoder *non* fa scivolare il tempo su un cambio vero: su
+  `rall4.wav` salta da 90.00 a 86.34 in un colpo e l'orologio lo prende con tau
+  0.22 s. Su `dip.wav` non lo muove affatto — il tempo pubblicato va da 89.98 a
+  89.81 attraverso un calo di 4 BPM. **L'idea rimasta dall'item 39 è chiusa:
+  misurata, non produce nulla.**
+
+**Dov'è davvero.** Due meccanismi, la stessa causa.
+
+1. La fiducia (`EvidenceTrust`) va da **1.000 a 0.300** — il pavimento assoluto —
+   nell'istante del calo, e ci resta **sedici secondi**: esattamente la finestra
+   del fit lungo a 24 battiti a 90 BPM. Il residuo sale per un motivo
+   **meccanico** (una retta fittata su beat il cui tempo si è piegato), non
+   perché i colpi siano suonati male.
+2. Con la fiducia al pavimento scattano due limiti scritti per un caso diverso
+   (il batterista che smette di suonare): il tappo `kPoorLeanBeats` inchioda
+   `phaseErrEma` a **0.0200** di battito mentre il bersaglio vero sta a 0.06, e
+   il tau del glide del tempo passa da 0.22 a **2.50 s**.
+
+Il commento in `TempoFollower.cpp` dice «al massimo della fiducia, che è tutto il
+resto incluso un accelerando, `poor` è zero». **La misura lo smentisce**: su un
+calo di due secondi la fiducia sta al pavimento per sedici.
+
+**Quanto spesso succede dal vivo** (cinque estratti della serata, oltre i 25 s):
+
+| brano | al pavimento | tau del tempo > 1 s |
+|---|---|---|
+| 1 | 27.8% | 42.9% |
+| 2 | 49.6% | 62.4% |
+| 3 | 40.5% | 49.8% |
+| 4 | 18.7% | 42.9% |
+| 5 | 33.1% | 59.3% |
+
+Il meccanismo scritto per «il batterista ha smesso» è attivo per **metà** di
+un'esecuzione in cui non ha mai smesso.
+
+**Due tentativi, misurati e non spediti.**
+
+*(a) La fiducia della fase dal fit corto* (8 battiti invece di 24, campi
+`phaseResidual`/`phaseCoverage` sull'ipotesi). Meccanicamente funziona: il tappo
+si apre dieci secondi prima (t=66 invece di t=76) e l'errore si chiude due
+secondi prima. Ma l'anello risuona — la cappa faceva da smorzatore per caso — e
+su materiale vero il ritardo **peggiora su tutti e quattro** i brani con
+correlazione attendibile: 7.75→9.75, 4.00→6.25, 1.50→5.75, 3.25→3.50 s. Media
++4.12→+5.80 s. Revertito.
+
+*(b) Il pavimento solo sotto i 2.5 BPM d'errore* (la banda che il commento stesso
+indica come «la patologia»). **No-op**: `rall4.wav` e `dip.wav` byte a byte
+identici, perché `err` istantaneo è sempre piccolo — il decoder consegna un
+gradino, non una rampa, e dopo il gradino `err` è di nuovo zero. Revertito.
+
+**Misura di delimitazione: spegnere del tutto la risposta «evidenza scarsa».**
+Non è un candidato da spedire, serve a sapere se il meccanismo si guadagna il
+posto. Interruttore `VP_NO_POOR` (solo per il banco).
+
+| | ritardo | errore | strattoni |
+|---|---|---|---|
+| base | +4.12 s | 0.94% | 2.23% |
+| senza | **+3.62 s** | 1.00% | **1.95%** |
+
+Meglio su tutti e quattro i brani misurabili (7.75→5.50, 4.00→3.50, 3.25→2.50,
+3.75→3.00).
+
+**E la misura di fase dice il contrario, che è la risposta.** `prec.py` sugli
+stessi cinque estratti — «struttura» è picco/media dell'energia degli attacchi
+piegata sulla fase dell'orologio: sopra 2 la griglia è sulla musica.
+
+| brano | struttura base → senza | spost. peggiore |
+|---|---|---|
+| 1 | 3.11 → **3.04** | 182.6 → **334.7** ms |
+| 2 | 3.37 → **3.26** | 236.6 → **260.2** ms |
+| 3 | 3.40 → **3.27** | 285.9 → 239.5 ms |
+| 4 | 2.96 → 3.04 | 102.5 → **161.1** ms |
+| 5 | 3.87 → **3.75** | 98.6 → 56.3 ms |
+
+Struttura peggiore su **quattro brani su cinque**. Gli strattoni migliorano ovunque, ma è
+esattamente ciò che il meccanismo scambia. **Il guadagno di `bench_live` era
+l'artefatto del ritardo-di-tempo, come previsto: il meccanismo si guadagna il
+posto e resta.** `VP_NO_POOR` è stato tolto: la delimitazione è conclusa.
+
+**Ma le due misure dicono cose opposte, e si sa perché.** `bench_live` misura il
+**ritardo del tempo**, che quel meccanismo aumenta *di proposito*. `VPAlign`
+misura la **fase**, ed è quella che si sente. Le sue righe (il confronto è già
+dentro `VPAlign`: la riga «prima» *è* la configurazione senza risposta):
+
+| | buco media | buco peggio | accel media | accel peggio |
+|---|---|---|---|---|
+| senza risposta | 21.4 | 39.9 | 18.4 | 41.2 |
+| con (spedita) | 24.2 | 38.4 | **15.5** | **34.5** |
+| buco con 44 ms di ritardo iniettato — senza | 28.1 | 72.2 | | |
+| — con | **25.2** | **64.2** | | |
+
+Quindi la risposta si guadagna il posto sull'**accelerando** (-16% medio e
+-16% al peggio) e sul buco patologico, e la paga sul buco ordinario e sul
+ritardo del tempo. **Non togliere il meccanismo sulla forza di `bench_live` da
+solo**: è precisamente la trappola scritta in `scripts/analysis/README.md`
+(«il BPM pubblicato non basta e inganna»).
+
+**Dove si arena, detto chiaro.** Da dentro l'anello, dopo che il calo è finito,
+un errore di 88 ms fermo e monosegno è **indistinguibile** da un *lean* di un
+passaggio senza batteria (documentato a 44 ms, e a 90 BPM 88 ms sono 0.13 di
+battito: stessa taglia, stessa forma, stesso segno). I due vanno chiusi in modo
+opposto. L'unico punto in cui differiscono è **durante** il calo, dove il
+bersaglio si muove — e lì durano due secondi, cioè sotto il pavimento fisico dei
+2-3 s già misurato nell'item 39.
+
+- [ ] Il discriminante, se esiste, non è nel follower: va cercato in cosa
+  distingue un *tempo che si piega* da *beat suonati male* prima che il residuo
+  del fit lungo li confonda. Candidato non provato: il segno e la persistenza
+  dello scarto fra fit corto e fit lungo, che su un calo si apre e su un lean no.
+- [ ] Rimisurare qualunque candidato su **entrambi** i banchi, e sulla fase
+  (`prec.py`) non solo sul tempo.
+- [ ] Nessun cambio di codice è sopravvissuto a questo item: l'albero è tornato a
+  HEAD. Quello che resta è la diagnosi, ed è precisa.
+
+
+
 ---
 
 ## Standby

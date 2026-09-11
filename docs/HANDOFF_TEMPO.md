@@ -1180,7 +1180,7 @@ tre sono il minimo teorico per accorgersi del cambio.
 - Il gate resta **solo su feed diretto** (`lineFeed`). Su microfono non e' mai
   stato provato e non deve esserlo senza una misura sua.
 
-# RECAP — stato al 10/09/2026
+# RECAP — stato all'11/09/2026
 
 Punto di ripartenza unico. Sostituisce la lettura di tutto quello che c'è sopra:
 sopra ci sono le misure storiche, qui c'è la mappa attuale. Il RECAP precedente
@@ -1312,10 +1312,30 @@ Alle sei del RECAP precedente (che restano valide, sotto) si aggiungono:
     non sono la stessa manopola.
 13. **Il tetto sugli snap al sito 1561** (item 35): i salti restano identici.
     Vengono tutti dal sito 1421. Strumentare prima di scegliere il sito.
+14. **Dare la fase insieme al tempo all'orologio** (item 39): no-op. 7.0 s in
+    entrambi i casi, la condizione scatta 1908 blocchi su 23400. `setGridPhase`
+    fissa un *bersaglio* e `phaseTau` regola quanto in fretta l'orologio **stima**
+    l'errore; `steerLim`/`steerCeil` regolano quanto in fretta può **agire**.
+15. **Prendere il tempo diretto invece di farlo scivolare** (item 40): non ha
+    niente da prendere. Su un cambio vero il decoder **non** fa una rampa — salta
+    da 90.00 a 86.34 in un colpo e l'orologio lo prende già con tau 0.22 s. Su un
+    calo di due secondi non muove il tempo affatto (89.98 → 89.81 attraverso 4
+    BPM). L'idea rimasta dall'item 39 è chiusa per misura.
+16. **La fiducia della fase dal fit corto** (item 40): meccanicamente corretta —
+    il tappo si apre dieci secondi prima — ma l'anello risuona e su materiale vero
+    il ritardo peggiora su **tutti e quattro** i brani misurabili (+4.12 → +5.80 s).
+17. **Togliere la risposta «evidenza scarsa»** (item 40): `bench_live` migliora
+    (+4.12 → +3.62 s) e la **fase peggiora** — struttura giù su 4 brani su 5.
+    È la trappola del BPM pubblicato, vista in diretta: quel banco misura il
+    ritardo del *tempo*, che quel meccanismo aumenta di proposito. Misurare
+    sempre anche con `prec.py`.
 
 ## Come si misura, adesso
 
 Per **materiale reale**: `VPTrack` con `--pulses`, poi `hist.py` e `prec.py`.
+**`bench_live.py` da solo non decide**: la sua colonna «ritardo» è il ritardo
+del tempo, e più di un meccanismo lo aumenta di proposito per guadagnare fase.
+Un candidato si giudica su `prec.py` (fase) **e** `VPAlign`, non su quello.
 Il BPM pubblicato da solo **non basta e inganna**: sul brano 1 sta fra 80.5 e 84
 con confidenza 1.00 mentre la griglia scende a 66.
 
