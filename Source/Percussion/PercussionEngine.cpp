@@ -576,17 +576,39 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     // struck gently loses the crack above its body; a tambourine has no body -
     // zero per cent of it is under a kilohertz - so a 1600 Hz pole is not
     // taking the top off the stroke, it is taking the stroke off.
-    const float cutoff = (untunedMetal ? 3000.0f : 1600.0f)
-                       + (untunedMetal ? 9000.0f : 5200.0f) * force;
+    // The library has one medium take and, for several articulations, one
+    // source take from which all three round-robin slots are built. Repeating
+    // that buffer exactly is the audible "machine gun" left in an otherwise
+    // human part. A real hand changes mainly the strike position: that changes
+    // the balance between skin/noise and body while the drum's tuning and the
+    // instant of contact stay put. Give each pre-built slot a small,
+    // deterministic spectral/decay fingerprint. This happens here, while the
+    // bank is prepared, so playback still does no filtering, allocation or
+    // random work on the audio thread.
+    DeterministicRng variation (seed ^ 0xC0110A5u);
+    const float colour = variation.nextSigned();
+    const float sustain = variation.nextSigned();
+    const float cutoffJitter = 1.0f + colour * (shaker ? 0.085f : 0.045f);
+    const float cutoff = ((untunedMetal ? 3000.0f : 1600.0f)
+                          + (untunedMetal ? 9000.0f : 5200.0f) * force)
+                         * cutoffJitter;
     const float a = 1.0f - std::exp (-2.0f * kPi * cutoff / sr);
     const float softening = 0.55f + 0.45f * force;
 
-    juce::ignoreUnused (seed);
+    // A second, fixed pole splits body from edge. Boosting or trimming that
+    // edge by only a few per cent is enough to make two hits different without
+    // turning one drum into another. Shaker beads naturally vary more than a
+    // membrane, hence the wider but still bounded range.
+    const float colourCutoff = (shaker ? 5600.0f : 2600.0f)
+                               * (1.0f + 0.06f * sustain);
+    const float colourA = 1.0f - std::exp (-2.0f * kPi * colourCutoff / sr);
+    const float edgeAmount = colour * 0.075f;
+    const float sustainAmount = sustain * (shaker ? 0.055f : 0.045f);
 
     const float wL = (1.0f - spec.pan) * 0.5f;
     const float wR = (1.0f + spec.pan) * 0.5f;
 
-    float lp = 0.0f;
+    float lp = 0.0f, colourLp = 0.0f;
     for (int i = 0; i < n; ++i)
     {
         // Do not vary a take by skipping samples at its start. The prepared
@@ -604,7 +626,14 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
         lp += a * (x - lp);
         const float t = static_cast<float> (i) / sr;
         const float damp = extraDecay > 0.0f ? std::exp (-t * extraDecay) : 1.0f;
-        const float v = ((1.0f - softening) * lp + softening * x) * damp;
+        const float base = ((1.0f - softening) * lp + softening * x) * damp;
+        colourLp += colourA * (base - colourLp);
+        const float edge = base - colourLp;
+        // Leave the first millisecond effectively unchanged: that is the
+        // measured contact used by attack compensation. The small sustain
+        // variation opens after it, so realism cannot become timing scatter.
+        const float opened = 1.0f - std::exp (-t * (shaker ? 22.0f : 34.0f));
+        const float v = (base + edgeAmount * edge) * (1.0f + sustainAmount * opened);
         dest.left[static_cast<size_t> (i)] = v * wL;
         dest.right[static_cast<size_t> (i)] = v * wR;
     }

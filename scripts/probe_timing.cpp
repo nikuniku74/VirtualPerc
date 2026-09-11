@@ -82,7 +82,8 @@ void measureAttacks (double sr)
         perc.setSeed (1234u);
         perc.setHumanization (0.0f);
         perc.setReverbAmount (0.0f);
-        perc.setVolume (1.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
         perc.setGroove (120.0f, 4);
 
         // Drive one stroke through the public path by hand: a tick with no

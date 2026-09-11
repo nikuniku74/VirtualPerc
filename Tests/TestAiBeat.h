@@ -2,6 +2,10 @@
 
 void vpRunAiBeatTests (int& passed, int& failed);
 
+/** Recorded-bank variation at the velocities the groove normally uses.
+    Part of `vpRunAiBeatTests`; also `VPTests --percussion`. */
+void vpRunPercussionSoundTests (int& passed, int& failed);
+
 /** Two-quarter cut / seek re-entry for the bar (docs/TODO.md item 2).
     Part of `vpRunAiBeatTests`; also `VPTests --bar`. */
 void vpRunBarReentryTests (int& passed, int& failed);

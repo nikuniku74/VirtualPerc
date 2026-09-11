@@ -1540,6 +1540,54 @@ void vpRunBarReentryTests (int& passed, int& failed)
     }
 }
 
+void vpRunPercussionSoundTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+
+    // The library has only one medium take for these two articulations.
+    // Replaying it bit-for-bit defeats round-robin exactly at the everyday
+    // velocities used by the groove, even though the hard layer's A/B test
+    // passes. The prepared slots must therefore carry a small timbral
+    // fingerprint of their own, with timing still handled by the common
+    // per-articulation attack value.
+    auto mediumRoundRobinDifference = [] (vp::Stroke stroke)
+    {
+        vp::PercussionEngine perc;
+        perc.prepare (48000.0);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+
+        auto take = [&perc, stroke]
+        {
+            constexpr int n = 24000;
+            std::vector<float> l (n), r (n);
+            vp::ClockTick idle;
+            perc.clearVoices();
+            perc.triggerForTest (stroke, 0.50f, 0);
+            perc.render (l.data(), r.data(), n, idle, true);
+            return l;
+        };
+
+        const auto a = take();
+        const auto b = take();
+        double energy = 0.0, difference = 0.0;
+        for (size_t i = 0; i < a.size(); ++i)
+        {
+            energy += static_cast<double> (a[i]) * a[i];
+            const double d = static_cast<double> (a[i]) - b[i];
+            difference += d * d;
+        }
+        return difference / std::max (1.0e-12, energy);
+    };
+
+    const double shakerRr = mediumRoundRobinDifference (vp::Stroke::shakerDown);
+    const double congaRr = mediumRoundRobinDifference (vp::Stroke::open);
+    std::printf ("perc-medium-rr  shaker=%.6f conga=%.6f\n", shakerRr, congaRr);
+    expect (shakerRr > 1.0e-4 && congaRr > 1.0e-4,
+            "medium shaker and conga round-robin slots are not identical buffers");
+}
+
 void vpRunAiBeatTests (int& passed, int& failed)
 {
     gPass = &passed;
@@ -4716,6 +4764,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         expect (energy > 1.0e-6 && rel > 0.05,
                 "two strokes of the same kind are different takes, not the same buffer twice");
     }
+
+    vpRunPercussionSoundTests (passed, failed);
 
     {
         // Two independent volumes, not one balance: either can go to zero

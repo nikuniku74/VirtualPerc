@@ -325,6 +325,16 @@ were playing.
   timing is. Recordings come from `Assets/Percussion/` (VCSL, CC0); missing
   assets fall back to synthesis, and `recordedStrokeCount()` exists so tests can
   assert that fallback did *not* happen silently.
+- **A source take is not automatically three takes.** The bundled library has
+  one medium recording for shaker and conga, and the derived heel/toe/muff and
+  stopped strokes also begin from one source. `layerFromRecording` gives each
+  pre-built round-robin slot a small deterministic colour and sustain
+  fingerprint, modelling the hand landing at a slightly different place. It
+  does not skip the transient or change playback rate: tuning and contact time
+  stay fixed. The work happens in `prepare()`, never in `render()`. The focused
+  regression is `VPTests --percussion`; on the current bank the relative
+  difference between consecutive medium hits is 0.000470 for shaker and
+  0.000171 for open conga (both were exactly zero before).
 - **Attack compensation.** A shaker is not a click: measured on the bundled
   library its energy needs 10-13 ms to get where a slap gets in 2. So attacks
   are measured per sample (`measureBankAttacks`), the tracker runs the clock

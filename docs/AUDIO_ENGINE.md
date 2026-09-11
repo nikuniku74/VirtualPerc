@@ -500,6 +500,15 @@ A conga and a quinto, not two toms. The nominal frequencies in `specFor` are a d
 
 `scripts/prepare_vcsl_samples.py` trims pre-roll, high-passes hall rumble, truncates before any second hit, normalises and fades. Loud and medium takes are separate recordings; the soft layer is still derived by taking the top off. heel/toe/muff are the open tone damped. Round-robin is a second take on every articulation, not only the low drum.
 
+The files alone do not fill every round-robin cell: at medium velocity there is
+one take, and derived articulations necessarily share a source. Those cells are
+now made distinct while the bank is prepared, with a bounded change in
+skin/bead colour and tail weight. The transform never skips the beginning and
+never changes playback speed, so it cannot turn realism into late attacks or
+detune the congas. `VPTests --percussion` measures the two everyday medium
+cases: consecutive shaker hits differ by 0.000470 of their energy and open
+congas by 0.000171, against exactly zero before.
+
 - **Every stroke was one sample.** A conga slapped hard is brighter and shorter than one slapped softly, not the same recording with more gain on it. Each articulation is now synthesised at three dynamic layers — force makes the strike noisier, the attack faster and the head bend further into pitch — and each layer three times over with its own noise seed, so two consecutive strokes are different takes rather than the same take twice. The layer sets the timbre and the remainder of the velocity sets the level, so a crescendo moves smoothly instead of stepping.
 - **Every sample ended on a step.** Each is an exponential decay cut off at a fixed length, and none had decayed far by then — the shaker stopped at 21 % of its peak, the open conga at 11 %, the slap at 8 %. That is a click on *every* hit, not a rare glitch. A 12 ms raised-cosine fade is welded onto each sample at synthesis.
 - **A voice taken over by the next hit of the same kind was switched off mid-sample.** It is faded over 4 ms instead.

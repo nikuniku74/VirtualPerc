@@ -1604,6 +1604,26 @@ picchi (gli accenti) sono invariati riga per riga. `--swing` 3/0, `--bar` 10/0.
   stessi tre layer da tre file). Non è stato segnalato e non è stato toccato:
   va misurato allo stesso modo prima di decidere.
 
+**Shaker e congas, ripetizione residua (2026-09-11).** Il round-robin dichiarava
+tre celle, ma alle velocity medie usate normalmente dal groove tutte e tre
+leggevano la stessa unica presa. Lo stesso valeva inevitabilmente per
+heel/toe/muff e per i colpi stoppati derivati da open/slap. Il test sul layer
+forte non lo vedeva perché lì esiste una presa B.
+
+- [x] `layerFromRecording` costruisce ora tre impronte molto piccole di colore
+  e sustain, deterministiche per cella. Simulano la mano che cade in un punto
+  leggermente diverso della pelle e i grani dello shaker che si dispongono
+  diversamente; non spostano l'inizio e non cambiano playback-rate/accordatura.
+  È tutto fatto in `prepare()`, quindi sul thread audio non è comparso lavoro.
+- [x] Regressione mirata `VPTests --percussion`: differenza relativa fra due
+  colpi medi consecutivi **0 → 0.000470 shaker**, **0 → 0.000171 open conga**;
+  1/1 PASS. `VPTiming --attacks`: contatto udibile resta nel banco compensato
+  (shaker down 13.04 ms al 50%; tumba 15.42; open 14.60; slap 15.38).
+- [x] A/B con stesso seed, pattern e mix: marcha 112 e dance 124, otto battute.
+- [ ] **Ascolto umano dell'A/B.** La misura prova che non sono più buffer
+  identici e che non si è mosso il colpo; la scelta di quanto sia più bella la
+  può chiudere soltanto chi la sente nel mix.
+
 ---
 
 ### 29. Su un intro senza batteria l'app si impegna su un tempo sbagliato e ci resta un minuto 🔴 (2026-09-09, misurato su brano reale — causa trovata, non corretta)

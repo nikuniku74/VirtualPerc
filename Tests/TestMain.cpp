@@ -1035,6 +1035,13 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--percussion")
+    {
+        vpRunPercussionSoundTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
     // The octave-level sweep alone: the broad synthetic boundary scan plus
     // focused 50/100 BPM kit runs through mixer and internal-file paths. For
     // iterating on the analysis level without paying for the full suite.
