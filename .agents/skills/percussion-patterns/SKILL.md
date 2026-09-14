@@ -289,6 +289,15 @@ were playing.
   timing is. Recordings come from `Assets/Percussion/` (VCSL, CC0); missing
   assets fall back to synthesis, and `recordedStrokeCount()` exists so tests can
   assert that fallback did *not* happen silently.
+- **The congas are played stopped (2026-09-14).** `PercussionEngine::trigger`
+  passes every conga stroke through `stoppedConga`, which maps `tumba`->`tapado`,
+  `open`->`muff`, `slap`->`slapClosed`; heel/toe/muff already stop and pass
+  through, shaker/cembalo/clap are not congas. The tables still name the ringing
+  strokes - that is the *intent* of the figure, and the mapping is what keeps a
+  stopped part sitting inside the band instead of over it. Change the mapping in
+  one place, never the tables. The bank is also read a perfect fourth above the
+  samples' natural pitch (`kDrumTune = 2^(5/12)`), so tumba/open/slap are
+  185/220/288 Hz before the stopped mapping.
 - **Attack compensation.** A shaker is not a click: measured on the bundled
   library its energy needs 10-13 ms to get where a slap gets in 2. So attacks
   are measured per sample (`measureBankAttacks`), the tracker runs the clock

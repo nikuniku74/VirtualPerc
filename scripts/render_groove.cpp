@@ -80,6 +80,7 @@ int main (int argc, char** argv)
     int bars = 8;
     float humanize = 0.35f, swing = 0.0f, intensity = 0.5f;
     float reverb = 0.30f;
+    float tune = 0.0f;
     // One gain each - no balance knob any more, see EngineSettings::
     // shakerVolume / congaVolume / cembaloVolume / clapVolume (item 9). 0.90
     // is the same headroom the old single `setVolume` asked for.
@@ -110,6 +111,7 @@ int main (int argc, char** argv)
         else if (a == "--cembalo-vol") cembaloVol = std::stof (next());
         else if (a == "--clap-vol")    clapVol = std::stof (next());
         else if (a == "--reverb")    reverb = std::stof (next());
+        else if (a == "--tune")      tune = std::stof (next());
         else if (a == "--click")     click = true;
         else if (a == "--dynamics")  dynamics = std::stof (next());
         else if (a == "--arc")       arc = true;
@@ -153,6 +155,8 @@ int main (int argc, char** argv)
     }
 
     vp::PercussionEngine perc;
+    if (tune > 0.25f)
+        perc.setDrumTune (tune);
     perc.prepare (kSr);
     perc.setSeed (0x5EED17u);
     perc.setGrooveStyle (style);
@@ -271,6 +275,6 @@ int main (int argc, char** argv)
                  file.getFileName().toRawUTF8(), vp::toString (style), bpm, bars,
                  static_cast<double> (total) / kSr, hits,
                  perc.recordedStrokeCount(), static_cast<int> (vp::Stroke::count),
-                 static_cast<double> (vp::PercussionEngine::drumTuneRatio()));
+                 static_cast<double> (tune > 0.25f ? tune : vp::PercussionEngine::drumTuneRatio()));
     return 0;
 }

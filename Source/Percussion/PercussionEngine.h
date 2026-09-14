@@ -27,6 +27,12 @@ public:
     void setClapVolume (float v) noexcept { clapVolume = clamp01 (v); }
     void setCembaloVolume (float v) noexcept { cembaloVolume = clamp01 (v); }
     void setReverbAmount (float amount) noexcept;
+    /** Playback-rate ratio for the *recorded* drums (the congas and everything
+        else that is not unpitched metal). `kDrumTune` by default. Exposed so a
+        render or a build can try a brighter kit without recompiling - the
+        recorded VCSL congas sit at 139/165/216 Hz, and the default raises them
+        a perfect fourth to 185/220/288 Hz. Must be set before `prepare()`. */
+    void setDrumTune (float ratio) noexcept;
     void setEnabled (bool on) noexcept { enabled = on; }
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
@@ -189,6 +195,9 @@ private:
     float clapVolume = 1.0f;
     float cembaloVolume = 1.0f;
     float reverbAmount = 0.30f;
+    /** Playback-rate ratio for the recorded drums. Defaults to `kDrumTune`
+        (a perfect fourth above the samples' natural pitch) in the .cpp. */
+    float drumTune = 1.33484f;
     float requestedSwing = 0.0f;
     float appliedSwing = 0.0f;
     GrooveStyle requestedStyle = GrooveStyle::marcha;

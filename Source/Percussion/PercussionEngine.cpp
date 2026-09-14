@@ -16,31 +16,27 @@ namespace
 {
     constexpr float kPi = 3.14159265358979323846f;
     // How far above the recorded pitch the drums are read, as a frequency
-    // ratio. The VCSL takes are the large drums of the library and they are
-    // recorded slack: at concert pitch the whole kit reads as a floor tom under
-    // a band, and the tumbao's low tone in particular disappears into the bass
-    // guitar instead of answering it.
+    // ratio. The VCSL takes are the conga set of the library, recorded at their
+    // natural pitch; their strongest partial - what a listener hears as the
+    // note - measures:
     //
-    // A perfect fourth (2^(5/12)) was the first correction and it was not
-    // enough - the part was still the bottom of the mix rather than sitting on
-    // top of it. A minor seventh is five semitones above that. Measured on the
-    // bundled takes, whose strongest partial is what a listener hears as the
-    // pitch of the drum:
+    //     tumba  139 Hz
+    //     open   165 Hz
+    //     slap   216 Hz
     //
-    //     tumba  138 Hz recorded ->  246 Hz   (184 at the old fourth)
-    //     open   163 Hz recorded ->  290 Hz   (218)
-    //     slap   216 Hz recorded ->  385 Hz   (288)
-    //
-    // which is a conga and a quinto rather than two toms, and is where a
-    // percussionist tunes a set that has to cut through a live band. The
-    // nominal figures in `specFor` below are a different thing and are not
-    // those numbers: they describe the synthesis fallback, which only sounds
-    // when Assets/Percussion is missing.
+    // which is already a tumba, a conga and a quinto. The previous default
+    // raised them a major seventh (2^(10/12) = 1.782, "to cut through a live
+    // band"), which pitched the tumba to 247 Hz - not a tumba, a tom - and is
+    // why the part read as thin and fake; the percussionist asked for the kit
+    // to sound real again (2026-09-14). At their natural pitch the same
+    // percussionist found them too low, so they sit a perfect fourth up
+    // (2^(5/12) = 1.335): tumba 185 Hz, open 220 Hz, slap 288 Hz. The ratio
+    // stays exposed through `setDrumTune` for a different room or band.
     //
     // It is one number on purpose: it drives the synthesised bank and the
     // playback rate of the recordings together, so the two halves of the bank
     // cannot end up tuned against each other.
-    constexpr float kDrumTune = 1.781797f; // 2^(10/12)
+    constexpr float kDrumTune = 1.33484f; // 2^(5/12)
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
@@ -115,8 +111,9 @@ namespace
 
     DrumSpec specFor (Stroke s) noexcept
     {
-        // Concert-pitch figures for the recorded drums, raised by kDrumTune.
-        // Shakers are unpitched and stay where they were.
+        // Concert-pitch figures for the synthesis fallback, scaled by kDrumTune
+        // so it stays tuned with the recorded bank. Shakers are unpitched and
+        // stay where they were.
         constexpr float kTune = kDrumTune;
         switch (s)
         {
@@ -136,6 +133,23 @@ namespace
             default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
+
+    /** The performer wants the whole conga set played *stopped* (2026-09-14):
+        the hand stays on the head, so the ringing open tones are replaced by
+        their muted equivalents. A part of stopped strokes sits inside a band
+        instead of over it - see the stopped pair in `specFor`. heel, toe and
+        muff are already muffled and pass through; the shaker, cembalo and clap
+        are not congas and pass through too. */
+    Stroke stoppedConga (Stroke s) noexcept
+    {
+        switch (s)
+        {
+            case Stroke::tumba: return Stroke::tapado;
+            case Stroke::open:  return Stroke::muff;
+            case Stroke::slap:  return Stroke::slapClosed;
+            default:            return s;
+        }
+    }
 }
 
 float PercussionEngine::drumTuneRatio() noexcept
@@ -150,6 +164,13 @@ void PercussionEngine::setReverbAmount (float amount) noexcept
         return;
     reverbAmount = amount;
     applyReverbParams();
+}
+
+void PercussionEngine::setDrumTune (float ratio) noexcept
+{
+    if (! std::isfinite (ratio) || ratio < 0.25f || ratio > 4.0f)
+        return;
+    drumTune = ratio;
 }
 
 void PercussionEngine::applyReverbParams() noexcept
@@ -565,10 +586,20 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     const float sr = static_cast<float> (sampleRate);
     // Same interval as the synthetic bank. Reading the take faster raises the
     // membrane and shortens the ring, which is what a smaller drum does.
-    const float pitch = untunedMetal ? 1.0f : kDrumTune;
+    const float pitch = untunedMetal ? 1.0f : drumTune;
     const int n = std::max (16, static_cast<int> (static_cast<float> (nSrc) / pitch));
-    dest.left.assign (static_cast<size_t> (n), 0.0f);
-    dest.right.assign (static_cast<size_t> (n), 0.0f);
+    // A conga in a groove does not ring half a second: the open tone reaches
+    // -30 dB at 304 ms and the tumba at 472 ms, and at natural pitch that tail
+    // overlaps the next eighth (0.25 s at 120 BPM), which both muddies the part
+    // and smears the leak canceller's delay search - measured, the canceller's
+    // conga return removal fell from 25.2% to 2.9% when the bank stopped being
+    // pitched up, because the long ring left it no clean onset to lock onto.
+    // Capping the ring here - rather than re-pitching the drums - keeps the
+    // natural tuning and a full open tone while the part stays defined.
+    const int maxRing = static_cast<int> (sampleRate * 0.30f);
+    const int nKeep = extraDecay > 0.0f ? n : std::min (n, maxRing);
+    dest.left.assign (static_cast<size_t> (nKeep), 0.0f);
+    dest.right.assign (static_cast<size_t> (nKeep), 0.0f);
 
     // Softer strokes lose the top. One pole is enough - the ear reads the
     // change of brightness, not the slope of the filter.
@@ -609,7 +640,7 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     const float wR = (1.0f + spec.pan) * 0.5f;
 
     float lp = 0.0f, colourLp = 0.0f;
-    for (int i = 0; i < n; ++i)
+    for (int i = 0; i < nKeep; ++i)
     {
         // Do not vary a take by skipping samples at its start. The prepared
         // recordings put the hand transient only a few samples wide at the
@@ -642,7 +673,7 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     // silence would just hold a voice open.
     if (extraDecay > 0.0f)
     {
-        const int keep = std::min (n, static_cast<int> (sr * (4.0f / extraDecay)));
+        const int keep = std::min (nKeep, static_cast<int> (sr * (4.0f / extraDecay)));
         dest.left.resize (static_cast<size_t> (keep));
         dest.right.resize (static_cast<size_t> (keep));
     }
@@ -1022,6 +1053,7 @@ const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float vel
 
 void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset) noexcept
 {
+    stroke = stoppedConga (stroke);
     releaseStroke (stroke);
 
     float gain = 1.0f;
