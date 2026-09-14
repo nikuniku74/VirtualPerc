@@ -3881,39 +3881,26 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     "NATURALE is off until the listener asks for it");
 
             {
-                // Same state machine as `barButton.onClick` in MainComponent.cpp,
-                // run against real `EngineSettings` rather than a bare bool, so a
-                // future edit to the handler that breaks the sequence fails here
-                // instead of only in the app.
-                auto tap = [] (vp::EngineSettings& s)
+                // Same behaviour as `barButton.onClick` in MainComponent.cpp: one
+                // function only - declare the one *here* - with no nudge and no
+                // toggle. Run against real `EngineSettings` so a future edit to
+                // the handler that breaks the sequence fails here instead of only
+                // in the app. The lock itself is set by the tracker when it
+                // consumes the declare, not by the button.
+                auto press = [] (vp::EngineSettings& s)
                 {
-                    if (! s.barLocked.load())
-                    {
-                        s.barNudge.fetch_add (1);
-                        s.barLocked.store (true);
-                    }
-                    else
-                    {
-                        s.barLocked.store (false);
-                    }
+                    s.barDeclare.fetch_add (1);
                 };
                 vp::EngineSettings s;
+                const int startDeclare = s.barDeclare.load();
                 const int startNudge = s.barNudge.load();
-                tap (s); // unlocked -> nudge and lock
-                const bool lockedAfterFirst = s.barLocked.load();
-                const int nudgeAfterFirst = s.barNudge.load();
-                tap (s); // locked -> unlock, no nudge
-                const bool lockedAfterSecond = s.barLocked.load();
-                const int nudgeAfterSecond = s.barNudge.load();
-                tap (s); // unlocked again -> nudge and lock, a second time
-                const int nudgeAfterThird = s.barNudge.load();
-                expect (lockedAfterFirst
-                            && nudgeAfterFirst == startNudge + 1
-                            && ! lockedAfterSecond
-                            && nudgeAfterSecond == nudgeAfterFirst
-                            && s.barLocked.load()
-                            && nudgeAfterThird == nudgeAfterFirst + 1,
-                        "SPOSTA L'1 nudges and locks; a tap on L'1 e QUI unlocks without nudging");
+                press (s);
+                press (s);
+                press (s);
+                expect (s.barDeclare.load() == startDeclare + 3
+                            && s.barNudge.load() == startNudge
+                            && ! s.barLocked.load(),
+                        "L'1 e' QUI declares the one each press, never nudges and never toggles");
             }
 
             auto countShaker = [] (vp::Subdivision subdivision, bool natural,

@@ -105,7 +105,7 @@ namespace
     // step from 120 to 132 BPM takes 7.28 s to catch instead of 5.46; at 0.22
     // that step and the 120-to-140 accelerando are unchanged to the digit.
     constexpr float kRateAcquiring = 0.70f;
-    constexpr float kRateLive      = 0.22f;
+    constexpr float kRateLive      = 0.30f;
 
     // A fixed tempo may only be refined, never dragged.
     constexpr float kFixedMaxStep = 0.015f;
@@ -2168,15 +2168,22 @@ void BeatDecoder::updateTempo() noexcept
     // subharmonic - it is the level. This only lifts the veto; the snap below
     // still wants its own `snapBeats` of votes and the fold's salience.
     constexpr int kProvenSlowerOctaveBeats = 10;
-    const bool combReadsHalf = combRawBpm > kMinBpm && combRawBpm < bpm * 0.70f;
-    if (combReadsHalf && tempo.salience() > kOctaveSnapSalience)
+    const bool transitionOwnsRate = transitionState == TempoTransitionState::rapid
+                                    || transitionRefitBeats > 0;
+    const bool combSlower = combRawBpm > kMinBpm && combRawBpm < bpm * 0.70f;
+    // The persistence proof is only for a *clean* half - the octave. A comb
+    // reading a third or a fourth (a subharmonic) never earns it: that is a
+    // stale comb, not a level, and the 120 -> 160 step depends on it staying
+    // vetoed while the fit rebuilds.
+    const bool combCleanHalf = combSlower && halfError < 0.25f;
+    if (combCleanHalf && ! transitionOwnsRate && tempo.salience() > kOctaveSnapSalience)
         combHalfBeats = std::min (combHalfBeats + 1, kProvenSlowerOctaveBeats);
     else
         combHalfBeats = std::max (0, combHalfBeats - 1);
     const bool halfProven = combHalfBeats >= kProvenSlowerOctaveBeats;
     const bool unprovenSlowerOctave = intervalAcquired && gridHealthy && gridIsDense
                                       && ! gridLooksLikeSubdivision
-                                      && combReadsHalf
+                                      && combSlower
                                       && ! halfProven;
     // Against the fold's *raw* answer, not the one already folded onto the
     // anchor - and this is the whole of why a doubled grid at slow tempo was
@@ -2208,8 +2215,6 @@ void BeatDecoder::updateTempo() noexcept
     // enter the snap vote undid a newly proven 120 -> 160 change after six
     // beats, sent the decoder to 53 BPM and never recovered. This is not an
     // octave veto: once fresh fits exist the ordinary level arbitration resumes.
-    const bool transitionOwnsRate = transitionState == TempoTransitionState::rapid
-                                    || transitionRefitBeats > 0;
     const bool combDisagrees = combReady && combMayCorrect && ! unprovenSlowerOctave
                                && ! transitionOwnsRate
                                && bpm > kMinBpm

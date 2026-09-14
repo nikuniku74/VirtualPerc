@@ -1489,6 +1489,15 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             tracker.nudgeBar (nudge - seenBarNudge);
             seenBarNudge = nudge;
         }
+        // The button "L'1 è QUI" declares the one *here*, not a quarter ahead:
+        // the beat the clock is on becomes beat zero, and the bar locks. Each
+        // press is one re-anchor, whatever the auto currently believes.
+        const int declare = cfg.barDeclare.load (std::memory_order_relaxed);
+        if (declare != seenBarDeclare)
+        {
+            tracker.declareBarHere();
+            seenBarDeclare = declare;
+        }
         // Read before the write-back below, and honoured in both directions.
         // The setting is a request from the screen *and* a read-out of what the
         // tracker decided - a tap locks the bar without this button being

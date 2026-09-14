@@ -378,6 +378,7 @@ private:
     std::atomic<float> lastTempoTransitionConfidence { 0.0f };
     std::atomic<int>   lastTempoTransitionIntervals { 0 };
     int seenBarNudge = 0;
+    int seenBarDeclare = 0;
 
     std::atomic<int>   lastStyle { 0 };
     std::atomic<float> lastStyleConf { 0.0f };

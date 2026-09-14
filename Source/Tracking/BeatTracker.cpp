@@ -669,6 +669,12 @@ void BeatTracker::nudgeBar (int beats) noexcept
     holdBarDecision();
 }
 
+void BeatTracker::declareBarHere() noexcept
+{
+    follower.rotateBarIndex (-follower.beatInBarIndex());
+    holdBarDecision();
+}
+
 void BeatTracker::notifyBarReentry() noexcept
 {
     // The listener has placed the one. A cut does not overrule that.

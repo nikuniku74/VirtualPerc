@@ -119,6 +119,13 @@ public:
         phrase. */
     void nudgeBar (int beats) noexcept;
 
+    /** The listener has just said "the one is here": the beat the clock is on
+        is beat zero, wherever the automatic alignment had put it. Rotates the
+        count by whatever brings the current beat to zero, keeps the phase, and
+        holds the decision so the auto cannot move it back. This is the button's
+        one function - it is not a nudge and not a toggle. */
+    void declareBarHere() noexcept;
+
     /** Whether the count is the listener's to move and nobody else's.
 
         Locked, `alignBarFromVotes` does nothing at all: the histogram keeps

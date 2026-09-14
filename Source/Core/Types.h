@@ -415,6 +415,10 @@ struct EngineSettings
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to
     // be one tap however wrong the analysis currently is.
     std::atomic<int>   barNudge        { 0 };
+    // The button "L'1 è QUI" declares the one *here*: the beat the clock is on
+    // is beat zero, wherever the auto had put it. A one-shot counter rather than
+    // a nudge: each press re-anchors the count to the current beat, then locks.
+    std::atomic<int>   barDeclare      { 0 };
     // And having said it, it stays said. The automatic alignment is a vote over
     // what the network calls a downbeat, and where the network is no better
     // than a coin - a microphone in a room, measured - that vote would move a

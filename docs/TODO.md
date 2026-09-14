@@ -361,18 +361,30 @@ sopra la scrive già. Restano due cose:
 
 ---
 
-### 13. Tasto «L'1 è QUI» / «SPOSTA L'1» ✅ (2026-09-04)
+### 13. Tasto «L'1 è QUI» / «SPOSTA L'1» ✅ (2026-09-04, poi semplificato 2026-09-14)
 
-**Comportamento attuale (non un bug di stato):** è **lo stesso pulsante**.  
-«SPOSTA L'1» = sbloccato, un click **sposta l'1 di un quarto e blocca**. Accesso «L'1 è QUI» = *il conto è tuo, l'auto non lo tocca*. Anche un TAP che dichiara l'1 accende il lucchetto.
+**Comportamento attuale (2026-09-14):** è un **solo pulsante**, una sola
+funzione, una sola etichetta: **«L'1 è QUI»**. Un tocco dichiara che il quarto
+su cui sta il clock è l'**uno** — ruota il conteggio di quanto serve per portare
+il battito corrente a zero e **blocca** (`BeatTracker::declareBarHere`). Non
+sposta più di un quarto in avanti, non è più un toggle: niente «SPOSTA L'1»,
+nessuno sblocco dal pulsante. Il fill fuchsia segnala solo che il conteggio è
+del musicista (un TAP che dichiara l'uno lo accende lo stesso).
 
-Su mixer/file il lucchetto **impedisce** il riallineamento automatico (item 2). In palco, di default conviene **sbloccato**.
+**Storia.** Prima (2026-09-04): «SPOSTA L'1» = sbloccato, un click spostava l'1
+di un quarto e bloccava; «L'1 è QUI» = acceso, un tap sbloccava senza nudge.
+Su mixer/file il lucchetto **impedisce** il riallineamento automatico (item 2).
+Il musicista l'ha trovato confuso (un toggle che sposta, non "questo è l'uno"),
+da cui la semplificazione.
 
-- [x] Decisione UX (2026-09-04): **B** — tap sul tasto acceso sblocca senza nudge.  
-  Un secondo tap (ora sbloccato) sposta di un altro quarto e riblocca. Niente press lungo, niente 5-click. Il 5-click leggeva come tasto rimasto acceso.
-- [x] Implementare la decisione. `barControlNudgeOnTap` in `Types.h`; handler in `barButton.onClick`.
-- [x] Test del lucchetto: `bar-lock` (motore) invariato; il gesto è coperto da `"SPOSTA L'1 nudges and locks; a tap on L'1 e QUI unlocks without nudging"`.
-- [x] Copy: sbloccato **SPOSTA L'1**, acceso **L'1 è QUI** (fill fuchsia). Un tap lo spegne — non serve più girare la battuta per uscirne.
+- [x] `BeatTracker::declareBarHere()`: `rotateBarIndex(-beatInBarIndex())` +
+  `holdBarDecision()`. Il `barNudge` resta nel motore ma non è più raggiungibile
+  dalla UI.
+- [x] `EngineSettings::barDeclare` (contatore one-shot) consumato in
+  `processBlock`, come `notifyInputRestart`.
+- [x] Handler `barButton.onClick` = solo `barDeclare.fetch_add(1)`.
+- [x] Test riscritto: `"L'1 e' QUI declares the one each press, never nudges and never toggles"`.
+  `VPTests --bar` 10/0.
 
 **Review (Claude, 2026-09-04)** — verificato che lo sblocco arriva davvero al
 tracker: `VirtualPercussionEngine.cpp` riconcilia `cfg.barLocked` leggendo prima

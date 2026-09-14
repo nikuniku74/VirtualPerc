@@ -590,21 +590,12 @@ MainComponent::MainComponent()
     // so this moves it on by one and locks it. Tapping again while it is lit
     // hands the count back without rotating: the old five-tap unlock read as a
     // button stuck on. A TAP that declares the one still locks via the tracker.
-    // See docs/TODO.md item 13.
+    // See docs/TODO.md item 13. The button has one function, not two: it
+    // declares the one *here* - the beat the clock is on becomes beat zero -
+    // and locks the bar. It is not a nudge and not a toggle.
     barButton.onClick = [this]
     {
-        auto& s = engine.settings();
-        const bool locked = s.barLocked.load();
-        if (! locked)
-        {
-            s.barNudge.fetch_add (1);
-            s.barLocked.store (true);
-        }
-        else
-        {
-            s.barLocked.store (false);
-        }
-        refreshBarButton();
+        engine.settings().barDeclare.fetch_add (1);
     };
     setupBtn (sub4, ink());
     setupBtn (sub8, ink());
@@ -2147,14 +2138,13 @@ void MainComponent::applyStyleAuto (bool on)
 
 void MainComponent::refreshBarButton()
 {
-    // Lit means the count is the listener's. A tap on the tempo declares the one
-    // as well, so this reads the engine back rather than trusting what the
-    // button last asked for - press TAP and the button lights on its own.
-    // Copy: locked is a held state you tap to release, not a button that
-    // stuck on. See docs/TODO.md item 13.
+    // The button has one function and one label: it declares the one *here*.
+    // It lights while the count is the listener's (a tap declares the one too,
+    // so this reads the engine back rather than trusting the last press), but
+    // the label does not change and a press never unlocks or nudges.
+    // See docs/TODO.md item 13.
     const bool locked = engine.settings().barLocked.load();
-    barButton.setButtonText (locked ? juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI"))
-                                    : juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")));
+    barButton.setButtonText (juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI")));
     barButton.setToggleState (locked, juce::dontSendNotification);
     barButton.setColour (juce::TextButton::buttonColourId, locked ? fuchsia() : ink());
     barButton.setColour (juce::TextButton::textColourOffId,
