@@ -354,6 +354,11 @@ private:
     int   fastDriftLargeBeats = 0;
     int   fastDriftSign = 0;
     int   octaveMismatchBeats = 0;
+    /** How many consecutive beats the comb has named the slower octave at
+        high salience. Proves the slower level on a full mix, where the
+        strength alternation that lifts the veto on synthetic kit material is
+        washed out. See `unprovenSlowerOctave` in BeatDecoder.cpp. */
+    int   combHalfBeats = 0;
     /** The level the comb was naming when the current re-anchor vote started.
         A comb that keeps changing its own mind is not evidence; only a comb
         that holds one answer while disagreeing with us gets to move the grid. */

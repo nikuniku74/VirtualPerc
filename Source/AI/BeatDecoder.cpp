@@ -509,6 +509,7 @@ void BeatDecoder::reset() noexcept
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
+    combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -594,6 +595,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     // is sooner than a fit could be rebuilt to argue about it.
     foldPhaseBeats = 0;
     octaveMismatchBeats = 0;
+    combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -883,6 +885,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
+    combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -946,6 +949,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
     octaveMismatchBeats = 0;
+    combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -2153,9 +2157,27 @@ void BeatDecoder::updateTempo() noexcept
                                 : 1.0f;
     const bool gridLooksLikeSubdivision =
         recentStrengthAlternation() > kSubdivisionAlternation && halfError < 0.20f;
+    // The alternation above fails on a full mix: a live band washes out the
+    // loud/quiet between quarters and hats, so the veto never stands down and a
+    // doubled grid plays double for the whole acquisition. Measured on the live
+    // Sally segment: the fold read 104 at salience ~1.0 for twenty seconds
+    // while the committed sat at 208 and the alternation stayed under 0.35.
+    //
+    // Persistence is the second proof. A fold that names the slower octave, at
+    // high salience, beat after beat, is not a glitch and not a transient
+    // subharmonic - it is the level. This only lifts the veto; the snap below
+    // still wants its own `snapBeats` of votes and the fold's salience.
+    constexpr int kProvenSlowerOctaveBeats = 10;
+    const bool combReadsHalf = combRawBpm > kMinBpm && combRawBpm < bpm * 0.70f;
+    if (combReadsHalf && tempo.salience() > kOctaveSnapSalience)
+        combHalfBeats = std::min (combHalfBeats + 1, kProvenSlowerOctaveBeats);
+    else
+        combHalfBeats = std::max (0, combHalfBeats - 1);
+    const bool halfProven = combHalfBeats >= kProvenSlowerOctaveBeats;
     const bool unprovenSlowerOctave = intervalAcquired && gridHealthy && gridIsDense
                                       && ! gridLooksLikeSubdivision
-                                      && combRawBpm < bpm * 0.70f;
+                                      && combReadsHalf
+                                      && ! halfProven;
     // Against the fold's *raw* answer, not the one already folded onto the
     // anchor - and this is the whole of why a doubled grid at slow tempo was
     // permanent.
@@ -2342,6 +2364,7 @@ void BeatDecoder::updateTempo() noexcept
         intervalAcquired = false;
         foldPhaseBeats = 0;
         octaveMismatchBeats = 0;
+        combHalfBeats = 0;
         octaveVoteBpm = 0.0f;
         beatsOnLevel = 0;
         enterRegime (TempoRegime::unknown);
@@ -2423,6 +2446,7 @@ void BeatDecoder::updateTempo() noexcept
             provisional = false;
             provisionalStrength = 0.0f;
             octaveMismatchBeats = 0;
+            combHalfBeats = 0;
             octaveVoteBpm = 0.0f;
             beatsOnLevel = 0;
             fastDriftBeats = 0;
