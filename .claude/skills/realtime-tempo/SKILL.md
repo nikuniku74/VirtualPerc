@@ -635,6 +635,22 @@ is unchanged. Exact `makedip.py`/`score_dip.py` A/B: stable return within 15 ms
 for the two discriminant cases; `shortFitBpm`, `longFitBpm` and the recent
 residual are diagnostic snapshot fields.
 
+**The phase anchor's straddle gate (2026-09-14).** `BeatDecoder::updateTempo`
+decides whether the 24-beat window is "lying across a tempo event" and, in the
+`fixed` regime only, eases `gridAnchorSec` from the long fit's intercept toward
+the short fit's (`longWindowStraddles` / `anchorBlend`). Its whole job is the
+dip: the long window stays stale for its full length after a transient has
+settled. It must **not** fire on a ramp, where the short fit is drifting away
+from the tempo the decoder has already committed to and handing the anchor to
+it is what puts the wobble back (measured 146 → 237 ms on `120→132 in 20 s`
+until this was fixed). The discriminator is `shortAgreesCommitted`
+(`kStraddleAgreeRatio = 0.008`): the short fit must be back *at the committed
+tempo*, not merely better than the long fit. A residual-cleanliness gate was
+tried first and is a no-op on the clean synthetic ramp - the ramp's fits are
+too clean for a residual to separate them. Verify with `VPAlign` (ramp rows
+must read 145.9/165.9 ms, not 236.8/193.8) and `score_dip.py` (return must stay
+~9.5 s).
+
 **Lateness only.** `GrooveEvent::delayBeats` is always >= 0. The clock hands out
 grid positions as they pass and there is no going back for one, so feel and
 swing are expressed as lateness (see the percussion-patterns skill).

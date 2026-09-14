@@ -189,6 +189,17 @@ namespace
         apart with the dip inside the long window only. */
     constexpr float kStraddleBpmDisagree = 0.004f;
 
+    /** How close the short fit's tempo has to be to the *committed* tempo
+        before the straddle is allowed to hand the phase anchor to it. A short
+        fit that is drifting away from the committed tempo is a ramp or a step
+        - the tempo is genuinely moving, and the straddle's job is not that;
+        it is the stale long window after a transient (a dip) has settled back.
+        On the dip the short fit returns to within ~0.1% of the committed
+        tempo; at the start of a ramp it is already 1.6% away and stays that
+        way, which is what this separates. 0.8% sits in the middle of that
+        gap. */
+    constexpr float kStraddleAgreeRatio = 0.008f;
+
     /** And how long both halves have to agree before it is acted on. */
     constexpr double kStraddleHoldSec = 0.40;
 
@@ -2471,11 +2482,24 @@ void BeatDecoder::updateTempo() noexcept
     // fixture the true displacement peaks at 107 ms and the decoder reported
     // 46 - the clock cannot give back what it is not told about, and what it
     // was being told came from the straddling line.
+    //
+    // The last clause is the one that separates a dip from a ramp. On a ramp
+    // the short fit is *drifting away* from the tempo the decoder has already
+    // committed to, and the straddle must not chase it - the long window is
+    // not lying, it is simply longer, and handing the phase anchor to the
+    // noisy short fit is what put the anchor wobble into the ramp (measured
+    // 146 -> 237 ms on `120 -> 132 in 20 s`). Only a short fit that has come
+    // back *to the committed tempo* - the event has settled - proves the long
+    // window stale.
+    const bool shortAgreesCommitted =
+        std::fabs (shortPeriod - 60.0f / std::max (kMinBpm, bpm))
+        < kStraddleAgreeRatio * (60.0f / std::max (kMinBpm, bpm));
     const bool straddleNow =
         haveLong && haveShort && longPeriod > 0.0f && shortPeriod > 0.0f
         && shortResidual * kStraddleResidualRatio < longResidual
         && std::fabs (shortPeriod - longPeriod)
-               > kStraddleBpmDisagree * longPeriod;
+               > kStraddleBpmDisagree * longPeriod
+        && shortAgreesCommitted;
     // Held, not taken on sight. Both halves can line up for a frame or two
     // on perfectly steady material - the eight-beat line genuinely does fit
     // its own eight beats better now and then - and acting on that put 2.5

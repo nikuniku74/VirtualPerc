@@ -3378,12 +3378,31 @@ calo lasciava passa da +10.0 a +1.9 ms, e sul materiale vero il brano 3 passa da
 264 a **48 ms** di spostamento di fase peggiore. Contro: la rampa da 20 s passa da
 146 a 237 ms di fase peggiore, e il brano 2 peggiora sugli strattoni.
 
-- [ ] **Decisione aperta.** La raccomandazione è di non tenerlo così: 237 ms su una
-  rampa sono un quarto di secondo di percussioni fuori, su il caso live più
-  frequente. Il cambio va rifatto in modo che **non scatti su una rampa** - cioè
-  richiedendo che il fit corto sia tornato vicino alla *baseline del brano*, non
-  solo migliore del lungo. Quella baseline esiste già in `EvidenceTrust`, ma sta
-  nel tracker e il decoder non la vede: è quello il pezzo di cablaggio mancante.
+- [x] **Decisione aperta — CORRETTA (2026-09-14), con un discriminante diverso da
+  quello previsto.** La raccomandazione era di non tenerlo così: 237 ms su una
+  rampa sono un quarto di secondo di percussioni fuori, sul caso live più
+  frequente. L'ipotesi scritta («fit corto vicino alla baseline del brano») è
+  stata **provata e falsificata**: su `VPAlign` la rampa è troppo pulita perché
+  il residuo del fit corto si stacchi dalla baseline, quindi quella condizione è
+  un no-op lì (e il banco deterministico non cambia di un millesimo). Il
+  discriminante che funziona è più semplice: lo straddle deve scattare solo
+  quando il fit corto **concorda col tempo già commesso** (`shortAgreesCommitted`,
+  `kStraddleAgreeRatio = 0.008`). Su un calo il corto torna a ~0.1% del
+  commesso; all'inizio di una rampa è già a 1.6% e ci resta, perché il decoder è
+  ancora `fixed` e il `moving` non ha ancora visto la rampa — ed è proprio
+  quella finestra in cui lo straddle mescolava l'ancora col fit corto rumoroso.
+  Misure:
+  - `VPAlign` rampa: `120→132 in 20 s` peggio **236.8 → 145.9 ms**, `100→110 in
+    12 s` **193.8 → 165.9 ms** — tornati ai valori pre-straddle. `100→110 in 30 s`
+    e `128→120 in 20 s` invariati. Gradini tutti PASS (salvo il `100→140`
+    preesistente), buco/accelerando identici al riferimento.
+  - Dip (`makedip`): rientro ≤15 ms tenuto 4 s **9.6 s** — invariato, il calo
+    resta corretto.
+  - `probe_tempo_step` identico riga per riga, `probe_matrix` **identico**
+    (5.23 s / 98 uscite / 9.08%), gate `--bar`/`--tempo-slow`/`--swing`/
+    `--evidence`/`--new-input`/`--rhythm`/`--state-timing`/`--tempo-step` verdi.
+  - Materiale reale (5 brani Flamingo): nessuna regressione; strattoni del brano
+    1 **3.58 → 2.49%** e spostamento di fase del brano 5 **268 → 169 ms**.
 
 ### 42. Il vocoder di fase azzerato a ogni callback: un terzo della CPU 🟢 (2026-09-11)
 
