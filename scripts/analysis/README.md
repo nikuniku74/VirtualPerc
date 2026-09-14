@@ -11,6 +11,7 @@ da `VPTrack --pulses`.
 | file | cosa misura |
 |---|---|
 | `profile.py wav minuti` | livello, quota di banda bassa e tempo grezzo ogni 10 s. Per trovare i confini fra i brani in una registrazione lunga. |
+| `refine_taps.py wav taps.txt [out]` | raffina i tap battuti a mano contro i transienti di banda bassa (30-180 Hz): tu decidi *quale* colpo è il battito, lo script trova *quando* esattamente. Il "Livello 1" di `docs/HANDOFF_LIVE_TRACKING.md`. |
 | `tempocurve.py wav lo hi` | tempogramma indipendente a finestra di 12 s: un **secondo parere** sul tempo vero. Usare solo i punti con nitidezza > 0.15. **Non è verità di fase.** |
 | `hist.py wav pulses [W]` | l'energia degli attacchi piegata sulla fase dell'orologio, istogramma a 24 bin. «struttura» = picco/media: sopra 2 la griglia è sulla musica. Dove sta il picco e di quanto si sposta fra finestre. |
 | `prec.py wav pulses lo hi` | i tre indicatori di precisione insieme: struttura, spostamento di fase fra finestre, deviazione degli strattoni della griglia. |
