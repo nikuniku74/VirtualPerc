@@ -65,7 +65,7 @@ void BeatHmm::prepare (double framesPerSecond)
     alpha.assign (static_cast<size_t> (numStates), 0.0f);
     next.assign (static_cast<size_t> (numStates), 0.0f);
     logPrior.assign (static_cast<size_t> (numTempi), 0.0f);
-
+  
     // The floor under the per-winner rule in `ready`: two beats of the fastest
     // tempo in the space, which is the shortest thing that could have been
     // observed twice at all.

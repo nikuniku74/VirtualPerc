@@ -1637,31 +1637,25 @@ forte non lo vedeva perché lì esiste una presa B.
   identici e che non si è mosso il colpo; la scelta di quanto sia più bella la
   può chiudere soltanto chi la sente nel mix.
 
-### 28b. Le congas suonavano finte: accordatura e colpi stoppati ✅ (2026-09-14, misurato — resta l'ascolto)
+### 28b. Le congas suonavano finte: accordatura e quinto stoppato ✅ (2026-09-14, misurato — resta l'ascolto)
 
 Segnalazione: *«le percussioni sono molto finte e hanno un suono brutto»*, poi
-*«le conga ora sono troppo basse di tonalità, e vorrei che fossero tutte
-suonate stoppate»*.
+*«le conga sono troppo basse di tonalità»*, poi la forma finale: *«la conga più
+alta la vorrei proprio stoppatissima, più africana; le congas con il classico
+suono pop»*.
 
-**Causa e fix, in due passi.** (1) `kDrumTune = 2^(10/12) = 1.782` leggeva i
-sample VCSL una settima maggiore sopra il naturale per «tagliare nel mix»;
-misurato il parziale più forte, tumba **139 Hz** / open **165 Hz** / slap
-**216 Hz**, a ×1.782 la tumba saliva a 247 Hz — un tom, non una tumba. Ora
-`kDrumTune = 2^(5/12) = 1.335` (una quarta sopra il naturale): tumba 185 Hz,
-open 220 Hz, slap 288 Hz. (2) Le congas sono tutte **stoppate**:
-`PercussionEngine::trigger` passa per `stoppedConga` — tumba→tapado, open→muff,
-slap→slapClosed; heel/toe/muff restano già stoppati, shaker/cembalo/clap non
-sono congas. In più la coda dei colpi registrati è limitata a **0.30 s**. Attacco
-sentito **+0.55 ms**, strike all'inizio dell'asset, `--percussion` 1/0,
-`--swing` 3/0, `--bar` 10/0.
+**Fix.** (1) `kDrumTune = 2^(5/12) = 1.335` (una quarta sopra il naturale, dopo
+aver tolto la settima maggiore `2^(10/12)` che rendeva la tumba un tom): tumba
+185 Hz, open 220 Hz, slap 288 Hz. (2) Solo il **quinto** è stoppato:
+`PercussionEngine::trigger` passa per `stoppedConga`, che mappa `slap`→
+`slapClosed` (il crack africano senza coda) e lascia tumba/open a suonare il
+tono aperto del pop classico. La coda dei colpi registrati è limitata a 0.30 s.
+Attacco sentito +0.55 ms, `--percussion` 1/0, `--swing` 3/0, `--bar` 10/0.
 
-**Costo dichiarato.** Sul percorso **speaker** il canceller rimuove ~11% del
-rientro delle congas (contro 25.2% con le open a 1.782): la fondamentale è più
-bassa e la ricerca di ritardo acustico aggancia meno (`leak-voice congas`,
-`--leak` 48/1). Sul percorso **mixer/file** — quello richiesto — il ritardo è
-noto e il fit a tre bande si adatta da sé, quindi non è toccato. Da risolvere
-solo se il microfono iPad torna prioritario: ritoccare la ricerca di ritardo
-acustico, non ri-pitchare o ri-aprire le congas.
+**Costo dichiarato.** Sul percorso speaker il canceller rimuove ~11% del rientro
+delle congas (contro 25.2% con le open a 1.782); sul percorso mixer/file — quello
+richiesto — il ritardo è noto e il fit a tre bande si adatta da sé. Da risolvere
+solo se il microfono iPad torna prioritario.
 
 
 ---

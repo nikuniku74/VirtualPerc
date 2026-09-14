@@ -325,15 +325,14 @@ were playing.
   timing is. Recordings come from `Assets/Percussion/` (VCSL, CC0); missing
   assets fall back to synthesis, and `recordedStrokeCount()` exists so tests can
   assert that fallback did *not* happen silently.
-- **The congas are played stopped (2026-09-14).** `PercussionEngine::trigger`
-  passes every conga stroke through `stoppedConga`, which maps `tumba`->`tapado`,
-  `open`->`muff`, `slap`->`slapClosed`; heel/toe/muff already stop and pass
-  through, shaker/cembalo/clap are not congas. The tables below still name the
-  ringing strokes - that is the *intent* of the figure, and the mapping is what
-  keeps a stopped part sitting inside the band instead of over it. Change the
-  mapping in one place, never the tables. The bank is also read a perfect fourth
-  above the samples' natural pitch (`kDrumTune = 2^(5/12)`), so tumba/open/slap
-  are 185/220/288 Hz before the stopped mapping.
+- **The quinto plays stopped, the congas open (2026-09-14).**
+  `PercussionEngine::trigger` passes every stroke through `stoppedConga`, which
+  maps only `slap`->`slapClosed` - the highest drum is the African crack with no
+  ring - and leaves `tumba`/`open` as their classic pop open tone. The tables
+  still name `slap`; that is the *intent* of the figure, and the mapping is what
+  keeps the quinto crisp. Change the mapping in one place, never the tables. The
+  bank is read a perfect fourth above the samples' natural pitch
+  (`kDrumTune = 2^(5/12)`), so tumba/open/slap are 185/220/288 Hz.
 - **A source take is not automatically three takes.** The bundled library has
   one medium recording for shaker and conga, and the derived heel/toe/muff and
   stopped strokes also begin from one source. `layerFromRecording` gives each

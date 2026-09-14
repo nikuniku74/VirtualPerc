@@ -134,20 +134,18 @@ namespace
         }
     }
 
-    /** The performer wants the whole conga set played *stopped* (2026-09-14):
-        the hand stays on the head, so the ringing open tones are replaced by
-        their muted equivalents. A part of stopped strokes sits inside a band
-        instead of over it - see the stopped pair in `specFor`. heel, toe and
-        muff are already muffled and pass through; the shaker, cembalo and clap
-        are not congas and pass through too. */
+    /** The quinto plays *very* stopped - the African crack with the hand left
+        on the head, no ring at all - while the tumba and the open conga keep
+        their classic pop open tone. Only the highest drum maps: it is the one
+        whose job in the band is the crisp short note, where a ringing quinto
+        sits over everything. heel, toe, muff and the stopped pair already are
+        what they are; shaker, cembalo and clap are not congas. */
     Stroke stoppedConga (Stroke s) noexcept
     {
         switch (s)
         {
-            case Stroke::tumba: return Stroke::tapado;
-            case Stroke::open:  return Stroke::muff;
-            case Stroke::slap:  return Stroke::slapClosed;
-            default:            return s;
+            case Stroke::slap: return Stroke::slapClosed;
+            default:           return s;
         }
     }
 }
