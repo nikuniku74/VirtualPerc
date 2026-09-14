@@ -1540,6 +1540,172 @@ void vpRunBarReentryTests (int& passed, int& failed)
     }
 }
 
+void vpRunNewInputTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nnew input (item 3)\n");
+
+    // A pulse train whose tempo can be switched while it runs. The decoder is
+    // the real one, so it is a fresh analysis epoch - not the stub - that has
+    // to make it let go of the old tempo. This is the engine's contract for
+    // loading another file while START stays on.
+    class SwitchTempoModel final : public vp::IBeatModel
+    {
+    public:
+        explicit SwitchTempoModel (double startFramesPerBeat) : fpb (startFramesPerBeat) {}
+        bool prepare (int) override { return true; }
+        void reset() override {}
+        bool infer (const float*, int, float out[3]) override
+        {
+            const double per = fpb.load (std::memory_order_relaxed);
+            phaseBeats += 1.0 / per;
+            const double beats = phaseBeats;
+            const double toBeat = std::fabs (beats - std::round (beats)) * per;
+            const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                     std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+            const int beatNo = static_cast<int> (std::llround (beats));
+            const int inBar = ((beatNo % 4) + 4) % 4;
+            out[0] = pulse;
+            out[1] = inBar == 0 ? pulse * 0.95f : 0.03f;
+            out[2] = 1.0f - out[0];
+            return true;
+        }
+        std::atomic<double> fpb;
+    private:
+        double phaseBeats = 0.0;
+    };
+
+    constexpr double sr = 48000.0;
+    constexpr int block = 256;
+    const auto framesFor = [] (double bpm)
+    {
+        return 60.0 / bpm * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+    };
+
+    auto silenceVoices = [] (vp::VirtualPercussionEngine& eng)
+    {
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.settings().cembaloEnabled.store (false);
+        eng.settings().clapEnabled.store (false);
+        eng.setRecordedLoopsEnabled (false);
+    };
+
+    auto pump = [] (vp::VirtualPercussionEngine& eng, const float* song, int n,
+                    int pos, int count, std::vector<float>& oL, std::vector<float>& oR)
+    {
+        float* outs[2] = { oL.data(), oR.data() };
+        int blocks = 0;
+        const int end = std::min (pos + count, n);
+        while (pos + block <= end)
+        {
+            const float* ins[1] = { song + pos };
+            eng.process (ins, 1, outs, 2, block);
+            pos += block;
+            if ((++blocks % 4) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+        }
+        return pos;
+    };
+
+    auto model = std::make_unique<SwitchTempoModel> (framesFor (60.0));
+    auto* raw = model.get();
+    vp::VirtualPercussionEngine eng;
+    eng.setBeatModel (std::move (model));
+    eng.prepare (sr, block, 1);
+    silenceVoices (eng);
+    eng.start();
+
+    // A steady tone, so the ordinary quiet-to-loud epoch watcher cannot fire on
+    // its own: the only restart counted below is the one under test.
+    const int n = static_cast<int> (sr * 20.0);
+    std::vector<float> tone (static_cast<size_t> (n), 0.0f);
+    for (int i = 0; i < n; ++i)
+        tone[static_cast<size_t> (i)] = 0.15f * std::sin (
+            2.0 * 3.14159265358979 * 220.0 * static_cast<double> (i) / sr);
+    std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+    std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+
+    int pos = pump (eng, tone.data(), n, 0, static_cast<int> (sr * 8.0), oL, oR);
+    const float bpmBefore = eng.snapshot().bpm;
+    const int restartsBefore = eng.snapshot().analysisRestarts;
+
+    // The band has changed song: the tempo doubles, and the UI declares a new
+    // input because a different file was loaded. No STOP in between.
+    raw->fpb.store (framesFor (120.0), std::memory_order_relaxed);
+    eng.notifyInputRestart();
+    pos = pump (eng, tone.data(), n, pos, static_cast<int> (sr * 5.0), oL, oR);
+    const auto after = eng.snapshot();
+
+    std::printf ("new-input      bpm %.1f -> %.1f  restarts %d -> %d\n",
+                 bpmBefore, after.bpm, restartsBefore, after.analysisRestarts);
+    expect (bpmBefore > 40.0f && bpmBefore < 80.0f,
+            "the engine is following the first input before the change");
+    expect (after.analysisRestarts == restartsBefore + 1,
+            "a new input forces exactly one fresh analysis epoch");
+    expect (after.bpm > 112.0f && after.bpm < 128.0f,
+            "and the decoder re-acquires the new tempo without a STOP");
+    (void) pos;
+}
+
+void vpRunRhythmSeenTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nrhythm share floor (item 34)\n");
+
+    constexpr double sr = 48000.0;
+    constexpr int block = 256;
+
+    vp::VirtualPercussionEngine eng;
+    eng.prepare (sr, block, 1);
+    eng.settings().shakerEnabled.store (false);
+    eng.settings().congasEnabled.store (false);
+    eng.settings().cembaloEnabled.store (false);
+    eng.settings().clapEnabled.store (false);
+    eng.setRecordedLoopsEnabled (false);
+    eng.start();
+
+    auto pump = [&] (float amplitude, double seconds)
+    {
+        const int n = static_cast<int> (sr * seconds);
+        std::vector<float> buf (static_cast<size_t> (n), 0.0f);
+        for (int i = 0; i < n; ++i)
+            buf[static_cast<size_t> (i)] = amplitude * static_cast<float> (
+                std::sin (2.0 * 3.14159265358979 * 100.0 * static_cast<double> (i) / sr));
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            const float* ins[1] = { buf.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+        }
+    };
+
+    // A low tone below the audible floor. Its low-band share is high - the
+    // whole signal is below 200 Hz - but it is not a rhythm section, and the
+    // level is too low for a ratio to mean anything. Under a large make-up
+    // gain the old code latched `rhythmSeen` on exactly this.
+    pump (0.001f, 2.5);
+    const auto quiet = eng.snapshot();
+
+    // A band-level low tone: same share, and now the level says it is real.
+    pump (0.20f, 1.0);
+    const auto loud = eng.snapshot();
+
+    std::printf ("rhythm-share   quiet lowShare=%.3f seen=%d | loud lowShare=%.3f seen=%d\n",
+                 quiet.lowShare, quiet.rhythmSeen ? 1 : 0,
+                 loud.lowShare, loud.rhythmSeen ? 1 : 0);
+    expect (quiet.lowShare > 0.30f,
+            "a quiet low tone still reads as a high low-band share");
+    expect (! quiet.rhythmSeen,
+            "but a share below the audible floor is not voted on");
+    expect (loud.rhythmSeen,
+            "at band level the same share is believed");
+}
+
 void vpRunPercussionSoundTests (int& passed, int& failed)
 {
     gPass = &passed;
@@ -1595,6 +1761,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
     std::printf ("\nAI beat tracking / TSM\n");
 
     vpRunBarReentryTests (passed, failed);
+    vpRunNewInputTests (passed, failed);
+    vpRunRhythmSeenTests (passed, failed);
 
     {
         const vp::EngineSnapshot snap;

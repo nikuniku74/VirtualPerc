@@ -10,6 +10,17 @@ void vpRunPercussionSoundTests (int& passed, int& failed);
     Part of `vpRunAiBeatTests`; also `VPTests --bar`. */
 void vpRunBarReentryTests (int& passed, int& failed);
 
+/** Loading another file while START stays on is a new input, not a drift of
+    the old one (docs/TODO.md item 3): the engine must force one fresh analysis
+    epoch so the decoder drops the previous song's tempo. Part of
+    `vpRunAiBeatTests`; also `VPTests --new-input`. */
+void vpRunNewInputTests (int& passed, int& failed);
+
+/** The low-band share only votes when the input is above the audible floor
+    (docs/TODO.md item 34): a ratio taken on room noise is not evidence of a
+    rhythm section. Part of `vpRunAiBeatTests`; also `VPTests --rhythm`. */
+void vpRunRhythmSeenTests (int& passed, int& failed);
+
 /** The octave-level sweep on its own: the broad synthetic boundary scan plus
     focused 50/100 BPM kit runs through the mixer and internal-file paths.
     Part of `vpRunAiBeatTests`; also runnable alone with

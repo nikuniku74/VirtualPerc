@@ -1640,6 +1640,12 @@ void MainComponent::loadInternalTrack (juce::URL url)
     buildTrackWaveform();
     selectFollowSource (vp::FollowSource::internalPlayer);
     trackTransport.start();
+    // A different file is a different input, not a drift of the one before it.
+    // Without this the tracker keeps the lock of the previous song, and with
+    // START still on the percussion plays the old tempo for as long as the
+    // decoder defends it - measured at 8-20 s, or until STOP. This restarts
+    // the decoder over; the clock is not restarted. See docs/TODO.md item 3.
+    engine.notifyInputRestart();
     refreshInternalTrackButtons();
     relayoutSettings();
     if (settingsOverlay.isVisible())

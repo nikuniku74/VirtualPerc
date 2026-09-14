@@ -490,6 +490,16 @@ instead of 32, `rotateBarIndex` only. The clap reads `barTrusted` from the
 tracker (histogram names beat zero, or the listener's lock), not a time-since-
 rotation proxy. Verify with `VPTests --bar`.
 
+**Loading another file is a new input, not a cut.** A seek keeps the tempo and
+only moves the one; a *different file* is a different source, and the decoder
+holds a lock that is right for the song that is gone. `loadInternalTrack` calls
+`VirtualPercussionEngine::notifyInputRestart()`, which forces a fresh
+`analysisEpoch` with `preserveCombOnEpoch = false` - the same restart the input
+change uses - while never restarting the clock. Drop the epoch with
+`notifyTrackSeek`/`notifyBarReentry` and a 60 BPM file loaded under a 120 one
+keeps 60 until STOP. Verify with `VPTests --new-input` (measured: 60.0 -> 120.0,
+one restart; with the consumption disabled, 60.0 -> 60.2, no restart).
+
 ## 4. The clock (`TempoFollower`)
 
 **Confirmed recovery follow-up (2026-09-09).** The correction budget now uses
@@ -684,6 +694,19 @@ Focused `VPOps --input-gain` at 120 BPM measured **+0.07 ms** worst operation
 delta through the iPad-room path, **0.00 ms** on the direct path and **zero extra
 epochs**. `--voice-toggle` measured +1.80 ms worst through the room, 0.00 ms
 direct, also with zero extra epochs.
+
+**A share is only evidence above the audible floor.** `updateRhythmShare` decides
+both `rhythmArrived` (the step that opens the epoch) and the standing
+`rhythmSeen` that `setSourceAudible` needs before START will join a track already
+playing. It measures a *ratio* of low-band to full energy on the pre-make-up bus,
+and a ratio taken below the audible level is a ratio of room noise - which is
+almost all low. Measured through the full engine on a muted input at a 24x
+make-up, `lowShare` read 0.34-0.46 and `rhythmSeen` latched on silence - the one
+false entry that could let the part play to an empty room. The vote is now
+withheld below the same `sourcePeak > (speaker ? 0.004 : 0.040)` that
+`setSourceAudible` uses; the filters keep running so the plateau is warm when a
+band arrives. Verify with `VPTests --rhythm` (quiet low tone: share 0.650, not
+voted; same tone at band level: 0.639, believed).
 
 The veto is an early `return`, so for the blocks it covers `levelLoud`, the
 `wasQuiet` test and the *downward* decay of `levelRef` are skipped rather than

@@ -251,6 +251,10 @@ struct EngineSnapshot
     /** Share of the pre-make-up analysis signal below 200 Hz. Diagnostics: it
         is what says whether the input has a rhythm section in it. */
     float lowShare             = 0.0f;
+    /** Whether that share has been believed: it is a ratio, and a ratio taken
+        below the audible level is a ratio of noise. The companion diagnostic
+        to `lowShare`. */
+    bool  rhythmSeen           = false;
     int   badInputSamples      = 0;
     /** Times the analysis lost audio because its worker fell behind. Zero on a
         healthy run; anything else is a dropout in the tracking, not the sound. */

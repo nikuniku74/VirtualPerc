@@ -59,7 +59,7 @@ Piano discusso: Task 0 = baseline; 1 = RED; 2 = finestra rientro; 3 = path file;
 
 ---
 
-### 3. Cambio brano a START già on (60 → 120 non riallinea)
+### 3. Cambio brano a START già on (60 → 120 non riallinea) ✅ (2026-09-14)
 
 Se carico un brano a es. **60 BPM**, premo **START**, poi carico **un altro** a **120 BPM**, l'app **non si allinea subito**. Se prima premo **STOP**, al nuovo brano **si allinea subito**.
 
@@ -67,11 +67,24 @@ Oggi `loadInternalTrack` sostituisce il file e fa `trackTransport.start()`, ma *
 
 Un file nuovo è un **ingresso nuovo**, non una deriva del brano precedente. L'utente non deve dover premere STOP. START può restare acceso; BPM e fase devono chiudersi sul B con la stessa prontezza di uno START pulito. Il clock non "riparte" a caso a ogni BPM: è il cambio di sorgente che va dichiarato.
 
-- [ ] Riprodurre: START su file A (60) → CARICA file B (120), senza STOP. Oggi: tempo/fase del A. Con STOP in mezzo: lock rapido sul 120.
-- [ ] Al load (e analogo seek, item 14): nuovo ingresso (restart decoder / finestra coming-in), non continuare il PLL del A. RT: niente alloc.
-- [ ] Percussioni sul B in poche battute, non restare a 60 per 8–20 s.
-- [ ] Test: A 60 → B 120 e A 120 → B 60, senza STOP; BPM e fase del secondo file. Ascolto.
-- [ ] Docs skill tempo: cambio file ≠ taglio in-song (item 2).
+**Fatto (2026-09-14): nuovo ingresso dichiarato al load.**
+`VirtualPercussionEngine::notifyInputRestart()` (`VirtualPercussionEngine.h`/`.cpp`)
+alza un `inputRestartPending` atomico; `process` lo consuma prima di
+`setSourceAudible`, azzera lo stato di livello/ritmo dell'ingresso precedente
+(`resetAnalysisLevelState`) e **incrementa** `analysisEpoch` con
+`preserveCombOnEpoch = false`, cioè lo stesso evento di un cambio sorgente
+misurato in item 19/29. `loadInternalTrack` lo chiama dopo `selectFollowSource` +
+`trackTransport.start()`. L'orologio non riparte: cambia solo l'evidenza su cui
+il decoder era agganciato. `notifyTrackSeek` resta invariato (un seek non è un
+brano nuovo). `resetAnalysisLevelState` non azzera più l'epoch da sé: lo fanno
+`prepare()` e `reset()` esplicitamente, così l'epoch può solo avanzare.
+
+- [x] Riprodurre: START su file A (60) → CARICA file B (120), senza STOP. Oggi: tempo/fase del A. Con STOP in mezzo: lock rapido sul 120.
+- [x] Al load (e analogo seek, item 14): nuovo ingresso (restart decoder / finestra coming-in), non continuare il PLL del A. RT: niente alloc.
+- [x] Percussioni sul B in poche battute, non restare a 60 per 8–20 s.
+- [x] Test: `VPTests --new-input` (anche dentro `vpRunAiBeatTests`). Stub a impulsi, decoder vero: A 60 → B 120 + `notifyInputRestart()`. **`bpm 60.0 -> 120.0`, `restarts 0 -> 1`**, 3/3 PASS. Controprova con la consumazione disattivata: **`bpm 60.0 -> 60.2`, `restarts 0 -> 0`**, 2 FAIL — la correzione è quella che riaggancia. Gate: `--bar` 10/0, `--swing` 3/0, `--evidence` 2/0, `--tempo-slow` 10/0, `--state-timing` 3/3, `--makeup e` 4/0, `--makeup f` 7/0.
+- [ ] **Ascolto** su iPad/Mac: caricare un secondo brano senza STOP e sentire che entra sul B in una o due battute.
+- [x] Docs skill tempo: cambio file ≠ taglio in-song (item 2).
 
 ---
 
@@ -2290,13 +2303,23 @@ al tetto di 24×, e la rete che risponde al rumore amplificato con 105 BPM a
 confidenza 0.62. Poi **quattro secondi di parte suonata su 116 BPM** prima che
 l'epoch la corregga.
 
-- [ ] **Difetto del cancello dell'item 29, misurato qui.** Con il guadagno a 24×
-  su un ingresso muto, `lowS` legge **0.34-0.46** — cioè la quota di banda bassa
-  del *rumore amplificato*, che è alta perché il rumore è tutto in basso. Quindi
-  `rhythmSeen` si aggancia sul silenzio. Qui non è stato lui a far entrare la
-  parte (l'ha tenuta fuori il test di livello, `picco` 0.001 < 0.040), ma è un
-  aggancio falso che va tolto: `updateRhythmShare` deve rifiutare di votare
-  quando l'energia pre-make-up è sotto il pavimento dell'udibile.
+- [x] **Difetto del cancello dell'item 29, misurato qui — CORRETTO (2026-09-14).**
+  Con il guadagno a 24× su un ingresso muto, `lowS` legge **0.34-0.46** — cioè la
+  quota di banda bassa del *rumore amplificato*, che è alta perché il rumore è
+  tutto in basso. Quindi `rhythmSeen` si agganciava sul silenzio. Qui non era
+  stato lui a far entrare la parte (l'ha tenuta fuori il test di livello,
+  `picco` 0.001 < 0.040), ma era un aggancio falso.
+  **Fix:** `updateRhythmShare(numSamples, sourceAudible)` non vota sotto il
+  pavimento udibile — lo stesso `sourcePeak > (speaker ? 0.004 : 0.040)` che usa
+  `setSourceAudible`, calcolato una volta in `process` e passato a entrambi. I
+  filtri continuano a girare (il plateau resta caldo), si ritira solo il voto.
+  `rhythmSeen` è ora anche nello snapshot (`EngineSnapshot::rhythmSeen`, mirror
+  atomico). Regressione `VPTests --rhythm` (3/3): tono a 100 Hz sotto il
+  pavimento → `lowShare 0.650` ma `seen 0`; stesso tono a livello band
+  (`lowShare 0.639`) → `seen 1`. Controprova senza il cancello: `quiet seen 1`,
+  1 FAIL. Gate verdi: `--bar` 10/0, `--new-input` 3/0, `--swing` 3/0,
+  `--evidence` 2/0, `--tempo-slow` 10/0, `--state-timing` 3/3, `--makeup c` 6/0,
+  `e` 4/0, `f` 7/0 (`d` resta 10/2, gli stessi due fail presenti su HEAD).
 - [ ] **I quattro secondi su 116 BPM** non li avrebbe evitati: dopo l'epoch il
   cancello è aperto comunque da `sawInputStart`, e il decoder ha bisogno di quei
   secondi per riacquisire. È un problema diverso.

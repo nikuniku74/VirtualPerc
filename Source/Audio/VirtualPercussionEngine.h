@@ -67,6 +67,17 @@ public:
         message thread on seek. */
     void notifyTrackSeek() noexcept;
 
+    /** The input is a different source now - the ordinary case is loading
+        another file while START is still on. That is a new input, not a drift
+        of the one before it: the level and rhythm history measured on the old
+        song is a description of audio that is no longer arriving, and the
+        decoder has to drop the old song's grid and re-acquire instead of
+        defending a tempo the new song never had. Forces a fresh analysis epoch
+        on the audio thread. The clock itself is never restarted - see
+        docs/TODO.md item 3. Call from the message thread on load, never on a
+        seek within one file (that is notifyTrackSeek). */
+    void notifyInputRestart() noexcept;
+
     EngineSettings& settings() noexcept { return cfg; }
     const EngineSettings& settings() const noexcept { return cfg; }
 
@@ -192,13 +203,16 @@ private:
         mean fitting a signal that is no longer there. Called from both
         `prepare()` and `reset()`; it touches nothing that `prepare()` sets up. */
     void resetLeakEstimate() noexcept;
-    /** The twelve scalars that say what level this input arrives at: the
-        make-up envelope and gain, the epoch watcher's level and own-output
-        trackers with their timers, and the epoch count. The same lifecycle
+    /** The scalars that say what level this input arrives at: the make-up
+        envelope and gain, the epoch watcher's level and own-output trackers
+        with their timers, and the rhythm-share plateau. The same lifecycle
         argument as `resetLeakEstimate()` above, and called from the same two
         places for the same reason - a new session is a new input, possibly a
         line-level feed replaced by a microphone in a room. It touches no
-        buffer and no prepared resource. */
+        buffer and no prepared resource, and deliberately does *not* touch
+        `analysisEpoch`: the epoch is a counter that has to keep moving forward
+        across the same boundary, and `prepare()`/`reset()` plus
+        `notifyInputRestart()` each set it themselves. */
     void resetAnalysisLevelState() noexcept;
     /** The public mirrors of three of those scalars - the epoch count, the
         make-up gain and the analysis peak - which the audio callback is the only
@@ -226,8 +240,16 @@ private:
         the step up in it that says a rhythm section just walked in. Audio
         thread, before the make-up gain: a broadband gain leaves the share
         alone, but everything else here reads a level, and a level after the
-        make-up is the network's operating point rather than the room's. */
-    bool updateRhythmShare (int numSamples) noexcept;
+        make-up is the network's operating point rather than the room's.
+
+        `sourceAudible` is whether the un-amplified peak is above the level
+        this input counts as music at. A share is a ratio, and below that level
+        there is nothing to take a ratio of - the bottom of the spectrum is
+        room noise, which is almost all low, so the share reads high on a muted
+        input (measured 0.34-0.46 through the full engine at a 24x make-up).
+        No vote is cast while the input is below the floor; the filters keep
+        running so the plateau is warm when the band arrives. */
+    bool updateRhythmShare (int numSamples, bool sourceAudible) noexcept;
     /** A two-quarter (or longer) hole in the *analysis* level, then music
         again, while already following: open the bar re-entry window. Not an
         epoch - the decoder must not restart. Audio thread. */
@@ -423,6 +445,8 @@ private:
     /** Latched: this input has been heard to have a rhythm section in it. */
     bool  rhythmSeen = false;
     std::atomic<float> lastLowShare { 0.0f };
+    /** The mirror of `rhythmSeen` the snapshot reads. */
+    std::atomic<bool> lastRhythmSeen { false };
     std::atomic<uint32_t> analysisEpoch { 0 };
     // Audio-thread event kind, retained until the next epoch. Continuous
     // arrangement changes preserve both comb history and network state.
@@ -430,6 +454,11 @@ private:
     /** Message-thread seek (and the audio-thread hole detector) set this;
         process() turns it into BeatTracker::notifyBarReentry. */
     std::atomic<bool> barReentryPending { false };
+    /** Message-thread track load sets this; process() turns it into a fresh
+        analysis epoch. Separate from `barReentryPending` because a new input
+        must drop the old song's evidence, while a seek within one file must
+        keep the tempo - see notifyInputRestart and notifyTrackSeek. */
+    std::atomic<bool> inputRestartPending { false };
     int   musicGapSamples = 0;
     bool  musicGapArmed = false;
     std::atomic<bool> lastBarTrusted { false };

@@ -181,6 +181,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     // Same boundary, same reason: the level this input arrives at is a property
     // of the device that has just been swapped out.
     resetAnalysisLevelState();
+    analysisEpoch.store (0, std::memory_order_relaxed);
+    inputRestartPending.store (false, std::memory_order_relaxed);
 
     tracker.prepare (sampleRate);
     // A new audio-device session owns a newly cleared hypothesis slot. Mirror
@@ -224,8 +226,8 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
 {
     // Where the analysis level is, where it has been, and how much of it is
     // ours: `applyAnalysisMakeup`'s envelope and gain, `updateAnalysisEpoch`'s
-    // three level trackers and their timers, the epoch count itself, and the
-    // own-output envelope the blame is drawn from.
+    // three level trackers and their timers, and the own-output envelope the
+    // blame is drawn from.
     //
     // All of it is a description of one input on one device. A new session is a
     // new input - the route can go from a mixer aux at line level to a
@@ -251,7 +253,11 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     shareHighSamples = 0;
     rhythmSeen = false;
     lastLowShare.store (0.0f, std::memory_order_relaxed);
-    analysisEpoch.store (0, std::memory_order_relaxed);
+    lastRhythmSeen.store (false, std::memory_order_relaxed);
+    // `analysisEpoch` is deliberately not touched here: this function runs
+    // inside `notifyInputRestart()`'s audio-thread path as well, where the
+    // epoch must be *advanced*, never zeroed. The lifecycle callers
+    // (`prepare()`, `reset()`) set it to zero themselves.
     preserveCombOnEpoch = false;
     barReentryPending.store (false, std::memory_order_relaxed);
     musicGapSamples = 0;
@@ -317,6 +323,8 @@ void VirtualPercussionEngine::reset() noexcept
     ringWrite = 0;
     resetLeakEstimate();
     resetAnalysisLevelState();
+    analysisEpoch.store (0, std::memory_order_relaxed);
+    inputRestartPending.store (false, std::memory_order_relaxed);
     tapWrite.store (0, std::memory_order_relaxed);
     tapRead = 0;
 }
@@ -428,6 +436,14 @@ void VirtualPercussionEngine::notifyTrackSeek() noexcept
     // A seek is a cut, not a new song. Restarting the decoder here was
     // throwing away a tempo that is still right; the one is what moved.
     barReentryPending.store (true, std::memory_order_relaxed);
+}
+
+void VirtualPercussionEngine::notifyInputRestart() noexcept
+{
+    // A new file is a new input, not a cut inside one. Queue the fresh epoch
+    // for the audio thread: the clock is never restarted, only the evidence
+    // it was fitted through.
+    inputRestartPending.store (true, std::memory_order_relaxed);
 }
 
 void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInputs, int numSamples) noexcept
@@ -1076,7 +1092,7 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         mono[static_cast<size_t> (i)] *= from + step * static_cast<float> (i);
 }
 
-bool VirtualPercussionEngine::updateRhythmShare (int numSamples) noexcept
+bool VirtualPercussionEngine::updateRhythmShare (int numSamples, bool sourceAudible) noexcept
 {
     // Two one-poles at 200 Hz. A biquad would be tidier at the corner and this
     // does not need a tidy corner: what is being asked is whether the bottom of
@@ -1117,38 +1133,56 @@ bool VirtualPercussionEngine::updateRhythmShare (int numSamples) noexcept
         // The energies are still filling. Follow, decide nothing.
         sharePrimeSamples += numSamples;
         shareBase = share;
+        lastRhythmSeen.store (rhythmSeen, std::memory_order_relaxed);
         return false;
     }
 
-    // Two ways to know there is a rhythm section, and they answer different
-    // questions. The step is "one just walked in" and drives the epoch. This is
-    // the standing fact "there is one now", which is what a track that was
-    // already playing when START was pressed needs: it has no entrance to
-    // detect, so a detector of entrances would leave it mute for ever.
-    if (share > kShareFloor)
-        shareHighSamples += numSamples;
-    else
-        shareHighSamples = 0;
-    if (shareHighSamples > static_cast<int> (sampleRate * kShareHighHoldSec))
-        rhythmSeen = true;
-
-    const bool stepping = share > kShareFloor && share > shareBase * kShareStepUp;
-    if (stepping)
-        shareStepSamples += numSamples;
-    else
-        shareStepSamples = 0;
-
-    if (shareStepSamples > static_cast<int> (sampleRate * kShareStepHoldSec))
+    // Voting needs energy to be about. `share` is a ratio, and below the level
+    // this input counts as audible the bottom of the spectrum is the room's
+    // noise - which is almost all low - so a muted input under a large make-up
+    // read 0.34-0.46 and latched `rhythmSeen` on silence, and from there let
+    // the part play to an empty room. The filters keep running so the plateau
+    // is warm when a band does arrive; only the vote is withheld.
+    if (! sourceAudible)
     {
+        shareHighSamples = 0;
         shareStepSamples = 0;
-        shareBase = share;
-        rhythmSeen = true;
-        return true;
+    }
+    else
+    {
+        // Two ways to know there is a rhythm section, and they answer
+        // different questions. The step is "one just walked in" and drives the
+        // epoch. This is the standing fact "there is one now", which is what a
+        // track that was already playing when START was pressed needs: it has
+        // no entrance to detect, so a detector of entrances would leave it
+        // mute for ever.
+        if (share > kShareFloor)
+            shareHighSamples += numSamples;
+        else
+            shareHighSamples = 0;
+        if (shareHighSamples > static_cast<int> (sampleRate * kShareHighHoldSec))
+            rhythmSeen = true;
+
+        const bool stepping = share > kShareFloor && share > shareBase * kShareStepUp;
+        if (stepping)
+            shareStepSamples += numSamples;
+        else
+            shareStepSamples = 0;
+
+        if (shareStepSamples > static_cast<int> (sampleRate * kShareStepHoldSec))
+        {
+            shareStepSamples = 0;
+            shareBase = share;
+            rhythmSeen = true;
+            lastRhythmSeen.store (rhythmSeen, std::memory_order_relaxed);
+            return true;
+        }
     }
 
     const double towards = share < shareBase ? kShareFallSec : kShareRiseSec;
     shareBase += (share - shareBase) * (1.0f - std::exp (-static_cast<float> (numSamples)
                                                          / std::max (1.0f, static_cast<float> (sampleRate * towards))));
+    lastRhythmSeen.store (rhythmSeen, std::memory_order_relaxed);
     return false;
 }
 
@@ -1574,6 +1608,19 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     const float inputTrim = std::clamp (
         cfg.inputGain.load (std::memory_order_relaxed), 0.0f, 4.0f);
     const float sourcePeak = inputTrim > 1.0e-6f ? postPeak / inputTrim : 0.0f;
+    // A new file is a new input. Loading another track while START stayed on
+    // left the level and rhythm history describing the song that is gone, and
+    // the decoder defending its tempo: measured, a 60 BPM file loaded under a
+    // 120 BPM one reported the old tempo until STOP was pressed. Drop the
+    // history - it was measured on audio that is no longer arriving - and
+    // force a fresh epoch, which tells the worker to re-acquire. The clock
+    // itself is never restarted. See docs/TODO.md item 3.
+    if (inputRestartPending.exchange (false, std::memory_order_relaxed))
+    {
+        resetAnalysisLevelState();
+        preserveCombOnEpoch = false;
+        analysisEpoch.fetch_add (1, std::memory_order_relaxed);
+    }
     // This is the last honest amplitude in the path. The make-up immediately
     // below deliberately raises a quiet room to BeatNet's operating level, so
     // asking the tracker whether the source is real after that point makes a
@@ -1592,7 +1639,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // section. `rhythmSeen` is the second fact, and it is only asked for here:
     // a source that starts from quiet still enters through its epoch, which is
     // the ordinary path and is not gated by this.
-    tracker.setSourceAudible (sourcePeak > (speaker ? 0.004f : 0.040f) && rhythmSeen);
+    const float audiblePeak = speaker ? 0.004f : 0.040f;
+    const bool sourceAudible = sourcePeak > audiblePeak;
+    tracker.setSourceAudible (sourceAudible && rhythmSeen);
     // How much the band is giving. Taken here on purpose: our own part has
     // just been subtracted, so the dynamics cannot follow themselves, and the
     // make-up gain below - which exists to hold the network's operating point
@@ -1602,8 +1651,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // Before the make-up, and before the level watcher: the share the bottom of
     // the mix is carrying is the one thing measured on real material that tells
     // an intro without a rhythm section from the band coming in. See
-    // updateRhythmShare.
-    const bool rhythmArrived = updateRhythmShare (numSamples);
+    // updateRhythmShare. `sourceAudible` is the same floor: a share taken below
+    // it is a ratio of room noise, not evidence of a rhythm section.
+    const bool rhythmArrived = updateRhythmShare (numSamples, sourceAudible);
     const bool levelJumped = updateAnalysisEpoch (numSamples, sourcePeak, rhythmArrived);
     if (barReentryPending.exchange (false, std::memory_order_relaxed))
         tracker.notifyBarReentry();
@@ -1917,6 +1967,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.inputGain = cfg.inputGain.load (std::memory_order_relaxed);
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.lowShare = lastLowShare.load (std::memory_order_relaxed);
+    s.rhythmSeen = lastRhythmSeen.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);
     s.analysisGaps = lastGaps.load (std::memory_order_relaxed);
     s.kickChannel = lastKickChannel.load (std::memory_order_relaxed);
