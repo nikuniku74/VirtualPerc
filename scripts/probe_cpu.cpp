@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdio>
 #include <thread>
+#include <string>
 #include <vector>
 
 int main (int argc, char** argv)
@@ -25,7 +26,13 @@ int main (int argc, char** argv)
 
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
-    eng.settings().followSource.store (static_cast<int> (vp::FollowSource::speaker));
+    // argv[2]: "mic" for the kit-microphone / desk-send path, which is what a
+    // band on stage actually uses. Default stays the speaker, which is the
+    // more expensive of the two - its leak search scans a wider window and
+    // twice as often.
+    const bool useMic = argc > 2 && std::string (argv[2]) == "mic";
+    eng.settings().followSource.store (static_cast<int> (
+        useMic ? vp::FollowSource::kitMic : vp::FollowSource::speaker));
     eng.start();
 
     std::vector<float> oL (static_cast<size_t> (block), 0.0f), oR (static_cast<size_t> (block), 0.0f);

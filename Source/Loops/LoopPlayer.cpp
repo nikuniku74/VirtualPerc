@@ -100,12 +100,28 @@ void LoopPlayer::stop() noexcept
     waitedQuarters = 0;
     for (auto& v : voices)
     {
+        // Every scalar is cleared whatever happens, so the state this
+        // leaves behind is identical either way. The phase vocoder is the
+        // one part that is not free to clear, and a voice that is already
+        // inert cannot have touched its own since the last time it was
+        // cleared: `advance` returns on `! v.active || v.index < 0` before
+        // it reaches `stretcher.process`.
+        //
+        // It matters because this is not a rare call. The renderer ends
+        // every block with `if (mode == strokes && blend <= 0) stop()`,
+        // which is the ordinary PATTERN case with no recording blended in -
+        // so both players reset both vocoders on every audio callback.
+        // Measured with `VPCpu`: 177 us of fixed cost per callback, which
+        // at a 256-sample buffer was 69% of everything the app spends.
+        const bool wasLive = v.active || v.index >= 0 || v.gain != 0.0f
+                             || v.gainTarget != 0.0f || v.gainStep != 0.0f;
         v.active = false;
         v.gain = 0.0f;
         v.gainTarget = 0.0f;
         v.gainStep = 0.0f;
         v.index = -1;
-        v.stretcher.reset();
+        if (wasLive)
+            v.stretcher.reset();
     }
 }
 

@@ -3321,8 +3321,120 @@ Revertito. Va ripreso con un limite di banda sulla derivata, non così.
   cavallo, **senza** cambiare sorgente — cioè rifittare l'ancora escludendo i
   battiti dentro l'evento, invece di scegliere fra due fit.
 - [ ] Il costo sul brano 2 va capito prima di considerare chiuso l'item.
-- [ ] `VPAlign` non è stato rimisurato su questo cambio: il confronto salvato è
-  anteriore alle colonne aggiunte da `2aa1653`. Da rifare prima di spedire.
+- [x] `VPAlign` rimisurato l'11/09/2026, e **dice di no sulle rampe**. Sotto.
+
+**Verifica su `VPAlign`, 11/09/2026: la rampa peggiora.** Confronto `2aa1653` →
+`4fead68` nello stesso `build-host`, `VPAlign` deterministico (due corse a HEAD
+identiche riga per riga). Fase peggiore contro la griglia scritta:
+
+| | prima | dopo |
+|---|---|---|
+| `100 -> 110 in 30 s` | 151.7 ms | 151.7 (invariato) |
+| `100 -> 110 in 12 s` | 165.9 ms | **193.8** |
+| `120 -> 132 in 20 s` | 145.9 ms | **236.8** |
+| `128 -> 120 in 20 s` | 73.7 ms | 73.7 (invariato) |
+
+Le tabelle dell'orologio - buco senza batteria e accelerando - sono **identiche**
+(differenze di 0.1 ms, cioè il rumore della misura): la protezione regge. È la
+rampa che paga, e un'accelerazione graduale è la cosa più comune che faccia un
+batterista dal vivo.
+
+**Il meccanismo.** Su una rampa i due fit sono in disaccordo *continuamente* e il
+fit corto fitta davvero meglio di una retta a ventiquattro battiti una curva, così
+entrambe le metà del test restano vere e l'ancora scivola verso il fit più
+rumoroso, avanti e indietro.
+
+**Tentativo fallito, per non rifarlo.** Limitare la durata dell'aggancio a una
+finestra lunga, con pari attesa prima di riagganciare: **no-op** (58.1 e 39.3
+invariati). Il danno non viene da un aggancio lungo ma da accensioni ripetute e
+brevi dentro la rampa. Rimosso.
+
+**Il bilancio, per decidere.** A favore: il calo rientra in 16.2 s invece di 18.0,
+la sovraelongazione scende da −31.7 a −23.7 ms, lo spostamento *permanente* che un
+calo lasciava passa da +10.0 a +1.9 ms, e sul materiale vero il brano 3 passa da
+264 a **48 ms** di spostamento di fase peggiore. Contro: la rampa da 20 s passa da
+146 a 237 ms di fase peggiore, e il brano 2 peggiora sugli strattoni.
+
+- [ ] **Decisione aperta.** La raccomandazione è di non tenerlo così: 237 ms su una
+  rampa sono un quarto di secondo di percussioni fuori, su il caso live più
+  frequente. Il cambio va rifatto in modo che **non scatti su una rampa** - cioè
+  richiedendo che il fit corto sia tornato vicino alla *baseline del brano*, non
+  solo migliore del lungo. Quella baseline esiste già in `EvidenceTrust`, ma sta
+  nel tracker e il decoder non la vede: è quello il pezzo di cablaggio mancante.
+
+### 42. Il vocoder di fase azzerato a ogni callback: un terzo della CPU 🟢 (2026-09-11)
+
+Domanda: si puo' ridurre il consumo di batteria durante l'uso.
+
+**Come si misura.** `VPCpu <blocco> [mic]`. Senza argomenti misura il percorso
+*speaker* (cancellatore di rientro a finestra larga); con `mic` misura il
+microfono sul kit o la mandata dal banco, che e' quello che una band usa dal
+vivo. Il secondo argomento e' stato aggiunto qui: prima il banco misurava solo
+il caso peggiore, che non e' quello dell'utente.
+
+**Il reperto.** Il consumo scalava quasi inversamente con la dimensione del
+buffer - 7.2% di un core a 128 campioni contro 1.7% a 1024 - e un fit lineare
+sui quattro punti isola **177 us di costo fisso per callback**, cioe' il **69%**
+di tutto quello che l'app spendeva al buffer comune da 256.
+
+Campionando il processo (`sample`), 169 campioni su 349 dentro `processBlock`
+stavano in `HybridPercussionRenderer::render` -> `LoopPlayer::stop()` ->
+`LoopStretcher::reset()` -> `DynamicSTFT::reset` (bzero dei buffer, riassegnazione
+di vettori, `addWindowProduct`).
+
+La causa e' una riga in coda a `render`:
+
+```cpp
+if (mode == Mode::strokes && blend <= 0.0f) { congas.stop(); shaker.stop(); }
+```
+
+In PATTERN senza registrazioni miscelate - il caso ordinario - quella condizione
+e' vera **a ogni blocco**, e `stop()` azzerava un vocoder di fase per voce.
+L'app resettava due vocoder cinquemila volte al minuto per spegnere qualcosa che
+era gia' spento.
+
+**La correzione.** In `LoopPlayer::stop()` ogni scalare continua a essere
+azzerato incondizionatamente - lo stato lasciato e' identico bit per bit - e solo
+`v.stretcher.reset()` viene saltato per una voce gia' inerte. E' equivalente per
+costruzione: `advance` esce su `! v.active || v.index < 0` prima di arrivare a
+`stretcher.process`, quindi il vocoder di una voce spenta non puo' essere stato
+toccato dal suo ultimo azzeramento.
+
+**Misure**, 30 s di audio, percorso microfono/mandata:
+
+| buffer | prima | dopo |
+|---|---|---|
+| 128 | 7.2% di un core | **3.9%** |
+| 256 | 4.2% | **2.7%** |
+| 512 | 2.4% | 1.9% |
+| 1024 | 1.7% | 1.5% |
+
+Percorso speaker, 256: 4.8% -> 3.6%.
+
+Regressioni: `VPTests --loops` 58/0 identico, `--leak` 47/2 e `--makeup` 83/9
+**identici a HEAD** (quei fallimenti sono preesistenti e non c'entrano con
+questo). Nessun percorso del tempo e' toccato.
+
+**Cosa resta, misurato e non fatto.**
+
+- Dopo la correzione restano ~108 us fissi per callback. Il profilo li mette in
+  `subtractSpeakerLeak` -> `updateLeakDelay` (66% del callback sul percorso
+  speaker) e in `HarmonicChange::analyseWindow` (21%).
+- [ ] **`leakScanCountdown` conta blocchi, non tempo**:
+  `speaker ? (locked ? 4 : 1) : 8`. La ricerca grossolana usa
+  `step = numSamples / 8`, quindi costa lo stesso (~30k operazioni) a qualunque
+  buffer, ma riparte ogni N *blocchi* - otto volte piu' spesso al secondo a 128
+  campioni che a 1024. Il ritardo acustico non cambia piu' in fretta con un
+  buffer piu' piccolo, quindi e' un'incoerenza prima ancora che un costo: la
+  velocita' di adattamento del cancellatore dipende oggi dal buffer dell'host.
+  Renderlo a tempo e' la correzione giusta, ma va scelto il riferimento e
+  **misurato con `VPTests --leak`** (che ha 2 FAIL noti da prima): fissarlo sul
+  comportamento a 256 non da' nessun guadagno al buffer piu' comune e ne toglie
+  a 1024. Non fatto qui perche' il guadagno certo era altrove.
+- [ ] Il buffer e' la leva piu' grande che resta e non e' nel codice: fra 128 e
+  1024 campioni ci sono 2.6 volte di consumo. Se l'app puo' chiedere all'host un
+  buffer piu' grande senza costare latenza percepita, vale piu' di qualunque
+  micro-ottimizzazione.
 
 ## Standby
 
