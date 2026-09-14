@@ -2913,6 +2913,20 @@ misurabile è zero — ma la conseguenza architetturale è vera e va detta:
 - [ ] Il brano 6 non ha una curva di verità utilizzabile (2 punti buoni). Il
   banco è a cinque.
 
+**Due tentativi ulteriori, misurati e scartati (2026-09-14).** Entrambi usavano
+`moving` (il trend del fit lungo) per accelerare il rientro, e nessuno dei due
+regge, per la stessa ragione per cui il muro qui sopra esiste: `moving` è troppo
+rumoroso durante l'acquisizione e i transitori, quindi non separa "la band
+deriva" da "il fit sta ancora assestandosi".
+1. **Escludere il pettine quando `moving`** (`pullTowardsComb`): sulle rampe di
+   `VPAlign` migliora solo la *media* di 1-4 ms (il peggio è identico), ma
+   `probe_matrix` passa da **98 a 102 uscite**. Ripristinato.
+2. **Committare a `kRateAcquiring` quando `moving`** (ramo `live`): la fase
+   "dopo" la rampa migliora (13.3→9.9, 12.9→10.2 ms), ma `probe_matrix`
+   aggancio medio **5.23 → 8.84 s** e uscite 98→103. Ripristinato.
+Non riprovare in questa forma: il discriminatorio pulito è la verità di fase
+(i tap), non un'altra soglia su `moving`/`trend`/`shortFitRate`.
+
 ---
 
 ### 39. Il rallentando: perché ci mette sei secondi, e perché «al primo colpo» non è possibile 🔴 (2026-09-11)
