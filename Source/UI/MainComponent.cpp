@@ -2768,15 +2768,18 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         s.octaveUp = block.removeFromRight (octW).reduced (0, juce::jmax (2, bpmH / 6));
         s.bpmNumber = block.reduced (4, 0);
     }
-    if (area.getHeight() > 6)
-        area.removeFromTop (juce::jmin (8, area.getHeight() / 8));
+    // Minimal gap before beats in compact
+    if (area.getHeight() > 2)
+        area.removeFromTop (juce::jmin (2, area.getHeight() / 12));
     // Limit beats row to its natural height; leftover space goes to knobs/buttons.
-    const int beatsH = juce::jlimit (48, 80, area.getHeight() / 3);
+    const int beatsH = juce::jlimit (48, 72, area.getHeight() / 3);
     s.beats = area.removeFromTop (beatsH);
-    // Consume remaining space so it's not wasted as dead air below beats.
-    // Transport/misure/knobs will use this freed space to scale up.
-    if (area.getHeight() > 6)
-        area.removeFromTop (juce::jmin (6, area.getHeight() / 10));
+    // "L'1 è QUI" button goes directly under beats, not on the side
+    const int barH = juce::jlimit (28, 40, juce::roundToInt (beatsH * 0.5f));
+    s.barShift = area.removeFromTop (barH).reduced (8, 2);
+    // Minimal gap between beats row and transport
+    if (area.getHeight() > 2)
+        area.removeFromTop (juce::jmin (2, area.getHeight() / 12));
     return s;
 }
 
