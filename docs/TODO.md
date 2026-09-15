@@ -3525,6 +3525,26 @@ questo). Nessun percorso del tempo e' toccato.
   buffer piu' grande senza costare latenza percepita, vale piu' di qualunque
   micro-ottimizzazione.
 
+### 43. Il pettine vecchio annullava un cambio gia' confermato 🟢 (2026-09-15)
+
+Sul percorso file/mixer il cambio era riconosciuto presto ma non restava preso:
+120→132 veniva confermato a +0,92 s, poi il pettine ancora a 120 riportava la
+pubblicazione successiva a 129,2 BPM e il clock si stabilizzava solo a 8,90 s.
+Su 120→108 il rimbalzo arrivava dopo gli otto battiti del fit corto e spostava la
+stabilita' a 14,12 s.
+
+Durante la finestra limitata di refit, solo su `lineFeed`, il live target ora
+ignora il pettine per 8+3 battiti accettati. Dopo: 120→132 **0,92 s al BPM / 1,34
+s stabile**, 120→108 **1,14 / 1,66 s**; errore massimo dopo conferma 0,041 e
+0,026 BPM. Nessun restart o arretramento del clock. Il microfono iPad non cambia.
+
+Gate: nuova regressione `VPTests --tempo-step` 11/11; `probe_matrix` completo
+identico a HEAD (5,22 s / 104 uscite / 30 mai / 9,11%); cinque dump impulsi
+Flamingo identici byte per byte; `VPAlign` sei gradini + due rampe PASS, incluso
+100→140 in 1,30 s e 24,5 ms un battito dopo l'evidenza; `probe_recovery` 84/84.
+Suite generale 620/27, con rossi storici fuori dalla transizione; non A/B completa.
+Dettaglio e limiti rimasti in `docs/HANDOFF_TEMPO.md`.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -3766,6 +3786,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Brano: `trackLoadButton` / `trackPlayButton` / `trackTransport`; waveform+seek in SETUP (`TrackWaveform`, item 14)  
 - ÷2 / ×2: **rimossi** (item 15, 2026-09-03); ottava sempre auto in `BeatTracker`  
 - Ottava automatica: si muove **solo se non sta suonando nulla** (item 17, `BeatTracker::updateAutoOctave`). Il livello si sceglie in acquisizione e si tiene; ÷2/×2 restano la via manuale anche a parte suonante. Regressione: `VPProbe --trace --live --mixer plain 168` deve finire ~167, non 84.
+- Pattern DANCE (2026-09-15): semplificato a groove classico sempre in levare — 4 note (2/6/10/14), solo tapado e open, A=B=C=D=Fill. Suono pop-dance classico, niente variazioni di bar. Compilato e verificato; ascolto ancora da fare.
 - Assestamento a volte lentissimo (fino a 30 s) sullo stesso materiale che di solito prende 2 s: item 18, aperto, **non** inseguirlo prima di sapere se esiste fuori dal banco (`VPProbe --sync`).
 - Chiusura Codex PATTERN: parte tecnica completata; resta l'ascolto umano in **Standby A**. Loop WAV registrati: **Standby B** + `HANDOFF_LOOP_DEBUG.md`
 - Guadagno automatico analisi (item 16): `kMakeupClipGuardPeak` in `VirtualPercussionEngine.cpp`, attenua solo sopra 0.90 di picco. Test veloce dedicato: `VPTests --octave` (non lanciare la suite intera per iterare qui). Full-suite gate e ascolto ancora da fare.

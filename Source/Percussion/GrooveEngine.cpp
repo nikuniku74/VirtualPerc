@@ -141,54 +141,39 @@ namespace
 
     // ----------------------------------------------------------------- dance
     //
-    // Pop-dance already has a kick on every numbered beat. The congas therefore
-    // answer it on the off-eighths: a short stopped low followed by a bright
-    // open tone, stated twice across the bar. One closed slap moves through the
-    // phrase on the inner sixteenths, giving the programmed hook its variation
-    // without turning it into a Latin tumbao. In particular there are no open
-    // low tumbas: that long bass note competes with the kick instead of making
-    // a pop-dance groove move.
+    // Classic pop-dance groove: stopped low answer on 2 and 10, open tone on 6
+    // and 14. Four notes, always on the offbeat, always the same - the sound
+    // of congas at a dance party, not a fill or variation.
     constexpr Hit kDanceA[] = {
-        {  2, Stroke::tapado,     0.76f },
-        {  6, Stroke::open,       0.82f },
-        { 10, Stroke::tapado,     0.78f },
-        { 11, Stroke::slapClosed, 0.80f },
-        { 14, Stroke::open,       0.94f },
+        {  2, Stroke::tapado, 0.76f },
+        {  6, Stroke::open,   0.82f },
+        { 10, Stroke::tapado, 0.78f },
+        { 14, Stroke::open,   0.94f },
     };
     constexpr Hit kDanceB[] = {
-        {  2, Stroke::tapado,     0.76f },
-        {  5, Stroke::slapClosed, 0.72f },
-        {  6, Stroke::open,       0.84f },
-        { 10, Stroke::tapado,     0.76f },
-        { 14, Stroke::open,       0.90f },
-        { 15, Stroke::slapClosed, 0.62f },
+        {  2, Stroke::tapado, 0.76f },
+        {  6, Stroke::open,   0.82f },
+        { 10, Stroke::tapado, 0.78f },
+        { 14, Stroke::open,   0.94f },
     };
     constexpr Hit kDanceC[] = {
-        {  2, Stroke::tapado,     0.76f },
-        {  6, Stroke::open,       0.80f },
-        {  7, Stroke::slapClosed, 0.52f },
-        { 10, Stroke::tapado,     0.78f },
-        { 13, Stroke::toe,        0.24f },
-        { 14, Stroke::open,       0.94f },
+        {  2, Stroke::tapado, 0.76f },
+        {  6, Stroke::open,   0.82f },
+        { 10, Stroke::tapado, 0.78f },
+        { 14, Stroke::open,   0.94f },
     };
-    // A fill is the one bar that may be busier than the rule allows - it is
-    // what a fill is - but eight straight sixteenths is a drum machine. Six,
-    // with a gap in them, is a player.
+    // Same pattern for the fill: consistency is the whole point.
     constexpr Hit kDanceFill[] = {
-        {  8, Stroke::tapado,     0.74f },
-        { 10, Stroke::open,       0.78f },
-        { 11, Stroke::slapClosed, 0.72f },
-        { 13, Stroke::open,       0.86f },
-        { 14, Stroke::slapClosed, 0.92f },
-        { 15, Stroke::open,       0.98f },
+        {  2, Stroke::tapado, 0.76f },
+        {  6, Stroke::open,   0.82f },
+        { 10, Stroke::tapado, 0.78f },
+        { 14, Stroke::open,   0.94f },
     };
     constexpr Hit kDanceD[] = {
-        {  2, Stroke::open,       0.76f },
-        {  3, Stroke::slapClosed, 0.42f },
-        {  6, Stroke::open,       0.86f },
-        { 10, Stroke::tapado,     0.76f },
-        { 11, Stroke::slapClosed, 0.82f },
-        { 14, Stroke::open,       0.92f },
+        {  2, Stroke::tapado, 0.76f },
+        {  6, Stroke::open,   0.82f },
+        { 10, Stroke::tapado, 0.78f },
+        { 14, Stroke::open,   0.94f },
     };
 
     // ------------------------------------------------------------------- pop
