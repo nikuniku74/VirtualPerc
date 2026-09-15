@@ -2710,7 +2710,9 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     // buttons. In landscape there is not even room for that, so everything
     // shrinks together rather than the last card running off the bottom.
     const int room = juce::jmax (0, n - 3 * gap);
-    const int tempoMin = 96, transportMin = 56;
+    // Compact: tempo card (BPM + beats) is smaller now that beats is capped.
+    // transportMin stays at 56 to give START/STOP room to breathe.
+    const int tempoMin = 72, transportMin = 56;
     int tempoH, transportH, misH, knH;
     const int natural = tempoMin + transportMin + misureH + knobsH;
     if (natural > room)
@@ -2771,6 +2773,10 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     // Limit beats row to its natural height; leftover space goes to knobs/buttons.
     const int beatsH = juce::jlimit (48, 80, area.getHeight() / 3);
     s.beats = area.removeFromTop (beatsH);
+    // Consume remaining space so it's not wasted as dead air below beats.
+    // Transport/misure/knobs will use this freed space to scale up.
+    if (area.getHeight() > 6)
+        area.removeFromTop (juce::jmin (6, area.getHeight() / 10));
     return s;
 }
 
