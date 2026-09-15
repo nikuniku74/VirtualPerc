@@ -195,6 +195,9 @@ private:
             under the two buttons and out of the column. */
         juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
         juce::Rectangle<int> barShift;
+        /** Compact only: the SETUP button rides the status row's right side,
+            because a phone has no title row to put it in. */
+        juce::Rectangle<int> settings;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
     StageRows compactTempoRows (juce::Rectangle<int> area) const;

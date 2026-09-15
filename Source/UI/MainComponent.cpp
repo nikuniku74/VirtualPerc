@@ -2605,7 +2605,9 @@ juce::Rectangle<int> MainComponent::compactPadded (juce::Rectangle<int> area) co
 void MainComponent::applyCompactVisibility()
 {
     const bool compact = isCompact();
-    settingsButton.setVisible (! compact);
+    // SETUP stays visible on a phone too - it is the only way into the settings
+    // page, and the compact layout gives it the status row's right side.
+    settingsButton.setVisible (true);
     followButton.setVisible (! compact);
     fixedButton.setVisible (! compact);
     barButton.setVisible (! compact);
@@ -2695,16 +2697,45 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     CompactGeom g;
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
-    g.tempo = r.removeFromTop (takeAtMost (r.getHeight(),
-                                            juce::roundToInt (static_cast<float> (n) * 0.36f)));
-    if (r.getHeight() > gap)
-        r.removeFromTop (gap);
-    g.transport = r.removeFromTop (takeAtMost (r.getHeight(), clampW (36, 56, n / 8)));
-    if (r.getHeight() > gap)
-        r.removeFromTop (gap);
-    g.misure = r.removeFromTop (takeAtMost (r.getHeight(), clampW (36, 64, n / 6)));
-    if (r.getHeight() > gap)
-        r.removeFromTop (gap);
+    constexpr int kChrome = 22;      // compact card title strip + padding
+    constexpr int kMisureRow = 52;   // the square row is capped here
+    const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 5);
+    const int misureH = kChrome + kMisureRow;
+    const int knobsH = kChrome + 11 + knobColW;   // label + a square knob
+    // On a phone the squares (MISURE, seven across) and the knobs (FEEL, five
+    // across) are limited by their *width*, so handing their cards extra height
+    // only floats them in empty space - which is where a tall portrait screen
+    // was going. Size those two to their content and give the rest to the two
+    // things that do grow with the room: the tempo read-out and TRASPORTO's
+    // buttons. In landscape there is not even room for that, so everything
+    // shrinks together rather than the last card running off the bottom.
+    const int room = juce::jmax (0, n - 3 * gap);
+    const int tempoMin = 96, transportMin = 56;
+    int tempoH, transportH, misH, knH;
+    const int natural = tempoMin + transportMin + misureH + knobsH;
+    if (natural > room)
+    {
+        const float f = static_cast<float> (room) / static_cast<float> (natural);
+        tempoH = juce::jmax (40, juce::roundToInt (static_cast<float> (tempoMin) * f));
+        transportH = juce::jmax (40, juce::roundToInt (static_cast<float> (transportMin) * f));
+        misH = juce::jmax (30, juce::roundToInt (static_cast<float> (misureH) * f));
+        knH = juce::jmax (44, juce::roundToInt (static_cast<float> (knobsH) * f));
+    }
+    else
+    {
+        misH = misureH;
+        knH = knobsH;
+        const int rest = room - misH - knH;
+        transportH = juce::jlimit (56, 132,
+                                   juce::roundToInt (static_cast<float> (rest) * 0.30f));
+        tempoH = juce::jmax (tempoMin, rest - transportH);
+    }
+    g.tempo = r.removeFromTop (takeAtMost (r.getHeight(), tempoH));
+    if (r.getHeight() > gap) r.removeFromTop (gap);
+    g.transport = r.removeFromTop (takeAtMost (r.getHeight(), transportH));
+    if (r.getHeight() > gap) r.removeFromTop (gap);
+    g.misure = r.removeFromTop (takeAtMost (r.getHeight(), misH));
+    if (r.getHeight() > gap) r.removeFromTop (gap);
     g.knobs = r;
     return g;
 }
@@ -2714,8 +2745,16 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     StageRows s;
     // FOLLOWING / IN ASCOLTO. SEGUI/FISSO stay off this row: a Split View
     // column cannot spend that width, and the colour already carries the mode.
-    const int pillH = clampW (16, 22, area.getHeight() / 8);
+    const int pillH = clampW (20, 30, area.getHeight() / 7);
     s.pill = area.removeFromTop (takeAtMost (area.getHeight(), pillH));
+    // SETUP rides the status row's right side: the words are left-aligned and
+    // the rest of the row is empty, and a phone has no title row to put it in.
+    {
+        const int btnW = clampW (54, 96, s.pill.getWidth() / 4);
+        s.settings = s.pill.removeFromRight (btnW).reduced (1);
+        if (s.pill.getWidth() > 8)
+            s.pill.removeFromRight (6);
+    }
     if (area.getHeight() > 4)
         area.removeFromTop (juce::jmin (4, area.getHeight() / 10));
     const int bpmH = clampW (32, 120, area.getHeight() * 5 / 8);
@@ -2894,8 +2933,9 @@ void MainComponent::resized()
 
     applyCompactVisibility();
     layoutTrackWaveform();
-    if (! isCompact())
-        settingsButton.toFront (false);
+    // SETUP sits over the painted stage in the compact layout, so it has to be
+    // above it either way.
+    settingsButton.toFront (false);
     if (styleMenu.isOpen())
         styleMenu.setBounds (getLocalBounds());
 }
@@ -2962,6 +3002,7 @@ void MainComponent::layoutCompact()
     const auto rows = compactTempoRows (g.tempo);
     halveButton.setBounds (rows.octaveDown);
     doubleButton.setBounds (rows.octaveUp);
+    settingsButton.setBounds (rows.settings);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (g.tempo.getX(), rows.bpm.getY(),
                                                          g.tempo.getRight(), rows.beats.getBottom());
