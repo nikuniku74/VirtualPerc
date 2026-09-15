@@ -141,38 +141,43 @@ namespace
 
     // ----------------------------------------------------------------- dance
     //
-    // Classic pop-dance groove: stopped low answer on 2 and 10, open tone on 6
-    // and 14. Four notes, always on the offbeat, always the same - the sound
-    // of congas at a dance party, not a fill or variation.
+    // Classic pop-dance groove: always in levare on 2/6/10/14, with variation
+    // across the phrase. Low on 2 and 10 (tapado), high on 6 and 14 (open).
+    // Light slaps move through the phrase for character without losing the groove.
     constexpr Hit kDanceA[] = {
         {  2, Stroke::tapado, 0.76f },
         {  6, Stroke::open,   0.82f },
         { 10, Stroke::tapado, 0.78f },
+        { 11, Stroke::slap,   0.42f },  // quiet slap, variation A
         { 14, Stroke::open,   0.94f },
     };
     constexpr Hit kDanceB[] = {
         {  2, Stroke::tapado, 0.76f },
-        {  6, Stroke::open,   0.82f },
+        {  5, Stroke::slap,   0.38f },  // moves early, variation B
+        {  6, Stroke::open,   0.84f },
         { 10, Stroke::tapado, 0.78f },
-        { 14, Stroke::open,   0.94f },
+        { 14, Stroke::open,   0.90f },
     };
     constexpr Hit kDanceC[] = {
         {  2, Stroke::tapado, 0.76f },
-        {  6, Stroke::open,   0.82f },
+        {  6, Stroke::open,   0.80f },
+        {  7, Stroke::slap,   0.40f },  // late slap, variation C
         { 10, Stroke::tapado, 0.78f },
         { 14, Stroke::open,   0.94f },
     };
-    // Same pattern for the fill: consistency is the whole point.
+    // Fill: subtle variation on the approach to the phrase
     constexpr Hit kDanceFill[] = {
         {  2, Stroke::tapado, 0.76f },
         {  6, Stroke::open,   0.82f },
         { 10, Stroke::tapado, 0.78f },
-        { 14, Stroke::open,   0.94f },
+        { 13, Stroke::slap,   0.35f },  // tiny slap on the final beat
+        { 14, Stroke::open,   0.98f },
     };
     constexpr Hit kDanceD[] = {
         {  2, Stroke::tapado, 0.76f },
         {  6, Stroke::open,   0.82f },
         { 10, Stroke::tapado, 0.78f },
+        { 11, Stroke::slap,   0.42f },  // same as A, closes the phrase
         { 14, Stroke::open,   0.94f },
     };
 

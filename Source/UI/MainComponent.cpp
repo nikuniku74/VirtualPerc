@@ -2768,7 +2768,9 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     }
     if (area.getHeight() > 6)
         area.removeFromTop (juce::jmin (8, area.getHeight() / 8));
-    s.beats = area;
+    // Limit beats row to its natural height; leftover space goes to knobs/buttons.
+    const int beatsH = juce::jlimit (48, 80, area.getHeight() / 3);
+    s.beats = area.removeFromTop (beatsH);
     return s;
 }
 
