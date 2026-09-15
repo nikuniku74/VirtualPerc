@@ -2507,6 +2507,32 @@ void MainComponent::timerCallback()
    #endif
 }
 
+juce::BorderSize<int> MainComponent::effectiveSafeArea() const
+{
+   #if JUCE_IOS
+    const auto win = vp::windowSafeAreaInsets();
+    juce::BorderSize<int> safe { win.top, win.left, win.bottom, win.right };
+
+    // JUCE's copy as a floor, not as the answer: whichever source knows about
+    // a given edge, that edge gets cleared.
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* display = displays.getDisplayForRect (getScreenBounds());
+    if (display == nullptr)
+        display = displays.getPrimaryDisplay();
+    if (display != nullptr)
+    {
+        const auto d = display->safeAreaInsets;
+        safe = { juce::jmax (safe.getTop(), d.getTop()),
+                 juce::jmax (safe.getLeft(), d.getLeft()),
+                 juce::jmax (safe.getBottom(), d.getBottom()),
+                 juce::jmax (safe.getRight(), d.getRight()) };
+    }
+    return safe;
+   #else
+    return {};
+   #endif
+}
+
 juce::Rectangle<int> MainComponent::safePadded (juce::Rectangle<int> area) const
 {
    #if JUCE_IOS
@@ -2520,14 +2546,11 @@ juce::Rectangle<int> MainComponent::safePadded (juce::Rectangle<int> area) const
     // the larger per side rather than adding them is what keeps the iPad
     // exactly as it was.
     juce::BorderSize<int> pad { 36, 24, 20, 24 };
-    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-    {
-        const auto safe = display->safeAreaInsets;
-        pad = { juce::jmax (pad.getTop(), safe.getTop()),
-                juce::jmax (pad.getLeft(), safe.getLeft()),
-                juce::jmax (pad.getBottom(), safe.getBottom()),
-                juce::jmax (pad.getRight(), safe.getRight()) };
-    }
+    const auto safe = effectiveSafeArea();
+    pad = { juce::jmax (pad.getTop(), safe.getTop()),
+            juce::jmax (pad.getLeft(), safe.getLeft()),
+            juce::jmax (pad.getBottom(), safe.getBottom()),
+            juce::jmax (pad.getRight(), safe.getRight()) };
     return pad.subtractedFrom (area);
    #else
     return area.reduced (30, 24);
@@ -2572,18 +2595,11 @@ juce::Rectangle<int> MainComponent::compactPadded (juce::Rectangle<int> area) co
 {
    #if JUCE_IOS
     juce::BorderSize<int> pad { 10, 8, 8, 8 };
-    const auto& displays = juce::Desktop::getInstance().getDisplays();
-    const auto* display = displays.getDisplayForRect (getScreenBounds());
-    if (display == nullptr)
-        display = displays.getPrimaryDisplay();
-    if (display != nullptr)
-    {
-        const auto safe = display->safeAreaInsets;
-        pad = { juce::jmax (pad.getTop(), safe.getTop()),
-                juce::jmax (pad.getLeft(), safe.getLeft()),
-                juce::jmax (pad.getBottom(), safe.getBottom()),
-                juce::jmax (pad.getRight(), safe.getRight()) };
-    }
+    const auto safe = effectiveSafeArea();
+    pad = { juce::jmax (pad.getTop(), safe.getTop()),
+            juce::jmax (pad.getLeft(), safe.getLeft()),
+            juce::jmax (pad.getBottom(), safe.getBottom()),
+            juce::jmax (pad.getRight(), safe.getRight()) };
     const int maxX = juce::jmax (0, (area.getWidth() - 8) / 2);
     // A short Split View slice cannot keep both the system status bar and the
     // home indicator. Keep the top: the in-app status row sits under it, and
@@ -2610,7 +2626,9 @@ void MainComponent::applyCompactVisibility()
     settingsButton.setVisible (true);
     followButton.setVisible (! compact);
     fixedButton.setVisible (! compact);
-    barButton.setVisible (! compact);
+    // Visible on a phone too: it now has its own row under the dots instead of
+    // having to share their width.
+    barButton.setVisible (true);
     const bool showNudge = ! compact && ! engine.settings().tempoFollow.load();
     bpmNudgeDown.setVisible (showNudge);
     bpmNudgeUp.setVisible (showNudge);
@@ -2633,24 +2651,56 @@ void MainComponent::layoutTransport (juce::Rectangle<int> body)
 
 void MainComponent::layoutMisure (juce::Rectangle<int> body)
 {
-    const int btnGap = 4;
-    const int nMisureSq = 7;
-    const int styleW = clampW (40, 72, body.getWidth() / 7);
-    // Use full width in normal mode, centred in compact
-    const bool compact = isCompact();
-    auto row = compact ? body.withSizeKeepingCentre (body.getWidth(),
-                juce::jmin (body.getHeight(), clampW (22, 52, body.getHeight())))
-        : body.reduced (0, (body.getHeight() - clampW (28, 56, body.getHeight())) / 2);
-
-    styleSelect.setBounds (row.removeFromLeft (styleW));
-    if (row.getWidth() > btnGap)
-        row.removeFromLeft (btnGap);
-    const int sideFit = juce::jmin (row.getHeight(),
-        juce::jmax (1, (row.getWidth() - btnGap * (nMisureSq - 1)) / nMisureSq));
+    const int btnGap = 5;
+    constexpr int nMisureSq = 7;
     juce::TextButton* squares[] = {
         &dynamicsButton, &subAuto, &sub4, &sub8, &sub16,
         &naturalButton, &swingButton
     };
+
+    // Seven squares plus the style menu across a phone leaves each of them
+    // about forty points wide. Where the card has the height for it, wrap to
+    // two rows instead: the squares then take roughly twice the width, which
+    // is what that height is for. Only where the width is actually the binding
+    // constraint - an iPad has room for all seven and should keep one row.
+    const int oneRowSq = (body.getWidth() - clampW (40, 72, body.getWidth() / 7)
+                          - btnGap * nMisureSq) / nMisureSq;
+    const int rowH = juce::jmin (56, (body.getHeight() - btnGap) / 2);
+    if (rowH >= 36 && oneRowSq < 56)
+    {
+        auto block = body.withSizeKeepingCentre (body.getWidth(), rowH * 2 + btnGap);
+        auto top = block.removeFromTop (rowH);
+        block.removeFromTop (btnGap);
+        auto bottom = block.removeFromTop (rowH);
+
+        styleSelect.setBounds (top.removeFromLeft (clampW (56, 120, top.getWidth() / 4)));
+        if (top.getWidth() > btnGap)
+            top.removeFromLeft (btnGap);
+        const int wTop = juce::jmax (1, (top.getWidth() - btnGap * 2) / 3);
+        for (int i = 0; i < 3; ++i)
+        {
+            squares[i]->setBounds (top.removeFromLeft (wTop));
+            if (i < 2 && top.getWidth() > btnGap)
+                top.removeFromLeft (btnGap);
+        }
+        const int wBottom = juce::jmax (1, (bottom.getWidth() - btnGap * 3) / 4);
+        for (int i = 3; i < nMisureSq; ++i)
+        {
+            squares[i]->setBounds (bottom.removeFromLeft (wBottom));
+            if (i + 1 < nMisureSq && bottom.getWidth() > btnGap)
+                bottom.removeFromLeft (btnGap);
+        }
+        return;
+    }
+
+    // One row. The squares spend the whole width rather than staying square
+    // and leaving the right-hand end of the card empty.
+    auto row = body.withSizeKeepingCentre (body.getWidth(),
+        juce::jmin (body.getHeight(), clampW (22, 52, body.getHeight())));
+    styleSelect.setBounds (row.removeFromLeft (clampW (40, 72, row.getWidth() / 7)));
+    if (row.getWidth() > btnGap)
+        row.removeFromLeft (btnGap);
+    const int sideFit = juce::jmax (1, (row.getWidth() - btnGap * (nMisureSq - 1)) / nMisureSq);
     for (int i = 0; i < nMisureSq; ++i)
     {
         squares[i]->setBounds (row.removeFromLeft (sideFit));
@@ -2661,22 +2711,47 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
 
 void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
 {
-    const int nKnobs = 5;
-    const int knobColW = juce::jmax (1, body.getWidth() / nKnobs);
-    auto placeKnob = [&] (juce::Label& name, juce::Slider& s)
+    constexpr int nKnobs = 5;
+    juce::Label*  names[]   = { &shakerVolLabel,  &congaVolLabel,  &cembaloVolLabel,
+                                &clapVolLabel,    &inputGainLabel };
+    juce::Slider* sliders[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider,
+                                &clapVolSlider,   &inputGainSlider };
+    auto placeKnob = [] (juce::Rectangle<int> col, juce::Label& name, juce::Slider& s)
     {
-        auto col = body.removeFromLeft (knobColW);
         const int labelH = juce::jmin (11, juce::jmax (0, col.getHeight() / 6));
         name.setBounds (col.removeFromBottom (labelH));
         if (col.getHeight() > 1)
             col.removeFromBottom (1);
         s.setBounds (col);
     };
-    placeKnob (shakerVolLabel, shakerVolSlider);
-    placeKnob (congaVolLabel, congaVolSlider);
-    placeKnob (cembaloVolLabel, cembaloVolSlider);
-    placeKnob (clapVolLabel, clapVolSlider);
-    placeKnob (inputGainLabel, inputGainSlider);
+
+    // A knob on a phone is as wide as a fifth of the screen and no wider, so
+    // extra height on this card would otherwise just float them. Three and
+    // two makes each of them half again as big, which is the point of the
+    // room. The pair on the second row is centred under the three above.
+    const int wideCol = juce::jmax (1, body.getWidth() / 3);
+    const int rowGap = 6;
+    constexpr int kUsefulKnob = 70;   // below this a knob is a fiddly target
+    if (body.getWidth() / nKnobs < 90
+        && body.getHeight() >= (kUsefulKnob + 11) * 2 + rowGap)
+    {
+        const int rowH = juce::jmin ((body.getHeight() - rowGap) / 2, wideCol + 11);
+        auto block = body.withSizeKeepingCentre (body.getWidth(), rowH * 2 + rowGap);
+        auto top = block.removeFromTop (rowH);
+        block.removeFromTop (rowGap);
+        auto bottom = block.removeFromTop (rowH);
+        for (int i = 0; i < 3; ++i)
+            placeKnob (top.removeFromLeft (wideCol), *names[i], *sliders[i]);
+        bottom.removeFromLeft (wideCol / 2);
+        for (int i = 3; i < nKnobs; ++i)
+            placeKnob (bottom.removeFromLeft (wideCol), *names[i], *sliders[i]);
+    }
+    else
+    {
+        const int knobColW = juce::jmax (1, body.getWidth() / nKnobs);
+        for (int i = 0; i < nKnobs; ++i)
+            placeKnob (body.removeFromLeft (knobColW), *names[i], *sliders[i]);
+    }
 
     shakerVolSlider.setVisible (true);
     shakerVolLabel.setVisible (true);
@@ -2693,6 +2768,23 @@ void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
     inputGainSlider.setVisible (true);
     inputGainLabel.setVisible (true);
     inputGainValue.setVisible (false);
+}
+
+namespace
+{
+    // The compact tempo column, top to bottom, at its natural size. Fixed
+    // numbers rather than fractions of the area: the column must not grow to
+    // fill whatever it is handed, or the space below the dots becomes a hole.
+    constexpr int kCompactPillH  = 26;
+    constexpr int kCompactBpmH   = 104;
+    constexpr int kCompactBeatsH = 62;
+    constexpr int kCompactBarH   = 30;
+    constexpr int kCompactGapA   = 4;   // status row -> BPM
+    constexpr int kCompactGapB   = 6;   // BPM -> dots
+    constexpr int kCompactGapC   = 4;   // dots -> "L'1 e QUI"
+    constexpr int kCompactTempoNatural =
+        kCompactPillH + kCompactGapA + kCompactBpmH + kCompactGapB
+        + kCompactBeatsH + kCompactGapC + kCompactBarH;
 }
 
 MainComponent::CompactGeom MainComponent::compactGeom() const
@@ -2714,9 +2806,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     // buttons. In landscape there is not even room for that, so everything
     // shrinks together rather than the last card running off the bottom.
     const int room = juce::jmax (0, n - 3 * gap);
-    // Compact: tempo card (BPM + beats + bar button) is minimal.
-    // Liberates space for transport, misure, feel to scale up.
-    const int tempoMin = 56, transportMin = 56;
+    const int tempoMin = kCompactTempoNatural, transportMin = 56;
     int tempoH, transportH, misH, knH;
     const int natural = tempoMin + transportMin + misureH + knobsH;
     if (natural > room)
@@ -2729,12 +2819,30 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     }
     else
     {
+        // The tempo column takes its natural height and no more. It used to
+        // take everything that was left over, and since its rows are a fixed
+        // size that surplus came out as empty screen under the dots - which is
+        // exactly the hole this layout kept showing. Spend it downwards
+        // instead: bigger START/STOP first, then a second row of squares, then
+        // a second row of knobs, each only if there is room for the whole step.
+        tempoH = tempoMin;
+        int extra = room - tempoMin - transportMin - misureH - knobsH;
+
+        const int toTransport = juce::jmin (extra, 132 - transportMin);
+        transportH = transportMin + toTransport;
+        extra -= toTransport;
+
         misH = misureH;
-        knH = knobsH;
-        const int rest = room - misH - knH;
-        transportH = juce::jlimit (56, 132,
-                                   juce::roundToInt (static_cast<float> (rest) * 0.30f));
-        tempoH = juce::jmax (tempoMin, rest - transportH);
+        if (extra >= kMisureRow + 6)
+        {
+            misH += kMisureRow + 6;      // squares wrap to two rows and grow
+            extra -= kMisureRow + 6;
+        }
+
+        // Whatever is left goes to FEEL, which is the last card on the page:
+        // it wraps its knobs when the height is there, so the surplus turns
+        // into bigger knobs rather than into padding.
+        knH = knobsH + juce::jmax (0, extra);
     }
     g.tempo = r.removeFromTop (takeAtMost (r.getHeight(), tempoH));
     if (r.getHeight() > gap) r.removeFromTop (gap);
@@ -2748,11 +2856,22 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
 
 MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> area) const
 {
+    // Natural heights, shrunk together when the slice is short and never
+    // stretched when it is tall: a column that grows to fill whatever it is
+    // given is what put a hole under the dots.
+    const float fit = area.getHeight() < kCompactTempoNatural
+                          ? static_cast<float> (area.getHeight())
+                              / static_cast<float> (kCompactTempoNatural)
+                          : 1.0f;
+    const auto px = [fit] (int v)
+    {
+        return juce::jmax (1, juce::roundToInt (static_cast<float> (v) * fit));
+    };
+
     StageRows s;
     // FOLLOWING / IN ASCOLTO. SEGUI/FISSO stay off this row: a Split View
     // column cannot spend that width, and the colour already carries the mode.
-    const int pillH = clampW (20, 30, area.getHeight() / 7);
-    s.pill = area.removeFromTop (takeAtMost (area.getHeight(), pillH));
+    s.pill = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactPillH)));
     // SETUP rides the status row's right side: the words are left-aligned and
     // the rest of the row is empty, and a phone has no title row to put it in.
     {
@@ -2761,9 +2880,8 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
     }
-    if (area.getHeight() > 4)
-        area.removeFromTop (juce::jmin (4, area.getHeight() / 10));
-    const int bpmH = clampW (32, 120, area.getHeight() * 5 / 8);
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
+    const int bpmH = px (kCompactBpmH);
     s.bpm = area.removeFromTop (takeAtMost (area.getHeight(), bpmH));
     {
         auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 360), s.bpm.getHeight());
@@ -2772,18 +2890,13 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         s.octaveUp = block.removeFromRight (octW).reduced (0, juce::jmax (2, bpmH / 6));
         s.bpmNumber = block.reduced (4, 0);
     }
-    // Minimal gap before beats in compact
-    if (area.getHeight() > 2)
-        area.removeFromTop (juce::jmin (2, area.getHeight() / 12));
-    // Limit beats row to its natural height; leftover space goes to knobs/buttons.
-    const int beatsH = juce::jlimit (48, 72, area.getHeight() / 3);
-    s.beats = area.removeFromTop (beatsH);
-    // "L'1 è QUI" button goes directly under beats, not on the side
-    const int barH = juce::jlimit (28, 40, juce::roundToInt (beatsH * 0.5f));
-    s.barShift = area.removeFromTop (barH).reduced (8, 2);
-    // Minimal gap between beats row and transport
-    if (area.getHeight() > 2)
-        area.removeFromTop (juce::jmin (2, area.getHeight() / 12));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
+    s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC)));
+    // "L'1 e QUI" goes under the dots rather than beside them: it is the
+    // control that moves them, and a phone has no width to spare next to them.
+    s.barShift = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)))
+                     .reduced (juce::jmax (8, area.getWidth() / 5), 1);
     return s;
 }
 
@@ -3018,6 +3131,7 @@ void MainComponent::layoutCompact()
     halveButton.setBounds (rows.octaveDown);
     doubleButton.setBounds (rows.octaveUp);
     settingsButton.setBounds (rows.settings);
+    barButton.setBounds (rows.barShift);
 
     tapStrip = juce::Rectangle<int>::leftTopRightBottom (g.tempo.getX(), rows.bpm.getY(),
                                                          g.tempo.getRight(), rows.beats.getBottom());

@@ -13,6 +13,9 @@ void requestMicrophoneAccess (std::function<void (bool granted)> callback)
     to the device" rather than as an answer. */
 void prepareAudioSession (const AudioSessionRequest&) {}
 
+/** No window insets off-device: the desktop build pads by its own numbers. */
+SafeAreaInsets windowSafeAreaInsets() { return {}; }
+
 double sessionSampleRate()   { return 0.0; }
 int    sessionBufferFrames() { return 0; }
 int    sessionInputChannels()  { return 0; }

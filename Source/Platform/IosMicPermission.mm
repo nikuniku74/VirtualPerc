@@ -1,6 +1,7 @@
 #include "Platform/IosMicPermission.h"
 
 #import <AVFoundation/AVFoundation.h>
+#import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 
 #include <cmath>
@@ -200,6 +201,51 @@ void setMediaServicesResetHandler (std::function<void()> handler)
         if (gResetHandler)
             gResetHandler();
     }];
+}
+
+SafeAreaInsets windowSafeAreaInsets()
+{
+    SafeAreaInsets out;
+    UIWindow* window = nil;
+
+    // The key window of the foreground scene. Split View and Stage Manager
+    // both give the process more than one, and only the one we are actually
+    // in knows where its own notch and home indicator are.
+    for (UIScene* scene in UIApplication.sharedApplication.connectedScenes)
+    {
+        if (! [scene isKindOfClass: [UIWindowScene class]])
+            continue;
+
+        for (UIWindow* w in ((UIWindowScene*) scene).windows)
+        {
+            if (w.isKeyWindow)
+            {
+                window = w;
+                break;
+            }
+            if (window == nil)
+                window = w;     // a usable stand-in until a key window turns up
+        }
+
+        if (window != nil && window.isKeyWindow)
+            break;
+    }
+
+    if (window == nil)
+        return out;
+
+    // Rounded up: a pixel of the status bar over the status row is still the
+    // status bar over the status row.
+    const UIEdgeInsets insets = window.safeAreaInsets;
+    const auto pts = [] (CGFloat v)
+    {
+        return v > 0.0 ? static_cast<int> (std::ceil (static_cast<double> (v))) : 0;
+    };
+    out.top    = pts (insets.top);
+    out.left   = pts (insets.left);
+    out.bottom = pts (insets.bottom);
+    out.right  = pts (insets.right);
+    return out;
 }
 
 } // namespace vp

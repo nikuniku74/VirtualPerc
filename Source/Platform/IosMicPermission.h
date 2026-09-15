@@ -48,6 +48,19 @@ bool   otherAudioPlaying();
 /** Whether iOS is currently doing its own processing on the input. */
 bool   sessionInputProcessing();
 
+/** The key window's safe-area insets, in points, or all zeroes off-device.
+
+    JUCE exposes the same numbers on `Displays::Display::safeAreaInsets`, but
+    they come back as zeroes often enough - before the view joins a window, and
+    on a scene the display lookup does not match - that the status row ends up
+    under the Dynamic Island. Asking UIKit for the window we are actually in is
+    the answer that is always right; the JUCE value stays as the fallback. */
+struct SafeAreaInsets
+{
+    int top = 0, left = 0, bottom = 0, right = 0;
+};
+SafeAreaInsets windowSafeAreaInsets();
+
 /** Called on the message thread when iOS has restarted its media server.
 
     Everything audio the process owns is invalid after that - the session, the

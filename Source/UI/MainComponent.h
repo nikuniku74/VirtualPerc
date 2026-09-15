@@ -116,6 +116,11 @@ private:
         widened per side to whatever the system says is unusable. On a phone
         that is a notch or a Dynamic Island at the top and a rounded corner
         either side; on an iPad it changes nothing. */
+    /** What the system says is unusable on each side. UIKit's own answer for
+        the window we are in, falling back to JUCE's display insets - the JUCE
+        value is zero often enough that trusting it alone puts the status row
+        under the Dynamic Island. Zero everywhere off-device. */
+    juce::BorderSize<int> effectiveSafeArea() const;
     juce::Rectangle<int> safePadded (juce::Rectangle<int> area) const;
     juce::Rectangle<int> layoutColumn() const;
 
