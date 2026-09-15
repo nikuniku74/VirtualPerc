@@ -121,6 +121,12 @@ private:
         value is zero often enough that trusting it alone puts the status row
         under the Dynamic Island. Zero everywhere off-device. */
     juce::BorderSize<int> effectiveSafeArea() const;
+    /** The insets the components were last laid out against. UIKit does not
+        have them yet when the first resized() runs, so the layout has to be
+        redone once they turn up - otherwise the controls sit where there was
+        no notch and the painting, which reads them later, lands somewhere
+        else entirely. */
+    juce::BorderSize<int> laidOutSafeArea { -1, -1, -1, -1 };
     juce::Rectangle<int> safePadded (juce::Rectangle<int> area) const;
     juce::Rectangle<int> layoutColumn() const;
 

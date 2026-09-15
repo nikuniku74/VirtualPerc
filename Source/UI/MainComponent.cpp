@@ -2353,6 +2353,16 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
 
+    // iOS hands over the safe area after the first resized() has already run,
+    // and it changes again on rotation and on a Split View drag. Nothing calls
+    // resized() for it, so the controls stay where they were placed when there
+    // was no notch while the painting - which reads the insets when it runs -
+    // moves down without them. That is one bug wearing three hats: SETUP under
+    // the status bar, the octave buttons off the tempo, and "L'1 e QUI" on top
+    // of the dots. Lay out again the moment the number changes.
+    if (const auto safe = effectiveSafeArea(); safe != laidOutSafeArea)
+        resized();
+
     // Peak hold with a slow release. The raw block peak of a band is a
     // flickering thing at fifteen frames a second - a snare hit and the gap
     // after it are 20 dB apart - and a bar that flickers cannot be read against
@@ -2778,7 +2788,7 @@ namespace
     constexpr int kCompactPillH  = 26;
     constexpr int kCompactBpmH   = 104;
     constexpr int kCompactBeatsH = 62;
-    constexpr int kCompactBarH   = 30;
+    constexpr int kCompactBarH   = 38;   // a full-width target, not a strip
     constexpr int kCompactGapA   = 4;   // status row -> BPM
     constexpr int kCompactGapB   = 6;   // BPM -> dots
     constexpr int kCompactGapC   = 4;   // dots -> "L'1 e QUI"
@@ -3050,6 +3060,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 void MainComponent::resized()
 {
     updateCompactLayout();
+    laidOutSafeArea = effectiveSafeArea();
     settingsOverlay.setBounds (getLocalBounds());
     if (settingsOverlay.isVisible())
         layoutSettings (settingsOverlay.getLocalBounds());
