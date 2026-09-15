@@ -2633,11 +2633,15 @@ void MainComponent::layoutTransport (juce::Rectangle<int> body)
 
 void MainComponent::layoutMisure (juce::Rectangle<int> body)
 {
-    const int btnGap = 5;
+    const int btnGap = 4;
     const int nMisureSq = 7;
-    const int styleW = clampW (36, 68, body.getWidth() / 6);
-    auto row = body.withSizeKeepingCentre (body.getWidth(),
-        juce::jmin (body.getHeight(), clampW (22, 52, body.getHeight())));
+    const int styleW = clampW (40, 72, body.getWidth() / 7);
+    // Use full width in normal mode, centred in compact
+    const bool compact = isCompact();
+    auto row = compact ? body.withSizeKeepingCentre (body.getWidth(),
+                juce::jmin (body.getHeight(), clampW (22, 52, body.getHeight())))
+        : body.reduced (0, (body.getHeight() - clampW (28, 56, body.getHeight())) / 2);
+
     styleSelect.setBounds (row.removeFromLeft (styleW));
     if (row.getWidth() > btnGap)
         row.removeFromLeft (btnGap);
@@ -2710,9 +2714,9 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     // buttons. In landscape there is not even room for that, so everything
     // shrinks together rather than the last card running off the bottom.
     const int room = juce::jmax (0, n - 3 * gap);
-    // Compact: tempo card (BPM + beats) is smaller now that beats is capped.
-    // transportMin stays at 56 to give START/STOP room to breathe.
-    const int tempoMin = 72, transportMin = 56;
+    // Compact: tempo card (BPM + beats + bar button) is minimal.
+    // Liberates space for transport, misure, feel to scale up.
+    const int tempoMin = 56, transportMin = 56;
     int tempoH, transportH, misH, knH;
     const int natural = tempoMin + transportMin + misureH + knobsH;
     if (natural > room)
