@@ -33,6 +33,9 @@ public:
         recorded VCSL congas sit at 139/165/216 Hz, and the default raises them
         a perfect fourth to 185/220/288 Hz. Must be set before `prepare()`. */
     void setDrumTune (float ratio) noexcept;
+    /** Diagnostic/rendering switch. False builds the procedural bank even when
+        recordings are embedded; set before prepare(). */
+    void setUseRecordedSamples (bool on) noexcept { useRecordedSamples = on; }
     void setEnabled (bool on) noexcept { enabled = on; }
     void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
     void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
@@ -206,6 +209,7 @@ private:
     int groovePulses = 4;
     int bankAttackLead = 0;
     bool enabled = true;
+    bool useRecordedSamples = true;
     int totalHits = 0;
     int hardStealCount = 0;
     int samplesSinceHit = 1000000;

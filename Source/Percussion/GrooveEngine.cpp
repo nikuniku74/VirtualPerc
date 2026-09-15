@@ -141,53 +141,54 @@ namespace
 
     // ----------------------------------------------------------------- dance
     //
-    // Electronic dance already has a post on every numbered beat. Congas make
-    // it move by answering those posts: stopped lows and short hand sounds on
-    // the first half, ringing opens on the off-eighths, and one syncopated slap
-    // that changes place through the phrase. No tumbao on beat three and no
-    // extra four-on-the-floor drum disguised as a conga.
+    // Pop-dance already has a kick on every numbered beat. The congas therefore
+    // answer it on the off-eighths: a short stopped low followed by a bright
+    // open tone, stated twice across the bar. One closed slap moves through the
+    // phrase on the inner sixteenths, giving the programmed hook its variation
+    // without turning it into a Latin tumbao. In particular there are no open
+    // low tumbas: that long bass note competes with the kick instead of making
+    // a pop-dance groove move.
     constexpr Hit kDanceA[] = {
-        {  2, Stroke::tapado, 0.58f },
-        {  3, Stroke::toe,   0.24f },
-        {  6, Stroke::open,  0.78f },
-        { 10, Stroke::tapado, 0.62f },
-        { 11, Stroke::slapClosed, 0.84f },
-        { 14, Stroke::open,  0.92f },
+        {  2, Stroke::tapado,     0.76f },
+        {  6, Stroke::open,       0.82f },
+        { 10, Stroke::tapado,     0.78f },
+        { 11, Stroke::slapClosed, 0.80f },
+        { 14, Stroke::open,       0.94f },
     };
     constexpr Hit kDanceB[] = {
-        {  2, Stroke::tumba, 0.64f },
+        {  2, Stroke::tapado,     0.76f },
         {  5, Stroke::slapClosed, 0.72f },
-        {  6, Stroke::open,  0.80f },
-        { 10, Stroke::tapado, 0.60f },
-        { 14, Stroke::open,  0.88f },
-        { 15, Stroke::slap,  0.58f },
+        {  6, Stroke::open,       0.84f },
+        { 10, Stroke::tapado,     0.76f },
+        { 14, Stroke::open,       0.90f },
+        { 15, Stroke::slapClosed, 0.62f },
     };
     constexpr Hit kDanceC[] = {
-        {  2, Stroke::tapado, 0.60f },
-        {  6, Stroke::open,  0.76f },
+        {  2, Stroke::tapado,     0.76f },
+        {  6, Stroke::open,       0.80f },
         {  7, Stroke::slapClosed, 0.52f },
-        { 10, Stroke::tumba, 0.66f },
-        { 13, Stroke::toe,   0.24f },
-        { 14, Stroke::open,  0.92f },
+        { 10, Stroke::tapado,     0.78f },
+        { 13, Stroke::toe,        0.24f },
+        { 14, Stroke::open,       0.94f },
     };
     // A fill is the one bar that may be busier than the rule allows - it is
     // what a fill is - but eight straight sixteenths is a drum machine. Six,
     // with a gap in them, is a player.
     constexpr Hit kDanceFill[] = {
-        {  8, Stroke::slap,  0.70f },
-        { 10, Stroke::open,  0.74f },
-        { 11, Stroke::slap,  0.68f },
-        { 13, Stroke::open,  0.82f },
-        { 14, Stroke::slap,  0.88f },
-        { 15, Stroke::open,  0.96f },
+        {  8, Stroke::tapado,     0.74f },
+        { 10, Stroke::open,       0.78f },
+        { 11, Stroke::slapClosed, 0.72f },
+        { 13, Stroke::open,       0.86f },
+        { 14, Stroke::slapClosed, 0.92f },
+        { 15, Stroke::open,       0.98f },
     };
     constexpr Hit kDanceD[] = {
-        {  2, Stroke::open,  0.70f },
+        {  2, Stroke::open,       0.76f },
         {  3, Stroke::slapClosed, 0.42f },
-        {  6, Stroke::open,  0.82f },
-        { 10, Stroke::tapado, 0.62f },
-        { 11, Stroke::slap,  0.78f },
-        { 14, Stroke::open,  0.90f },
+        {  6, Stroke::open,       0.86f },
+        { 10, Stroke::tapado,     0.76f },
+        { 11, Stroke::slapClosed, 0.82f },
+        { 14, Stroke::open,       0.92f },
     };
 
     // ------------------------------------------------------------------- pop
@@ -548,7 +549,7 @@ namespace
           { 0.94f, 1.00f, 0.92f, 1.00f },
           0.18f, 8 },
 
-        // dance - sixteenths, leaning on the offbeat like an open hat
+        // pop-dance - stopped low/open answers, leaning on the offbeat like an open hat
         { kDanceA, static_cast<int> (std::size (kDanceA)),
           kDanceB, static_cast<int> (std::size (kDanceB)),
           kDanceC, static_cast<int> (std::size (kDanceC)),
@@ -557,7 +558,7 @@ namespace
           { 0.70f, 0.40f, 0.88f, 0.40f,  0.58f, 0.52f, 0.90f, 0.62f,
             0.72f, 0.38f, 0.86f, 0.46f,  0.54f, 0.60f, 0.94f, 0.74f },
           { 1.00f, 0.95f, 0.97f, 0.95f },
-          0.30f, 8 },
+          0.12f, 8 },
 
         // pop - level, quiet, and mostly space
         { kPopA, static_cast<int> (std::size (kPopA)),

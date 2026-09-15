@@ -117,20 +117,20 @@ namespace
         constexpr float kTune = kDrumTune;
         switch (s)
         {
-            case Stroke::tumba: return {  82.0f * kTune, 0.10f,  8.5f, 0.30f, -0.30f };
-            case Stroke::open:  return { 178.0f * kTune, 0.09f, 12.0f, 0.20f,  0.16f };
-            case Stroke::slap:  return { 330.0f * kTune, 0.52f, 26.0f, 0.10f,  0.34f };
-            case Stroke::heel:  return { 120.0f * kTune, 0.42f, 46.0f, 0.07f, -0.10f };
-            case Stroke::toe:   return { 240.0f * kTune, 0.50f, 60.0f, 0.05f,  0.22f };
-            case Stroke::muff:  return { 190.0f * kTune, 0.30f, 34.0f, 0.09f,  0.12f };
+            case Stroke::tumba: return { 139.0f * kTune, 0.10f,  8.5f, 0.30f, -0.30f };
+            case Stroke::open:  return { 165.0f * kTune, 0.09f, 12.0f, 0.22f,  0.16f };
+            case Stroke::slap:  return { 216.0f * kTune, 0.52f, 28.0f, 0.11f,  0.34f };
+            case Stroke::heel:  return { 165.0f * kTune, 0.42f, 46.0f, 0.07f, -0.10f };
+            case Stroke::toe:   return { 216.0f * kTune, 0.50f, 60.0f, 0.05f,  0.22f };
+            case Stroke::muff:  return { 165.0f * kTune, 0.30f, 34.0f, 0.09f,  0.12f };
             // The stopped pair. Both are the open stroke with the hand left on
             // the head: brighter at the strike because the skin is tighter
             // under a held hand, and then nothing - the ring is not shortened,
             // it is absent. The slap keeps its crack; the tapado keeps the
             // weight of the low drum and loses its note.
-            case Stroke::slapClosed: return { 360.0f * kTune, 0.60f, 90.0f, 0.05f,  0.30f };
-            case Stroke::tapado:     return {  95.0f * kTune, 0.34f, 70.0f, 0.05f, -0.26f };
-            default:            return { 180.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
+            case Stroke::slapClosed: return { 216.0f * kTune, 0.60f, 90.0f, 0.05f,  0.30f };
+            case Stroke::tapado:     return { 139.0f * kTune, 0.34f, 70.0f, 0.05f, -0.26f };
+            default:            return { 165.0f * kTune, 0.30f, 20.0f, 0.12f,  0.0f };
         }
     }
 
@@ -148,6 +148,7 @@ namespace
             default:           return s;
         }
     }
+
 }
 
 float PercussionEngine::drumTuneRatio() noexcept
@@ -320,13 +321,13 @@ void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std:
     const float force = 0.55f + 0.45f * (static_cast<float> (layer) / static_cast<float> (kLayers - 1));
     const float sr = static_cast<float> (sampleRate);
 
-    // Force does three things to a drum, and gain is none of them: the strike
-    // gets noisier, the attack gets faster, and the head is driven harder so it
-    // starts sharp and falls into pitch.
+    // A procedural conga is a struck membrane, not a sine with noise pasted on
+    // it. Three inharmonic modes share a continuously accumulated falling
+    // pitch, while a separate short hand transient supplies the edge.
     const float noiseAmt = std::clamp (spec.noise * (0.6f + 0.9f * force), 0.0f, 0.95f);
     const float decay = spec.decay * (1.12f - 0.22f * force);
     const float bend = 0.06f + 0.10f * force;
-    const float attack = 300.0f + 500.0f * force;
+    const float attack = 650.0f + 850.0f * force;
 
     const int n = std::max (256, static_cast<int> (sampleRate * static_cast<double> (spec.seconds)));
     s.left.assign (static_cast<size_t> (n), 0.0f);
@@ -336,25 +337,47 @@ void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std:
     const float wL = (1.0f - spec.pan) * 0.5f;
     const float wR = (1.0f + spec.pan) * 0.5f;
 
-    float lp = 0.0f;
-    Svf crack;
+    const bool stopped = stroke == Stroke::heel || stroke == Stroke::toe
+                         || stroke == Stroke::muff || stroke == Stroke::slapClosed
+                         || stroke == Stroke::tapado;
+    const bool slapLike = stroke == Stroke::slap || stroke == Stroke::slapClosed;
+    const float modeSpread = 0.010f * local.nextSigned();
+    const float mode2Ratio = 1.47f * (1.0f + modeSpread);
+    const float mode3Ratio = 2.09f * (1.0f - 0.6f * modeSpread);
+    float phase1 = 0.0f, phase2 = 0.7f, phase3 = 1.9f;
+    float handLp = 0.0f;
+    Svf crack, skinEdge;
     for (int i = 0; i < n; ++i)
     {
         const float t = static_cast<float> (i) / sr;
-        const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * attack));
+        const float rise = 1.0f - std::exp (-t * attack);
+        const float bodyEnv = std::exp (-t * decay);
 
-        // The head: fundamental falling into pitch, plus the first overtone a
-        // conga actually has (roughly a fifth above, decaying faster).
+        // Accumulate phase. `sin (f(t) * t)` bends with the wrong integral and
+        // produces the synthetic "pew" the previous fallback had.
         const float f0 = spec.freq * (1.0f + bend * std::exp (-t * 28.0f));
-        const float skin = std::sin (2.0f * kPi * f0 * t)
-                         + 0.30f * std::sin (3.0f * kPi * f0 * t) * std::exp (-t * decay * 1.8f);
+        phase1 += 2.0f * kPi * f0 / sr;
+        phase2 += 2.0f * kPi * f0 * mode2Ratio / sr;
+        phase3 += 2.0f * kPi * f0 * mode3Ratio / sr;
+        const float skin = std::sin (phase1) * bodyEnv
+                         + 0.36f * std::sin (phase2) * std::exp (-t * decay * 1.55f)
+                         + 0.17f * std::sin (phase3) * std::exp (-t * decay * 2.35f);
 
         const float nse = local.nextSigned();
-        lp += 0.09f * (nse - lp);
-        const float slap = crack.bandpass (nse, (2200.0f + 2600.0f * force) / sr, 0.35f)
-                           * std::exp (-t * (90.0f + 60.0f * force));
+        handLp += 0.075f * (nse - handLp);
+        const float contact = crack.bandpass (
+                                  nse, (1800.0f + 3400.0f * force) / sr, 0.30f)
+                              * std::exp (-t * (95.0f + 85.0f * force));
+        const float edge = skinEdge.bandpass (
+                               nse, (850.0f + 900.0f * force) / sr, 0.48f)
+                           * std::exp (-t * (55.0f + 45.0f * force));
+        const float hand = contact * (slapLike ? 1.35f : 0.72f)
+                         + edge * (stopped ? 0.52f : 0.24f)
+                         + handLp * 0.16f * std::exp (-t * 75.0f);
 
-        const float v = (skin * (1.0f - noiseAmt) + (lp * 0.5f + slap) * noiseAmt) * env;
+        float v = rise * (skin * (1.0f - noiseAmt) + hand * noiseAmt);
+        // A close-miked head compresses at the centre before the output stage.
+        v = std::tanh (v * (1.10f + 0.25f * force));
         s.left[static_cast<size_t> (i)] = v * wL;
         s.right[static_cast<size_t> (i)] = v * wR;
     }
@@ -492,6 +515,8 @@ void PercussionEngine::synthesizeClap (Sample& s, int layer, std::uint32_t seed)
 bool PercussionEngine::loadNamedWav (const char* name, std::vector<float>& mono) noexcept
 {
     mono.clear();
+    if (! useRecordedSamples)
+        return false;
    #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
     if (name == nullptr)
         return false;

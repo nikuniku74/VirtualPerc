@@ -1752,6 +1752,64 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
     std::printf ("perc-medium-rr  shaker=%.6f conga=%.6f\n", shakerRr, congaRr);
     expect (shakerRr > 1.0e-4 && congaRr > 1.0e-4,
             "medium shaker and conga round-robin slots are not identical buffers");
+
+    vp::PercussionEngine procedural;
+    procedural.setUseRecordedSamples (false);
+    procedural.prepare (48000.0);
+    procedural.setReverbAmount (0.0f);
+    procedural.setHumanization (0.0f);
+    auto renderProcedural = [&procedural] (vp::Stroke stroke)
+    {
+        constexpr int n = 14400;
+        std::vector<float> l (n), r (n);
+        vp::ClockTick idle;
+        procedural.clearVoices();
+        procedural.triggerForTest (stroke, 0.90f, 0);
+        procedural.render (l.data(), r.data(), n, idle, true);
+        return l;
+    };
+    const auto low = renderProcedural (vp::Stroke::tumba);
+    const auto open = renderProcedural (vp::Stroke::open);
+    const auto slap = renderProcedural (vp::Stroke::slapClosed);
+    auto energy = [] (const std::vector<float>& x)
+    {
+        double e = 0.0;
+        for (float v : x)
+            e += std::isfinite (v) ? static_cast<double> (v) * v : -1.0e9;
+        return e;
+    };
+    auto correlation = [] (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        double aa = 0.0, bb = 0.0, ab = 0.0;
+        for (size_t i = 0; i < std::min (a.size(), b.size()); ++i)
+        {
+            aa += static_cast<double> (a[i]) * a[i];
+            bb += static_cast<double> (b[i]) * b[i];
+            ab += static_cast<double> (a[i]) * b[i];
+        }
+        return ab / std::sqrt (std::max (1.0e-12, aa * bb));
+    };
+    const double lowEnergy = energy (low);
+    const double openEnergy = energy (open);
+    const double slapEnergy = energy (slap);
+    const double lowOpenCorrelation = std::fabs (correlation (low, open));
+    const double openSlapCorrelation = std::fabs (correlation (open, slap));
+    const float lowAttack = procedural.attackMsFor (vp::Stroke::tumba);
+    const float openAttack = procedural.attackMsFor (vp::Stroke::open);
+    const float slapAttack = procedural.attackMsFor (vp::Stroke::slapClosed);
+    std::printf ("perc-procedural low=%.2f open=%.2f slap=%.2f corr=%.3f/%.3f "
+                 "attack=%.2f/%.2f/%.2f ms\n",
+                 lowEnergy, openEnergy, slapEnergy,
+                 lowOpenCorrelation, openSlapCorrelation,
+                 static_cast<double> (lowAttack), static_cast<double> (openAttack),
+                 static_cast<double> (slapAttack));
+    expect (procedural.recordedStrokeCount() == 0
+                && lowEnergy > 1.0 && openEnergy > 1.0 && slapEnergy > 1.0,
+            "the forced procedural bank produces finite energy for all three conga voices");
+    expect (lowOpenCorrelation < 0.95 && openSlapCorrelation < 0.95,
+            "procedural low open and stopped-slap are distinct instruments, not one oscillator");
+    expect (lowAttack < 20.0f && openAttack < 20.0f && slapAttack < 20.0f,
+            "procedural conga attacks stay inside the clock's measured lead window");
 }
 
 void vpRunAiBeatTests (int& passed, int& failed)
@@ -3732,7 +3790,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                                          vp::Subdivision::sixteenth);
         const auto dance8 = congaSteps (vp::GrooveStyle::dance, 0,
                                         vp::Subdivision::eighth);
-        expect (exactSteps (dance16, std::vector<int> { 2, 3, 6, 10, 11, 14 }),
+        expect (exactSteps (dance16, std::vector<int> { 2, 6, 10, 11, 14 }),
                 "sixteenth subdivision preserves the exact authored dance A congas");
         expect (exactSteps (dance8, std::vector<int> { 2, 6, 10, 14 }),
                 "eighth subdivision keeps dance A eighths and removes its e/a congas");

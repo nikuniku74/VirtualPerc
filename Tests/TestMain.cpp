@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <iterator>
 #include <random>
 #include <string>
 #include <utility>
@@ -473,6 +474,93 @@ namespace
         d.worstGated = static_cast<float> (worstGated);
         d.worstUngated = static_cast<float> (worstUngated);
         return d;
+    }
+
+    void runPopDanceGrooveTest()
+    {
+        vp::GrooveEngine groove;
+        groove.prepare (0xDACE124u);
+        groove.setStyle (vp::GrooveStyle::dance);
+        groove.setHumanize (0.0f);
+        groove.setIntensity (0.0f); // written figure only; no probabilistic ghosts
+        groove.setDynamics (1.0f);
+        groove.setShakerEnabled (false);
+        groove.setCongasEnabled (true);
+
+        struct Expected { int step; vp::Stroke stroke; };
+        const Expected barA[] = {
+            { 2, vp::Stroke::tapado }, { 6, vp::Stroke::open },
+            { 10, vp::Stroke::tapado }, { 11, vp::Stroke::slapClosed },
+            { 14, vp::Stroke::open },
+        };
+
+        groove.setSubdivision (vp::Subdivision::sixteenth);
+        int found = 0;
+        bool exactA = true;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+            const int n = groove.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
+            for (int i = 0; i < n; ++i)
+            {
+                if (found >= static_cast<int> (std::size (barA))
+                    || step != barA[found].step || ev[i].stroke != barA[found].stroke)
+                    exactA = false;
+                ++found;
+            }
+        }
+        exactA = exactA && found == static_cast<int> (std::size (barA));
+        expect (exactA,
+                "pop-dance bar A is stopped-low/open answers plus one closed syncopation");
+
+        // At the shipped eighth-note density the hook must remain four answers
+        // around the kick, not collapse into a Latin figure or lose its final lift.
+        groove.prepare (0xDACE124u);
+        groove.setStyle (vp::GrooveStyle::dance);
+        groove.setHumanize (0.0f);
+        groove.setIntensity (0.0f);
+        groove.setDynamics (1.0f);
+        groove.setShakerEnabled (false);
+        groove.setCongasEnabled (true);
+        groove.setSubdivision (vp::Subdivision::eighth);
+        const Expected eighthA[] = {
+            { 2, vp::Stroke::tapado }, { 6, vp::Stroke::open },
+            { 10, vp::Stroke::tapado }, { 14, vp::Stroke::open },
+        };
+        found = 0;
+        bool exactEighthA = true;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+            const int n = groove.eventsAt (0, step, ev, vp::GrooveEngine::kMaxEvents);
+            for (int i = 0; i < n; ++i)
+            {
+                if (found >= static_cast<int> (std::size (eighthA))
+                    || step != eighthA[found].step
+                    || ev[i].stroke != eighthA[found].stroke)
+                    exactEighthA = false;
+                ++found;
+            }
+        }
+        exactEighthA = exactEighthA
+                       && found == static_cast<int> (std::size (eighthA));
+        expect (exactEighthA,
+                "pop-dance keeps its four off-eighth conga answers on the default grid");
+
+        bool cleanPhrase = true;
+        for (int bar = 0; bar < 7; ++bar) // the eighth bar is deliberately a fill
+            for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+            {
+                vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                const int n = groove.eventsAt (bar, step, ev,
+                                               vp::GrooveEngine::kMaxEvents);
+                for (int i = 0; i < n; ++i)
+                    cleanPhrase = cleanPhrase && step % 4 != 0
+                                  && ev[i].stroke != vp::Stroke::tumba
+                                  && ev[i].stroke != vp::Stroke::slap;
+            }
+        expect (cleanPhrase,
+                "pop-dance regular bars leave the kick posts clear and use no ringing low tumba");
     }
 
     /** The swing warp's geometry, on its own. Behind `--swing` as well as in
@@ -1131,6 +1219,13 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--pop-dance")
+    {
+        runPopDanceGrooveTest();
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
+
     // Same argument for the leak canceller bench: a hundred-odd engine runs
     // that finish in seconds, behind minutes of neural worker tests.
     if (argc > 1 && std::string (argv[1]) == "--leak")
@@ -1151,6 +1246,8 @@ int main (int argc, char** argv)
     }
 
     std::printf ("Virtual Percussionist — engine / clock / AI tests\n");
+
+    runPopDanceGrooveTest();
 
     {
         vp::TempoFollower clock;

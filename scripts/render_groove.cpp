@@ -91,6 +91,7 @@ int main (int argc, char** argv)
     // render still sounds like what most listeners hear.
     bool cembalo = false, clap = false;
     bool natural = false;
+    bool procedural = false;
     vp::Subdivision subdivision = vp::Subdivision::eighth;
     float dynamics = 1.0f;
     bool arc = false;
@@ -120,6 +121,7 @@ int main (int argc, char** argv)
         else if (a == "--cembalo")   cembalo = true;
         else if (a == "--clap")      clap = true;
         else if (a == "--natural")   natural = true;
+        else if (a == "--procedural") procedural = true;
         else if (a == "--sub")
         {
             const std::string v = next();
@@ -140,7 +142,7 @@ int main (int argc, char** argv)
                          "              [--shaker-vol 0.9] [--conga-vol 0.9] [--reverb 0.30]\n"
                          "              [--no-congas] [--no-shaker] [--cembalo] [--clap]\n"
                          "              [--cembalo-vol 0.9] [--clap-vol 0.9]\n"
-                         "              [--sub 4|8|16] [--natural]\n"
+                         "              [--sub 4|8|16] [--natural] [--procedural]\n"
                          "              [--dynamics 1.0] [--arc]\n");
             return 1;
         }
@@ -155,6 +157,7 @@ int main (int argc, char** argv)
     }
 
     vp::PercussionEngine perc;
+    perc.setUseRecordedSamples (! procedural);
     if (tune > 0.25f)
         perc.setDrumTune (tune);
     perc.prepare (kSr);

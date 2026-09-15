@@ -83,7 +83,7 @@ each style carries its **own conga figure and its own shaker weighting**.
 |---|---|
 | `marcha` | latin tumbao. The signature is the **pair of open tones on 4 and the "and" of 4** pulling into the next bar; everything before them exists to leave room for it. |
 | `rock` | lives in the gaps. Kick and snare own the numbered beats, so: nothing on 2 and 4, a stopped low answer after one, an open tone after two, an open push after four. |
-| `dance` | answers the four-on-the-floor posts - stopped lows on the first half, ringing opens on the off-eighths, one syncopated slap that moves through the phrase. No extra kick disguised as a conga. |
+| `dance` | pop-dance hook: stopped low/open answers on the off-eighths, with one closed slap moving through the phrase. No open low tumba against the four-on-the-floor kick; sparse ghosts (`ghostChance` 0.12) keep it programmed and clean. |
 | `pop` | tasteful, quiet, mostly space. `ghostChance` 0.10. |
 | `samba` | weight on 2 and 4, syncopated opens. |
 | `funk` | sixteenth ghosts, leaning into the "a". Busiest: `ghostChance` 0.45. |
@@ -333,6 +333,14 @@ were playing.
   keeps the quinto crisp. Change the mapping in one place, never the tables. The
   bank is read a perfect fourth above the samples' natural pitch
   (`kDrumTune = 2^(5/12)`), so tumba/open/slap are 185/220/288 Hz.
+- **The procedural conga bank is a real fallback instrument, not a sine-wave
+  placeholder (2026-09-14).** `synthesizeDrum` matches the recorded set's
+  139/165/216 Hz natural pitches before tuning, integrates the falling pitch
+  into continuous phase, and excites three inharmonic membrane modes plus a
+  separate hand transient. Open, stopped and slap articulations weight those
+  components differently. All synthesis happens in `prepare()`; `render()`
+  still only reads and sums the completed samples. `VPRender --procedural`
+  forces this bank for listening even when recordings are embedded.
 - **A source take is not automatically three takes.** The bundled library has
   one medium recording for shaker and conga, and the derived heel/toe/muff and
   stopped strokes also begin from one source. `layerFromRecording` gives each
