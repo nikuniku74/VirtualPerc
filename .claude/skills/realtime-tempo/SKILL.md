@@ -235,6 +235,75 @@ motion authority, and must improve the global phase distribution without
 moving the flat or abrupt populations. A manually marked beat grid and listening
 remain necessary before any product claim about live phase.
 
+**The hybrid shape-authority bridge was rejected too (2026-09-16).** The plan in
+`docs/superpowers/plans/2026-09-16-hybrid-tempo-motion-proof.md` added a strict
+proof edge, a residual-shape classifier and a one-shot bridge inside FISSO. On
+the four-offset quick bank it left 3/4 continuous rows with no authority at all,
+fired on two fixed and three step rows (trace hashes changed) and broke one
+recovery. It was removed whole; the classifier and diagnostics stay, and
+`compare_motion_matrix.py` now rejects a vacuous zero-authority "pass".
+
+**What does follow motion: a beat-date filter, not another release
+(2026-09-16).** On a direct feed the phase and rate the clock is steered to now
+come from `Source/AI/BeatKalman.h`, an IMM Kalman filter over beat dates with
+three models (constant, wandering, constant-acceleration) mixed by likelihood.
+The regime, the committed `bpm`, the octave and the display are untouched; the
+filter only replaces `beatPhase`/`periodSec` and publishes `clockBpm`
+(`phaseTracked`). Why it works where five switches did not: FISSO's phase is
+`(now - 24-beat line anchor) / committed period`, and on a ramp both lag; the
+filter predicts the next beat date with a period that is allowed to move, and
+no gate decides when.
+
+The details that made it globally safe, each measured on `probe_motion_matrix`:
+
+- **Gate on a fixed fraction of the period (0.15), never on the filter's own
+  sigma.** A sigma gate widens exactly while the motion model entertains noise,
+  admits sixteenths, and feeds the motion that widened it. Changing only this
+  took the fixed family's published-phase error from 20.8 to 10.8 ms.
+- **Tempered likelihood (x2).** One late snare must not hand the motion model
+  the song.
+- **Never re-seed from one peak.** After a drum gap the grid gate is open and
+  the newest peak can be a swung offbeat; seeding on it held a case half a beat
+  out for ten seconds. Re-seed on the decoder's fitted grid.
+- **Refusals are not loss.** A constant-fraction stream of refused peaks is
+  offbeats; only refusals that drift in one direction mean the tempo moved.
+- **The filter measures steps itself.** After a -13% step the decoder's grid
+  gate refuses every real beat for ~3 s (until the old grid has drifted a whole
+  beat) and the transition path may not confirm. The filter is therefore shown
+  every eligible peak: refused ones count only as evidence, and when three
+  drifting refusals fold to one period 5-30% away it re-seeds on that period and
+  owns the step until the committed tempo arrives within 4%.
+- **Phase just before the newest corrected beat date is the end of the previous
+  beat,** not zero: that clamp was a 60 ms one-frame spike.
+- **Lean back on poor evidence.** A passage without a drummer makes onsets
+  *late* for seconds and the filter follows lateness as faithfully as motion.
+  `BeatTracker` blends tracked -> line-fit phase/rate and 0.15 -> 0.90 s phase
+  constant by `trackedPhaseWeight(evidence.trust())`; a band speeding up with
+  its drummer never leaves trust 1, so ramps keep the full benefit.
+
+Sounding MIXER clock phase against the written grid (`probe_motion_matrix`,
+HEAD -> filter). Tuning used offsets 0/16/32/48 only; 64/96/128 were never
+looked at until the end:
+
+| bank | flat mean / p95 | continuous mean / p95 / >50 ms | steps mean / p95 / >50 ms |
+|---|---|---|---|
+| quick 0-48 (192 runs) | 19.8/53.2 -> 18.9/53.0 | 54.1/124.3/37.8% -> 37.9/96.1/18.9% | 48.0/201.7/23.4% -> 35.9/163.0/18.0% |
+| unseen 64-128 (144 runs) | 17.5/45.8 -> 16.5/45.4 | 57.1/132.3/38.2% -> 42.7/117.4/22.9% | 46.6/192.2/23.6% -> 36.7/163.8/18.8% |
+| full, offset 0 (192 runs) | 18.9/50.1 -> 17.8/48.7 | 64.4/149.3 -> 47.7/132.8 | 52.5/218.2 -> 39.8/181.2 |
+
+The full bank's continuous p99.5 got worse (480.1 -> 513.9 ms): its tail is
+sixteenth-note grid confusion, which neither path solves. `VPAlign` MIXER ramps
+(mean/worst ms): 100->110/30 s 22.0/84.7 -> 18.1/56.1, 100->110/12 s 40.8/127.2
+-> 18.3/56.6, 120->132/20 s 28.5/95.5 -> 20.2/53.3, 128->120/20 s 20.2/48.0 ->
+19.5/52.1; flat 7.1/33.3 -> 8.3/34.6 and 7.2/22.0 -> 6.4/22.0. Only 128->120
+still misses its gate (19.5/52.0), by 0.1 ms of worst: at the end of that
+rallentando the target is 18-27 ms late and the clock loop adds ~20 ms more.
+All six steps still PASS. The drum-hole bench costs a little (MIXER, eight
+songs, mean/worst: 20.9/34.9 -> 23.6/45.4 and 25.3/66.2 -> 27.4/68.7) while its
+accelerando column improves 23.6/46.5 -> 14.1/37.4. The room path is unchanged
+(the filter publishes only on `lineFeed`). Real beat-grid and listening are
+still required.
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with
@@ -1274,6 +1343,7 @@ build measures differently run to run.
 | features fed to the network | `Source/AI/LogSpectFeatures.cpp` |
 | model I/O, session, providers | `Source/AI/OnnxBeatModel.cpp`, `OnnxSession.cpp` |
 | tempo sources, regime, octave anchor | `Source/AI/BeatDecoder.cpp` |
+| phase/rate the direct-feed clock follows (beat-date filter) | `Source/AI/BeatKalman.h`, `BeatDecoder::observeBeatKalman` |
 | the comb / metrical level | `Source/AI/TempoEstimator.cpp` |
 | the state-space prior | `Source/AI/BeatHmm.cpp` |
 | worker, FIFO, publication | `Source/AI/NeuralBeatTracker.cpp` |

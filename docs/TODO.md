@@ -3581,9 +3581,35 @@ contenenti anche casi d'ottava ambigui, non una certificazione.
 
 - [x] banco globale con beat-grid vera e gate anti-falso sul selettore;
 - [x] documentazione corretta: nessun rilascio da curvatura in produzione;
-- [ ] progettare autorita' di moto continua e limitata, non un altro switch;
+- [x] progettare autorita' di moto continua e limitata, non un altro switch (item 45);
 - [ ] beat-grid manuale su almeno due tratti con accelerando/rallentando;
 - [ ] ascolto umano della parte renderizzata contro quei tratti.
+
+### 45. Riallineamento sui cambi di tempo: filtro sulle date dei battiti 🟡 (2026-09-16, misurato su banchi sintetici — resta ascolto e beat-grid reale)
+
+Il ponte ibrido del piano Codex (Task 3-4) e' stato respinto dal banco globale e
+rimosso. Al suo posto, su file/mixer, la fase e il tempo che il clock insegue
+vengono da `Source/AI/BeatKalman.h`: un filtro IMM sulle date dei battiti che
+segue rampe senza rilasciare FISSO e misura da se' i gradini che la griglia del
+decoder rifiuta per secondi. BPM mostrato, regime e ottava non cambiano;
+microfono iPad invariato. Dettagli e limiti in `docs/HANDOFF_TEMPO.md` e nella
+skill `realtime-tempo`.
+
+Clock MIXER contro griglia vera, `probe_motion_matrix` su offset mai usati per
+tarare (64/96/128): continuo **57,1 -> 42,7 ms** medi, quota >50 ms **38% ->
+23%**; gradini **46,6 -> 36,7 ms**, p95 192 -> 164; fisso 17,5 -> 16,5.
+`VPAlign`: 100->110 in 12 s **40,8/127,2 -> 18,3/56,6 ms**, 120->132 in 20 s
+28,5/95,5 -> 20,2/53,3; gradini tutti PASS.
+
+- [x] filtro IMM + gate a frazione di periodo + riseeding dalla griglia;
+- [x] gradini misurati dai battiti rifiutati (5-30%), possesso fino all'arrivo del decoder;
+- [x] ritorno al fit sul buco batteria tramite fiducia sull'evidenza;
+- [x] test unitari (`--tempo-motion` 294/0) e suite mirate verdi;
+- [ ] 128->120 in 20 s ancora oltre il gate di 0,1 ms (ritardo del loop del clock);
+- [ ] buco batteria un po' peggiore (MIXER 20,9/34,9 -> 23,6/45,4 ms);
+- [ ] `--bar` intermittente una volta sotto carico: verificare se succede anche su HEAD;
+- [ ] suite completa `./scripts/run-tests.sh` (non eseguita);
+- [ ] beat-grid manuale e ascolto su accelerando/rallentando reali (mixer e brano caricato).
 
 ## Standby
 
