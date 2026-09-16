@@ -92,13 +92,15 @@ namespace
     constexpr int   kFastBeatsAlone = 5;
 
     // A quadratic over sixteen accepted line-feed beats estimates the local
-    // tempo slope at the newest beat. Its individual values remain too noisy
-    // to own a tempo, but the sign is useful when curvature, the endpoint and
-    // the ordinary responsive fit all agree for three beats. Relative units
-    // keep the same decision at 100 and 160 BPM.
+    // tempo slope at the newest beat. It remains diagnostic: the global motion
+    // population found that a release selector loose enough to improve all four
+    // clean ramps also fires on fixed-tempo jitter. Requiring the quadratic to
+    // remove half the line's squared error makes the diagnostic selective, but
+    // too late to be a production release.
     constexpr float kMotionCurveRate = 0.0010f;      // BPM/beat divided by BPM
     constexpr float kMotionCurveDeviation = 0.012f;
     constexpr float kMotionCurveResidual = 0.045f;
+    constexpr float kMotionCurveImprovement = 0.50f;
     constexpr int   kMotionCurveBeats = 3;
 
 
@@ -2781,6 +2783,8 @@ void BeatDecoder::updateTempo() noexcept
     const bool coherentMotionCurve = haveMotionCurve && haveShort
                                      && motionFitResidual < kMotionCurveResidual
                                      && shortResidual < kMotionCurveResidual
+                                     && motionFitImprovement
+                                            >= kMotionCurveImprovement
                                      && std::fabs (motionFitRate / bpm)
                                             > kMotionCurveRate
                                      && std::fabs (motionDeviation)

@@ -89,8 +89,9 @@ public:
             its newest accepted beat. Unlike `shortFit`, which is the average
             slope through the window, this asks what the local slope would be
             if the beat dates really form a smooth accelerando. It never owns
-            the target tempo; on a direct feed its evidence can only release a
-            stale fixed-tempo hold after the production safety gates agree. */
+            the target tempo. The global fixed/motion/step population rejected
+            using this evidence to release a stale fixed-tempo hold, so these
+            fields remain diagnostic only. */
         float motionFit = 0.0f;
         float motionFitRate = 0.0f;
         float motionFitResidual = 1.0f;
@@ -427,8 +428,8 @@ private:
     float lastFastDeviation = 0.0f;
     float lastIntervalDeviation = 0.0f;
     /** A line-feed-only constant-acceleration fit over sixteen accepted beats.
-        Three coherent curves may release FISSO before the absolute tempo gap
-        has grown large enough for the eight-beat deviation gate. */
+        Kept as diagnostic evidence: selectors fast enough to release FISSO on
+        all clean ramps also fired on globally varied fixed-tempo material. */
     float motionFitBpm = 0.0f;
     float motionFitRate = 0.0f;
     float motionFitResidual = 1.0f;

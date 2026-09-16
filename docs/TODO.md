@@ -3554,33 +3554,36 @@ controlli fissi e il buco batteria. Con questo follow-up la matrice conserva
 e il suo riferimento debole passa 8,62→8,70% errore, 2,21→2,27% strattoni.
 Non chiamare quindi il follow-up byte-identico o la fase live gia' certificata.
 
-### 44. La curvatura libera prima FISSO su una rampa diretta 🟢 (2026-09-16)
+### 44. Curvatura su rampa diretta: diagnostica, rilascio respinto 🟡 (2026-09-16)
 
 Il debito rimasto nasceva prima che il fit corto accumulasse abbastanza scarto:
 sulla rampa 100→110/12 s il vero tempo era gia' 104,17, il decoder ancora
 100,07 e il clock 69,9 ms tardi. Una quadratica a otto battiti e' inutilizzabile
-(fino a ±1,7 BPM/battito anche a 100 fisso). Il nuovo fit curvo usa sedici
-battiti e **non guida** ne' BPM ne' fase: solo su `lineFeed`, dopo tre curve
-coerenti e pulite, concede l'uscita da FISSO al live fit gia' esistente.
+(fino a ±1,7 BPM/battito anche a 100 fisso). Il fit curvo su sedici battiti
+resta nel tree, ma non guida BPM/fase e **non libera FISSO**.
 
-MIXER, quattro semi, media/peggio: 100→110/30 **22,0/84,7→19,8/78,4**;
-100→110/12 **40,8/127,2→35,2/93,2**; 120→132/20
-**28,5/95,5→25,0/81,6**; 128→120/20 **20,2/48,0→18,5/48,0**. Controlli
-fissi e buco batteria invariati. Matrice completa: 5,22 s / **103** uscite / 30
-mai / **9,11%**, contro 104 e 9,12% al checkpoint precedente.
+Il primo checkpoint aveva documentato come attivo un rilascio che non era
+collegato allo switch. `VPAlign --ramps` fresco ha infatti riprodotto i numeri
+precedenti: 22,0/84,7; 40,8/127,2; 28,5/95,5; 20,2/48,0 ms MIXER.
 
-Respinta la scorciatoia a due curve: falsi rilasci sui controlli e gate rampa
-lenta a 90,2 ms (POSA 134,0). Respinta anche la distanza fra ancore: la
-magnitudine arriva a ~0,056 beat sia su rampa vera sia su jitter fisso.
+`probe_motion_matrix` ora misura il vero percorso MIXER mentre suona, senza snap
+da STOP, su tre popolazioni casuali con verita' nota. Il vecchio selettore a tre
+curve produce **8 falsi su 128 tempi fissi**, 51 prove sul moto continuo e 11
+sui gradini: non e' globale. Il requisito di migliorare la retta del 50% elimina
+i falsi ma arriva troppo tardi; usarlo solo come innesco non basta; quattro
+prove non filtrate conservano ancora un falso. Tutte e tre le varianti di
+produzione sono state rimosse.
 
-Flamingo resta un riferimento debole e leggermente negativo: 8,70→8,73% errore,
-2,27→2,33% strattoni, un solo lag affidabile su cinque. Quindi:
+Il diagnostico corrente richiede tre curve che dimezzino l'errore quadratico
+della retta. Matrice 64 casi/famiglia: prove 0/11/3 su fisso/continuo/gradino;
+fase media MIXER 18,9/64,4/52,5 ms e p95 50,1/149,3/218,2 ms. Sono baseline
+contenenti anche casi d'ottava ambigui, non una certificazione.
 
-- [x] gate sintetico di fase permanente, matrice completa e test tempo mirati;
+- [x] banco globale con beat-grid vera e gate anti-falso sul selettore;
+- [x] documentazione corretta: nessun rilascio da curvatura in produzione;
+- [ ] progettare autorita' di moto continua e limitata, non un altro switch;
 - [ ] beat-grid manuale su almeno due tratti con accelerando/rallentando;
-- [ ] ascolto umano della parte renderizzata contro quei tratti;
-- [ ] solo dopo quei due gate decidere se 93 ms di peggio sintetico e' ancora
-  udibile e quale segnale causale aggiungere; non abbassare a due prove.
+- [ ] ascolto umano della parte renderizzata contro quei tratti.
 
 ## Standby
 

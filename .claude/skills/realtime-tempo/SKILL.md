@@ -192,54 +192,48 @@ Treat that as a transparent weak negative, not phase ground truth: a manually
 marked beat grid and listening pass are still required before calling continuous
 live following complete.
 
-**Curvature can release a held direct-feed tempo without becoming another
-tempo owner (2026-09-16).** The remaining fast-ramp debt was accumulated before
-the eight-beat deviation had enough size to release FISSO. On the worst
-100->110 / 12 s seed, the true tempo had reached 104.17 while the held decoder
-still published 100.07; the clock was already 69.9 ms late. Shortening the
-responsive fit was already measured and rejected above, and a raw quadratic on
-the same eight beats is worse: even at a fixed 100 BPM it reported local slopes
-up to +/-1.7 BPM per beat.
+**Curvature remains diagnostic (2026-09-16).** The remaining fast-ramp debt is
+real: on the worst 100->110 / 12 s seed, truth had reached 104.17 while the
+held decoder still published 100.07 and the clock was 69.9 ms late. A raw
+quadratic over the short eight-beat window is not the answer; at a fixed 100 BPM
+it reports local slopes up to +/-1.7 BPM per beat.
 
 `fitPeriodCurve` therefore fits `t(n) = a + b*n + c*n^2` over sixteen accepted
-beats, centred on the newest beat. It evaluates the local period at that newest
-beat, but **never drives BPM or phase**. On `lineFeed` only, it may release a
-held tempo after three consecutive accepted beats when all of these agree:
+beats and evaluates the local period at the newest one. The first checkpoint
+documented that fit as a production release, but the actual switch contained no
+`motionFitEvidence` exit: fresh `VPAlign --ramps` reproduced the preceding
+22.0/84.7, 40.8/127.2, 28.5/95.5 and 20.2/48.0 ms MIXER results exactly. The
+code and the claim did not match.
 
-- curve rate is over 0.1% of BPM per beat;
-- both the curved endpoint and the ordinary short fit are over 1.2% from the
-  committed BPM, in the curve's direction;
-- both residuals are under 0.045.
+The missing test is now `scripts/probe_motion_matrix.cpp`: deterministic flat,
+continuous and abrupt trajectories from 55 to 175 BPM with subdivisions,
+swing, jitter, missing beats, false peaks and gaps, all scored against their
+written beat grids. Its original integration also overstated the clock: it
+snapped phase whenever error exceeded 0.04 beat and omitted the sounding
+clock's locked tempo trim. It now uses the MIXER path (`setLocked`, tempo trim,
+motion hint and `setGridPhase`; no silent/STOP snap).
 
-The ordinary live target then owns the tempo exactly as before. The long window,
-comb, clock continuity and iPad/microphone path are unchanged. Four-seed MIXER
-phase, previous direct-motion result -> curvature release (mean/worst ms):
+The original three-curve selector was not globally safe. Across 128 runs per
+family (one 64-case bank plus four independent 16-case offsets), it produced
+**8 proofs on fixed tempo**, 51 on continuous motion and 11 on steps. That is
+roughly one false proof per eighteen minutes of flat material, not a production
+gate. Three follow-ups were rejected:
 
-| ramp | before | after |
-|---|---:|---:|
-| 100->110 / 30 s | 22.0 / 84.7 | **19.8 / 78.4** |
-| 100->110 / 12 s | 40.8 / 127.2 | **35.2 / 93.2** |
-| 120->132 / 20 s | 28.5 / 95.5 | **25.0 / 81.6** |
-| 128->120 / 20 s | 20.2 / 48.0 | **18.5 / 48.0** |
+- requiring at least 50% quadratic residual improvement on every proof removes
+  the flat false positives but reaches the clean ramps too late;
+- requiring it only at the start of a run is still too late;
+- a fourth unfiltered proof still fires on a fixed case and leaves one targeted
+  ramp over its gate.
 
-The fixed 100/130 controls remain 7.1/33.3 and 7.2/22.0 ms. The ten-second
-drummer hole remains FISSO; its difficult 44 ms row remains 25.3/66.2 ms. The
-complete 360-run material matrix improves 104->103 excursions and 9.12->9.11%
-outside, with mean acquisition 5.22 s and 30 unacquired octave cases unchanged.
-
-Two tempting relaxations were measured and rejected. Releasing after two
-curves, even after requiring the long fit's direction, changed the fixed
-controls and made the slow-ramp MIXER gate fail at 90.2 ms (POSA reached 134.0
-ms). The short/long phase-anchor gap is not a discriminator either: the true
-fast ramp read -0.054/-0.058 beat, while fixed-tempo jitter produced
-+0.043/+0.056 beat in the opposite direction but the same magnitude. Keep the
-three-beat proof; do not tune either shortcut from one ramp.
-
-On the five `Flamingo` extracts the weak tempogram score moves 8.70->8.73% error
-and 2.27->2.33% grid jerk; only one of five lag correlations is reliable. This
-is again a transparent weak negative. The deterministic phase gain justifies
-the bounded release, but a hand-marked beat grid and listening remain the gate
-for the product claim "perfectly and immediately".
+The current selector is deliberately diagnostic: each of three proofs must
+remove at least half the straight-line squared error. On the full 64-case bank
+it yields 0 flat, 11 continuous and 3 step proofs, so the probe's selector gate
+passes without disabling the detector. It still does **not** release FISSO or
+drive BPM/phase. Do not add another threshold to this binary release. The next
+design has to replace the hard fixed/live switch with a bounded continuous
+motion authority, and must improve the global phase distribution without
+moving the flat or abrupt populations. A manually marked beat grid and listening
+remain necessary before any product claim about live phase.
 
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live

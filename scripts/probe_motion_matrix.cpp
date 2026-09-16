@@ -88,6 +88,7 @@ struct Score
     int phaseOver50 = 0;
     int tempoOver4 = 0;
     int fixedToLive = 0;
+    int curveProofs = 0;
 };
 
 double percentile (std::vector<double> values, double p)
@@ -216,7 +217,7 @@ std::vector<Event> makeEvents (const Scenario& s, const std::vector<double>& bea
     return events;
 }
 
-Score run (const Scenario& s, unsigned seed)
+Score run (const Scenario& s, unsigned seed, bool verbose)
 {
     const auto beats = makeBeatGrid (s);
     const auto events = makeEvents (s, beats, seed);
@@ -227,11 +228,16 @@ Score run (const Scenario& s, unsigned seed)
     decoder.setLevelAnchor (true);
     vp::TempoFollower clock;
     clock.prepare (kSampleRate);
+    clock.setPulsesPerBeat (4);
+    clock.setFollowStrength (vp::FollowStrength::high);
+    clock.setLocked (true);
+    clock.setTempoTrimEnabled (true);
 
     Score score;
     size_t eventLo = 0, truth = 0;
     uint32_t lastSerial = 0;
     bool haveSerial = false;
+    bool curveProofActive = false;
     vp::TempoRegime previousRegime = vp::TempoRegime::unknown;
     std::mt19937 floorRng (seed * 2246822519u + 3266489917u);
     std::uniform_real_distribution<float> floor (0.012f, 0.032f);
@@ -259,6 +265,23 @@ Score run (const Scenario& s, unsigned seed)
                                             > vp::kTempoMotionDeviation
                                      && h.shortFitResidual < vp::kTempoMotionResidual;
             clock.setTempoMotionHint (cleanMotion);
+            const auto diagnostics = decoder.diagnostics();
+            const bool curveProof = h.regime == vp::TempoRegime::fixed
+                                    && diagnostics.motionFitEvidence >= 3;
+            if (curveProof && ! curveProofActive)
+            {
+                ++score.curveProofs;
+                if (verbose)
+                    std::printf ("    curve@%5.2fs truth=%6.2f committed=%6.2f"
+                                 " motion=%6.2f rate=%+.4f short=%6.2f long=%6.2f"
+                                 " residual=%5.3f/%5.3f improve=%5.3f\n",
+                                 frame / kFps, s.bpmAt (frame / kFps), h.bpm,
+                                 diagnostics.motionFit, diagnostics.motionFitRate,
+                                 h.shortFitBpm, h.longFitBpm,
+                                 diagnostics.motionFitResidual, h.shortFitResidual,
+                                 diagnostics.motionFitImprovement);
+            }
+            curveProofActive = curveProof;
             if (h.bpm > 50.0f)
                 clock.setTargetTempo (h.bpm, h.confidence);
             if (! haveSerial)
@@ -272,15 +295,11 @@ Score run (const Scenario& s, unsigned seed)
                 clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - h.beatPhase),
                                          h.confidence, 1);
             }
-            const float gridError = vp::wrapCentered (clock.beatPhase() - h.beatPhase);
-            if (std::fabs (gridError) > 0.04f)
-                clock.snapPhase (h.beatPhase, true);
-            else
-                clock.setGridPhase (h.beatPhase,
-                                    vp::gridPhaseTau (cleanMotion
-                                                          ? vp::kGridTauMotion
-                                                          : vp::kGridTauHolding,
-                                                      true, 1.0f));
+            clock.setGridPhase (h.beatPhase,
+                                vp::gridPhaseTau (cleanMotion
+                                                      ? vp::kGridTauMotion
+                                                      : vp::kGridTauHolding,
+                                                  true, 1.0f));
 
             if (previousRegime == vp::TempoRegime::fixed
                 && h.regime == vp::TempoRegime::live)
@@ -328,10 +347,12 @@ struct Aggregate
     double tempoError = 0.0;
     double tempoOver4 = 0.0;
     int releases = 0;
+    int curveProofs = 0;
     int runs = 0;
 };
 
-void printFamily (MotionKind kind, const char* label, int cases, unsigned offset)
+Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned offset,
+                       bool verbose)
 {
     Aggregate a;
     for (int i = 0; i < cases; ++i)
@@ -339,7 +360,7 @@ void printFamily (MotionKind kind, const char* label, int cases, unsigned offset
         const unsigned seed = offset + 1009u + static_cast<unsigned> (i) * 7919u
                               + static_cast<unsigned> (kind) * 104729u;
         const Scenario scenario = makeScenario (kind, seed);
-        Score score = run (scenario, seed);
+        Score score = run (scenario, seed, verbose);
         double sum = 0.0;
         for (double x : score.phaseMs)
             sum += x;
@@ -351,36 +372,62 @@ void printFamily (MotionKind kind, const char* label, int cases, unsigned offset
         a.tempoError += score.tempoErrorSum / n;
         a.tempoOver4 += score.tempoOver4 / n * 100.0;
         a.releases += score.fixedToLive;
+        a.curveProofs += score.curveProofs;
         ++a.runs;
+        if (verbose)
+        {
+            std::printf ("  seed=%10u bpm=%6.1f sub=%d swing=%.3f jitter=%4.1fms"
+                         " miss=%4.1f%% false=%4.2f/s phase=%6.1f/%6.1f/%6.1fms"
+                         " bpmErr=%5.2f%% F->V=%d curve=%d\n",
+                         seed, scenario.baseBpm, scenario.subdivision, scenario.swing,
+                         scenario.jitterSec * 1000.0, scenario.missChance * 100.0,
+                         scenario.falsePeaksPerSec, sum / n,
+                         percentile (score.phaseMs, 0.95),
+                         percentile (score.phaseMs, 0.995),
+                         score.tempoErrorSum / n, score.fixedToLive,
+                         score.curveProofs);
+        }
     }
 
     const double n = std::max (1, a.runs);
-    std::printf ("%-12s %5d %10.1f %10.1f %10.1f %9.2f%% %9.3f%% %9.2f%% %8d\n",
+    std::printf ("%-12s %5d %10.1f %10.1f %10.1f %9.2f%% %9.3f%% %9.2f%% %8d %8d\n",
                  label, a.runs, a.meanSum / n, a.p95Sum / n, a.worst,
                  a.phaseOver50 / n, a.tempoError / n, a.tempoOver4 / n,
-                 a.releases);
+                 a.releases, a.curveProofs);
+    return a;
 }
 } // namespace
 
 int main (int argc, char** argv)
 {
     bool quick = false;
+    bool verbose = false;
     unsigned offset = 0;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (argv[i], "--quick") == 0)
             quick = true;
+        else if (std::strcmp (argv[i], "--verbose") == 0)
+            verbose = true;
         else if (std::strcmp (argv[i], "--offset") == 0 && i + 1 < argc)
             offset = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
     }
     const int cases = quick ? 16 : 64;
     std::printf ("Matrice globale del moto: verita' scritta, %d casi per famiglia, offset %u.\n",
                  cases, offset);
-    std::printf ("%-12s %5s %10s %10s %10s %10s %10s %10s %8s\n",
+    std::printf ("%-12s %5s %10s %10s %10s %10s %10s %10s %8s %8s\n",
                  "famiglia", "corse", "fase media", "fase p95", "fase p99.5",
-                 ">50 ms", "err BPM", ">4% BPM", "F->V");
-    printFamily (MotionKind::flat, "fisso", cases, offset);
-    printFamily (MotionKind::smooth, "continuo", cases, offset);
-    printFamily (MotionKind::step, "gradino", cases, offset);
-    return 0;
+                 ">50 ms", "err BPM", ">4% BPM", "F->V", "curve");
+    const Aggregate fixed = printFamily (MotionKind::flat, "fisso", cases, offset, verbose);
+    const Aggregate smooth =
+        printFamily (MotionKind::smooth, "continuo", cases, offset, verbose);
+    printFamily (MotionKind::step, "gradino", cases, offset, verbose);
+
+    // A selector that would release a click-stable tempo even once is not a
+    // production gate. The moving population must still contain qualifying
+    // evidence, otherwise zero false positives was obtained by disabling the
+    // detector rather than by separating motion from onset scatter.
+    const bool selectorPass = fixed.curveProofs == 0 && smooth.curveProofs > 0;
+    std::printf ("selettore curvatura: %s\n", selectorPass ? "PASS" : "FAIL");
+    return selectorPass ? 0 : 1;
 }
