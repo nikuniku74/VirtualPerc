@@ -281,6 +281,50 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
     }
 
     {
+        auto rejectsWithoutMovingAnchor =
+            [] (double invalidTime, double resumeTime, int resumeSteps)
+        {
+            vp::TempoMotionTracker tracker;
+            tracker.observe (observation (0.0, 120.0f, 120.0f));
+            tracker.observe (observation (0.5, 120.0f, 120.0f));
+
+            const auto rejected =
+                tracker.observe (observation (invalidTime, 120.0f, 120.0f));
+            const auto resumed =
+                tracker.observe (
+                    observation (resumeTime, 120.0f, 120.0f, resumeSteps));
+            return rejected.veto == vp::TempoMotionVeto::badObservation
+                && resumed.veto == vp::TempoMotionVeto::none
+                && std::fabs (resumed.predictedBpm - 120.0f) < 0.5f
+                && resumed.periodDeltaPerBeat == 0.0f
+                && resumed.authority == 0.0f;
+        };
+
+        expect (rejectsWithoutMovingAnchor (0.25, 1.0, 1),
+                "a non-monotonic stable beat cannot move the time anchor");
+        expect (rejectsWithoutMovingAnchor (0.60, 1.0, 1),
+                "an implausibly short stable period cannot move the time anchor");
+        expect (rejectsWithoutMovingAnchor (2.0, 2.5, 4),
+                "an implausibly long stable period cannot move the time anchor");
+    }
+
+    {
+        vp::TempoMotionTracker tracker;
+        tracker.observe (observation (0.0, 120.0f, 120.0f));
+        tracker.observe (observation (0.5, 120.0f, 120.0f));
+        auto invalidTransition = observation (0.25, 120.0f, 120.0f);
+        invalidTransition.transitionState = vp::TempoTransitionState::suspected;
+        const auto rejected = tracker.observe (invalidTransition);
+        const auto resumed =
+            tracker.observe (observation (1.0, 120.0f, 120.0f));
+        expect (rejected.veto == vp::TempoMotionVeto::badObservation
+                    && resumed.veto == vp::TempoMotionVeto::none
+                    && std::fabs (resumed.predictedBpm - 120.0f) < 0.5f
+                    && resumed.periodDeltaPerBeat == 0.0f,
+                "an invalid transition timestamp cannot move the time anchor");
+    }
+
+    {
         vp::TempoMotionTracker ramp;
         const auto active = feedAccelerando (ramp, 28);
         expect (active.authority > 0.0f, "accelerando activates before veto checks");

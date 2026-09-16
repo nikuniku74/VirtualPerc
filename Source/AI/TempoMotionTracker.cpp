@@ -164,8 +164,6 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     }
 
     const double elapsed = o.beatTimeSec - lastBeatTimeSec;
-    lastBeatTimeSec = o.beatTimeSec;
-
     if (elapsed <= 0.0 || ! std::isfinite (elapsed))
         return publishVeto (TempoMotionVeto::badObservation);
 
@@ -173,6 +171,9 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     if (! std::isfinite (period) || period < kMinPeriodSec || period > kMaxPeriodSec)
         return publishVeto (TempoMotionVeto::badObservation);
 
+    // Only a normalized period the model can accept may move this anchor.
+    // Otherwise one bad timestamp corrupts both its own sample and the next.
+    lastBeatTimeSec = o.beatTimeSec;
     periods[static_cast<size_t> (write)] = period;
     write = (write + 1) % kWindow;
     filled = std::min (filled + 1, kWindow);
