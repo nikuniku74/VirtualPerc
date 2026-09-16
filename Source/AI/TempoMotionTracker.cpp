@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-
 namespace vp
 {
 namespace
@@ -20,6 +19,7 @@ constexpr float kPeriodNoiseFloor = 0.0015f;
 
 constexpr float kMinPeriodSec = 60.0f / 190.0f;
 constexpr float kMaxPeriodSec = 60.0f / 50.0f;
+constexpr float kInfiniteRateZ = 1.0e6f;
 
 void sortInPlace (float* values, int count) noexcept
 {
@@ -65,6 +65,13 @@ int signOf (float value) noexcept
         return -1;
     return 0;
 }
+
+float finitePredictedBpm (float bpm) noexcept
+{
+    if (! std::isfinite (bpm) || bpm < 50.0f || bpm > 190.0f)
+        return 0.0f;
+    return bpm;
+}
 } // namespace
 
 void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noexcept
@@ -89,9 +96,15 @@ void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noe
 
     lastOutput.authority = 0.0f;
     lastOutput.proofClosed = false;
+    lastOutput.periodDeltaPerBeat = 0.0f;
+    lastOutput.uncertainty = 1.0f;
     lastOutput.veto = reason;
     lastOutput.state = filled > 0 ? TempoMotionShadowState::proving
                                   : TempoMotionShadowState::idle;
+    if (modelPeriodSec >= kMinPeriodSec && modelPeriodSec <= kMaxPeriodSec)
+        lastOutput.predictedBpm = finitePredictedBpm (60.0f / modelPeriodSec);
+    else
+        lastOutput.predictedBpm = 0.0f;
 }
 
 TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) noexcept
@@ -109,12 +122,12 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
         lastOutput.proofClosed = false;
         lastOutput.periodDeltaPerBeat = 0.0f;
         lastOutput.uncertainty = 1.0f;
-        if (o.committedBpm > 0.0f)
-            lastOutput.predictedBpm = o.committedBpm;
+        lastOutput.predictedBpm = finitePredictedBpm (o.committedBpm);
         return lastOutput;
     };
 
     if (! std::isfinite (o.beatTimeSec) || ! std::isfinite (o.committedBpm)
+        || ! std::isfinite (o.shortFitBpm)
         || o.gridQuarterSteps < 1 || o.committedBpm < 50.0f || o.committedBpm > 190.0f)
         return publishVeto (TempoMotionVeto::badObservation);
 
@@ -128,7 +141,7 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     {
         lastBeatTimeSec = o.beatTimeSec;
         lastOutput = {};
-        lastOutput.predictedBpm = o.committedBpm;
+        lastOutput.predictedBpm = finitePredictedBpm (o.committedBpm);
         lastOutput.state = TempoMotionShadowState::idle;
         return lastOutput;
     }
@@ -215,7 +228,12 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
 
             const float mse = sse / static_cast<float> (std::max (1, count - 2));
             const float slopeSe = std::sqrt (std::max (0.0f, mse / sxx));
-            rateZ = slopeSe > 1.0e-12f ? std::fabs (slope) / slopeSe : 0.0f;
+            if (std::fabs (slope) <= 1.0e-12f)
+                rateZ = 0.0f;
+            else if (slopeSe <= 1.0e-12f)
+                rateZ = kInfiniteRateZ;
+            else
+                rateZ = std::fabs (slope) / slopeSe;
 
             const float startPeriod = intercept;
             const float endPeriod = intercept + slope * static_cast<float> (count - 1);
@@ -232,6 +250,8 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     const float fitPeriodDelta = shortPeriodSec - committedPeriodSec;
     const int fitSign = signOf (fitPeriodDelta);
     const int slopeSign = signOf (slope);
+    const bool shortFitContradictsSlope =
+        fitSign != 0 && slopeSign != 0 && fitSign != slopeSign;
 
     const bool indexGapOk =
         std::fabs (o.fitIndexGap - 1.0f) <= kMaximumIndexGapError;
@@ -246,7 +266,13 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
                         && slopeSign != 0
                         && slopeSign == fitSign;
 
-    if (qualityOk)
+    if (shortFitContradictsSlope)
+    {
+        authority = 0.0f;
+        proofBeats = 0;
+        direction = 0;
+    }
+    else if (qualityOk)
     {
         if (direction == 0 || direction == slopeSign)
         {
@@ -277,8 +303,9 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     const float predictedPeriod =
         std::clamp (intercept + slope * static_cast<float> (count),
                     kMinPeriodSec, kMaxPeriodSec);
-    lastOutput.predictedBpm = 60.0f / predictedPeriod;
-    lastOutput.periodDeltaPerBeat = slope;
+    lastOutput.predictedBpm = finitePredictedBpm (60.0f / predictedPeriod);
+    lastOutput.periodDeltaPerBeat =
+        (authority > 0.0f && ! shortFitContradictsSlope) ? slope : 0.0f;
     lastOutput.uncertainty =
         std::clamp (4.0f / std::max (4.0f, rateZ), 0.0f, 1.0f);
     lastOutput.authority = authority;
