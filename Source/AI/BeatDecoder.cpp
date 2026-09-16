@@ -91,6 +91,16 @@ namespace
     constexpr float kFastLineCleanResidual = 0.030f;
     constexpr int   kFastBeatsAlone = 5;
 
+    // A quadratic over sixteen accepted line-feed beats estimates the local
+    // tempo slope at the newest beat. Its individual values remain too noisy
+    // to own a tempo, but the sign is useful when curvature, the endpoint and
+    // the ordinary responsive fit all agree for three beats. Relative units
+    // keep the same decision at 100 and 160 BPM.
+    constexpr float kMotionCurveRate = 0.0010f;      // BPM/beat divided by BPM
+    constexpr float kMotionCurveDeviation = 0.012f;
+    constexpr float kMotionCurveResidual = 0.045f;
+    constexpr int   kMotionCurveBeats = 3;
+
 
 
     // How fast the committed tempo moves per beat in each regime.
@@ -516,6 +526,12 @@ void BeatDecoder::reset() noexcept
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
+    motionFitBpm = 0.0f;
+    motionFitRate = 0.0f;
+    motionFitResidual = 1.0f;
+    motionFitImprovement = 0.0f;
+    motionFitEvidence = 0;
+    motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
@@ -851,6 +867,12 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.combBpm = tempo.bpm();
     d.combSalience = tempo.salience();
     d.shortFitRate = shortFitRate;
+    d.motionFit = motionFitBpm;
+    d.motionFitRate = motionFitRate;
+    d.motionFitResidual = motionFitResidual;
+    d.motionFitImprovement = motionFitImprovement;
+    d.motionFitEvidence = motionFitEvidence;
+    d.motionFitDirection = motionFitDirection;
     d.longFit = longFitBpm;
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
@@ -892,6 +914,12 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
+    motionFitBpm = 0.0f;
+    motionFitRate = 0.0f;
+    motionFitResidual = 1.0f;
+    motionFitImprovement = 0.0f;
+    motionFitEvidence = 0;
+    motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
@@ -956,6 +984,12 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
     fastDriftSign = 0;
+    motionFitBpm = 0.0f;
+    motionFitRate = 0.0f;
+    motionFitResidual = 1.0f;
+    motionFitImprovement = 0.0f;
+    motionFitEvidence = 0;
+    motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
     octaveVoteBpm = 0.0f;
@@ -1135,6 +1169,126 @@ bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual,
     residual = static_cast<float> (std::sqrt (sumSq / static_cast<double> (keep)) / slope);
     anchorOut = meanT + slope * (idx[keep - 1] - meanIdx);
     return true;
+}
+
+bool BeatDecoder::fitPeriodCurve (int maxBeats, float& periodNow, float& bpmPerBeat,
+                                  float& residual, float& improvement) const noexcept
+{
+    periodNow = 0.0f;
+    bpmPerBeat = 0.0f;
+    residual = 1.0f;
+    improvement = 0.0f;
+    const int n = std::min (beatFilled, maxBeats);
+    if (n < 6 || bpm < kMinBpm)
+        return false;
+
+    // Same admitted events as the ordinary fit. A quadratic can explain an
+    // outlier better than a line, so letting it see peaks that the production
+    // grid rejected would make its apparent responsiveness meaningless.
+    double t[kBeatHistory];
+    const int oldest = (beatWrite - n + kBeatHistory) % kBeatHistory;
+    for (int i = 0; i < n; ++i)
+        t[i] = beatTime[(oldest + i) % kBeatHistory];
+
+    const double guess = 60.0 / static_cast<double> (bpm);
+    double idx[kBeatHistory];
+    int keep = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double beats = (t[i] - t[0]) / guess;
+        const double rounded = std::round (beats);
+        if (std::fabs (beats - rounded) > 0.28)
+            continue;
+        idx[keep] = rounded;
+        t[keep] = t[i];
+        ++keep;
+    }
+    if (keep < 6 || idx[keep - 1] - idx[0] < 5.0)
+        return false;
+
+    // Fit y = a + b*x + c*x^2 after centring both axes on the newest beat.
+    // Then b is the causal period at that beat and 2c is its change per beat.
+    // This is deliberately diagnostic first: extrapolating a quadratic to the
+    // edge amplifies onset jitter, and the probes must quantify that cost.
+    const double newestIdx = idx[keep - 1];
+    const double newestTime = t[keep - 1];
+    double m[3][4] {};
+    double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    for (int i = 0; i < keep; ++i)
+    {
+        const double x = idx[i] - newestIdx;
+        const double x2 = x * x;
+        const double y = t[i] - newestTime;
+        sumX += x;
+        sumY += y;
+        sumXX += x2;
+        sumXY += x * y;
+        const double v[3] { 1.0, x, x2 };
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int col = 0; col < 3; ++col)
+                m[row][col] += v[row] * v[col];
+            m[row][3] += v[row] * y;
+        }
+    }
+
+    for (int col = 0; col < 3; ++col)
+    {
+        int pivot = col;
+        for (int row = col + 1; row < 3; ++row)
+            if (std::fabs (m[row][col]) > std::fabs (m[pivot][col]))
+                pivot = row;
+        if (std::fabs (m[pivot][col]) < 1.0e-12)
+            return false;
+        if (pivot != col)
+            for (int k = col; k < 4; ++k)
+                std::swap (m[col][k], m[pivot][k]);
+        const double scale = m[col][col];
+        for (int k = col; k < 4; ++k)
+            m[col][k] /= scale;
+        for (int row = 0; row < 3; ++row)
+        {
+            if (row == col)
+                continue;
+            const double factor = m[row][col];
+            for (int k = col; k < 4; ++k)
+                m[row][k] -= factor * m[col][k];
+        }
+    }
+
+    const double a = m[0][3];
+    const double b = m[1][3];
+    const double c = m[2][3];
+    if (b < 60.0 / kMaxBpm - 1.0e-9 || b > 60.0 / kMinBpm + 1.0e-9)
+        return false;
+
+    double sumSq = 0.0;
+    double linearSumSq = 0.0;
+    const double count = static_cast<double> (keep);
+    const double linearDen = count * sumXX - sumX * sumX;
+    if (std::fabs (linearDen) < 1.0e-12)
+        return false;
+    const double linearB = (count * sumXY - sumX * sumY) / linearDen;
+    const double linearA = (sumY - linearB * sumX) / count;
+    for (int i = 0; i < keep; ++i)
+    {
+        const double x = idx[i] - newestIdx;
+        const double y = t[i] - newestTime;
+        const double predicted = a + b * x + c * x * x;
+        const double e = y - predicted;
+        sumSq += e * e;
+        const double linearE = y - (linearA + linearB * x);
+        linearSumSq += linearE * linearE;
+    }
+
+    periodNow = static_cast<float> (b);
+    bpmPerBeat = static_cast<float> (-120.0 * c / (b * b));
+    residual = static_cast<float> (std::sqrt (sumSq / static_cast<double> (keep)) / b);
+    improvement = linearSumSq > 1.0e-12
+                      ? static_cast<float> (1.0 - sumSq / linearSumSq)
+                      : 0.0f;
+    return std::isfinite (periodNow) && std::isfinite (bpmPerBeat)
+           && std::isfinite (residual) && std::isfinite (improvement);
 }
 
 float BeatDecoder::gridPhaseNow (float periodSec) const noexcept
@@ -2598,6 +2752,60 @@ void BeatDecoder::updateTempo() noexcept
         lastFitIndexGap = shortIndexGap;
     }
 
+    // The ordinary eight-beat line reports the average slope of its window,
+    // about three and a half beats in the past. A smooth tempo change has a
+    // second signature: the beat dates curve, so a longer quadratic can ask
+    // for the slope at the newest accepted beat. Onset jitter makes that
+    // endpoint too noisy to drive the tempo directly (the fixed controls show
+    // isolated +/-0.3%/beat readings), hence the deliberately narrow role:
+    // release a held direct-feed tempo only after three mutually coherent
+    // curves. The room path never enters this decision.
+    float motionPeriod = 0.0f;
+    motionFitBpm = 0.0f;
+    motionFitRate = 0.0f;
+    motionFitResidual = 1.0f;
+    motionFitImprovement = 0.0f;
+    const bool haveMotionCurve = lineFeed
+                                 && fitPeriodCurve (16, motionPeriod, motionFitRate,
+                                                    motionFitResidual,
+                                                    motionFitImprovement);
+    if (haveMotionCurve)
+        motionFitBpm = 60.0f / motionPeriod;
+
+    const float motionDeviation = haveMotionCurve && bpm > kMinBpm
+                                      ? (motionFitBpm - bpm) / bpm
+                                      : 0.0f;
+    const float shortDeviation = haveShort && bpm > kMinBpm
+                                     ? (shortFitBpm - bpm) / bpm
+                                     : 0.0f;
+    const bool coherentMotionCurve = haveMotionCurve && haveShort
+                                     && motionFitResidual < kMotionCurveResidual
+                                     && shortResidual < kMotionCurveResidual
+                                     && std::fabs (motionFitRate / bpm)
+                                            > kMotionCurveRate
+                                     && std::fabs (motionDeviation)
+                                            > kMotionCurveDeviation
+                                     && std::fabs (shortDeviation)
+                                            > kMotionCurveDeviation
+                                     && motionFitRate * motionDeviation > 0.0f
+                                     && motionFitRate * shortDeviation > 0.0f;
+    if (coherentMotionCurve)
+    {
+        const int sign = motionFitRate > 0.0f ? 1 : -1;
+        if (sign == motionFitDirection)
+            motionFitEvidence = std::min (motionFitEvidence + 1, kMotionCurveBeats);
+        else
+        {
+            motionFitDirection = sign;
+            motionFitEvidence = 1;
+        }
+    }
+    else
+    {
+        motionFitEvidence = 0;
+        motionFitDirection = 0;
+    }
+
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
     if (! haveShort)
@@ -3480,6 +3688,12 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.fastIntervalDeviation = fastMotionCurrent ? lastIntervalDeviation : 0.0f;
     hyp.fastTempoEvidence = fastMotionCurrent ? fastDriftBeats : 0;
     hyp.fastTempoDirection = fastMotionCurrent ? fastDriftSign : 0;
+    hyp.motionFitBpm = fastMotionCurrent ? motionFitBpm : 0.0f;
+    hyp.motionFitRate = fastMotionCurrent ? motionFitRate : 0.0f;
+    hyp.motionFitResidual = fastMotionCurrent ? motionFitResidual : 1.0f;
+    hyp.motionFitImprovement = fastMotionCurrent ? motionFitImprovement : 0.0f;
+    hyp.motionFitEvidence = fastMotionCurrent ? motionFitEvidence : 0;
+    hyp.motionFitDirection = fastMotionCurrent ? motionFitDirection : 0;
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

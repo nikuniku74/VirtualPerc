@@ -108,6 +108,54 @@ sono 52→50 (stabile 4,915 s) e 120→118 (26,02 ms contro gate 25 ms). Restano
 anche le relazioni quasi/esattamente d'ottava. Per certificare fase e musicalita'
 sul live serve ancora una beat-grid manuale su due o tre brani e ascolto umano.
 
+### 16/09/2026 — curvatura causale: FISSO lascia prima una rampa vera
+
+**Causa misurata.** Sulla rampa peggiore 100→110 in 12 s il decoder era ancora
+fermo a 100,07 quando il batterista era gia' a 104,17 BPM; il clock aveva
+accumulato 69,9 ms di ritardo. Il fit lineare corto vede la grandezza della
+deriva, ma la vede al centro dei suoi otto battiti. Accorciarlo era gia' stato
+provato e raddoppiava il wobble. Una quadratica sugli stessi otto battiti e'
+troppo rumorosa: a 100 BPM fissi stima fino a ±1,7 BPM per battito.
+
+**Correzione mantenuta.** `BeatDecoder::fitPeriodCurve` fitta
+`t(n)=a+b*n+c*n²` su sedici battiti accettati e valuta la pendenza all'ultimo.
+Non sceglie mai BPM o fase. Solo su file/mixer puo' liberare FISSO dopo tre
+battiti consecutivi se:
+
+- la curvatura supera 0,1% del BPM per battito;
+- endpoint curvo e fit corto sono entrambi oltre 1,2% dal BPM commesso, con lo
+  stesso segno;
+- entrambi i residui sono sotto 0,045.
+
+Dopo l'uscita il target e' il live fit esistente; nessun restart, snap o nuovo
+clock. Percorso iPad/microfono invariato. Quattro semi, MIXER (media/peggio ms):
+
+| rampa | checkpoint precedente | ora |
+|---|---:|---:|
+| 100→110 in 30 s | 22,0 / 84,7 | **19,8 / 78,4** |
+| 100→110 in 12 s | 40,8 / 127,2 | **35,2 / 93,2** |
+| 120→132 in 20 s | 28,5 / 95,5 | **25,0 / 81,6** |
+| 128→120 in 20 s | 20,2 / 48,0 | **18,5 / 48,0** |
+
+Controlli fissi invariati: 100 BPM 7,1/33,3 ms; 130 BPM 7,2/22,0. Il buco
+batteria resta FISSO, inclusa la riga con 44 ms di ritardo a 25,3/66,2 ms. La
+matrice completa migliora **104→103 uscite** e **9,12→9,11% fuori**; aggancio
+5,22 s e 30 non-agganci d'ottava invariati. `VPAlign` completo exit 0; i gate
+mirati restano `--tempo-step` 11/0, `--tempo-slow` 10/0, `--evidence` 2/0,
+`--new-input` 3/0 e `--bar` 10/0.
+
+**Tentativi respinti.** Due prove della curvatura invece di tre, anche chiedendo
+la direzione del fit lungo, alterano i controlli fissi e fanno fallire la rampa
+lenta: MIXER 90,2 ms contro gate 90, POSA 134,0 ms. Anche la distanza fra
+ancora corta e lunga non separa: -0,054/-0,058 beat sulla rampa vera,
++0,043/+0,056 sul jitter a tempo fisso. Entrambi sono stati rimossi.
+
+**Reale, senza sovrainterpretare.** I cinque estratti Flamingo passano da
+8,70→8,73% di errore tempogramma e 2,27→2,33% di strattoni; solo un ritardo su
+cinque ha correlazione sufficiente. E' un piccolo segnale negativo e non una
+beat-grid. La fase live non e' ancora certificata: prossimo gate reale resta
+beat-grid manuale + ascolto su due o tre brani con accelerando/rallentando.
+
 ## Cronologia precedente
 
 ### Checkpoint credito limitato — 09/09/2026: rifinitura iniziale mantenuta

@@ -85,6 +85,18 @@ public:
         int   beatsHeld = 0;
         /** How fast the short fit is itself moving, BPM per beat. */
         float shortFitRate = 0.0f;
+        /** Diagnostic quadratic fit over the responsive window, evaluated at
+            its newest accepted beat. Unlike `shortFit`, which is the average
+            slope through the window, this asks what the local slope would be
+            if the beat dates really form a smooth accelerando. It never owns
+            the target tempo; on a direct feed its evidence can only release a
+            stale fixed-tempo hold after the production safety gates agree. */
+        float motionFit = 0.0f;
+        float motionFitRate = 0.0f;
+        float motionFitResidual = 1.0f;
+        float motionFitImprovement = 0.0f;
+        int   motionFitEvidence = 0;
+        int   motionFitDirection = 0;
         bool  levelSettled = false;
         int   userOctave = 0;
         /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
@@ -243,6 +255,8 @@ private:
                      double& anchorOut, float* indexGapOut = nullptr) const noexcept;
     bool  fitPeriodBefore (int maxBeats, float& period, float& residual, float& coverage,
                            double& anchorOut, float* indexGapOut, int skipNewest) const noexcept;
+    bool  fitPeriodCurve (int maxBeats, float& periodNow, float& bpmPerBeat,
+                          float& residual, float& improvement) const noexcept;
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     float scoreConfidence() const noexcept;
@@ -412,6 +426,15 @@ private:
         second proves that its direction is causal rather than a phase offset. */
     float lastFastDeviation = 0.0f;
     float lastIntervalDeviation = 0.0f;
+    /** A line-feed-only constant-acceleration fit over sixteen accepted beats.
+        Three coherent curves may release FISSO before the absolute tempo gap
+        has grown large enough for the eight-beat deviation gate. */
+    float motionFitBpm = 0.0f;
+    float motionFitRate = 0.0f;
+    float motionFitResidual = 1.0f;
+    float motionFitImprovement = 0.0f;
+    int   motionFitEvidence = 0;
+    int   motionFitDirection = 0;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

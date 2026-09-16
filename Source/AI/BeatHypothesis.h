@@ -79,6 +79,15 @@ struct BeatHypothesis
     float    fastIntervalDeviation = 0.0f;
     int      fastTempoEvidence = 0;
     int      fastTempoDirection = 0;
+    /** Line-feed curvature evidence. Diagnostic only: it explains why FISSO
+        was released on a gradual change; the consumer never uses it to move
+        the clock or to choose a tempo. */
+    float    motionFitBpm = 0.0f;
+    float    motionFitRate = 0.0f;
+    float    motionFitResidual = 1.0f;
+    float    motionFitImprovement = 0.0f;
+    int      motionFitEvidence = 0;
+    int      motionFitDirection = 0;
 
     TempoRegime regime   = TempoRegime::unknown;
 

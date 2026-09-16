@@ -192,6 +192,55 @@ Treat that as a transparent weak negative, not phase ground truth: a manually
 marked beat grid and listening pass are still required before calling continuous
 live following complete.
 
+**Curvature can release a held direct-feed tempo without becoming another
+tempo owner (2026-09-16).** The remaining fast-ramp debt was accumulated before
+the eight-beat deviation had enough size to release FISSO. On the worst
+100->110 / 12 s seed, the true tempo had reached 104.17 while the held decoder
+still published 100.07; the clock was already 69.9 ms late. Shortening the
+responsive fit was already measured and rejected above, and a raw quadratic on
+the same eight beats is worse: even at a fixed 100 BPM it reported local slopes
+up to +/-1.7 BPM per beat.
+
+`fitPeriodCurve` therefore fits `t(n) = a + b*n + c*n^2` over sixteen accepted
+beats, centred on the newest beat. It evaluates the local period at that newest
+beat, but **never drives BPM or phase**. On `lineFeed` only, it may release a
+held tempo after three consecutive accepted beats when all of these agree:
+
+- curve rate is over 0.1% of BPM per beat;
+- both the curved endpoint and the ordinary short fit are over 1.2% from the
+  committed BPM, in the curve's direction;
+- both residuals are under 0.045.
+
+The ordinary live target then owns the tempo exactly as before. The long window,
+comb, clock continuity and iPad/microphone path are unchanged. Four-seed MIXER
+phase, previous direct-motion result -> curvature release (mean/worst ms):
+
+| ramp | before | after |
+|---|---:|---:|
+| 100->110 / 30 s | 22.0 / 84.7 | **19.8 / 78.4** |
+| 100->110 / 12 s | 40.8 / 127.2 | **35.2 / 93.2** |
+| 120->132 / 20 s | 28.5 / 95.5 | **25.0 / 81.6** |
+| 128->120 / 20 s | 20.2 / 48.0 | **18.5 / 48.0** |
+
+The fixed 100/130 controls remain 7.1/33.3 and 7.2/22.0 ms. The ten-second
+drummer hole remains FISSO; its difficult 44 ms row remains 25.3/66.2 ms. The
+complete 360-run material matrix improves 104->103 excursions and 9.12->9.11%
+outside, with mean acquisition 5.22 s and 30 unacquired octave cases unchanged.
+
+Two tempting relaxations were measured and rejected. Releasing after two
+curves, even after requiring the long fit's direction, changed the fixed
+controls and made the slow-ramp MIXER gate fail at 90.2 ms (POSA reached 134.0
+ms). The short/long phase-anchor gap is not a discriminator either: the true
+fast ramp read -0.054/-0.058 beat, while fixed-tempo jitter produced
++0.043/+0.056 beat in the opposite direction but the same magnitude. Keep the
+three-beat proof; do not tune either shortcut from one ramp.
+
+On the five `Flamingo` extracts the weak tempogram score moves 8.70->8.73% error
+and 2.27->2.33% grid jerk; only one of five lag correlations is reliable. This
+is again a transparent weak negative. The deterministic phase gain justifies
+the bounded release, but a hand-marked beat grid and listening remain the gate
+for the product claim "perfectly and immediately".
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with

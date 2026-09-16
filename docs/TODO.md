@@ -3554,6 +3554,34 @@ controlli fissi e il buco batteria. Con questo follow-up la matrice conserva
 e il suo riferimento debole passa 8,62→8,70% errore, 2,21→2,27% strattoni.
 Non chiamare quindi il follow-up byte-identico o la fase live gia' certificata.
 
+### 44. La curvatura libera prima FISSO su una rampa diretta 🟢 (2026-09-16)
+
+Il debito rimasto nasceva prima che il fit corto accumulasse abbastanza scarto:
+sulla rampa 100→110/12 s il vero tempo era gia' 104,17, il decoder ancora
+100,07 e il clock 69,9 ms tardi. Una quadratica a otto battiti e' inutilizzabile
+(fino a ±1,7 BPM/battito anche a 100 fisso). Il nuovo fit curvo usa sedici
+battiti e **non guida** ne' BPM ne' fase: solo su `lineFeed`, dopo tre curve
+coerenti e pulite, concede l'uscita da FISSO al live fit gia' esistente.
+
+MIXER, quattro semi, media/peggio: 100→110/30 **22,0/84,7→19,8/78,4**;
+100→110/12 **40,8/127,2→35,2/93,2**; 120→132/20
+**28,5/95,5→25,0/81,6**; 128→120/20 **20,2/48,0→18,5/48,0**. Controlli
+fissi e buco batteria invariati. Matrice completa: 5,22 s / **103** uscite / 30
+mai / **9,11%**, contro 104 e 9,12% al checkpoint precedente.
+
+Respinta la scorciatoia a due curve: falsi rilasci sui controlli e gate rampa
+lenta a 90,2 ms (POSA 134,0). Respinta anche la distanza fra ancore: la
+magnitudine arriva a ~0,056 beat sia su rampa vera sia su jitter fisso.
+
+Flamingo resta un riferimento debole e leggermente negativo: 8,70→8,73% errore,
+2,27→2,33% strattoni, un solo lag affidabile su cinque. Quindi:
+
+- [x] gate sintetico di fase permanente, matrice completa e test tempo mirati;
+- [ ] beat-grid manuale su almeno due tratti con accelerando/rallentando;
+- [ ] ascolto umano della parte renderizzata contro quei tratti;
+- [ ] solo dopo quei due gate decidere se 93 ms di peggio sintetico e' ancora
+  udibile e quale segnale causale aggiungere; non abbassare a due prove.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

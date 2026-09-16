@@ -1222,6 +1222,12 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     float lastShortBpm = 0.0f;
     float lastLongBpm = 0.0f;
     float lastCombBpm = 0.0f;
+    float lastMotionBpm = 0.0f;
+    float lastMotionRate = 0.0f;
+    float lastMotionResidual = 1.0f;
+    float lastMotionImprovement = 0.0f;
+    int lastMotionEvidence = 0;
+    int lastMotionDirection = 0;
     vp::TempoRegime lastRegime = vp::TempoRegime::unknown;
     bool haveHypPhase = false;
     int lastPrinted = -1;
@@ -1260,7 +1266,14 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             lastHypBpm = hy.bpm;
             lastShortBpm = hy.shortFitBpm;
             lastLongBpm = hy.longFitBpm;
-            lastCombBpm = dec.diagnostics().combBpm;
+            const auto dg = dec.diagnostics();
+            lastCombBpm = dg.combBpm;
+            lastMotionBpm = dg.motionFit;
+            lastMotionRate = dg.motionFitRate;
+            lastMotionResidual = dg.motionFitResidual;
+            lastMotionImprovement = dg.motionFitImprovement;
+            lastMotionEvidence = dg.motionFitEvidence;
+            lastMotionDirection = dg.motionFitDirection;
             lastRegime = hy.regime;
             haveHypPhase = true;
             const float gridErr = vp::wrapCentered (clock.beatPhase() - hy.beatPhase);
@@ -1314,11 +1327,16 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             {
                 lastPrinted = sec;
                 std::printf ("   t=%-4d vero=%-7.2f dec=%-7.2f corto=%-7.2f lungo=%-7.2f "
-                             "comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
+                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
                              "(decoder %+7.1f)\n",
                              sec, bpmAt (t), static_cast<double> (lastHypBpm),
                              static_cast<double> (lastShortBpm),
                              static_cast<double> (lastLongBpm),
+                             static_cast<double> (lastMotionBpm),
+                             static_cast<double> (lastMotionRate),
+                             static_cast<double> (lastMotionResidual),
+                             static_cast<double> (lastMotionImprovement),
+                             lastMotionEvidence, lastMotionDirection,
                              static_cast<double> (lastCombBpm),
                              static_cast<double> (hy.shortFitResidual),
                              vp::regimeLabel (static_cast<int> (lastRegime)),
@@ -1368,10 +1386,14 @@ bool measureRampPhase()
         // offset every song carries and no ramp is responsible for it.
         { "100 fisso",          100.0f, 100.0f, 30.0,  9.0,  36.0, 10.0 },
         { "130 fisso",          130.0f, 130.0f, 30.0,  9.0,  25.0, 10.0 },
-        { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0, 24.0,  90.0, 17.0 },
-        { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0, 45.0, 135.0, 32.0 },
-        { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0, 32.0, 105.0, 20.0 },
-        { "128 -> 120 in 20 s", 128.0f, 120.0f, 20.0, 24.0,  60.0, 23.0 },
+        // These margins lock the sixteen-beat curvature release in: the prior
+        // direct-motion checkpoint (22.0/84.7, 40.8/127.2, 28.5/95.5 and
+        // 20.2/48.0 mean/worst) fails at least the mean or worst line below,
+        // while the measured four-seed result retains useful headroom.
+        { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0, 21.0,  82.0, 15.0 },
+        { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0, 38.0, 105.0, 30.0 },
+        { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0, 27.0,  90.0, 18.0 },
+        { "128 -> 120 in 20 s", 128.0f, 120.0f, 20.0, 19.5,  52.0, 21.0 },
     };
     const struct { RampMode m; const char* label; } modes[] = {
         { RampMode::lean,  "LEANA" },

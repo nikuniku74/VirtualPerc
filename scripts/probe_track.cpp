@@ -106,7 +106,7 @@ int main (int argc, char** argv)
                  path.c_str(), n / sr, sr, gainDb);
     if (trace)
         std::printf ("#  t     pubbl   rete   pettine  corto  lungo  conf  resL resS  reg stato suona  "
-                     "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?\n");
+                     "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?  curva rate resC gain ev\n");
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     if (pulseFile != nullptr)
@@ -152,7 +152,9 @@ int main (int argc, char** argv)
         if (trace && t >= lastTrace + traceStep)
         {
             lastTrace = t;
-            std::printf ("%6.1f %7.2f %7.2f %8.2f %7.2f %7.2f  %.2f  %5.3f %5.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s\n",
+            vp::BeatHypothesis hyp {};
+            const bool haveHyp = eng.tryLoadNeuralHypothesis (hyp);
+            std::printf ("%6.1f %7.2f %7.2f %8.2f %7.2f %7.2f  %.2f  %5.3f %5.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s  %7.2f %+6.2f %.3f %.2f %d\n",
                          t, (double) s.bpm, (double) s.neuralBpm, (double) s.combBpm,
                          (double) s.shortFitBpm, (double) s.longFitBpm,
                          (double) s.confidence, (double) s.fitResidual,
@@ -161,7 +163,12 @@ int main (int argc, char** argv)
                          s.analysisRestarts, (double) s.analysisGain, (double) s.inputPeak,
                          (double) s.analysisPeak, (double) s.lowShare,
                          s.levelSettled ? 1 : 0, (double) s.fitCoverage,
-                         s.barTrusted ? "SI" : "no");
+                         s.barTrusted ? "SI" : "no",
+                         haveHyp ? (double) hyp.motionFitBpm : 0.0,
+                         haveHyp ? (double) hyp.motionFitRate : 0.0,
+                         haveHyp ? (double) hyp.motionFitResidual : 1.0,
+                         haveHyp ? (double) hyp.motionFitImprovement : 0.0,
+                         haveHyp ? hyp.motionFitEvidence : 0);
         }
 
         pos += take;
