@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AI/TempoMotionShape.h"
 #include "Core/Types.h"
 
 #include <array>
@@ -48,6 +49,13 @@ struct TempoMotionOutput
     float uncertainty = 1.0f;
     float authority = 0.0f;
     bool proofClosed = false;
+    bool firstStrictProof = false;
+    TempoMotionShapeModel shapeModel = TempoMotionShapeModel::insufficient;
+    float shapePredictedBpm = 0.0f;
+    float shapeQuadraticVsHinge = 0.0f;
+    float shapeEvidenceMargin = 0.0f;
+    int shapeQuadraticWins = 0;
+    int shapeQuarantineBeats = 0;
 };
 
 class TempoMotionTracker
@@ -55,6 +63,8 @@ class TempoMotionTracker
 public:
     void reset (bool fullModelReset = true,
                 TempoMotionVeto reason = TempoMotionVeto::none) noexcept;
+    void beginFixedTenure (double entryTimeSec, float committedBpm) noexcept;
+    void quarantineShape() noexcept;
     TempoMotionOutput observe (const TempoMotionObservation&) noexcept;
     TempoMotionOutput output() const noexcept { return lastOutput; }
 
@@ -69,6 +79,15 @@ private:
     float authority = 0.0f;
     int proofBeats = 0;
     int direction = 0;
+    std::array<TempoMotionShapePoint, TempoMotionShape::kMaximumPoints> shapePoints {};
+    int shapeFilled = 0;
+    double shapeEntryTimeSec = -1.0;
+    double shapeQuarterIndex = 0.0;
+    float shapeEntryPeriodSec = 0.0f;
+    bool strictProofSeen = false;
+    bool shapeHingeActive = false;
+    int shapeQuadraticWins = 0;
+    int shapeQuarantineBeats = 0;
     TempoMotionOutput lastOutput {};
 };
 } // namespace vp

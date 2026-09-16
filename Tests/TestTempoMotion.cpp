@@ -3,6 +3,7 @@
 #include "AI/BeatDecoder.h"
 #include "AI/TempoMotionTracker.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -97,6 +98,97 @@ vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
     }
     return last;
 }
+
+struct DecoderMotionFixtureResult
+{
+    int strictProofPulses = 0;
+    int fixedReleases = 0;
+    bool sawHinge = false;
+    bool sawQuarantine = false;
+    bool sawQuadraticAuthority = false;
+    bool bridgeStayedZero = true;
+    uint32_t strictProofBeatSerial = 0;
+    uint32_t firstReleaseBeatSerial = 0;
+};
+
+DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
+{
+    constexpr double fps = 50.0;
+    constexpr double motionStartSec = 55.0;
+    std::array<double, 256> eventTimes {};
+    int eventCount = 0;
+    double beatTimeSec = 0.0;
+    int motionBeat = 0;
+    while (beatTimeSec < 95.0 && eventCount < static_cast<int> (eventTimes.size()))
+    {
+        const bool moving = beatTimeSec >= motionStartSec;
+        if (! moving || motionBeat != 3)
+            eventTimes[static_cast<size_t> (eventCount++)] = beatTimeSec;
+
+        const double period = moving
+                                  ? (abruptStep
+                                         ? 0.565
+                                         : std::max (0.54,
+                                                     0.6 - 0.001 * motionBeat))
+                                  : 0.6;
+        beatTimeSec += period;
+        if (moving)
+            ++motionBeat;
+    }
+
+    vp::BeatDecoder decoder;
+    decoder.prepare (fps);
+    decoder.setLineFeed (true);
+    decoder.setLevelAnchor (true);
+
+    DecoderMotionFixtureResult result;
+    bool previousStrictProof = false;
+    vp::TempoRegime previousRegime = vp::TempoRegime::unknown;
+
+    for (int frame = 0; frame < static_cast<int> (95.0 * fps); ++frame)
+    {
+        float activation = 0.02f;
+        for (int event = 0; event < eventCount; ++event)
+        {
+            const double distanceFrames =
+                static_cast<double> (frame) - eventTimes[static_cast<size_t> (event)] * fps;
+            if (std::fabs (distanceFrames) <= 7.0)
+            {
+                const double d = distanceFrames / 1.35;
+                activation = std::max (
+                    activation,
+                    0.95f * static_cast<float> (std::exp (-0.5 * d * d)));
+            }
+        }
+
+        const auto h = decoder.observe (activation, 0.02f, 1.0f - activation);
+        const auto d = decoder.diagnostics();
+        if (d.motionFirstStrictProof && ! previousStrictProof)
+        {
+            ++result.strictProofPulses;
+            result.strictProofBeatSerial = h.beatSerial;
+        }
+        result.sawHinge |=
+            d.motionShapeModel == static_cast<int> (vp::TempoMotionShapeModel::hinge);
+        result.sawQuarantine |= d.motionShapeQuarantineBeats > 0;
+        result.sawQuadraticAuthority |=
+            d.motionShapeModel == static_cast<int> (vp::TempoMotionShapeModel::quadratic)
+            && d.motionShapeQuadraticWins >= 2
+            && d.motionShapeQuarantineBeats == 0;
+        result.bridgeStayedZero &= d.motionBridgeAuthority == 0.0f
+                                && h.motionBridgeAuthority == 0.0f;
+        if (previousRegime == vp::TempoRegime::fixed
+            && h.regime == vp::TempoRegime::live)
+        {
+            ++result.fixedReleases;
+            if (result.firstReleaseBeatSerial == 0)
+                result.firstReleaseBeatSerial = h.beatSerial;
+        }
+        previousStrictProof = d.motionFirstStrictProof;
+        previousRegime = h.regime;
+    }
+    return result;
+}
 }
 
 void vpRunTempoMotionTrackerTests (int& passed, int& failed)
@@ -108,6 +200,67 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         condition ? ++passed : ++failed;
         std::printf ("  %s  %s\n", condition ? "PASS" : "FAIL", name);
     };
+
+    {
+        vp::TempoMotionTracker tracker;
+        tracker.beginFixedTenure (0.0, 100.0f);
+        double t = 0.0;
+        int strictPulses = 0;
+        for (int beat = 1; beat <= 18; ++beat)
+        {
+            const float period = 0.6f - 0.002f * static_cast<float> (beat - 1);
+            t += period;
+            const auto out = tracker.observe (
+                observation (t, 100.0f, 60.0f / period));
+            strictPulses += out.firstStrictProof ? 1 : 0;
+        }
+        expect (strictPulses == 1,
+                "strict tempo-motion proof is a one-shot tenure edge");
+    }
+
+    {
+        vp::TempoMotionTracker tracker;
+        tracker.beginFixedTenure (0.0, 100.0f);
+        bool quadraticFromSevenThroughTwelve = true;
+        bool finiteShapeBpm = true;
+        for (int quarter = 1; quarter <= 11; ++quarter)
+        {
+            constexpr double curvature = -0.00032;
+            const double q = static_cast<double> (quarter);
+            const double t = 0.6 * q + curvature * q * q;
+            const float localPeriod =
+                static_cast<float> (0.6 + curvature * (2.0 * q - 1.0));
+            const auto out = tracker.observe (
+                observation (t, 100.0f, 60.0f / localPeriod));
+            if (quarter >= 6)
+            {
+                quadraticFromSevenThroughTwelve &=
+                    out.shapeModel == vp::TempoMotionShapeModel::quadratic
+                    && out.shapeQuadraticVsHinge > 0.0f
+                    && out.shapeEvidenceMargin >= 2.0f;
+                finiteShapeBpm &= predictedBpmInRange (out.shapePredictedBpm);
+            }
+        }
+        expect (quadraticFromSevenThroughTwelve && finiteShapeBpm,
+                "fixed-tenure quadratic diagnostics update at seven through twelve points");
+    }
+
+    {
+        const auto ramp = runDecoderMotionFixture (false);
+        expect (ramp.strictProofPulses == 1
+                    && ramp.fixedReleases > 0
+                    && ramp.strictProofBeatSerial < ramp.firstReleaseBeatSerial,
+                "decoder ramp proves strict motion before its existing fixed release");
+        expect (ramp.bridgeStayedZero,
+                "strict diagnostics cannot apply bridge authority");
+
+        const auto step = runDecoderMotionFixture (true);
+        expect ((step.sawHinge || step.sawQuarantine)
+                    && ! step.sawQuadraticAuthority,
+                "missed-first-beat step is hinged or quarantined without shape authority");
+        expect (step.bridgeStayedZero,
+                "diagnostics-only decoder always publishes zero bridge authority");
+    }
 
     for (float bpm : { 52.0f, 100.0f, 168.0f })
     {

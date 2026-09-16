@@ -866,16 +866,29 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
     leftFixedBeats = 0;
     fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
     fixedSamples = 0;
-    // Motion authority belongs to one continuous fixed-regime tenure. Without
-    // this boundary, periods gathered before/through a step could prove after
-    // the decoder returned to fixed; the four quick step banks exposed
-    // 25/0/19/129 authority frames. They become 0/0/0/0 when entry starts a
-    // fresh proof and exit revokes the old one. This is diagnostic-only: no BPM
-    // or grid state is read from the shadow here.
+    // A residual curve is meaningful only inside one uninterrupted fixed
+    // tenure. Seed it from the accepted entry beat while leaving the scalar
+    // interval tracker unanchored; carrying an interval across this boundary
+    // made a preceding step look like continuous motion in the quick banks.
+    // Diagnostic only here: no tempo, grid or serial reads the shape output.
     if (r == TempoRegime::fixed)
-        resetMotionShadow (true, TempoMotionVeto::none);
+    {
+        const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+        if (beatFilled > 0)
+        {
+            motionTracker.beginFixedTenure (beatTime[newest], bpm);
+            motionShadow = motionTracker.output();
+            motionObservedBeatSerial = beatSerial;
+        }
+        else
+        {
+            resetMotionShadow (true, TempoMotionVeto::none);
+        }
+    }
     else if (previous == TempoRegime::fixed)
+    {
         resetMotionShadow (false, TempoMotionVeto::none);
+    }
 }
 
 BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
@@ -896,6 +909,14 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.motionShadowAuthority = motionShadow.authority;
     d.motionShadowState = static_cast<int> (motionShadow.state);
     d.motionShadowVeto = static_cast<int> (motionShadow.veto);
+    d.motionFirstStrictProof = motionShadow.firstStrictProof;
+    d.motionShapeModel = static_cast<int> (motionShadow.shapeModel);
+    d.motionShapeBpm = motionShadow.shapePredictedBpm;
+    d.motionShapeQuadraticVsHinge = motionShadow.shapeQuadraticVsHinge;
+    d.motionShapeEvidenceMargin = motionShadow.shapeEvidenceMargin;
+    d.motionShapeQuadraticWins = motionShadow.shapeQuadraticWins;
+    d.motionShapeQuarantineBeats = motionShadow.shapeQuarantineBeats;
+    d.motionBridgeAuthority = motionBridgeAuthority;
     d.longFit = longFitBpm;
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
@@ -1881,6 +1902,8 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     }
 
     transitionState = TempoTransitionState::suspected;
+    motionTracker.quarantineShape();
+    motionShadow = motionTracker.output();
     transitionReason = TempoTransitionReason::candidateStarted;
     transitionFirstSec = prevEvent;
     transitionLastSec = eventTimeSec;
@@ -3147,7 +3170,8 @@ void BeatDecoder::updateTempo() noexcept
             // at a flat part of the sine and then held 82.09 while the truth
             // fell to 80.23 - comb, long fit and short fit all following it
             // down, only the published number frozen - for ten seconds.
-            if (beatsInRegime >= kRegimeMinBeats
+            const bool releaseFixed =
+                beatsInRegime >= kRegimeMinBeats
                 && (moving
                     || fixedErrorBeats >= kBeatsToLeaveFixed
                     || (fastDriftBeats >= (lineFeed && shortFitResidual < kFastLineCleanResidual
@@ -3156,7 +3180,9 @@ void BeatDecoder::updateTempo() noexcept
                         && windowAgrees)
                     || (fastDriftLargeBeats >= kFastBeatsAlone
                         && (lineFeed || windowAgrees))
-                    || (haveLong && std::fabs (anchorError) > 0.06f)))
+                    || (haveLong && std::fabs (anchorError) > 0.06f));
+
+            if (releaseFixed)
             {
                 enterRegime (TempoRegime::live);
                 fixedErrorBeats = 0;
@@ -3759,6 +3785,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     const bool fastMotionCurrent = lastBeatSec >= 0.0
                                    && timeSec - lastBeatSec
                                           <= 1.5 * static_cast<double> (newPeriod);
+    if (! fastMotionCurrent && motionShadow.veto != TempoMotionVeto::staleBeats)
+        resetMotionShadow (false, TempoMotionVeto::staleBeats);
     hyp.fastTempoDeviation = fastMotionCurrent ? lastFastDeviation : 0.0f;
     hyp.fastIntervalDeviation = fastMotionCurrent ? lastIntervalDeviation : 0.0f;
     hyp.fastTempoEvidence = fastMotionCurrent ? fastDriftBeats : 0;
@@ -3780,6 +3808,21 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.motionShadowVeto =
         fastMotionCurrent ? static_cast<int> (motionShadow.veto)
                           : static_cast<int> (TempoMotionVeto::staleBeats);
+    hyp.motionFirstStrictProof = fastMotionCurrent
+                                     ? motionShadow.firstStrictProof : false;
+    hyp.motionShapeModel =
+        fastMotionCurrent ? static_cast<int> (motionShadow.shapeModel)
+                          : static_cast<int> (TempoMotionShapeModel::insufficient);
+    hyp.motionShapeBpm = fastMotionCurrent ? motionShadow.shapePredictedBpm : 0.0f;
+    hyp.motionShapeQuadraticVsHinge =
+        fastMotionCurrent ? motionShadow.shapeQuadraticVsHinge : 0.0f;
+    hyp.motionShapeEvidenceMargin =
+        fastMotionCurrent ? motionShadow.shapeEvidenceMargin : 0.0f;
+    hyp.motionShapeQuadraticWins =
+        fastMotionCurrent ? motionShadow.shapeQuadraticWins : 0;
+    hyp.motionShapeQuarantineBeats =
+        fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
+    hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

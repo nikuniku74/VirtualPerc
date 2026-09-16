@@ -16,6 +16,7 @@ constexpr float kMinimumRateZ = 4.0f;
 constexpr float kMinimumWindowDisplacement = 0.006f;
 constexpr float kAuthorityPerBeat = 0.35f;
 constexpr float kPeriodNoiseFloor = 0.0015f;
+constexpr int kShapeQuarantineBeats = 12;
 
 constexpr float kMinPeriodSec = 60.0f / 190.0f;
 constexpr float kMaxPeriodSec = 60.0f / 50.0f;
@@ -80,6 +81,15 @@ void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noe
     proofBeats = 0;
     direction = 0;
     modelVelocity = 0.0f;
+    shapePoints.fill ({});
+    shapeFilled = 0;
+    shapeEntryTimeSec = -1.0;
+    shapeQuarterIndex = 0.0;
+    shapeEntryPeriodSec = 0.0f;
+    strictProofSeen = false;
+    shapeHingeActive = false;
+    shapeQuadraticWins = 0;
+    shapeQuarantineBeats = 0;
 
     if (fullModelReset)
     {
@@ -96,11 +106,18 @@ void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noe
 
     lastOutput.authority = 0.0f;
     lastOutput.proofClosed = false;
+    lastOutput.firstStrictProof = false;
     lastOutput.periodDeltaPerBeat = 0.0f;
     lastOutput.uncertainty = 1.0f;
     lastOutput.veto = reason;
     lastOutput.state = filled > 0 ? TempoMotionShadowState::proving
                                   : TempoMotionShadowState::idle;
+    lastOutput.shapeModel = TempoMotionShapeModel::insufficient;
+    lastOutput.shapePredictedBpm = 0.0f;
+    lastOutput.shapeQuadraticVsHinge = 0.0f;
+    lastOutput.shapeEvidenceMargin = 0.0f;
+    lastOutput.shapeQuadraticWins = 0;
+    lastOutput.shapeQuarantineBeats = 0;
     // A discontinuity or transition leaves the bounded period model available
     // for diagnostics, but there is no measurable interval across the boundary.
     // The next valid beat is an anchor, not a period sample.
@@ -111,9 +128,49 @@ void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noe
         lastOutput.predictedBpm = 0.0f;
 }
 
+void TempoMotionTracker::beginFixedTenure (double entryTimeSec,
+                                           float committedBpm) noexcept
+{
+    reset (true, TempoMotionVeto::none);
+    if (! std::isfinite (entryTimeSec) || entryTimeSec < 0.0
+        || ! std::isfinite (committedBpm)
+        || committedBpm < 50.0f || committedBpm > 190.0f)
+    {
+        lastOutput.state = TempoMotionShadowState::vetoed;
+        lastOutput.veto = TempoMotionVeto::badObservation;
+        return;
+    }
+
+    shapeEntryTimeSec = entryTimeSec;
+    shapeEntryPeriodSec = 60.0f / committedBpm;
+    shapeQuarterIndex = 0.0;
+    shapePoints[0] = { 0.0, 0.0 };
+    shapeFilled = 1;
+    // The entry beat seeds only the cumulative residual curve. The scalar
+    // tracker still needs the next accepted beat as its time anchor, so no
+    // interval measured before this fixed tenure can leak into its proof.
+    lastBeatTimeSec = -1.0;
+    lastOutput.predictedBpm = committedBpm;
+}
+
+void TempoMotionTracker::quarantineShape() noexcept
+{
+    authority = 0.0f;
+    proofBeats = 0;
+    direction = 0;
+    shapeQuadraticWins = 0;
+    shapeQuarantineBeats = kShapeQuarantineBeats;
+    lastOutput.authority = 0.0f;
+    lastOutput.proofClosed = false;
+    lastOutput.firstStrictProof = false;
+    lastOutput.shapeQuadraticWins = 0;
+    lastOutput.shapeQuarantineBeats = shapeQuarantineBeats;
+}
+
 TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) noexcept
 {
     const float previousAuthority = authority;
+    lastOutput.firstStrictProof = false;
 
     auto publishVeto = [&] (TempoMotionVeto reason) noexcept
     {
@@ -124,9 +181,17 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
         lastOutput.state = TempoMotionShadowState::vetoed;
         lastOutput.authority = 0.0f;
         lastOutput.proofClosed = false;
+        lastOutput.firstStrictProof = false;
         lastOutput.periodDeltaPerBeat = 0.0f;
         lastOutput.uncertainty = 1.0f;
         lastOutput.predictedBpm = finitePredictedBpm (o.committedBpm);
+        shapeQuadraticWins = 0;
+        lastOutput.shapeQuadraticWins = 0;
+        if (reason == TempoMotionVeto::transition)
+        {
+            shapeQuarantineBeats = kShapeQuarantineBeats;
+            lastOutput.shapeQuarantineBeats = shapeQuarantineBeats;
+        }
         return lastOutput;
     };
 
@@ -154,11 +219,128 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     if (! o.lineFeed)
         return publishAnchoredVeto (TempoMotionVeto::notDirect);
 
+    if (o.fixedRegime)
+    {
+        if (shapeEntryTimeSec < 0.0 || shapeFilled <= 0
+            || ! std::isfinite (shapeEntryPeriodSec)
+            || shapeEntryPeriodSec <= 0.0f)
+        {
+            shapePoints.fill ({});
+            shapeEntryTimeSec = o.beatTimeSec;
+            shapeEntryPeriodSec = 60.0f / o.committedBpm;
+            shapeQuarterIndex = 0.0;
+            shapePoints[0] = { 0.0, 0.0 };
+            shapeFilled = 1;
+            shapeHingeActive = false;
+            shapeQuadraticWins = 0;
+            shapeQuarantineBeats = 0;
+            lastOutput.shapeModel = TempoMotionShapeModel::insufficient;
+            lastOutput.shapePredictedBpm = 0.0f;
+            lastOutput.shapeQuadraticVsHinge = 0.0f;
+            lastOutput.shapeEvidenceMargin = 0.0f;
+            lastOutput.shapeQuadraticWins = 0;
+            lastOutput.shapeQuarantineBeats = 0;
+        }
+        else
+        {
+            if (shapeQuarantineBeats > 0)
+                --shapeQuarantineBeats;
+
+            shapeQuarterIndex += static_cast<double> (o.gridQuarterSteps);
+            const double residual =
+                o.beatTimeSec - shapeEntryTimeSec
+                - shapeQuarterIndex * static_cast<double> (shapeEntryPeriodSec);
+            if (! std::isfinite (shapeQuarterIndex) || ! std::isfinite (residual))
+                return publishVeto (TempoMotionVeto::badObservation);
+
+            if (shapeFilled == TempoMotionShape::kMaximumPoints)
+            {
+                for (int i = 1; i < TempoMotionShape::kMaximumPoints; ++i)
+                    shapePoints[static_cast<size_t> (i - 1)] =
+                        shapePoints[static_cast<size_t> (i)];
+                --shapeFilled;
+            }
+            shapePoints[static_cast<size_t> (shapeFilled++)] = {
+                shapeQuarterIndex, residual
+            };
+
+            if (shapeFilled < TempoMotionShape::kMinimumPoints)
+            {
+                lastOutput.shapeModel = TempoMotionShapeModel::insufficient;
+                lastOutput.shapePredictedBpm = 0.0f;
+                lastOutput.shapeQuadraticVsHinge = 0.0f;
+                lastOutput.shapeEvidenceMargin = 0.0f;
+                lastOutput.shapeQuadraticWins = 0;
+                lastOutput.shapeQuarantineBeats = shapeQuarantineBeats;
+            }
+            else
+            {
+                const auto shape = TempoMotionShape::classify (shapePoints, shapeFilled);
+                lastOutput.shapeModel = shape.model;
+                lastOutput.shapeQuadraticVsHinge =
+                    static_cast<float> (shape.quadraticVsHinge);
+                lastOutput.shapeEvidenceMargin =
+                    static_cast<float> (shape.evidenceMargin);
+
+                if (! shape.finite || shape.model == TempoMotionShapeModel::invalid
+                    || ! std::isfinite (shape.nextPeriodDeltaSec))
+                {
+                    authority = 0.0f;
+                    shapeQuadraticWins = 0;
+                    lastOutput.shapePredictedBpm = 0.0f;
+                    lastOutput.shapeQuadraticVsHinge = 0.0f;
+                    lastOutput.shapeEvidenceMargin = 0.0f;
+                }
+                else
+                {
+                    const float shapePeriod = std::clamp (
+                        shapeEntryPeriodSec
+                            + static_cast<float> (shape.nextPeriodDeltaSec),
+                        kMinPeriodSec, kMaxPeriodSec);
+                    lastOutput.shapePredictedBpm =
+                        finitePredictedBpm (60.0f / shapePeriod);
+
+                    if (shape.model == TempoMotionShapeModel::hinge)
+                    {
+                        shapeHingeActive = true;
+                        shapeQuadraticWins = 0;
+                        shapeQuarantineBeats = kShapeQuarantineBeats;
+                        authority = 0.0f;
+                        proofBeats = 0;
+                        direction = 0;
+                    }
+                    else if (shape.model == TempoMotionShapeModel::quadratic
+                             && ! shapeHingeActive
+                             && shapeQuarantineBeats == 0)
+                    {
+                        shapeQuadraticWins = std::min (shapeQuadraticWins + 1, 2);
+                    }
+                    else
+                    {
+                        shapeQuadraticWins = 0;
+                    }
+                }
+                lastOutput.shapeQuadraticWins = shapeQuadraticWins;
+                lastOutput.shapeQuarantineBeats = shapeQuarantineBeats;
+            }
+        }
+    }
+    else
+    {
+        shapeQuadraticWins = 0;
+        lastOutput.shapeQuadraticWins = 0;
+    }
+
     if (lastBeatTimeSec < 0.0)
     {
         lastBeatTimeSec = o.beatTimeSec;
-        lastOutput = {};
+        lastOutput.veto = TempoMotionVeto::none;
         lastOutput.predictedBpm = finitePredictedBpm (o.committedBpm);
+        lastOutput.periodDeltaPerBeat = 0.0f;
+        lastOutput.uncertainty = 1.0f;
+        lastOutput.authority = 0.0f;
+        lastOutput.proofClosed = false;
+        lastOutput.firstStrictProof = false;
         lastOutput.state = TempoMotionShadowState::idle;
         return lastOutput;
     }
@@ -283,6 +465,8 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
                         && displacement >= kMinimumWindowDisplacement
                         && slopeSign != 0
                         && slopeSign == fitSign;
+    lastOutput.firstStrictProof = qualityOk && ! strictProofSeen;
+    strictProofSeen = strictProofSeen || qualityOk;
 
     if (shortFitContradictsSlope)
     {

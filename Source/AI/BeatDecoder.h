@@ -105,6 +105,14 @@ public:
         float motionShadowAuthority = 0.0f;
         int   motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
         int   motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
+        bool  motionFirstStrictProof = false;
+        int   motionShapeModel = static_cast<int> (TempoMotionShapeModel::insufficient);
+        float motionShapeBpm = 0.0f;
+        float motionShapeQuadraticVsHinge = 0.0f;
+        float motionShapeEvidenceMargin = 0.0f;
+        int   motionShapeQuadraticWins = 0;
+        int   motionShapeQuarantineBeats = 0;
+        float motionBridgeAuthority = 0.0f;
         bool  levelSettled = false;
         int   userOctave = 0;
         /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
@@ -448,6 +456,7 @@ private:
     TempoMotionTracker motionTracker;
     TempoMotionOutput motionShadow {};
     uint32_t motionObservedBeatSerial = 0;
+    float motionBridgeAuthority = 0.0f;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

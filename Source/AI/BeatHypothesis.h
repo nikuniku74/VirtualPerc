@@ -98,6 +98,14 @@ struct BeatHypothesis
     float    motionShadowAuthority = 0.0f;
     int      motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
     int      motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
+    bool     motionFirstStrictProof = false;
+    int      motionShapeModel = static_cast<int> (TempoMotionShapeModel::insufficient);
+    float    motionShapeBpm = 0.0f;
+    float    motionShapeQuadraticVsHinge = 0.0f;
+    float    motionShapeEvidenceMargin = 0.0f;
+    int      motionShapeQuadraticWins = 0;
+    int      motionShapeQuarantineBeats = 0;
+    float    motionBridgeAuthority = 0.0f;
 
     TempoRegime regime   = TempoRegime::unknown;
 
