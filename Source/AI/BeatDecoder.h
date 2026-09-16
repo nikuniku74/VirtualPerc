@@ -3,6 +3,7 @@
 #include "AI/BeatHypothesis.h"
 #include "AI/BeatHmm.h"
 #include "AI/TempoEstimator.h"
+#include "AI/TempoMotionTracker.h"
 
 namespace vp
 {
@@ -98,6 +99,12 @@ public:
         float motionFitImprovement = 0.0f;
         int   motionFitEvidence = 0;
         int   motionFitDirection = 0;
+        float motionShadowBpm = 0.0f;
+        float motionShadowPeriodDelta = 0.0f;
+        float motionShadowUncertainty = 1.0f;
+        float motionShadowAuthority = 0.0f;
+        int   motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
+        int   motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
         bool  levelSettled = false;
         int   userOctave = 0;
         /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
@@ -240,6 +247,8 @@ private:
         subdivision and is thrown away. Moves the grid when the two disagree,
         repeatedly and by more than a fifth of a beat. */
     void  checkGridPhase (float periodSec) noexcept;
+    void  updateMotionShadow() noexcept;
+    void  resetMotionShadow (bool full, TempoMotionVeto reason) noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
     /** Least squares through the newest `maxBeats` beat times. `anchorOut` is
@@ -436,6 +445,9 @@ private:
     float motionFitImprovement = 0.0f;
     int   motionFitEvidence = 0;
     int   motionFitDirection = 0;
+    TempoMotionTracker motionTracker;
+    TempoMotionOutput motionShadow {};
+    uint32_t motionObservedBeatSerial = 0;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

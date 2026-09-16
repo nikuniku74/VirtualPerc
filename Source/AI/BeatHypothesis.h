@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AI/TempoMotionTracker.h"
 #include "Core/Types.h"
 
 #include <atomic>
@@ -88,6 +89,15 @@ struct BeatHypothesis
     float    motionFitImprovement = 0.0f;
     int      motionFitEvidence = 0;
     int      motionFitDirection = 0;
+    /** Bounded tempo-motion model output. Diagnostic shadow only in this task:
+        neither the fixed-tempo branch nor the audio-thread clock may consume it
+        as tempo or phase authority. */
+    float    motionShadowBpm = 0.0f;
+    float    motionShadowPeriodDelta = 0.0f;
+    float    motionShadowUncertainty = 1.0f;
+    float    motionShadowAuthority = 0.0f;
+    int      motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
+    int      motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
 
     TempoRegime regime   = TempoRegime::unknown;
 

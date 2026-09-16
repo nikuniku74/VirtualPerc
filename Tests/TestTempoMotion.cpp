@@ -1,4 +1,5 @@
 #include "TestTempoMotion.h"
+#include "AI/BeatDecoder.h"
 #include "AI/TempoMotionTracker.h"
 
 #include <cmath>
@@ -335,5 +336,23 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         }
         expect (allBadCommittedOk,
                 "bad committed tempo publishes finite inactive diagnostics");
+    }
+
+    {
+        constexpr double fps = 50.0;
+        constexpr int framesPerBeat = 30; // 100 BPM at 50 analysis frames/s.
+        vp::BeatDecoder decoder;
+        decoder.prepare (fps);
+        decoder.setLineFeed (true);
+
+        bool fixedSilent = true;
+        for (int frame = 0; frame < static_cast<int> (90.0 * fps); ++frame)
+        {
+            const float activation = (frame % framesPerBeat) == 0 ? 0.95f : 0.02f;
+            decoder.observe (activation, 0.02f, 1.0f - activation);
+            const auto diagnostics = decoder.diagnostics();
+            fixedSilent &= diagnostics.motionShadowAuthority == 0.0f;
+        }
+        expect (fixedSilent, "fixed decoder never publishes motion authority");
     }
 }

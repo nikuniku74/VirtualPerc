@@ -516,6 +516,7 @@ void BeatDecoder::reset() noexcept
     beatSerial = 0;
     downbeatSerial = 0;
     gridSerial = 0;
+    resetMotionShadow (true, TempoMotionVeto::inputEpoch);
     std::fill (cadenceHist, cadenceHist + 8, 0.0f);
     cadenceHistBeats = 0.0f;
     cadenceAnchorSec = -1.0;
@@ -573,6 +574,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     if (wanted == octaveShift)
         return;
 
+    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
     const bool cadenceCorrection = metricalOctaveHintValid
                                    && wanted == metricalOctaveHint
                                    && wanted < octaveShift
@@ -855,12 +857,23 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
 {
     if (r == tempoRegime)
         return;
+    const TempoRegime previous = tempoRegime;
     tempoRegime = r;
     beatsInRegime = 0;
     fixedErrorBeats = 0;
     leftFixedBeats = 0;
     fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
     fixedSamples = 0;
+    // Motion authority belongs to one continuous fixed-regime tenure. Without
+    // this boundary, periods gathered before/through a step could prove after
+    // the decoder returned to fixed; the four quick step banks exposed
+    // 25/0/19/129 authority frames. They become 0/0/0/0 when entry starts a
+    // fresh proof and exit revokes the old one. This is diagnostic-only: no BPM
+    // or grid state is read from the shadow here.
+    if (r == TempoRegime::fixed)
+        resetMotionShadow (true, TempoMotionVeto::none);
+    else if (previous == TempoRegime::fixed)
+        resetMotionShadow (false, TempoMotionVeto::none);
 }
 
 BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
@@ -875,6 +888,12 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.motionFitImprovement = motionFitImprovement;
     d.motionFitEvidence = motionFitEvidence;
     d.motionFitDirection = motionFitDirection;
+    d.motionShadowBpm = motionShadow.predictedBpm;
+    d.motionShadowPeriodDelta = motionShadow.periodDeltaPerBeat;
+    d.motionShadowUncertainty = motionShadow.uncertainty;
+    d.motionShadowAuthority = motionShadow.authority;
+    d.motionShadowState = static_cast<int> (motionShadow.state);
+    d.motionShadowVeto = static_cast<int> (motionShadow.veto);
     d.longFit = longFitBpm;
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
@@ -943,6 +962,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     // across it - and the splice would supply exactly the sort of odd interval
     // this detector is built to notice.
     clearTempoTransition (TempoTransitionReason::reset);
+    resetMotionShadow (false, TempoMotionVeto::discontinuity);
 }
 
 void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
@@ -1015,6 +1035,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     provisionalStrength = 0.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
+    resetMotionShadow (true, TempoMotionVeto::inputEpoch);
 }
 
 float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
@@ -1358,6 +1379,7 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
         lastBeatSec += shift;   // so the gate starts admitting the beats it was refusing
     foldPhaseBeats = 0;
     ++gridSerial;
+    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
 
     // The beats behind us were the wrong ones. Keeping them would have the fit
     // pulling the grid straight back to where it was, which is the same trap
@@ -1783,6 +1805,7 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
             transitionLastSec = eventTimeSec;
             transitionLastStrength = strength;
             ++transitionSerial;
+            resetMotionShadow (false, TempoMotionVeto::transition);
             return true;
         }
 
@@ -2117,6 +2140,48 @@ bool BeatDecoder::tryFastAcquire() noexcept
         anchorStrength = 0.0f;
     }
     return true;
+}
+
+void BeatDecoder::updateMotionShadow() noexcept
+{
+    if (motionObservedBeatSerial == beatSerial || beatFilled < 1)
+        return;
+    motionObservedBeatSerial = beatSerial;
+
+    const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+    int steps = 1;
+    if (beatFilled >= 2)
+    {
+        const int previous = (newest - 1 + kBeatHistory) % kBeatHistory;
+        const double elapsed = beatTime[newest] - beatTime[previous];
+        const double reference = 60.0 / std::max (kMinBpm, bpm);
+        steps = std::clamp (static_cast<int> (std::llround (elapsed / reference)),
+                            1, 4);
+    }
+
+    TempoMotionObservation o;
+    o.beatTimeSec = beatTime[newest];
+    o.beatStrength = beatStrength[newest];
+    o.gridQuarterSteps = steps;
+    o.committedBpm = bpm;
+    o.shortFitBpm = shortFitBpm;
+    o.longFitBpm = longFitBpm;
+    o.shortFitResidual = shortFitResidual;
+    o.fitCoverage = lastFitCoverage;
+    o.fitIndexGap = lastFitIndexGap;
+    o.intervalJitter = recentIntervalJitter();
+    o.transitionState = transitionState;
+    o.transitionRefitBeats = transitionRefitBeats;
+    o.lineFeed = lineFeed;
+    o.fixedRegime = tempoRegime == TempoRegime::fixed;
+    motionShadow = motionTracker.observe (o);
+}
+
+void BeatDecoder::resetMotionShadow (bool full, TempoMotionVeto reason) noexcept
+{
+    motionTracker.reset (full, reason);
+    motionShadow = motionTracker.output();
+    motionObservedBeatSerial = beatSerial;
 }
 
 void BeatDecoder::updateTempo() noexcept
@@ -2530,6 +2595,7 @@ void BeatDecoder::updateTempo() noexcept
         // noisier than no fit at all - 0.9 BPM of steady-state spread became
         // 1.7 on the same material.
         ++gridSerial;
+        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
         clearTempoTransition (TempoTransitionReason::reset);
         beatWrite = 0;
         beatFilled = 0;
@@ -2605,6 +2671,7 @@ void BeatDecoder::updateTempo() noexcept
             staleGridBpm = 0.0f;
             tempo.restartEvidence();
             ++gridSerial;
+            resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
             clearTempoTransition (TempoTransitionReason::reset);
             lastBeatSec = -1.0;
             gridAnchorSec = -1.0;
@@ -2759,9 +2826,9 @@ void BeatDecoder::updateTempo() noexcept
     // second signature: the beat dates curve, so a longer quadratic can ask
     // for the slope at the newest accepted beat. Onset jitter makes that
     // endpoint too noisy to drive the tempo directly (the fixed controls show
-    // isolated +/-0.3%/beat readings), hence the deliberately narrow role:
-    // release a held direct-feed tempo only after three mutually coherent
-    // curves. The room path never enters this decision.
+    // isolated +/-0.3%/beat readings), so curvature remains diagnostic only.
+    // The globally safe selector did not justify releasing a held tempo, and
+    // the room path never enters this diagnostic.
     float motionPeriod = 0.0f;
     motionFitBpm = 0.0f;
     motionFitRate = 0.0f;
@@ -2810,6 +2877,7 @@ void BeatDecoder::updateTempo() noexcept
         motionFitDirection = 0;
     }
 
+    updateMotionShadow();
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
     if (! haveShort)
@@ -3179,6 +3247,7 @@ void BeatDecoder::updateTempo() noexcept
                         kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                     transitionLastSec = gridAnchorSec;
                     ++transitionSerial;
+                    resetMotionShadow (false, TempoMotionVeto::transition);
                     return;
                 }
             }
@@ -3698,6 +3767,17 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.motionFitImprovement = fastMotionCurrent ? motionFitImprovement : 0.0f;
     hyp.motionFitEvidence = fastMotionCurrent ? motionFitEvidence : 0;
     hyp.motionFitDirection = fastMotionCurrent ? motionFitDirection : 0;
+    hyp.motionShadowBpm = fastMotionCurrent ? motionShadow.predictedBpm : 0.0f;
+    hyp.motionShadowPeriodDelta =
+        fastMotionCurrent ? motionShadow.periodDeltaPerBeat : 0.0f;
+    hyp.motionShadowUncertainty = fastMotionCurrent ? motionShadow.uncertainty : 1.0f;
+    hyp.motionShadowAuthority = fastMotionCurrent ? motionShadow.authority : 0.0f;
+    hyp.motionShadowState =
+        fastMotionCurrent ? static_cast<int> (motionShadow.state)
+                          : static_cast<int> (TempoMotionShadowState::idle);
+    hyp.motionShadowVeto =
+        fastMotionCurrent ? static_cast<int> (motionShadow.veto)
+                          : static_cast<int> (TempoMotionVeto::staleBeats);
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

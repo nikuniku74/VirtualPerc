@@ -363,7 +363,7 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             hashFloat (score.traceHash, clock.currentTempo());
             hashWord (score.traceHash, static_cast<uint32_t> (truth));
 
-            const float motionAuthority = 0.0f;
+            const float motionAuthority = h.motionShadowAuthority;
             if (motionAuthority > 0.0f)
                 ++score.authorityFrames;
             shadowProven = shadowProven || motionAuthority > 0.0f;
