@@ -118,6 +118,80 @@ restart and finished at 102.51 BPM, but `prec.py` still measured 94 ms median
 phase-window movement and 258.4 ms worst movement. Do not cite the wide-step
 fix as solving gradual breathing: that path remains separate.
 
+**A confirmed direct-feed step must not be re-argued by the old comb
+(2026-09-15).** Confirmation already replaced the BPM and rebuilt the short-fit
+history from the new peaks, but the four-second activation autocorrelation was
+still allowed to pull the live target immediately. On the clean 120->132 probe,
+the causal detector confirmed 132.03 after 0.92 s, then the stale 120-BPM comb
+pulled the next publication to 129.2 and the sounding clock did not remain
+settled until 8.90 s. On 120->108, confirmation came at 1.14 s; after the first
+eight refit beats the still-old comb produced a later 108.92-BPM rebound, moving
+the stable time to 14.12 s.
+
+For mixer/file (`lineFeed`) only, `updateTempo` now bypasses
+`pullTowardsComb` while `transitionRefitBeats` is non-zero. The quarantine is
+the eight accepted beats needed by the short fit plus three more accepted beats
+for the slower autocorrelation. It is bounded, does not restart or move the
+musical clock, and does not change the iPad/room path. Measured end to end by
+`probe_small_steps`: 120->132 is at rate in 0.92 s and stable in 1.34 s; 120->108
+is at rate in 1.14 s and stable in 1.66 s. The new `VPTests --tempo-step`
+regression watches every post-confirmation publication: worst error is 0.041 BPM
+and 0.026 BPM respectively, one serial each (11/11 PASS). `probe_tempo_step`'s
+120->132 row improves 4.1->0.9 s and every other row is unchanged.
+
+Safety evidence for that isolated step fix, before the continuous-motion work
+below: the complete 360-run `probe_matrix` was line-for-line identical to HEAD
+(5.22 s mean acquisition, 104 excursions, 30 never-acquired, 9.11% out), as were
+all five pulse files from the reproducible `Flamingo` mixer extracts.
+`VPAlign` now correctly treats its 100->140 case as a required three-interval
+wide transition: it reaches rate in the causal minimum 1.30 s and is at 24.5 ms
+worst phase one beat later; all six steps and both ramps pass. This does not
+solve near/exact octaves or the two remaining marginal small steps (52->50 at
+4.915 s; 120->118 at 26.02 ms against a 25 ms gate).
+
+**A ramp must be scored in phase, not only in BPM (2026-09-15).** A 10 BPM rise
+over 30 seconds changes by only 0.33 BPM/s: a follower can remain inside a 2%
+tempo gate while accumulating an audible fraction of a beat. `VPAlign --ramps`
+therefore drives decoder and sounding MIXER clock against the unjittered beat
+grid and now fails on mean, worst, or post-ramp phase debt. Flat 100/130 controls
+are part of the same gate.
+
+The held regime used a median of three newest intervals for its fast motion
+vote. On a direct feed one interpolated onset can reverse that median and erase
+a real ramp repeatedly. The line path now takes the deviation from the smoother
+eight-beat fit, still requires the raw newest intervals to support the same
+direction, and spends one vote rather than clearing the run on one disagreement.
+A tightly placed short fit (`residual < 0.030`) earns release after two net
+votes; otherwise it still needs three. The room path keeps the old 2.4% raw-
+interval rule.
+
+While that same clean direct-feed evidence says the held tempo is moving by
+more than 2%, `BeatTracker` shortens phase averaging from 0.90 to 0.30 seconds
+and lets the existing phase-derived rate trim use a 0.20 rather than 0.08 gain.
+This hint does not choose a tempo, is disabled for speaker/microphone, harmony,
+TAP and manual tempo ownership, and expires 1.5 expected beats after the last
+accepted beat so a dropout cannot leave it armed.
+Measured over four deterministic seeds, sounding MIXER phase (mean/worst ms):
+
+| ramp | before | after |
+|---|---:|---:|
+| 100->110 / 30 s | 26.0 / 140.7 | **22.0 / 84.7** |
+| 100->110 / 12 s | 40.8 / 153.4 | **40.8 / 127.2** |
+| 120->132 / 20 s | 33.3 / 130.4 | **28.5 / 95.5** |
+| 128->120 / 20 s | 20.2 / 62.7 | **20.2 / 48.0** |
+
+Flat controls remain 7.1/33.3 and 7.2/22.0 ms. A ten-second drummer dropout
+also stays `fixed`: with 44 ms of acoustic lateness its real MIXER row remains
+25.3/66.2 ms, so the direct-feed exception does not turn that passage into a
+tempo change. The complete material matrix retains 5.22 s mean acquisition,
+104 excursions and 30 never-acquired runs; its outside fraction moves only
+9.11->9.12%. The five `Flamingo` extracts are no longer byte-identical because
+four contain clean motion evidence; the loose tempogram score moves 8.62->8.70%
+error and 2.21->2.27% grid jerk, with only one of five lag correlations reliable.
+Treat that as a transparent weak negative, not phase ground truth: a manually
+marked beat grid and listening pass are still required before calling continuous
+live following complete.
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with

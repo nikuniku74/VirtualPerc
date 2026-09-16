@@ -30,7 +30,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <random>
 #include <vector>
 
@@ -665,7 +667,7 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
 struct TempoStep
 {
     double secondsToOneBpm = -1.0;
-    double phaseMsAtThirdBeat = 1.0e9;
+    double phaseMsAfterEvidence = 1.0e9;
     double responseDeadlineSec = -1.0;
     double worstErrPct = 0.0;
     double settledErrPct = 0.0;
@@ -674,9 +676,12 @@ struct TempoStep
     bool clockMovedBackwards = false;
 };
 
-/** `rampSec` of zero is a step; anything else is a ramp taking that long. */
+/** `rampSec` of zero is a step; anything else is a ramp taking that long.
+    `evidenceIntervals` is the number of new spacings the detector is required
+    to hear before a decision can be causal. */
 TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
-                       double seconds, unsigned seed, bool print = false)
+                       double seconds, unsigned seed, int evidenceIntervals = 2,
+                       bool print = false)
 {
     vp::BeatDecoder dec;
     dec.prepare (kFps);
@@ -729,9 +734,10 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
     TempoStep r;
     const auto firstChanged = std::lower_bound (
         trueAt.begin(), trueAt.end(), changeBeatSec * kFps - 1.0e-6);
-    if (firstChanged + 2 < trueAt.end())
+    if (firstChanged + evidenceIntervals < trueAt.end())
     {
-        const long long evidencePeakFrame = std::llround (*(firstChanged + 2));
+        const long long evidencePeakFrame =
+            std::llround (*(firstChanged + evidenceIntervals));
         const long long evidenceReadyFrame = evidencePeakFrame + 1;
         r.responseDeadlineSec =
             static_cast<double> (evidenceReadyFrame) / kFps - changeBeatSec;
@@ -742,7 +748,7 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
     uint32_t lastTransitionSerial = 0;
     bool seenSerial = false;
     bool seenTransitionSerial = false;
-    int lastPrinted = -1;
+    uint32_t lastPrintedBeatSerial = 0;
     double previousClockPosition = 0.0;
     size_t truthCursor = 0;
 
@@ -812,12 +818,17 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
         previousClockPosition = clockPosition;
 
         const double clockNow = t + static_cast<double> (blockPerFrame) / kSr;
-        const double thirdBeatAt =
-            changeBeatSec + 3.0 * 60.0 / static_cast<double> (toBpm);
-        if (clockNow >= thirdBeatAt && r.phaseMsAtThirdBeat > 1.0e8)
+        // Judge phase one beat after the minimum causal evidence. Ordinary
+        // steps need two intervals and were already measured this way; wide
+        // line steps deliberately need a third interval to reject a fill, so
+        // measuring them on that very peak gave the clock zero time to react.
+        const double phaseMeasureAt =
+            changeBeatSec + static_cast<double> (evidenceIntervals + 1)
+                                * 60.0 / static_cast<double> (toBpm);
+        if (clockNow >= phaseMeasureAt && r.phaseMsAfterEvidence > 1.0e8)
         {
             const double truePhase = truePhaseAt (clockNow * kFps);
-            r.phaseMsAtThirdBeat =
+            r.phaseMsAfterEvidence =
                 std::fabs (vp::wrapCentered (
                     clock.beatPhase() - static_cast<float> (truePhase)))
                 * 60.0 / bpmAt (clockNow) * 1000.0;
@@ -834,22 +845,32 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
             && std::fabs (clock.currentTempo() - want) <= 1.0)
             r.secondsToOneBpm = t - changeBeatSec;
 
-        if (print)
+        if (print && hy.valid && hy.beatSerial != lastPrintedBeatSerial
+            && t >= changeBeatSec - 1.0
+            && t <= changeBeatSec
+                        + static_cast<double> (evidenceIntervals + 5)
+                              * 60.0 / static_cast<double> (toBpm))
         {
-            const int sec = static_cast<int> (t);
-            if (sec != lastPrinted && sec % 2 == 0)
-            {
-                lastPrinted = sec;
-                const auto dg = dec.diagnostics();
-                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f decoder=%-7.2f "
-                             "corto=%-7.2f lungo=%-7.2f rate=%-5.2f  scarto %.2f%%  %s\n",
-                             sec, want, static_cast<double> (clock.currentTempo()),
-                             static_cast<double> (hy.bpm),
-                             static_cast<double> (dg.shortFit),
-                             static_cast<double> (dg.longFit),
-                             static_cast<double> (dg.shortFitRate),
-                             errPct, vp::regimeLabel (static_cast<int> (hy.regime)));
-            }
+            lastPrintedBeatSerial = hy.beatSerial;
+            const auto dg = dec.diagnostics();
+            const double truePhase = truePhaseAt (clockNow * kFps);
+            const double phaseMs = vp::wrapCentered (
+                                       clock.beatPhase()
+                                       - static_cast<float> (truePhase))
+                                   * 60.0 / want * 1000.0;
+            std::printf ("   t=%-6.2f vero=%-7.2f clock=%-7.2f decoder=%-7.2f "
+                         "corto=%-7.2f lungo=%-7.2f fase=%+6.1fms %s "
+                         "moto=%d/%+d/%+.2f%% trans=%d/%d/%d\n",
+                         t, want, static_cast<double> (clock.currentTempo()),
+                         static_cast<double> (hy.bpm),
+                         static_cast<double> (dg.shortFit),
+                         static_cast<double> (dg.longFit), phaseMs,
+                         vp::regimeLabel (static_cast<int> (hy.regime)),
+                         hy.fastTempoEvidence, hy.fastTempoDirection,
+                         static_cast<double> (hy.fastTempoDeviation * 100.0f),
+                         static_cast<int> (hy.transitionState),
+                         static_cast<int> (hy.transitionReason),
+                         hy.transitionIntervals);
         }
     }
     return r;
@@ -894,14 +915,14 @@ TempoAggregate reduceTempoSteps (const TempoStep* runs, int count,
             && r.responseDeadlineSec >= 0.0
             && r.secondsToOneBpm <= r.responseDeadlineSec + 1.0e-9)
             ++out.responseValidRuns;
-        if (r.phaseMsAtThirdBeat <= 25.0)
+        if (r.phaseMsAfterEvidence <= 25.0)
             ++out.phaseValidRuns;
         if (r.rapidTransitions == expectedTransitions)
             ++out.transitionValidRuns;
         if (! r.clockMovedBackwards)
             ++out.monotonicRuns;
         out.pulseViolations += r.pulseViolations;
-        out.worstPhaseMs = std::max (out.worstPhaseMs, r.phaseMsAtThirdBeat);
+        out.worstPhaseMs = std::max (out.worstPhaseMs, r.phaseMsAfterEvidence);
         out.worstErrPct = std::max (out.worstErrPct, r.worstErrPct);
         out.worstSettledErrPct =
             std::max (out.worstSettledErrPct, r.settledErrPct);
@@ -924,16 +945,16 @@ bool tempoAggregationSelfCheck()
     {
         r.secondsToOneBpm = 0.5;
         r.responseDeadlineSec = 1.0;
-        r.phaseMsAtThirdBeat = 20.0;
+        r.phaseMsAfterEvidence = 20.0;
         r.rapidTransitions = 1;
     }
     masked[0].rapidTransitions = 0;
-    masked[3].phaseMsAtThirdBeat = 30.0;
+    masked[3].phaseMsAfterEvidence = 30.0;
     const TempoAggregate missingAndPhase =
         reduceTempoSteps (masked, 4, true, 1);
 
     masked[0].rapidTransitions = 1;
-    masked[3].phaseMsAtThirdBeat = 20.0;
+    masked[3].phaseMsAfterEvidence = 20.0;
     masked[3].rapidTransitions = 2;
     const TempoAggregate duplicate =
         reduceTempoSteps (masked, 4, true, 1);
@@ -958,16 +979,15 @@ bool measureTempoChange()
     std::printf ("La cosa su cui un percussionista dal vivo viene giudicato. Il\n"
                  "tempo cambia a 20 s; la colonna parte dal primo battito che\n"
                  "porta la nuova spaziatura e finisce entro un BPM. La fase e'\n"
-                 "letta al terzo battito\n"
-                 "causalmente osservabile; impulsi conta ogni salto o duplicato.\n"
-                 "I cinque gradini richiedono transizione=1 e tutte le scadenze;\n"
-                 "stress e rampe richiedono transizione=0 e sicurezza del clock.\n\n");
+                 "letta un battito dopo l'evidenza causale minima; impulsi conta\n"
+                 "ogni salto o duplicato. I gradini richiedono transizione=1 e\n"
+                 "tutte le scadenze; le rampe transizione=0 e clock sicuro.\n\n");
     std::printf ("%-26s %-9s %-9s %-9s %-10s %-9s %-9s %-8s %-9s %-9s %-6s\n",
                  "cambio", "max +/-1", "scadenza", "resp ok", "fase max",
                  "fase ok", "trans ok", "impulsi", "monotono",
                  "peggio/res", "esito");
 
-    enum class CaseKind { requiredStep, stressStep, ramp };
+    enum class CaseKind { requiredStep, requiredWideStep, ramp };
     struct Case
     {
         const char* name;
@@ -982,27 +1002,30 @@ bool measureTempoChange()
         { "128 -> 120, gradino", 128.0f, 120.0f, 0.0, CaseKind::requiredStep },
         { "76 -> 82, gradino",    76.0f,  82.0f, 0.0, CaseKind::requiredStep },
         { "168 -> 156, gradino", 168.0f, 156.0f, 0.0, CaseKind::requiredStep },
-        { "100 -> 140, gradino", 100.0f, 140.0f, 0.0, CaseKind::stressStep },
+        { "100 -> 140, gradino", 100.0f, 140.0f, 0.0, CaseKind::requiredWideStep },
         { "118 -> 126 in 4 s",   118.0f, 126.0f, 4.0, CaseKind::ramp },
         { "118 -> 126 in 12 s",  118.0f, 126.0f, 12.0, CaseKind::ramp },
     };
     // One case traced, so where the seconds actually go is visible rather than
     // guessed at.
-    std::printf ("\n  Il gradino 118 -> 128, battuta per battuta:\n");
-    tempoChange (118.0f, 128.0f, 18.0, 0.0, 40.0, 101u, true);
+    std::printf ("\n  Il gradino 100 -> 140, battuta per battuta:\n");
+    tempoChange (100.0f, 140.0f, 18.0, 0.0, 40.0, 101u, 3, true);
     std::printf ("\n");
 
     bool allPass = true;
     for (const Case& c : cases)
     {
         constexpr int kSeeds = 4;
+        const int evidenceIntervals =
+            c.kind == CaseKind::requiredWideStep ? 3 : 2;
         TempoStep runs[kSeeds];
         for (int s = 0; s < kSeeds; ++s)
             runs[s] = tempoChange (
                 c.from, c.to, 20.0, c.ramp, 70.0,
-                101u + static_cast<unsigned> (s) * 977u);
+                101u + static_cast<unsigned> (s) * 977u,
+                evidenceIntervals);
 
-        const bool strictStep = c.kind == CaseKind::requiredStep;
+        const bool strictStep = c.kind != CaseKind::ramp;
         const TempoAggregate result =
             reduceTempoSteps (runs, kSeeds, strictStep,
                               strictStep ? 1 : 0);
@@ -1058,11 +1081,10 @@ bool measureTempoChange()
 //
 // So: phase, in milliseconds, against the notated grid, three ways -
 //
-//   LEANA    the loop as the app runs it while the part is sounding: the grid
-//            is never moved, only the rate is bent towards it
-//   TRIM     the same, plus the rate integrator - which the app switches off in
-//            the live regime, which is to say switches off exactly when the
-//            band is speeding up
+//   LEANA    the proportional loop alone, retained as a reference: the grid is
+//            never moved, only the rate is bent towards it
+//   MIXER    the same, plus the rate integrator. Since 2026-08-30 this is the
+//            path the app uses for a direct line feed while the part sounds
 //   POSA     what the app does while nothing is playing: the grid is *placed*
 //            on the song. This is what a listener gets after pressing STOP.
 //
@@ -1070,13 +1092,10 @@ bool measureTempoChange()
 // without them the table cannot say whose lag it is measuring. That turned out
 // to matter more than any of the three modes. Measured:
 //
-//     rampa              LEANA          TRIM           POSA           decoder
-//     100 -> 110 / 30 s  30.6 / -20.3   27.3 / -16.3   20.4 / -11.9   17.6 / -10.7
-//     100 -> 110 / 12 s  58.9 / -74.2   50.4 / -45.7   30.3 / -22.4   24.9 / -17.1
-//     120 -> 132 / 20 s  31.4 / -20.9   24.3 /  +9.0   19.2 / -10.3   18.7 / -10.4
-//     128 -> 120 / 20 s  26.0 / +11.8   24.6 / -21.0   18.0 /  -0.4   16.1 /  -2.0
-//
-// (mean of the absolute phase, and the signed phase over the last third)
+// The original table is preserved in docs/HANDOFF_TEMPO.md. The current MIXER
+// gate uses four seeds and includes flat controls; it fails on mean, worst or
+// post-ramp phase so a change cannot improve the signed tail by overshooting
+// and quietly leave a larger debt after the ramp.
 //
 // **A proportional loop cannot be inside a ramp.** It closes an error by
 // leaning, so it needs a standing error to lean at all, and the faster the band
@@ -1102,8 +1121,9 @@ bool measureTempoChange()
 // block it arrives makes the loop's behaviour a function of the buffer size.
 // Both are tested for, both failed, and the tests are right.
 //
-// The rate integrator, driven by the averaged phase error rather than by
-// differencing two beats half a second apart, is the TRIM column above. It
+// The first rate-integrator prototype, driven by the averaged phase error
+// rather than by differencing two beats half a second apart, produced the old
+// TRIM column above. It
 // takes the mean down on every ramp and it overshoots: the signed column goes
 // from -20.9 to +9.0 on one ramp and from +11.8 to -21.0 on another, which is
 // the part running away and catching up rather than following. It also costs
@@ -1198,6 +1218,11 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     double decSum = 0.0, decTailSum = 0.0;
     int n = 0, tailN = 0, afterN = 0;
     float lastHypPhase = 0.0f;
+    float lastHypBpm = 0.0f;
+    float lastShortBpm = 0.0f;
+    float lastLongBpm = 0.0f;
+    float lastCombBpm = 0.0f;
+    vp::TempoRegime lastRegime = vp::TempoRegime::unknown;
     bool haveHypPhase = false;
     int lastPrinted = -1;
 
@@ -1217,6 +1242,12 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
         if (hy.valid)
         {
             if (! seenSerial) { lastSerial = hy.beatSerial; seenSerial = true; }
+            const bool cleanTempoMotion =
+                mode == RampMode::trim
+                && hy.regime == vp::TempoRegime::fixed
+                && std::fabs (hy.fastTempoDeviation) > vp::kTempoMotionDeviation
+                && hy.shortFitResidual < vp::kTempoMotionResidual;
+            clock.setTempoMotionHint (cleanTempoMotion);
             if (hy.bpm > 50.0f)
                 clock.setTargetTempo (hy.bpm, hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
@@ -1226,13 +1257,21 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                                          hy.confidence, 1);
             }
             lastHypPhase = hy.beatPhase;
+            lastHypBpm = hy.bpm;
+            lastShortBpm = hy.shortFitBpm;
+            lastLongBpm = hy.longFitBpm;
+            lastCombBpm = dec.diagnostics().combBpm;
+            lastRegime = hy.regime;
             haveHypPhase = true;
             const float gridErr = vp::wrapCentered (clock.beatPhase() - hy.beatPhase);
             if (mode == RampMode::place && std::fabs (gridErr) > 0.04f)
                 clock.snapPhase (hy.beatPhase, true);
             else
                 clock.setGridPhase (hy.beatPhase,
-                                    vp::gridPhaseTau (vp::kGridTauHolding, true, 1.0f));
+                                    vp::gridPhaseTau (cleanTempoMotion
+                                                          ? vp::kGridTauMotion
+                                                          : vp::kGridTauHolding,
+                                                      true, 1.0f));
         }
 
         // Read before the block advances, so a block's own travel is not
@@ -1271,12 +1310,22 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
         if (print)
         {
             const int sec = static_cast<int> (t);
-            if (sec != lastPrinted && sec % 4 == 0)
+            if (sec != lastPrinted)
             {
                 lastPrinted = sec;
-                std::printf ("   t=%-4d vero=%-7.2f orologio=%-7.2f trim=%+6.3f  "
-                             "fase %+7.1f ms (decoder %+7.1f)\n",
-                             sec, bpmAt (t), static_cast<double> (clock.currentTempo()),
+                std::printf ("   t=%-4d vero=%-7.2f dec=%-7.2f corto=%-7.2f lungo=%-7.2f "
+                             "comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
+                             "(decoder %+7.1f)\n",
+                             sec, bpmAt (t), static_cast<double> (lastHypBpm),
+                             static_cast<double> (lastShortBpm),
+                             static_cast<double> (lastLongBpm),
+                             static_cast<double> (lastCombBpm),
+                             static_cast<double> (hy.shortFitResidual),
+                             vp::regimeLabel (static_cast<int> (lastRegime)),
+                             hy.fastTempoEvidence, hy.fastTempoDirection,
+                             static_cast<double> (hy.fastTempoDeviation * 100.0f),
+                             static_cast<double> (hy.fastIntervalDeviation * 100.0f),
+                             static_cast<double> (clock.currentTempo()),
                              static_cast<double> (clock.tempoTrimBpm()), ms, decMs);
             }
         }
@@ -1290,40 +1339,47 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     return r;
 }
 
-void measureRampPhase()
+bool measureRampPhase()
 {
     std::printf ("--- la fase che una rampa lascia indietro ---\n");
     std::printf ("Il tempo in percentuale non misura una rampa: 10 BPM in 30 s\n"
                  "sono 0.33 BPM al secondo, e un orologio indietro di un secondo\n"
                  "sta dentro lo 0.3%%. Quello che si sente e' la fase. Qui e' in\n"
-                 "millisecondi contro la griglia vera, nei tre modi che l'app ha:\n"
-                 "LEANA (come suona), TRIM (con l'integratore che in regime VIVO\n"
-                 "e' spento) e POSA (griglia posata, cioe' quello che si sente a\n"
+                 "millisecondi contro la griglia vera, nei tre modi del probe:\n"
+                 "LEANA (controllo proporzionale), MIXER (percorso diretto reale,\n"
+                 "con integratore) e POSA (griglia posata, cioe' quello che si sente a\n"
                  "STOP). Le ultime due colonne sono la fase del *decoder* contro\n"
                  "la stessa griglia: e' il pavimento, nessun anello puo' fare\n"
                  "meglio del bersaglio che gli viene dato.\n\n");
-    std::printf ("%-24s %-9s %-11s %-11s %-11s %-11s %-11s %-11s\n",
+    std::printf ("%-24s %-9s %-11s %-11s %-11s %-11s %-11s %-11s %-6s\n",
                  "rampa", "modo", "media ms", "peggio ms", "coda ms", "dopo ms",
-                 "dec media", "dec coda");
+                 "dec media", "dec coda", "gate");
 
-    struct Case { const char* name; float from, to; double ramp; };
+    struct Case
+    {
+        const char* name;
+        float from, to;
+        double ramp;
+        double maxMixerMean, maxMixerWorst, maxMixerAfter;
+    };
     const Case cases[] = {
         // Flat first, and it is not a control: if the decoder's phase is not
         // zero against the notated grid on a tempo that never moves, that is an
         // offset every song carries and no ramp is responsible for it.
-        { "100 fisso",          100.0f, 100.0f, 30.0 },
-        { "130 fisso",          130.0f, 130.0f, 30.0 },
-        { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0 },
-        { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0 },
-        { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0 },
-        { "128 -> 120 in 20 s", 128.0f, 120.0f, 20.0 },
+        { "100 fisso",          100.0f, 100.0f, 30.0,  9.0,  36.0, 10.0 },
+        { "130 fisso",          130.0f, 130.0f, 30.0,  9.0,  25.0, 10.0 },
+        { "100 -> 110 in 30 s", 100.0f, 110.0f, 30.0, 24.0,  90.0, 17.0 },
+        { "100 -> 110 in 12 s", 100.0f, 110.0f, 12.0, 45.0, 135.0, 32.0 },
+        { "120 -> 132 in 20 s", 120.0f, 132.0f, 20.0, 32.0, 105.0, 20.0 },
+        { "128 -> 120 in 20 s", 128.0f, 120.0f, 20.0, 24.0,  60.0, 23.0 },
     };
     const struct { RampMode m; const char* label; } modes[] = {
         { RampMode::lean,  "LEANA" },
-        { RampMode::trim,  "TRIM" },
+        { RampMode::trim,  "MIXER" },
         { RampMode::place, "POSA" },
     };
 
+    bool allPass = true;
     for (const Case& c : cases)
     {
         for (const auto& md : modes)
@@ -1344,13 +1400,23 @@ void measureRampPhase()
                 decMean += r.decMeanMs;
                 decTail += r.decTailMs;
             }
-            std::printf ("%-24s %-9s %-11.1f %-11.1f %-+11.1f %-11.1f %-11.1f %-+11.1f\n",
+            const double mixerMean = mean / kSeeds;
+            const double mixerAfter = after / kSeeds;
+            const bool gated = md.m == RampMode::trim;
+            const bool pass = ! gated
+                              || (mixerMean <= c.maxMixerMean
+                                  && worst <= c.maxMixerWorst
+                                  && mixerAfter <= c.maxMixerAfter);
+            allPass = allPass && pass;
+            std::printf ("%-24s %-9s %-11.1f %-11.1f %-+11.1f %-11.1f %-11.1f %-+11.1f %-6s\n",
                          md.m == RampMode::lean ? c.name : "", md.label,
-                         mean / kSeeds, worst, tail / kSeeds, after / kSeeds,
-                         decMean / kSeeds, decTail / kSeeds);
+                         mixerMean, worst, tail / kSeeds, mixerAfter,
+                         decMean / kSeeds, decTail / kSeeds,
+                         gated ? (pass ? "PASS" : "FAIL") : "-");
         }
     }
-    std::printf ("\n");
+    std::printf ("\nrampa fase MIXER: %s\n\n", allPass ? "PASS" : "FAIL");
+    return allPass;
 }
 
 void measureDrumHole (double kHoleLate)
@@ -1424,6 +1490,7 @@ void measureDrumHole (double kHoleLate)
         // late as the kit goes out and slides back as it returns. If that costs
         // the hole more than the ramp gains, it does not ship.
         { "prove + trim",            false, true,  true,  true  },
+        { "MIXER reale",             true,  true,  true,  true  },
     };
     constexpr int kSeeds = 8;
     for (const Variant& v : variants)
@@ -1490,8 +1557,40 @@ void measureResync()
 }
 } // namespace
 
-int main()
+int main (int argc, char** argv)
 {
+    if (argc == 2 && std::strcmp (argv[1], "--ramps") == 0)
+    {
+        return measureRampPhase() ? 0 : 1;
+    }
+
+    if (argc == 2 && std::strcmp (argv[1], "--holes") == 0)
+    {
+        measureDrumHole (0.0);
+        measureDrumHole (2.2);
+        return 0;
+    }
+
+    if ((argc == 5 || argc == 6) && std::strcmp (argv[1], "--trace-ramp") == 0)
+    {
+        const float from = std::strtof (argv[2], nullptr);
+        const float to = std::strtof (argv[3], nullptr);
+        const double ramp = std::strtod (argv[4], nullptr);
+        std::printf ("Rampa %.1f -> %.1f in %.1f s, percorso MIXER\n",
+                     static_cast<double> (from), static_cast<double> (to), ramp);
+        const unsigned seed = argc == 6
+                                  ? static_cast<unsigned> (std::strtoul (argv[5], nullptr, 10))
+                                  : 101u;
+        std::printf ("seme %u\n", seed);
+        const auto r = rampPhase (from, to, 20.0, ramp, 20.0 + ramp + 10.0,
+                                  seed, RampMode::trim, true);
+        std::printf ("media=%.1f ms peggio=%.1f coda=%+.1f dopo=%.1f "
+                     "decoder=%.1f/%+.1f ms\n",
+                     r.meanMs, r.worstMs, r.tailMs, r.afterMs,
+                     r.decMeanMs, r.decTailMs);
+        return 0;
+    }
+
     std::printf ("Virtual Percussionist - aggancio e allineamento\n\n");
     if (! tempoAggregationSelfCheck())
         return 1;
@@ -1501,7 +1600,7 @@ int main()
     measureDrumHole (0.0);
     measureDrumHole (2.2);
     const bool tempoChangesPass = measureTempoChange();
-    measureRampPhase();
+    const bool rampPhasePass = measureRampPhase();
     measureResync();
-    return tempoChangesPass ? 0 : 1;
+    return tempoChangesPass && rampPhasePass ? 0 : 1;
 }

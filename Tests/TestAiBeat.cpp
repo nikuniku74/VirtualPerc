@@ -150,6 +150,10 @@ namespace
             committed BPM back towards it, and the next interval at the *new*
             tempo then looks like a fresh change. */
         float  bpmLate = 0.0f;
+        /** Largest published error after the transition was confirmed. A late
+            sample alone misses a stale-comb rebound which eventually repairs
+            itself but is heard for several beats. */
+        float  worstBpmErrorAfterConfirm = 0.0f;
         int    rapidCount = 0;
         /** How many times `transitionSerial` moved over the whole run. One step
             is one event; more than that is the detector arguing with itself, and
@@ -571,6 +575,11 @@ namespace
                 result.serialAtExpiry = h.transitionSerial;
             }
 
+            if (result.rapidAtSec >= 0.0)
+                result.worstBpmErrorAfterConfirm = std::max (
+                    result.worstBpmErrorAfterConfirm,
+                    std::fabs (h.bpm - toBpm));
+
             if (result.rapidAtSec >= 0.0
                 && (result.expiredAtSec < 0.0
                     || std::fabs (now - result.expiredAtSec) < 1.0e-9)
@@ -592,6 +601,27 @@ namespace
             result.serialAtEnd = h.transitionSerial;
         }
         return result;
+    }
+
+    void expectTransitionRefitRejectsOldComb()
+    {
+        for (const auto pair : { std::pair<float, float> { 120.0f, 132.0f },
+                                 std::pair<float, float> { 120.0f, 108.0f } })
+        {
+            const auto result = runDecoderStep (pair.first, pair.second, true);
+            std::printf ("tempo-refit %.0f->%.0f worst-after-confirm=%.3f BPM "
+                         "late=%.2f serial=x%d\n",
+                         static_cast<double> (pair.first),
+                         static_cast<double> (pair.second),
+                         static_cast<double> (result.worstBpmErrorAfterConfirm),
+                         static_cast<double> (result.bpmLate),
+                         result.serialIncrements);
+            expect (result.rapidAtSec >= 0.0
+                        && result.worstBpmErrorAfterConfirm <= 0.5f
+                        && std::fabs (result.bpmLate - pair.second) <= 1.0f
+                        && result.serialIncrements == 1,
+                    "a confirmed line step is never pulled back toward the old comb");
+        }
     }
 }
 
@@ -2662,6 +2692,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (std::fabs (wide.bpmLate - pair.second) <= 1.0f,
                     "violent line change survives the stale fold and holds its new tempo");
         }
+
+        expectTransitionRefitRejectsOldComb();
 
         expect (! pulseCountMatches (0.24, 0.26, 4, 0)
                     && ! pulseCountMatches (0.24, 0.26, 4, 2)
@@ -9748,6 +9780,7 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
         expect (std::fabs (wide.bpmLate - pair.second) <= 1.0f,
                 "violent line change survives the stale fold and holds its new tempo");
     }
+    expectTransitionRefitRejectsOldComb();
 }
 
 void vpRunHarmonicEntryTest (int& passed, int& failed)

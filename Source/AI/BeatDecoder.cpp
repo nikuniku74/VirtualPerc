@@ -83,9 +83,12 @@ namespace
     // room path neither stands on the recent median alone: room-smoothed onsets
     // cross both thresholds in one direction often enough to release a fixed
     // record.
-    constexpr float kFastDriftTolerance = 0.024f;
+    constexpr float kFastDriftToleranceRoom = 0.024f;
+    constexpr float kFastDriftToleranceLine = 0.012f;
     constexpr float kFastDriftLarge     = 0.045f;
     constexpr int   kFastBeatsToLeaveFixed = 3;
+    constexpr int   kFastBeatsToLeaveFixedLine = 2;
+    constexpr float kFastLineCleanResidual = 0.030f;
     constexpr int   kFastBeatsAlone = 5;
 
 
@@ -397,6 +400,11 @@ namespace
     // that is worth doing: a longer window would be a second path to the clock
     // running beside the one that is measured.
     constexpr int kTransitionRapidLifetimeBeats = 2;
+
+    // The eight-beat fit is current before the four-second autocorrelation is.
+    // Keep the latter quarantined for three more accepted beats after a
+    // confirmed change; see the measured 120 -> 108 case in the live branch.
+    constexpr int kTransitionCombLagBeats = 3;
 
     // A suspicion nothing follows up. If no eligible peak arrives within this
     // many of the candidate's own periods the evidence is stale - the fill
@@ -1427,9 +1435,11 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     // sounded wrong, but `transitionSerial` moved twice for one musical event
     // and a follower keyed off the serial re-adopts on each.
     //
-    // A short fit is eight beats, so eight accepted beats is what is owed. By
-    // then the fits carry the new tempo themselves and the question the detector
-    // answers has an honest reference again.
+    // A short fit is eight beats, so that is the first part of what is owed.
+    // The autocorrelation spans four seconds and trails it: three further
+    // accepted beats keep that older opinion out until it names the new tempo
+    // too. Then the question the detector answers has an honest reference
+    // again.
     if (transitionRefitBeats > 0)
     {
         if (transitionState == TempoTransitionState::suspected)
@@ -1612,7 +1622,8 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
                 : timeSec;
             // Set after the two retained peaks above, so they do not spend the
             // budget they are part of paying off.
-            transitionRefitBeats = kShortFit;
+            transitionRefitBeats =
+                kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
             transitionLastSec = eventTimeSec;
             transitionLastStrength = strength;
             ++transitionSerial;
@@ -2628,11 +2639,41 @@ void BeatDecoder::updateTempo() noexcept
     const bool haveWindow = longFitSpread (spread, trend);
 
     float recent = 0.0f;
+    // These are published to the clock. Do not let a value from the last valid
+    // interval survive a dropout or a history reset and masquerade as current
+    // motion while no responsive measurement exists.
+    lastFastDeviation = 0.0f;
+    lastIntervalDeviation = 0.0f;
     if (recentPeriod (recent))
     {
-        const float fastDeviation = (60.0f / recent - bpm) / std::max (kMinBpm, bpm);
+        // On a direct feed the eight-beat fit is both smooth enough to carry a
+        // persistent direction and current enough to release a held tempo. The
+        // median of three raw intervals is faster on paper but one interpolated
+        // peak can reverse its sign, repeatedly erasing the very run a ramp is
+        // trying to prove. Keep that raw median for room input, where the long
+        // fit cannot make reflections into clean evidence.
+        const float intervalBpm = 60.0f / recent;
+        const float intervalDeviation = (intervalBpm - bpm) / std::max (kMinBpm, bpm);
+        lastIntervalDeviation = intervalDeviation;
+        const float recentBpm = lineFeed && haveShort ? shortFitBpm : intervalBpm;
+        const float fastDeviation = (recentBpm - bpm) / std::max (kMinBpm, bpm);
         lastFastDeviation = fastDeviation;
-        if (std::fabs (fastDeviation) > kFastDriftTolerance)
+        const float fastTolerance = lineFeed ? kFastDriftToleranceLine
+                                             : kFastDriftToleranceRoom;
+        // The short fit alone cannot distinguish a real rate move from an
+        // acoustic phase offset: when a drummer drops out, the accepted peaks
+        // may all slide late and the fit window reports a temporary slowdown
+        // even though the new intervals are still at the old tempo. A ramp is
+        // different: its newest intervals keep moving in the same direction.
+        // Require that causal evidence on a direct feed. Its small floor is
+        // below the 1.2% fit decision but above interpolation dust. A tightly
+        // placed line-feed fit earns release after two net votes; a looser fit
+        // still needs three, and both require the long-window direction below.
+        constexpr float kLineIntervalSupport = 0.004f;
+        const bool intervalSupports = ! lineFeed
+                                      || (std::fabs (intervalDeviation) > kLineIntervalSupport
+                                          && intervalDeviation * fastDeviation > 0.0f);
+        if (std::fabs (fastDeviation) > fastTolerance && intervalSupports)
         {
             const int fastSign = fastDeviation > 0.0f ? 1 : -1;
             if (fastSign == fastDriftSign)
@@ -2652,9 +2693,22 @@ void BeatDecoder::updateTempo() noexcept
         }
         else
         {
-            fastDriftBeats = 0;
-            fastDriftLargeBeats = 0;
-            fastDriftSign = 0;
+            // One jittered line-feed interval may fail the support test inside
+            // a genuine ramp. Spend one vote rather than erasing all the
+            // preceding evidence; room input retains the strict reset.
+            if (lineFeed && fastDriftBeats > 0)
+            {
+                --fastDriftBeats;
+                fastDriftLargeBeats = std::max (0, fastDriftLargeBeats - 1);
+                if (fastDriftBeats == 0)
+                    fastDriftSign = 0;
+            }
+            else
+            {
+                fastDriftBeats = 0;
+                fastDriftLargeBeats = 0;
+                fastDriftSign = 0;
+            }
         }
     }
 
@@ -2752,13 +2806,12 @@ void BeatDecoder::updateTempo() noexcept
             fixedErrorBeats = std::clamp (fixedErrorBeats, 0, 3 * kBeatsToLeaveFixed);
 
             // The fast release has to agree with the window before it counts.
-            // On its own it is a median of three intervals against a held
-            // tempo, and on a microphone in a room three intervals drift 2.4%
-            // in one direction often enough to break a fixed tempo out of the
-            // regime several times a minute - which is most of the movement
-            // left in a tempo that was otherwise correct and still. A real
-            // change moves the recent intervals *and* leans the twenty-four
-            // beat window the same way; jitter does only the first.
+            // In a room its median of three intervals may drift 2.4% one way
+            // several times a minute, so that path keeps the conservative
+            // threshold. On a direct feed the smoother eight-beat fit carries
+            // the size and direction, while the newest raw intervals only
+            // prove causality. A real change also leans the twenty-four-beat
+            // window the same way; ordinary jitter does not.
             const bool windowAgrees = haveWindow && fastDriftSign != 0
                                       && trend * static_cast<float> (fastDriftSign) > 0.0f
                                       && std::fabs (trend) > (lineFeed ? kLiveTrend * 0.25f
@@ -2766,8 +2819,8 @@ void BeatDecoder::updateTempo() noexcept
                                       && (lineFeed || (moving
                                                        && std::fabs (trend) > spread * 0.85f));
 
-            // Three things were tried here to make a tempo change land sooner
-            // and none of them shipped. `VPAlign`'s tempo bench measures all of
+            // Three earlier things were tried here to make a tempo change land
+            // sooner and none shipped. `VPAlign`'s tempo bench measures all of
             // them, so the trade is on record rather than in somebody's memory:
             //
             //   - **Leaving sooner on a line feed** (three beats of a large
@@ -2787,9 +2840,13 @@ void BeatDecoder::updateTempo() noexcept
             // A fit over eight beats cannot describe a new tempo until most of
             // those eight beats are at it, and at 120 BPM that is four seconds
             // - everything else is rounding on top. The honest answer is that a
-            // *step* costs about five seconds and a band that actually drifts
-            // or ramps costs nothing measurable: the same bench has the clock
-            // never leaving 2% of an accelerando at all.
+            // *step* costs about five seconds. That percentage-only probe hid
+            // phase debt on ramps: `VPAlign --ramps` later measured a direct
+            // 100 -> 110 / 30 s ramp at 140.7 ms worst before this causal
+            // release and 84.7 ms after it, while fixed 100/130 controls stayed
+            // at 33.3/22.0 ms. That is why the direct-feed exception above is
+            // narrower than simply lowering the room thresholds.
+            //
             // And `moving` on its own, which was computed for the acquisition
             // branch and never asked here.
             //
@@ -2811,7 +2868,10 @@ void BeatDecoder::updateTempo() noexcept
             if (beatsInRegime >= kRegimeMinBeats
                 && (moving
                     || fixedErrorBeats >= kBeatsToLeaveFixed
-                    || (fastDriftBeats >= kFastBeatsToLeaveFixed && windowAgrees)
+                    || (fastDriftBeats >= (lineFeed && shortFitResidual < kFastLineCleanResidual
+                                                ? kFastBeatsToLeaveFixedLine
+                                                : kFastBeatsToLeaveFixed)
+                        && windowAgrees)
                     || (fastDriftLargeBeats >= kFastBeatsAlone
                         && (lineFeed || windowAgrees))
                     || (haveLong && std::fabs (anchorError) > 0.06f)))
@@ -2903,7 +2963,8 @@ void BeatDecoder::updateTempo() noexcept
                     transitionRapidDeadlineSec =
                         timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
                                       * static_cast<double> (transitionPeriodSec);
-                    transitionRefitBeats = kShortFit;
+                    transitionRefitBeats =
+                        kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                     transitionLastSec = gridAnchorSec;
                     ++transitionSerial;
                     return;
@@ -3054,7 +3115,9 @@ void BeatDecoder::updateTempo() noexcept
             //
             // The second is the bar after a confirmed tempo transition, while
             // `transitionRefitBeats` says the fits are still being rebuilt from
-            // the beats after the change. Measured at 160 BPM, where a
+            // the beats after the change. On a direct feed it also quarantines
+            // the slower comb for three extra beats; room input keeps the old
+            // refit length. Measured at 160 BPM, where a
             // transition that should not have been confirmed drops both fits
             // and publishes 166.9: the fold read 159.6-160.0 from the first
             // beat and the committed number walked down 166.9, 166.2, 165.5,
@@ -3070,7 +3133,17 @@ void BeatDecoder::updateTempo() noexcept
             // tempo that has been left for seconds, and `pullTowardsComb`'s 35%
             // cap is exactly what stops it dragging a true change back.
             const bool stale = leftFixedBeats > 0 || transitionRefitBeats > 0;
-            const float wanted = pullTowardsComb (target, combReady, combBpm);
+            // The comb spans seconds of audio and therefore still names the
+            // tempo that was left while the short fit is rebuilding from a
+            // confirmed step. Letting it pull here immediately undid the
+            // causal interval measurement: 120 -> 132 was confirmed after two
+            // intervals at +0.92 s, then the stale 120-BPM comb dragged the
+            // committed value to 129.2 on the very next beat and the sounding
+            // clock did not settle for 8.9 s. During the bounded refit window,
+            // the new-beat fit is the only rate source that can be current.
+            const float wanted = lineFeed && transitionRefitBeats > 0
+                                     ? target
+                                     : pullTowardsComb (target, combReady, combBpm);
             // And only while the gap is actually one a stale number would leave.
             //
             // Without this the catch-up fires on every beat of the window,
@@ -3395,6 +3468,18 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.shortFitBpm = shortFitBpm;
     hyp.longFitBpm = longFitBpm;
     hyp.shortFitResidual = shortFitResidual;
+    // `updateTempo` only runs on an accepted beat. Its last motion reading is
+    // useful between ordinary beats, but after one and a half expected periods
+    // it describes an onset train that is no longer present. Publish silence,
+    // not stale authority, so a drummer dropout cannot leave the faster clock
+    // loop armed until the next accepted peak happens to arrive.
+    const bool fastMotionCurrent = lastBeatSec >= 0.0
+                                   && timeSec - lastBeatSec
+                                          <= 1.5 * static_cast<double> (newPeriod);
+    hyp.fastTempoDeviation = fastMotionCurrent ? lastFastDeviation : 0.0f;
+    hyp.fastIntervalDeviation = fastMotionCurrent ? lastIntervalDeviation : 0.0f;
+    hyp.fastTempoEvidence = fastMotionCurrent ? fastDriftBeats : 0;
+    hyp.fastTempoDirection = fastMotionCurrent ? fastDriftSign : 0;
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

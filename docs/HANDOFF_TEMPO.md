@@ -1,12 +1,114 @@
 # Ripresa del lavoro sul tempo
 
-Richiesta: implementare progressivamente il piano approvato, con test mirati e
-commit locali separati. **Ultima istruzione utente: proseguire SENZA committare**;
-questa prevale sul piano iniziale. Non eseguire la suite completa. Nessuna modifica al
-submodule JUCE, già sporco all'inizio. Nessuna promessa di perfezione su audio
-ambiguo: mantenere il tempo acquisito, oppure attendere/TAP all'avvio.
+Richiesta corrente: arrivare al riallineamento immediato e preciso quando il
+tempo cambia, prima su brano caricato e mandata mixer/live; microfono iPad per
+ultimo. Nessun commit eseguito. Il submodule JUCE e
+`pop-dance-congas-procedural-124.wav` erano gia' sporchi/non tracciati e non sono
+stati toccati.
 
 ## Stato
+
+### 15/09/2026 — il pettine vecchio non annulla piu' un cambio confermato
+
+**Causa misurata.** Il detector causale riconosceva il cambio correttamente, ma
+subito dopo il pettine su quattro secondi descriveva ancora il tempo lasciato e
+veniva autorizzato a tirare indietro il fit nuovo:
+
+- 120→132: conferma a **+0,92 s** e 132,03 BPM, pubblicazione successiva a
+  **129,2 BPM**, stabilita' del clock soltanto a **8,90 s**;
+- 120→108: conferma a **+1,14 s**, poi rimbalzo tardivo a **108,92 BPM** quando
+  terminavano gli otto battiti del fit corto, stabilita' soltanto a **14,12 s**.
+
+**Correzione.** Solo su ingresso diretto (`lineFeed`, quindi file/mixer), dopo
+una transizione confermata il live fit non usa `pullTowardsComb` finche' la
+stima corta non e' ricostruita e il pettine non ha avuto altri tre battiti per
+smaltire il vecchio tempo: 8+3 battiti accettati, finestra limitata. Il clock
+musicale non riparte e non arretra. Il percorso microfono/iPad resta invariato.
+
+| cambio | prima: stabile | dopo: BPM / stabile | errore max dopo conferma |
+|---|---:|---:|---:|
+| 120→132 | 8,90 s | **0,92 / 1,34 s** | **0,041 BPM** |
+| 120→108 | 14,12 s | **1,14 / 1,66 s** | **0,026 BPM** |
+
+La regressione permanente in `VPTests --tempo-step` controlla ogni BPM
+pubblicato dopo la conferma, non soltanto quello finale: **11/11 PASS**, un solo
+seriale per cambio. `probe_tempo_step`: 120→132 **4,1→0,9 s**; tutte le altre
+righe identiche.
+
+**Regressioni e catena reale al checkpoint del solo gradino.** `probe_matrix`
+completo (360 corse) era identico riga per riga a HEAD: **5,22 s**, 104 uscite,
+30 mai agganciate, 9,11% fuori. Anche i cinque file di impulsi prodotti da
+`bench_live.py` sui campioni riproducibili di `Flamingo Marco 09.07.26.m4a`
+erano identici byte per byte (media 8,62% errore, 2,21% strattoni).
+
+`VPAlign` ora esprime il contratto gia' presente per i salti larghi: 100→140
+richiede una transizione dopo tre intervalli, non zero. Raggiunge il tempo nel
+minimo causale di **1,30 s** e un battito dopo misura **24,5 ms** di fase peggiore;
+sei gradini e due rampe PASS. `probe_recovery` **84/84**, `--tempo-slow` 10/10,
+`--bar` 10/10, `--new-input` 3/3. La suite generale chiude **620 PASS / 27 FAIL**:
+i 27 rossi sono sparsi nei gate storici di asset/render, cancellazione, 50 BPM,
+fase ONNX e make-up; nessuna asserzione di transizione o cambio brano fallisce.
+Non esiste una corsa generale pre-patch nello stesso ambiente, quindi non viene
+dichiarata identica: il confronto A/B autorevole per questa modifica e' il banco
+tempo deterministico e il dump reale sopra.
+
+### 15/09/2026 — il banco misura finalmente la fase delle rampe
+
+Il vecchio gate percentuale dichiarava buone le rampe anche quando il clock era
+oltre 100 ms fuori: 10 BPM in 30 s sono appena 0,33 BPM/s, quindi il BPM puo'
+essere formalmente corretto mentre la fase accumula ritardo. `VPAlign --ramps`
+ora confronta decoder e clock MIXER con la griglia vera, include due controlli a
+tempo fisso e fallisce su media, peggio o debito dopo la rampa.
+
+**Causa.** In FISSO il voto rapido usava la mediana di tre intervalli grezzi. Un
+solo onset interpolato poteva invertirne il segno e cancellare ogni volta una
+rampa reale. Su linea/file la grandezza e il segno arrivano ora dal fit corto a
+otto battiti; gli intervalli piu' recenti devono ancora confermare la causalita'.
+Un disaccordo spende un voto anziche' azzerare tutto. Se il fit corto e' pulito
+(residuo < 0,030), bastano due voti netti; altrimenti ne restano necessari tre.
+Microfono/stanza conserva la vecchia regola sugli intervalli al 2,4%.
+
+La stessa evidenza pulita, solo sul percorso diretto e solo quando nessun TAP o
+tempo manuale possiede il clock, accorcia la media di fase 0,90→0,30 s e porta il
+guadagno dell'integratore 0,08→0,20. Non sceglie un BPM, non riparte, non scatta;
+fa reagire prima i due anelli gia' esistenti e si spegne appena manca una misura
+corrente: dopo 1,5 battiti attesi senza un nuovo beat l'evidenza pubblicata va a
+zero. Quattro semi deterministici, catena MIXER reale (media/peggio ms):
+
+| rampa | prima | dopo |
+|---|---:|---:|
+| 100→110 in 30 s | 26,0 / 140,7 | **22,0 / 84,7** |
+| 100→110 in 12 s | 40,8 / 153,4 | **40,8 / 127,2** |
+| 120→132 in 20 s | 33,3 / 130,4 | **28,5 / 95,5** |
+| 128→120 in 20 s | 20,2 / 62,7 | **20,2 / 48,0** |
+
+I controlli fissi restano 7,1/33,3 e 7,2/22,0 ms. Il buco batteria di dieci
+secondi resta FISSO sia senza ritardo sia con 44 ms di ritardo acustico; la riga
+MIXER difficile resta 25,3/66,2 ms. Il gate rampe ora e' permanente e PASS.
+
+**A/B largo, senza nascondere il costo.** La matrice completa conserva **5,22
+s / 104 uscite / 30 mai agganciate**; il tempo fuori soglia passa 9,11→9,12%.
+Quattro dei cinque dump Flamingo cambiano, perche' contengono evidenza di moto.
+Il riferimento tempogramma, affidabile per il ritardo su un solo brano, passa
+8,62→8,70% di errore e 2,21→2,27% di strattoni: piccolo segnale negativo, non una
+beat-grid di fase. La correzione resta per il forte guadagno causale ripetibile,
+ma non autorizza a chiamare le rampe «perfette» senza beat-grid manuale e ascolto.
+
+Verifica finale del codice qui sopra: `VPAlign` completo exit 0 (sei gradini,
+due rampe BPM e il nuovo gate di fase); `VPTests --tempo-step` 11/0,
+`--tempo-slow` 10/0, `--evidence` 2/0, `--new-input` 3/0 e `--bar` 10/0;
+`probe_tempo_step` e `probe_recovery` exit 0. Due tentativi della suite generale
+hanno superato tutta la parte tempo ma non hanno prodotto il riepilogo finale:
+sono rimasti per minuti nello stesso vecchio banco `leak-138` e sono stati
+interrotti. I 620/27 sopra restano quindi il risultato del checkpoint del solo
+gradino, non vengono spacciati per una suite finale del follow-up rampe.
+
+**Ancora aperto:** `probe_small_steps` e' 9 PASS / 2 FAIL. I due casi marginali
+sono 52→50 (stabile 4,915 s) e 120→118 (26,02 ms contro gate 25 ms). Restano
+anche le relazioni quasi/esattamente d'ottava. Per certificare fase e musicalita'
+sul live serve ancora una beat-grid manuale su due o tre brani e ascolto umano.
+
+## Cronologia precedente
 
 ### Checkpoint credito limitato — 09/09/2026: rifinitura iniziale mantenuta
 

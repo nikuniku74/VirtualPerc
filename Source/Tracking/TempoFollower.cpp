@@ -171,6 +171,7 @@ void TempoFollower::reset() noexcept
     reanchor = false;
     havePhaseObservation = false;
     tempoTrimEnabled = false;
+    tempoMotionHint = false;
     tempoTrust = 1.0f;
     poorTrustSamples = 0;
     phaseRecoverySamplesRemaining = 0;
@@ -555,7 +556,16 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
             lastDrift = drift;
 
             const float measuredErrorBpm = drift * 60.0f / elapsed;
-            const float trust = std::clamp (strength * 0.08f, 0.10f, 0.28f)
+            // A held decoder can otherwise spend most of a short ramp proving
+            // that it really moved while this independent phase slope already
+            // says the clock is late. Only the tightly fitted direct-feed hint
+            // selects the larger gain. Four-seed VPAlign: the 100 -> 110 / 12 s
+            // worst phase falls 153.4 -> 127.2 ms; fixed 100/130 controls remain
+            // 33.3/22.0 ms. BeatTracker owns the TAP/manual/room guards.
+            const float rateGain = tempoMotionHint
+                                       ? std::clamp (strength * 0.20f, 0.20f, 0.40f)
+                                       : std::clamp (strength * 0.08f, 0.10f, 0.28f);
+            const float trust = rateGain
                                 * rateTrustScale (tempoTrust)
                                 * (static_cast<float> (driftSameWay)
                                    / static_cast<float> (kDriftAgreeing));

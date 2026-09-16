@@ -407,10 +407,11 @@ private:
         step, and this is what separates them - see the live branch. */
     float shortFitRate = 0.0f;
     float prevShortFitBpm = 0.0f;
-    /** The last recent-interval deviation measured, as a fraction of the
-        committed tempo. How big a step is decides whether the beat history is
-        worth keeping across it - see the exit from the fixed regime. */
+    /** The last responsive-fit and raw recent-interval deviations, as fractions
+        of the committed tempo. The first releases a clean direct-feed hold; the
+        second proves that its direction is causal rather than a phase offset. */
     float lastFastDeviation = 0.0f;
+    float lastIntervalDeviation = 0.0f;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;
@@ -449,12 +450,12 @@ private:
         close it sooner, but silence and rejected peaks must not leave it armed.
         Derived at confirmation from the reported, user-octaved period. */
     double transitionRapidDeadlineSec = -1.0;
-    /** Accepted fit-history beats still owed before another candidate may open.
-        A confirmation empties the fit history down to the two peaks that
-        measured the new period, and until a short fit has re-formed over it the
-        stale fold is the strongest thing naming a tempo - which is enough to
-        drag the committed BPM back and have the detector confirm the same
-        change twice. See `observeTempoTransition`. */
+    /** Accepted fit-history beats still owed before another candidate may open
+        or, on a direct feed, the comb may pull the measured rate. A confirmation
+        empties the fit history down to the two peaks that measured the new
+        period. The short fit reforms first; the four-second autocorrelation
+        remains stale for a few more beats and otherwise drags the committed BPM
+        back. See `observeTempoTransition` and the live branch in `updateTempo`. */
     int    transitionRefitBeats = 0;
     uint32_t transitionSerial = 0;
     /** The newest eligible peak, whatever the grid then did with it. Intervals

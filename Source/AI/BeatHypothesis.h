@@ -70,6 +70,15 @@ struct BeatHypothesis
     float    shortFitBpm = 0.0f;
     float    longFitBpm  = 0.0f;
     float    shortFitResidual = 1.0f;
+    /** Causal direct-feed motion evidence behind the fixed-tempo release. The
+        clock consumes the deviation and residual only to tune its existing
+        phase/rate loop; they never select or own a tempo. A positive/negative
+        sign says faster/slower, and the leaky beat count says how persistently
+        the short fit and newest raw intervals agree. */
+    float    fastTempoDeviation = 0.0f;
+    float    fastIntervalDeviation = 0.0f;
+    int      fastTempoEvidence = 0;
+    int      fastTempoDirection = 0;
 
     TempoRegime regime   = TempoRegime::unknown;
 

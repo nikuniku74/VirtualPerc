@@ -1158,6 +1158,17 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                            || (! speakerFollow && !harmonicSourceActive && periodic
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
+    // This hint must obey the same ownership rules as the trim it accelerates.
+    // In particular, analysis may still see a moving band while TAP or manual
+    // tempo owns the clock; it is evidence then, not authority.
+    const bool cleanTempoMotion = trimTempo && ! tapOwnsTempo && ! tempoOwned
+                                  && ! speakerFollow && ! harmonicSourceActive
+                                  && periodic && ! tapHold && tempoFollow && haveHyp
+                                  && hyp.regime == TempoRegime::fixed
+                                  && std::fabs (hyp.fastTempoDeviation)
+                                         > kTempoMotionDeviation
+                                  && hyp.shortFitResidual < kTempoMotionResidual;
+    follower.setTempoMotionHint (cleanTempoMotion);
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
         follower.beginTempoTransition (hyp.transitionBpm);
@@ -1526,7 +1537,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const float phaseTau =
                 follower.tempoTransitionActive()
                     ? kGridTauRapid
-                    : gridPhaseTau (kGridTauHolding, holding, evidence.trust());
+                    : gridPhaseTau (cleanTempoMotion ? kGridTauMotion
+                                                     : kGridTauHolding,
+                                    holding, evidence.trust());
             follower.setGridPhase (songPhase, phaseTau);
         }
     }
@@ -1686,7 +1699,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.kickTrusted = kickTrusted;
     out.drumsOut = evidence.drumsAreOut();
     out.evidenceTrust = evidence.trust();
-    out.gridTauSec = gridPhaseTau (kGridTauHolding, holding, evidence.trust());
+    out.gridTauSec = gridPhaseTau (cleanTempoMotion ? kGridTauMotion
+                                                    : kGridTauHolding,
+                                       holding, evidence.trust());
 
     // Whether what the clock is following is known to be somebody playing.
     //

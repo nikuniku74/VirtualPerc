@@ -3545,6 +3545,15 @@ Flamingo identici byte per byte; `VPAlign` sei gradini + due rampe PASS, incluso
 Suite generale 620/27, con rossi storici fuori dalla transizione; non A/B completa.
 Dettaglio e limiti rimasti in `docs/HANDOFF_TEMPO.md`.
 
+Follow-up rampe dello stesso giorno: il confronto sopra resta il checkpoint del
+solo gradino. Il nuovo gate di fase `VPAlign --ramps` ha poi ridotto il peggio
+MIXER 140,7→84,7 ms (100→110/30 s), 153,4→127,2 (100→110/12 s),
+130,4→95,5 (120→132/20 s) e 62,7→48,0 (128→120/20 s), lasciando invariati i
+controlli fissi e il buco batteria. Con questo follow-up la matrice conserva
+5,22 s / 104 / 30 ma il fuori passa 9,11→9,12%; quattro dump Flamingo cambiano
+e il suo riferimento debole passa 8,62→8,70% errore, 2,21→2,27% strattoni.
+Non chiamare quindi il follow-up byte-identico o la fase live gia' certificata.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

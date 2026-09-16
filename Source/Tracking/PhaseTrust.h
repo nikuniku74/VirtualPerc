@@ -18,6 +18,18 @@ constexpr float kGridTauAcquire = 0.25f;
 /** A confirmed tempo step gets one beat of faster phase convergence. */
 constexpr float kGridTauRapid = 0.10f;
 
+/** A clean direct-feed ramp has independent rate evidence, so its phase may be
+    averaged over fewer hypotheses without turning ordinary onset jitter into
+    clock motion. */
+constexpr float kGridTauMotion = 0.30f;
+
+/** A held direct-feed tempo is only called musically in motion once the
+    responsive fit is two percent away and still tightly placed. These are the
+    same two facts that earn the decoder's early fixed-regime release; below
+    them the ordinary 0.90 s averaging remains in force. */
+constexpr float kTempoMotionDeviation = 0.020f;
+constexpr float kTempoMotionResidual = 0.030f;
+
 /** However bad the evidence gets, the clock still has to be able to follow a
     band. Two and a fifth seconds is four bars at 110 BPM. */
 constexpr float kGridTauMax = 2.20f;

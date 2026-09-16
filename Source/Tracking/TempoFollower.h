@@ -40,6 +40,14 @@ public:
     void setFollowStrength (FollowStrength s) noexcept { follow = s; }
     void setLocked (bool on) noexcept { locked = on; }
     void setTempoTrimEnabled (bool on) noexcept;
+    /** The decoder has a clean short fit moving away from a held direct-feed
+        tempo. This does not select a tempo; it only lets repeated phase drift
+        build the existing rate trim faster while that independent evidence is
+        present. */
+    void setTempoMotionHint (bool on) noexcept
+    {
+        tempoMotionHint = on;
+    }
     /** How much the clock should believe the tempo it is being handed, 0..1,
         relative to how well the analysis has been fitting this song. 1 - the
         default, and what everything that does not set it gets - is exactly the
@@ -150,6 +158,7 @@ private:
     bool reanchor = false;
     bool havePhaseObservation = false;
     bool tempoTrimEnabled = false;
+    bool tempoMotionHint = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */
     float tempoTrust = 1.0f;
     // Poor evidence may hold the clock slightly away from the song. Once clean
