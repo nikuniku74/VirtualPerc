@@ -1029,6 +1029,23 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                           static_cast<double> (numSamples) / sampleRate,
                           hyp.shortFitResidual);
 
+    // A tracked direct feed leans back towards the decoder's own line fit as
+    // this song's evidence goes wide - see trackedPhaseWeight.
+    float trackedWeight = 0.0f;
+    if (haveHyp && hyp.valid && hyp.phaseTracked)
+    {
+        trackedWeight = trackedPhaseWeight (evidence.trust());
+        if (trackedWeight < 1.0f)
+        {
+            hyp.beatPhase = wrap01 (hyp.fitBeatPhase
+                                    + trackedWeight * wrapCentered (hyp.beatPhase
+                                                                    - hyp.fitBeatPhase));
+            hyp.clockBpm = hyp.bpm + trackedWeight * (hyp.clockBpm - hyp.bpm);
+            if (hyp.clockBpm > 1.0f)
+                hyp.periodSec = 60.0f / hyp.clockBpm;
+        }
+    }
+
     // The worker publishes one hypothesis per 20 ms analysis frame into a
     // single slot, while this runs once per audio block. Reading `peak` would
     // count one beat twice on a small buffer and miss it entirely on a large
@@ -1188,7 +1205,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         const bool useTransitionPayload =
             follower.tempoTransitionActive()
             && hyp.transitionState == TempoTransitionState::rapid;
-        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : nnBpm,
+        // A tracked direct feed hands the clock the filter's local rate rather
+        // than the committed tempo, which is held still for display and level
+        // decisions and lags a band that is speeding up.
+        const float clockBpm = hyp.phaseTracked && hyp.clockBpm > 50.0f ? hyp.clockBpm : nnBpm;
+        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : clockBpm,
                                  useTransitionPayload ? hyp.transitionConfidence : nnConf);
     }
 
@@ -1537,8 +1558,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const float phaseTau =
                 follower.tempoTransitionActive()
                     ? kGridTauRapid
-                    : gridPhaseTau (cleanTempoMotion ? kGridTauMotion
-                                                     : kGridTauHolding,
+                    : gridPhaseTau (hyp.phaseTracked
+                                        ? kGridTauHolding + trackedWeight
+                                              * (kGridTauTracked - kGridTauHolding)
+                                    : cleanTempoMotion ? kGridTauMotion
+                                                       : kGridTauHolding,
                                     holding, evidence.trust());
             follower.setGridPhase (songPhase, phaseTau);
         }
@@ -1808,6 +1832,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.shortFitResidual = haveHyp ? hyp.shortFitResidual : 1.0f;
     out.setTempoTransitionDiagnostics (
         haveHyp && transitionConsumer.transitionDiagnosticsAllowed() ? &hyp : nullptr);
+    out.setTempoMotionDiagnostics (haveHyp ? &hyp : nullptr);
     if (! armed)
         out.followBar = FollowBar::paused;
     else if (! inputIsLive && heldBpm > 40.0f

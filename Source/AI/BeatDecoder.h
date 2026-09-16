@@ -2,6 +2,7 @@
 
 #include "AI/BeatHypothesis.h"
 #include "AI/BeatHmm.h"
+#include "AI/BeatKalman.h"
 #include "AI/TempoEstimator.h"
 #include "AI/TempoMotionTracker.h"
 
@@ -258,6 +259,7 @@ private:
     void  updateMotionShadow() noexcept;
     void  resetMotionShadow (bool full, TempoMotionVeto reason) noexcept;
     void  updateTempo() noexcept;
+    void  observeBeatKalman (double eventTimeSec, bool accepted) noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
     /** Least squares through the newest `maxBeats` beat times. `anchorOut` is
         the other half of the line and the half the phase needs: the time the
@@ -454,6 +456,14 @@ private:
     int   motionFitEvidence = 0;
     int   motionFitDirection = 0;
     TempoMotionTracker motionTracker;
+    /** Beat-date filter whose phase and local period a direct feed publishes.
+        See BeatKalman.h. */
+    BeatKalman beatKalman;
+    static constexpr double kKalmanRestartRatio = 0.12;
+    static constexpr double kKalmanStepSettled = 0.04;
+    bool kalmanOwnsStep = false;
+    uint32_t kalmanGridSerial = 0;
+    uint32_t kalmanTransitionSerial = 0;
     TempoMotionOutput motionShadow {};
     uint32_t motionObservedBeatSerial = 0;
     float motionBridgeAuthority = 0.0f;

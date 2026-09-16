@@ -491,6 +491,7 @@ void BeatDecoder::prepare (double framesPerSecond)
 
 void BeatDecoder::reset() noexcept
 {
+    beatKalman.reset();
     tempo.reset();
     timeSec = 0.0;
     lastBeatSec = -1.0;
@@ -990,6 +991,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
 
 void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
 {
+    beatKalman.reset();
     // The two things that decide the metrical level. Both were measuring a
     // room: over forty seconds of room noise at the level the make-up gain
     // hands the network, the fold names a tempo with a salience of 0.29 and
@@ -3575,6 +3577,65 @@ float BeatDecoder::scoreConfidence() const noexcept
     return std::clamp (score, 0.0f, 1.0f);
 }
 
+void BeatDecoder::observeBeatKalman (double eventTimeSec, bool accepted) noexcept
+{
+    const double committedPeriod = 60.0 / std::max (kMinBpm, bpm);
+    const auto seedOnGrid = [&]
+    {
+        // Seed on the fitted grid, never on the peak itself: after a gap the
+        // grid gate is open and the newest peak may be a swung offbeat, which
+        // measured half a beat out for ten seconds when it was taken as beat.
+        double seed = eventTimeSec;
+        if (gridAnchorSec >= 0.0)
+            seed = gridAnchorSec
+                   + std::round ((eventTimeSec - gridAnchorSec) / committedPeriod)
+                         * committedPeriod;
+        beatKalman.start (seed, committedPeriod);
+        kalmanOwnsStep = false;
+    };
+
+    // Restarted whenever the decoder replaces its grid - a new level, a
+    // re-anchored grid, a confirmed step - except while the filter owns a step
+    // it measured itself: then the committed tempo is the thing lagging, and
+    // neither its distance nor the grid re-anchoring on the way to the new
+    // tempo is a reason to throw the measurement away.
+    const double apart = std::fabs (beatKalman.period() / committedPeriod - 1.0);
+    if (kalmanOwnsStep && apart < kKalmanStepSettled)
+        kalmanOwnsStep = false;
+    const bool restart = ! established
+                         || transitionSerial != kalmanTransitionSerial
+                         || ! beatKalman.started()
+                         || (! kalmanOwnsStep
+                             && (gridSerial != kalmanGridSerial || apart > kKalmanRestartRatio));
+    if (restart)
+    {
+        // Wait for a beat the grid vouches for; the change stays pending.
+        if (! accepted)
+            return;
+        kalmanGridSerial = gridSerial;
+        kalmanTransitionSerial = transitionSerial;
+        seedOnGrid();
+        return;
+    }
+    kalmanGridSerial = gridSerial;
+
+    // A peak the grid refused only updates the filter while the grid is known
+    // to be stale, which is exactly while the filter owns a step. Otherwise it
+    // can only count as a refusal, the evidence a step is made of.
+    beatKalman.observe (eventTimeSec, accepted || kalmanOwnsStep);
+
+    double stepBeat = 0.0, stepPeriod = 0.0;
+    if (beatKalman.measuredStep (stepBeat, stepPeriod))
+    {
+        beatKalman.start (stepBeat, stepPeriod);
+        kalmanOwnsStep = true;
+    }
+    else if (beatKalman.lostTrack())
+    {
+        seedOnGrid();
+    }
+}
+
 BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                                      float lowBand) noexcept
 {
@@ -3750,10 +3811,37 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         updateTempo();
     }
 
-    const float newPeriod = 60.0f / std::max (kMinBpm, bpm);
-    const float phase = gridPhaseNow (newPeriod);
+    // Every completed peak, not only the ones the grid accepted: after a step
+    // the grid refuses every real beat until the old grid has drifted a whole
+    // beat, and a filter fed from it is blind for exactly that long. Its own
+    // gate refuses subdivisions.
+    if (eligiblePeak)
+        observeBeatKalman (eventTimeSec, peak);
+
+    float newPeriod = 60.0f / std::max (kMinBpm, bpm);
+    float phase = gridPhaseNow (newPeriod);
+    float clockBpm = bpm;
+
+    // On a direct feed the phase and the local period the clock is steered to
+    // come from the beat-date filter once it has measured this pulse. The
+    // committed BPM, the regime and every level decision stay with the fits:
+    // they are what the display and the octave logic must hold still.
+    double trackedPhase = 0.0, trackedPeriod = 0.0;
+    const bool tracked = lineFeed && established
+                         && beatKalman.phaseAt (timeSec, trackedPhase, trackedPeriod)
+                         && trackedPeriod > 60.0 / kMaxBpm
+                         && trackedPeriod < 60.0 / kMinBpm;
+    if (tracked)
+    {
+        phase = wrap01 (static_cast<float> (trackedPhase));
+        newPeriod = static_cast<float> (trackedPeriod);
+        clockBpm = 60.0f / newPeriod;
+    }
 
     hyp.bpm = bpm;
+    hyp.clockBpm = clockBpm;
+    hyp.phaseTracked = tracked;
+    hyp.fitBeatPhase = gridPhaseNow (60.0f / std::max (kMinBpm, bpm));
     hyp.beatPhase = phase;
     hyp.barPhase = wrap01 ((static_cast<float> (beatsInBar) + phase) * 0.25f);
     hyp.pBeat = pBeat;

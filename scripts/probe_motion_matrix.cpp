@@ -10,7 +10,8 @@
 // Build (decoder + the clock heard by the percussion engine):
 //   clang++ -std=c++17 -O2 -Wno-unused-function -I Source \
 //     scripts/probe_motion_matrix.cpp Source/AI/BeatDecoder.cpp \
-//     Source/AI/TempoMotionTracker.cpp Source/AI/TempoEstimator.cpp \
+//     Source/AI/TempoMotionTracker.cpp Source/AI/TempoMotionShape.cpp \
+//     Source/AI/TempoEstimator.cpp \
 //     Source/AI/BeatHmm.cpp \
 //     Source/Tracking/TempoFollower.cpp -o /tmp/probe_motion_matrix
 //
@@ -308,8 +309,11 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                  diagnostics.motionFitImprovement);
             }
             curveProofActive = curveProof;
+            // Same glue as BeatTracker: a tracked direct feed steers the clock
+            // with the filter's local rate, not the committed tempo.
+            const float clockBpm = h.phaseTracked && h.clockBpm > 50.0f ? h.clockBpm : h.bpm;
             if (h.bpm > 50.0f)
-                clock.setTargetTempo (h.bpm, h.confidence);
+                clock.setTargetTempo (clockBpm, h.confidence);
             if (! haveSerial)
             {
                 lastSerial = h.beatSerial;
@@ -322,9 +326,9 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                          h.confidence, 1);
             }
             clock.setGridPhase (h.beatPhase,
-                                vp::gridPhaseTau (cleanMotion
-                                                      ? vp::kGridTauMotion
-                                                      : vp::kGridTauHolding,
+                                vp::gridPhaseTau (h.phaseTracked ? vp::kGridTauTracked
+                                                  : cleanMotion  ? vp::kGridTauMotion
+                                                                 : vp::kGridTauHolding,
                                                   true, 1.0f));
 
             if (previousRegime == vp::TempoRegime::fixed

@@ -546,20 +546,37 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
                 seenSerial = true;
             }
             clock.setTempoTrust (trustClock ? trust.trust() : 1.0f);
+            // BeatTracker's lean back to the line fit on poor evidence.
+            float trackedWeight = 0.0f;
+            auto hyLean = hy;
+            if (hy.phaseTracked)
+            {
+                trackedWeight = vp::trackedPhaseWeight (trustGrid ? trust.trust() : 1.0f);
+                hyLean.beatPhase = vp::wrap01 (hy.fitBeatPhase
+                                               + trackedWeight * vp::wrapCentered (hy.beatPhase
+                                                                                   - hy.fitBeatPhase));
+                hyLean.clockBpm = hy.bpm + trackedWeight * (hy.clockBpm - hy.bpm);
+            }
             if (hy.bpm > 50.0f)
-                clock.setTargetTempo (hy.bpm, hy.confidence);
+                clock.setTargetTempo (hy.phaseTracked && hyLean.clockBpm > 50.0f ? hyLean.clockBpm
+                                                                            : hy.bpm,
+                                      hy.confidence);
             if (hy.beatSerial != lastBeatSerial && hy.confidence > 0.25f)
             {
                 lastBeatSerial = hy.beatSerial;
-                clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - hy.beatPhase),
+                clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - hyLean.beatPhase),
                                          hy.confidence, 1);
             }
             // The rejected alternative from Tracking/PhaseTrust.h: a shorter
             // constant on a line feed. Measured here so the note that says it
             // is not an improvement has a number behind it.
             const float baseTau = lineFeed ? 0.35f : vp::kGridTauHolding;
-            clock.setGridPhase (hy.beatPhase,
-                                vp::gridPhaseTau (baseTau, true,
+            clock.setGridPhase (hyLean.beatPhase,
+                                vp::gridPhaseTau (hy.phaseTracked
+                                                      ? baseTau + trackedWeight
+                                                            * (vp::kGridTauTracked - baseTau)
+                                                      : baseTau,
+                                                  true,
                                                   trustGrid ? trust.trust() : 1.0f));
         }
         clock.advance (blockPerFrame);
@@ -788,7 +805,9 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
                 ++r.rapidTransitions;
             }
             if (hy.bpm > 50.0f)
-                clock.setTargetTempo (hy.bpm, hy.confidence);
+                clock.setTargetTempo (hy.phaseTracked && hy.clockBpm > 50.0f ? hy.clockBpm
+                                                                        : hy.bpm,
+                                      hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
             {
                 lastSerial = hy.beatSerial;
@@ -799,7 +818,9 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
                                 clock.tempoTransitionActive()
                                     ? vp::kGridTauRapid
                                     : vp::gridPhaseTau (
-                                          vp::kGridTauHolding, true, 1.0f));
+                                          hy.phaseTracked ? vp::kGridTauTracked
+                                                          : vp::kGridTauHolding,
+                                          true, 1.0f));
         }
 
         const double positionBefore =
@@ -1255,7 +1276,9 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                 && hy.shortFitResidual < vp::kTempoMotionResidual;
             clock.setTempoMotionHint (cleanTempoMotion);
             if (hy.bpm > 50.0f)
-                clock.setTargetTempo (hy.bpm, hy.confidence);
+                clock.setTargetTempo (hy.phaseTracked && hy.clockBpm > 50.0f ? hy.clockBpm
+                                                                        : hy.bpm,
+                                      hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
             {
                 lastSerial = hy.beatSerial;
@@ -1281,9 +1304,9 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                 clock.snapPhase (hy.beatPhase, true);
             else
                 clock.setGridPhase (hy.beatPhase,
-                                    vp::gridPhaseTau (cleanTempoMotion
-                                                          ? vp::kGridTauMotion
-                                                          : vp::kGridTauHolding,
+                                    vp::gridPhaseTau (hy.phaseTracked ? vp::kGridTauTracked
+                                                      : cleanTempoMotion ? vp::kGridTauMotion
+                                                                         : vp::kGridTauHolding,
                                                       true, 1.0f));
         }
 

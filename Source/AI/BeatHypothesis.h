@@ -34,6 +34,16 @@ struct BeatHypothesis
     bool     valid       = false;
     bool     peak        = false;
     bool     downbeat    = false;
+    /** The rate the clock should run at now. Equal to `bpm` except on a direct
+        feed whose beat-date filter is tracking, where it is that filter's local
+        period: `bpm` stays the committed tempo the display and the level logic
+        hold still, while the clock follows the band inside the beat. */
+    float    clockBpm    = 0.0f;
+    /** `beatPhase` and `periodSec` come from the beat-date filter. */
+    bool     phaseTracked = false;
+    /** The decoder's own line-fit phase at `bpm`, whether or not it was
+        replaced. Where the evidence is poor the consumer leans back to it. */
+    float    fitBeatPhase = 0.0f;
 
     /** Monotonic beat counters. The audio thread reads this slot at its own
         block rate, which is neither aligned to nor necessarily faster than the
