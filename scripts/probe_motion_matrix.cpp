@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <random>
@@ -89,7 +90,27 @@ struct Score
     int tempoOver4 = 0;
     int fixedToLive = 0;
     int curveProofs = 0;
+    int recoveryViolations = 0;
+    int authorityFrames = 0;
+    uint64_t traceHash = 1469598103934665603ULL;
 };
+
+void hashWord (uint64_t& hash, uint32_t word) noexcept
+{
+    for (int byte = 0; byte < 4; ++byte)
+    {
+        hash ^= static_cast<uint8_t> (word >> (byte * 8));
+        hash *= 1099511628211ULL;
+    }
+}
+
+void hashFloat (uint64_t& hash, float value) noexcept
+{
+    uint32_t word = 0;
+    static_assert (sizeof (word) == sizeof (value));
+    std::memcpy (&word, &value, sizeof (word));
+    hashWord (hash, word);
+}
 
 double percentile (std::vector<double> values, double p)
 {
@@ -238,6 +259,10 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
     uint32_t lastSerial = 0;
     bool haveSerial = false;
     bool curveProofActive = false;
+    bool shadowProven = false;
+    size_t excursionTruthBeat = 0;
+    bool excursionOpen = false;
+    bool excursionFailed = false;
     vp::TempoRegime previousRegime = vp::TempoRegime::unknown;
     std::mt19937 floorRng (seed * 2246822519u + 3266489917u);
     std::uniform_real_distribution<float> floor (0.012f, 0.032f);
@@ -332,6 +357,32 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                     ++score.tempoOver4;
             }
             score.measured += 1.0;
+
+            hashFloat (score.traceHash, h.bpm);
+            hashFloat (score.traceHash, clock.beatPhase());
+            hashFloat (score.traceHash, clock.currentTempo());
+            hashWord (score.traceHash, static_cast<uint32_t> (truth));
+
+            const float motionAuthority = 0.0f;
+            if (motionAuthority > 0.0f)
+                ++score.authorityFrames;
+            shadowProven = shadowProven || motionAuthority > 0.0f;
+            if (shadowProven && phaseMs > 50.0 && ! excursionOpen)
+            {
+                excursionOpen = true;
+                excursionFailed = false;
+                excursionTruthBeat = truth;
+            }
+            if (excursionOpen && phaseMs <= 50.0)
+            {
+                excursionOpen = false;
+                excursionFailed = false;
+            }
+            if (excursionOpen && ! excursionFailed && truth > excursionTruthBeat + 2)
+            {
+                ++score.recoveryViolations;
+                excursionFailed = true;
+            }
         }
         clock.advance (kSamplesPerFrame);
     }
@@ -349,10 +400,13 @@ struct Aggregate
     int releases = 0;
     int curveProofs = 0;
     int runs = 0;
+    uint64_t traceHash = 1469598103934665603ULL;
+    int recoveryViolations = 0;
+    int authorityFrames = 0;
 };
 
 Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned offset,
-                       bool verbose)
+                       bool verbose, bool csv)
 {
     Aggregate a;
     for (int i = 0; i < cases; ++i)
@@ -373,6 +427,10 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
         a.tempoOver4 += score.tempoOver4 / n * 100.0;
         a.releases += score.fixedToLive;
         a.curveProofs += score.curveProofs;
+        a.recoveryViolations += score.recoveryViolations;
+        a.authorityFrames += score.authorityFrames;
+        hashWord (a.traceHash, static_cast<uint32_t> (score.traceHash & 0xffffffffULL));
+        hashWord (a.traceHash, static_cast<uint32_t> (score.traceHash >> 32));
         ++a.runs;
         if (verbose)
         {
@@ -390,10 +448,23 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
     }
 
     const double n = std::max (1, a.runs);
-    std::printf ("%-12s %5d %10.1f %10.1f %10.1f %9.2f%% %9.3f%% %9.2f%% %8d %8d\n",
-                 label, a.runs, a.meanSum / n, a.p95Sum / n, a.worst,
-                 a.phaseOver50 / n, a.tempoError / n, a.tempoOver4 / n,
-                 a.releases, a.curveProofs);
+    if (csv)
+    {
+        std::printf (
+            "%u,%s,%d,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%d,%d,%016llx,%d,%d\n",
+            offset, label, a.runs, a.meanSum / n, a.p95Sum / n, a.worst,
+            a.phaseOver50 / n, a.tempoError / n, a.tempoOver4 / n,
+            a.releases, a.curveProofs,
+            static_cast<unsigned long long> (a.traceHash),
+            a.recoveryViolations, a.authorityFrames);
+    }
+    else
+    {
+        std::printf ("%-12s %5d %10.1f %10.1f %10.1f %9.2f%% %9.3f%% %9.2f%% %8d %8d\n",
+                     label, a.runs, a.meanSum / n, a.p95Sum / n, a.worst,
+                     a.phaseOver50 / n, a.tempoError / n, a.tempoOver4 / n,
+                     a.releases, a.curveProofs);
+    }
     return a;
 }
 } // namespace
@@ -402,6 +473,7 @@ int main (int argc, char** argv)
 {
     bool quick = false;
     bool verbose = false;
+    bool csv = false;
     unsigned offset = 0;
     for (int i = 1; i < argc; ++i)
     {
@@ -409,19 +481,34 @@ int main (int argc, char** argv)
             quick = true;
         else if (std::strcmp (argv[i], "--verbose") == 0)
             verbose = true;
+        else if (std::strcmp (argv[i], "--csv") == 0)
+            csv = true;
         else if (std::strcmp (argv[i], "--offset") == 0 && i + 1 < argc)
             offset = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
     }
     const int cases = quick ? 16 : 64;
-    std::printf ("Matrice globale del moto: verita' scritta, %d casi per famiglia, offset %u.\n",
-                 cases, offset);
-    std::printf ("%-12s %5s %10s %10s %10s %10s %10s %10s %8s %8s\n",
-                 "famiglia", "corse", "fase media", "fase p95", "fase p99.5",
-                 ">50 ms", "err BPM", ">4% BPM", "F->V", "curve");
-    const Aggregate fixed = printFamily (MotionKind::flat, "fisso", cases, offset, verbose);
+    if (csv && offset == 0)
+    {
+        std::printf (
+            "offset,family,runs,mean,p95,p995,over50,bpm_error,bpm_over4,releases,"
+            "curve,trace_hash,recovery_violations,authority_frames\n");
+    }
+    if (! csv)
+    {
+        std::printf ("Matrice globale del moto: verita' scritta, %d casi per famiglia, offset %u.\n",
+                     cases, offset);
+        std::printf ("%-12s %5s %10s %10s %10s %10s %10s %10s %8s %8s\n",
+                     "famiglia", "corse", "fase media", "fase p95", "fase p99.5",
+                     ">50 ms", "err BPM", ">4% BPM", "F->V", "curve");
+    }
+    const Aggregate fixed =
+        printFamily (MotionKind::flat, "fisso", cases, offset, verbose, csv);
     const Aggregate smooth =
-        printFamily (MotionKind::smooth, "continuo", cases, offset, verbose);
-    printFamily (MotionKind::step, "gradino", cases, offset, verbose);
+        printFamily (MotionKind::smooth, "continuo", cases, offset, verbose, csv);
+    printFamily (MotionKind::step, "gradino", cases, offset, verbose, csv);
+
+    if (csv)
+        return 0;
 
     // A selector that would release a click-stable tempo even once is not a
     // production gate. The moving population must still contain qualifying
