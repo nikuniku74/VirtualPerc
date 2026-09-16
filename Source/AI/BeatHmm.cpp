@@ -16,7 +16,7 @@ namespace
     // inside one beat, and anything that needs to move faster than this is a
     // different song rather than the same one played quicker.
     constexpr int kReach = 2;
-
+    
     // Where a listener's sense of pulse sits. Not a tie-breaker bolted on
     // afterwards - it is part of the model, because it is part of hearing: the
     // reason nobody taps 184 to a slow rock tune is not that 184 does not fit,
