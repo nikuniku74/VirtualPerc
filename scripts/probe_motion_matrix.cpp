@@ -336,7 +336,7 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
         // Performance scoring starts after acquisition, but false authority is
         // a safety diagnostic and must cover the whole run. The hypothesis
         // field keeps the existing stale gate on this wider counter.
-        const float motionAuthority = h.motionShadowAuthority;
+        const float motionAuthority = h.motionBridgeAuthority;
         if (motionAuthority > 0.0f)
             ++score.authorityFrames;
         shadowProven = shadowProven || motionAuthority > 0.0f;
