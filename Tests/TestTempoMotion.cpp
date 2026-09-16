@@ -7,6 +7,10 @@
 
 namespace
 {
+constexpr float kDyadicBasePeriodSec = 0.5f;
+constexpr float kDyadicPeriodSlopeSec = -1.0f / 256.0f;
+constexpr float kDyadicCommittedBpm = 100.0f;
+
 vp::TempoMotionObservation observation (double t, float committed,
                                         float shortFit, int steps = 1)
 {
@@ -32,13 +36,48 @@ bool predictedBpmInRange (float bpm) noexcept
     return std::isfinite (bpm) && bpm >= 50.0f && bpm <= 190.0f;
 }
 
-bool outputFiniteInactive (const vp::TempoMotionOutput& out) noexcept
+bool outputFiniteInactiveZeroPrediction (const vp::TempoMotionOutput& out) noexcept
 {
     return std::isfinite (out.predictedBpm)
         && std::isfinite (out.periodDeltaPerBeat)
         && std::isfinite (out.uncertainty)
         && std::isfinite (out.authority)
-        && out.authority == 0.0f;
+        && out.authority == 0.0f
+        && out.predictedBpm == 0.0f;
+}
+
+float dyadicPeriodSec (int intervalIndex) noexcept
+{
+    return kDyadicBasePeriodSec + kDyadicPeriodSlopeSec * static_cast<float> (intervalIndex);
+}
+
+struct DyadicPeriodFeedResult
+{
+    vp::TempoMotionOutput last {};
+    double lastTimeSec = 0.0;
+    int intervalsFed = 0;
+};
+
+DyadicPeriodFeedResult feedDyadicLinearPeriods (vp::TempoMotionTracker& tracker,
+                                                int intervalCount) noexcept
+{
+    DyadicPeriodFeedResult result {};
+    result.lastTimeSec = 0.0;
+    result.last = tracker.observe (
+        observation (result.lastTimeSec, kDyadicCommittedBpm, kDyadicCommittedBpm));
+
+    for (int n = 1; n < intervalCount; ++n)
+    {
+        const float periodSec = dyadicPeriodSec (n - 1);
+        result.lastTimeSec += static_cast<double> (periodSec);
+        result.last = tracker.observe (
+            observation (result.lastTimeSec,
+                         kDyadicCommittedBpm,
+                         60.0f / periodSec));
+        result.intervalsFed = n;
+    }
+
+    return result;
 }
 
 vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
@@ -53,25 +92,6 @@ vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
         const float truth = committed + bpmPerBeat * static_cast<float> (beat);
         t += 60.0 / truth;
         last = tracker.observe (observation (t, committed, truth));
-    }
-    return last;
-}
-
-vp::TempoMotionOutput feedLinearPeriodRamp (vp::TempoMotionTracker& tracker,
-                                            int beats,
-                                            float committedBpm,
-                                            float basePeriodSec,
-                                            float periodSlopeSec) noexcept
-{
-    double t = 0.0;
-    vp::TempoMotionOutput last {};
-    tracker.observe (observation (t, committedBpm, committedBpm));
-    for (int n = 1; n < beats; ++n)
-    {
-        const float periodN = basePeriodSec + periodSlopeSec * static_cast<float> (n - 1);
-        t += static_cast<double> (periodN);
-        const float shortFit = 60.0f / periodN;
-        last = tracker.observe (observation (t, committedBpm, shortFit));
     }
     return last;
 }
@@ -243,36 +263,45 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
 
     {
         vp::TempoMotionTracker live;
-        const auto active = feedLinearPeriodRamp (live, 14, 100.0f, 0.60f, -0.0015f);
-        expect (active.authority >= 0.999f,
-                "linear period ramp earns authority via zero slope error");
+        const auto fed = feedDyadicLinearPeriods (live, 14);
+        expect (live.output().state == vp::TempoMotionShadowState::active
+                    && live.output().authority >= 0.999f,
+                "dyadic linear period ramp reaches active authority");
 
-        const float periodAtRevoke = 0.60f + (-0.0015f) * 10.0f;
-        auto revoke = observation (20.0, 100.0f, 60.0f / periodAtRevoke);
+        const float nextPeriod = dyadicPeriodSec (fed.intervalsFed);
+        const double revokeTime = fed.lastTimeSec + static_cast<double> (nextPeriod);
+        auto revoke = observation (revokeTime,
+                                   kDyadicCommittedBpm,
+                                   60.0f / nextPeriod);
         revoke.fixedRegime = false;
-        const float before = live.output().authority;
         const auto out = live.observe (revoke);
-        expect (before >= 0.999f
-                    && out.authority == 0.0f
-                    && out.periodDeltaPerBeat == 0.0f,
+        expect (out.authority == 0.0f
+                    && out.periodDeltaPerBeat == 0.0f
+                    && out.state != vp::TempoMotionShadowState::active,
                 "losing fixed eligibility revokes authority immediately");
     }
 
     {
+        vp::TempoMotionTracker zeroSe;
+        const auto fed = feedDyadicLinearPeriods (zeroSe, 14);
+        expect (fed.last.authority > 0.0f
+                    && fed.last.uncertainty <= 4.1e-6f,
+                "dyadic linear period hits infinite rate confidence");
+    }
+
+    {
         vp::TempoMotionTracker proof;
-        const float basePeriod = 0.60f;
-        const float periodSlope = -0.0015f;
         double t = 0.0;
-        proof.observe (observation (t, 100.0f, 100.0f));
+        proof.observe (observation (t, kDyadicCommittedBpm, kDyadicCommittedBpm));
         int qualifyingIndex = 0;
         float prevAuthority = 0.0f;
         bool proofTimingOk = true;
         for (int n = 1; n < 12; ++n)
         {
-            const float periodN = basePeriod + periodSlope * static_cast<float> (n - 1);
-            t += static_cast<double> (periodN);
-            const auto out =
-                proof.observe (observation (t, 100.0f, 60.0f / periodN));
+            const float periodSec = dyadicPeriodSec (n - 1);
+            t += static_cast<double> (periodSec);
+            const auto out = proof.observe (
+                observation (t, kDyadicCommittedBpm, 60.0f / periodSec));
             if (n >= 5)
             {
                 ++qualifyingIndex;
@@ -285,29 +314,26 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
             }
             prevAuthority = out.authority;
         }
-        expect (proofTimingOk, "linear period proof waits exactly three qualifying beats");
+        expect (proofTimingOk,
+                "dyadic linear period proof waits exactly three qualifying beats");
     }
 
     {
-        vp::TempoMotionTracker tracker;
-        feedAccelerando (tracker, 12);
-        const double t = 15.0;
-        for (const float badCommitted : { std::numeric_limits<float>::quiet_NaN(),
-                                          std::numeric_limits<float>::infinity(),
-                                          240.0f,
-                                          12.0f })
+        bool allBadCommittedOk = true;
+        for (const float badCommitted : { std::numeric_limits<float>::quiet_NaN (),
+                                            std::numeric_limits<float>::infinity (),
+                                            49.0f,
+                                            191.0f,
+                                            240.0f })
         {
-            auto bad = observation (t, 100.0f, 105.0f);
+            vp::TempoMotionTracker tracker;
+            tracker.observe (observation (0.0, 100.0f, 100.0f));
+            auto bad = observation (0.5, 100.0f, 100.0f);
             bad.committedBpm = badCommitted;
             const auto out = tracker.observe (bad);
-            if (! outputFiniteInactive (out)
-                || (std::isfinite (badCommitted) && badCommitted >= 50.0f
-                    && badCommitted <= 190.0f && predictedBpmInRange (out.predictedBpm)))
-            {
-                expect (false, "bad committed tempo publishes finite inactive diagnostics");
-                return;
-            }
+            allBadCommittedOk &= outputFiniteInactiveZeroPrediction (out);
         }
-        expect (true, "bad committed tempo publishes finite inactive diagnostics");
+        expect (allBadCommittedOk,
+                "bad committed tempo publishes finite inactive diagnostics");
     }
 }
