@@ -1,4 +1,5 @@
 #include "TestTempoMotion.h"
+#include "TestTempoMotionShape.h"
 #include "AI/BeatDecoder.h"
 #include "AI/TempoMotionTracker.h"
 
@@ -100,6 +101,8 @@ vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
 
 void vpRunTempoMotionTrackerTests (int& passed, int& failed)
 {
+    vpRunTempoMotionShapeTests (passed, failed);
+
     auto expect = [&] (bool condition, const char* name)
     {
         condition ? ++passed : ++failed;
