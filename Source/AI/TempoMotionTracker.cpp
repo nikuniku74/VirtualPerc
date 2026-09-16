@@ -291,11 +291,7 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     }
     else
     {
-        if (proofBeats > 0 || authority > 0.0f)
-        {
-            if (slopeSign != 0 && direction != 0 && slopeSign != direction)
-                authority = 0.0f;
-        }
+        authority = 0.0f;
         proofBeats = 0;
         direction = 0;
     }
@@ -304,8 +300,9 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
         std::clamp (intercept + slope * static_cast<float> (count),
                     kMinPeriodSec, kMaxPeriodSec);
     lastOutput.predictedBpm = finitePredictedBpm (60.0f / predictedPeriod);
-    lastOutput.periodDeltaPerBeat =
-        (authority > 0.0f && ! shortFitContradictsSlope) ? slope : 0.0f;
+    const bool publishMotionDelta =
+        ! shortFitContradictsSlope && (qualityOk || authority > 0.0f);
+    lastOutput.periodDeltaPerBeat = publishMotionDelta ? slope : 0.0f;
     lastOutput.uncertainty =
         std::clamp (4.0f / std::max (4.0f, rateZ), 0.0f, 1.0f);
     lastOutput.authority = authority;

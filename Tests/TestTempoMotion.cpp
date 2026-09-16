@@ -32,6 +32,15 @@ bool predictedBpmInRange (float bpm) noexcept
     return std::isfinite (bpm) && bpm >= 50.0f && bpm <= 190.0f;
 }
 
+bool outputFiniteInactive (const vp::TempoMotionOutput& out) noexcept
+{
+    return std::isfinite (out.predictedBpm)
+        && std::isfinite (out.periodDeltaPerBeat)
+        && std::isfinite (out.uncertainty)
+        && std::isfinite (out.authority)
+        && out.authority == 0.0f;
+}
+
 vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
                                         int beats,
                                         float committed = 100.0f,
@@ -44,6 +53,25 @@ vp::TempoMotionOutput feedAccelerando (vp::TempoMotionTracker& tracker,
         const float truth = committed + bpmPerBeat * static_cast<float> (beat);
         t += 60.0 / truth;
         last = tracker.observe (observation (t, committed, truth));
+    }
+    return last;
+}
+
+vp::TempoMotionOutput feedLinearPeriodRamp (vp::TempoMotionTracker& tracker,
+                                            int beats,
+                                            float committedBpm,
+                                            float basePeriodSec,
+                                            float periodSlopeSec) noexcept
+{
+    double t = 0.0;
+    vp::TempoMotionOutput last {};
+    tracker.observe (observation (t, committedBpm, committedBpm));
+    for (int n = 1; n < beats; ++n)
+    {
+        const float periodN = basePeriodSec + periodSlopeSec * static_cast<float> (n - 1);
+        t += static_cast<double> (periodN);
+        const float shortFit = 60.0f / periodN;
+        last = tracker.observe (observation (t, committedBpm, shortFit));
     }
     return last;
 }
@@ -90,6 +118,7 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         bool slopeNegative = false;
         bool predictsFaster = false;
         bool firstAuthorityProofClosed = true;
+        bool provingShowsDelta = false;
         for (int beat = 0; beat < 32; ++beat)
         {
             const float truth = 100.0f + 0.35f * static_cast<float> (beat);
@@ -99,6 +128,10 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
                 authorityBounded = false;
             if (out.authority > 0.0f && prevAuthority == 0.0f)
                 firstAuthorityProofClosed = out.proofClosed;
+            if (out.authority == 0.0f
+                && out.state == vp::TempoMotionShadowState::proving
+                && out.periodDeltaPerBeat != 0.0f)
+                provingShowsDelta = true;
             prevAuthority = out.authority;
             if (out.authority > 0.0f)
             {
@@ -111,7 +144,8 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
                     && slopeNegative
                     && predictsFaster
                     && authorityBounded
-                    && firstAuthorityProofClosed,
+                    && firstAuthorityProofClosed
+                    && provingShowsDelta,
                 "a clean accelerando earns bounded authority");
     }
 
@@ -208,39 +242,72 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
     }
 
     {
-        vp::TempoMotionTracker linear;
+        vp::TempoMotionTracker live;
+        const auto active = feedLinearPeriodRamp (live, 14, 100.0f, 0.60f, -0.0015f);
+        expect (active.authority >= 0.999f,
+                "linear period ramp earns authority via zero slope error");
+
+        const float periodAtRevoke = 0.60f + (-0.0015f) * 10.0f;
+        auto revoke = observation (20.0, 100.0f, 60.0f / periodAtRevoke);
+        revoke.fixedRegime = false;
+        const float before = live.output().authority;
+        const auto out = live.observe (revoke);
+        expect (before >= 0.999f
+                    && out.authority == 0.0f
+                    && out.periodDeltaPerBeat == 0.0f,
+                "losing fixed eligibility revokes authority immediately");
+    }
+
+    {
+        vp::TempoMotionTracker proof;
+        const float basePeriod = 0.60f;
+        const float periodSlope = -0.0015f;
         double t = 0.0;
-        const float startBpm = 100.0f;
-        const float endBpm = 111.0f;
-        const int beats = 12;
-        bool highConfidence = false;
-        for (int beat = 0; beat < beats; ++beat)
+        proof.observe (observation (t, 100.0f, 100.0f));
+        int qualifyingIndex = 0;
+        float prevAuthority = 0.0f;
+        bool proofTimingOk = true;
+        for (int n = 1; n < 12; ++n)
         {
-            const float truth =
-                startBpm + (endBpm - startBpm) * static_cast<float> (beat)
-                          / static_cast<float> (beats - 1);
-            t += 60.0 / truth;
-            const auto out = linear.observe (observation (t, startBpm, truth));
-            if (beat == beats - 1)
-                highConfidence = out.uncertainty < 0.05f && out.authority > 0.0f;
+            const float periodN = basePeriod + periodSlope * static_cast<float> (n - 1);
+            t += static_cast<double> (periodN);
+            const auto out =
+                proof.observe (observation (t, 100.0f, 60.0f / periodN));
+            if (n >= 5)
+            {
+                ++qualifyingIndex;
+                if (qualifyingIndex < 3)
+                    proofTimingOk &= out.authority == 0.0f;
+                else if (qualifyingIndex == 3)
+                    proofTimingOk &= out.authority > 0.0f && out.authority <= 0.350001f;
+                if (out.authority > prevAuthority + 0.350001f)
+                    proofTimingOk = false;
+            }
+            prevAuthority = out.authority;
         }
-        expect (highConfidence,
-                "a perfect-linear ramp yields high rate confidence");
+        expect (proofTimingOk, "linear period proof waits exactly three qualifying beats");
     }
 
     {
         vp::TempoMotionTracker tracker;
-        feedAccelerando (tracker, 10);
-        vp::TempoMotionObservation bad {};
-        bad.beatTimeSec = std::numeric_limits<double>::quiet_NaN();
-        bad.committedBpm = 100.0f;
-        bad.shortFitBpm = 105.0f;
-        bad.gridQuarterSteps = 1;
-        bad.lineFeed = true;
-        bad.fixedRegime = true;
-        const auto out = tracker.observe (bad);
-        expect (predictedBpmInRange (out.predictedBpm)
-                    && out.authority == 0.0f,
-                "bad observations publish finite inactive diagnostics");
+        feedAccelerando (tracker, 12);
+        const double t = 15.0;
+        for (const float badCommitted : { std::numeric_limits<float>::quiet_NaN(),
+                                          std::numeric_limits<float>::infinity(),
+                                          240.0f,
+                                          12.0f })
+        {
+            auto bad = observation (t, 100.0f, 105.0f);
+            bad.committedBpm = badCommitted;
+            const auto out = tracker.observe (bad);
+            if (! outputFiniteInactive (out)
+                || (std::isfinite (badCommitted) && badCommitted >= 50.0f
+                    && badCommitted <= 190.0f && predictedBpmInRange (out.predictedBpm)))
+            {
+                expect (false, "bad committed tempo publishes finite inactive diagnostics");
+                return;
+            }
+        }
+        expect (true, "bad committed tempo publishes finite inactive diagnostics");
     }
 }
