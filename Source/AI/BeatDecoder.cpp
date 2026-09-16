@@ -574,7 +574,6 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     if (wanted == octaveShift)
         return;
 
-    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
     const bool cadenceCorrection = metricalOctaveHintValid
                                    && wanted == metricalOctaveHint
                                    && wanted < octaveShift
@@ -639,6 +638,9 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     shortFitResidual = 1.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
+    // Regime exit revokes authority with a generic tenure reset first. Publish
+    // the causal boundary last so diagnostics retain the octave/grid reason.
+    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
 }
 
 void BeatDecoder::observeDownbeatCadence() noexcept
@@ -2595,7 +2597,6 @@ void BeatDecoder::updateTempo() noexcept
         // noisier than no fit at all - 0.9 BPM of steady-state spread became
         // 1.7 on the same material.
         ++gridSerial;
-        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
         clearTempoTransition (TempoTransitionReason::reset);
         beatWrite = 0;
         beatFilled = 0;
@@ -2621,6 +2622,7 @@ void BeatDecoder::updateTempo() noexcept
         longFitBpm = 0.0f;
         shortFitBpm = 0.0f;
         shortFitResidual = 1.0f;
+        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
         return;
     }
 
@@ -2671,7 +2673,6 @@ void BeatDecoder::updateTempo() noexcept
             staleGridBpm = 0.0f;
             tempo.restartEvidence();
             ++gridSerial;
-            resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
             clearTempoTransition (TempoTransitionReason::reset);
             lastBeatSec = -1.0;
             gridAnchorSec = -1.0;
@@ -2701,6 +2702,7 @@ void BeatDecoder::updateTempo() noexcept
             shortFitBpm = 0.0f;
             shortFitResidual = 1.0f;
             enterRegime (TempoRegime::unknown);
+            resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
             return;
         }
     }

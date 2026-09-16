@@ -10,7 +10,8 @@
 // Build (decoder + the clock heard by the percussion engine):
 //   clang++ -std=c++17 -O2 -Wno-unused-function -I Source \
 //     scripts/probe_motion_matrix.cpp Source/AI/BeatDecoder.cpp \
-//     Source/AI/TempoEstimator.cpp Source/AI/BeatHmm.cpp \
+//     Source/AI/TempoMotionTracker.cpp Source/AI/TempoEstimator.cpp \
+//     Source/AI/BeatHmm.cpp \
 //     Source/Tracking/TempoFollower.cpp -o /tmp/probe_motion_matrix
 //
 // Run the default 192 cases, or 48 while developing:
@@ -332,6 +333,14 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             previousRegime = h.regime;
         }
 
+        // Performance scoring starts after acquisition, but false authority is
+        // a safety diagnostic and must cover the whole run. The hypothesis
+        // field keeps the existing stale gate on this wider counter.
+        const float motionAuthority = h.motionShadowAuthority;
+        if (motionAuthority > 0.0f)
+            ++score.authorityFrames;
+        shadowProven = shadowProven || motionAuthority > 0.0f;
+
         const double now = frame / kFps;
         while (truth + 1 < beats.size() && beats[truth + 1] <= now)
             ++truth;
@@ -363,10 +372,6 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             hashFloat (score.traceHash, clock.currentTempo());
             hashWord (score.traceHash, static_cast<uint32_t> (truth));
 
-            const float motionAuthority = h.motionShadowAuthority;
-            if (motionAuthority > 0.0f)
-                ++score.authorityFrames;
-            shadowProven = shadowProven || motionAuthority > 0.0f;
             if (shadowProven && phaseMs > 50.0 && ! excursionOpen)
             {
                 excursionOpen = true;

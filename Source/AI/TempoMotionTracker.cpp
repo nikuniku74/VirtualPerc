@@ -101,6 +101,10 @@ void TempoMotionTracker::reset (bool fullModelReset, TempoMotionVeto reason) noe
     lastOutput.veto = reason;
     lastOutput.state = filled > 0 ? TempoMotionShadowState::proving
                                   : TempoMotionShadowState::idle;
+    // A discontinuity or transition leaves the bounded period model available
+    // for diagnostics, but there is no measurable interval across the boundary.
+    // The next valid beat is an anchor, not a period sample.
+    lastBeatTimeSec = -1.0;
     if (modelPeriodSec >= kMinPeriodSec && modelPeriodSec <= kMaxPeriodSec)
         lastOutput.predictedBpm = finitePredictedBpm (60.0f / modelPeriodSec);
     else
@@ -128,14 +132,27 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
 
     if (! std::isfinite (o.beatTimeSec) || ! std::isfinite (o.committedBpm)
         || ! std::isfinite (o.shortFitBpm)
-        || o.gridQuarterSteps < 1 || o.committedBpm < 50.0f || o.committedBpm > 190.0f)
+        || o.beatTimeSec < 0.0 || o.gridQuarterSteps < 1
+        || o.committedBpm < 50.0f || o.committedBpm > 190.0f)
         return publishVeto (TempoMotionVeto::badObservation);
 
+    auto publishAnchoredVeto = [&] (TempoMotionVeto reason) noexcept
+    {
+        // These are accepted beats whose tempo evidence is temporarily
+        // ineligible. They still delimit the next measurable interval. Leaving
+        // the anchor behind made the following one-step sample span two beats
+        // and read 120 BPM as 60 after a single vetoed beat.
+        if (lastBeatTimeSec >= 0.0 && o.beatTimeSec <= lastBeatTimeSec)
+            return publishVeto (TempoMotionVeto::badObservation);
+        lastBeatTimeSec = o.beatTimeSec;
+        return publishVeto (reason);
+    };
+
     if (o.transitionState != TempoTransitionState::stable || o.transitionRefitBeats != 0)
-        return publishVeto (TempoMotionVeto::transition);
+        return publishAnchoredVeto (TempoMotionVeto::transition);
 
     if (! o.lineFeed)
-        return publishVeto (TempoMotionVeto::notDirect);
+        return publishAnchoredVeto (TempoMotionVeto::notDirect);
 
     if (lastBeatTimeSec < 0.0)
     {

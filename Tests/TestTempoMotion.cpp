@@ -207,6 +207,80 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
             "a two-quarter gap is normalized before fitting");
 
     {
+        vp::TempoMotionTracker dropout;
+        dropout.observe (observation (0.0, 120.0f, 120.0f));
+        dropout.observe (observation (0.5, 120.0f, 120.0f));
+        dropout.reset (false, vp::TempoMotionVeto::discontinuity);
+
+        const auto reanchored =
+            dropout.observe (observation (20.0, 120.0f, 120.0f));
+        const auto resumed =
+            dropout.observe (observation (20.5, 120.0f, 120.0f));
+        expect (reanchored.veto == vp::TempoMotionVeto::none
+                    && reanchored.state == vp::TempoMotionShadowState::idle
+                    && resumed.veto == vp::TempoMotionVeto::none
+                    && std::fabs (resumed.predictedBpm - 120.0f) < 0.5f,
+                "a partial discontinuity reset invalidates the time anchor");
+    }
+
+    {
+        auto recoversAcrossValidVeto =
+            [] (vp::TempoTransitionState transitionState,
+                int refitBeats,
+                bool lineFeed,
+                vp::TempoMotionVeto expectedVeto)
+        {
+            vp::TempoMotionTracker tracker;
+            tracker.observe (observation (0.0, 120.0f, 120.0f));
+            tracker.observe (observation (0.5, 120.0f, 120.0f));
+
+            auto vetoed = observation (1.0, 120.0f, 120.0f);
+            vetoed.transitionState = transitionState;
+            vetoed.transitionRefitBeats = refitBeats;
+            vetoed.lineFeed = lineFeed;
+            const auto boundary = tracker.observe (vetoed);
+            const auto resumed =
+                tracker.observe (observation (1.5, 120.0f, 120.0f));
+            return boundary.veto == expectedVeto
+                && resumed.veto == vp::TempoMotionVeto::none
+                && std::fabs (resumed.predictedBpm - 120.0f) < 0.5f;
+        };
+
+        expect (recoversAcrossValidVeto (vp::TempoTransitionState::suspected,
+                                         0,
+                                         true,
+                                         vp::TempoMotionVeto::transition),
+                "a transition-vetoed beat advances the time anchor");
+        expect (recoversAcrossValidVeto (vp::TempoTransitionState::stable,
+                                         2,
+                                         true,
+                                         vp::TempoMotionVeto::transition),
+                "a refit-vetoed beat advances the time anchor");
+        expect (recoversAcrossValidVeto (vp::TempoTransitionState::stable,
+                                         0,
+                                         false,
+                                         vp::TempoMotionVeto::notDirect),
+                "a direct-path veto advances the time anchor");
+    }
+
+    {
+        vp::TempoMotionTracker tracker;
+        tracker.observe (observation (0.0, 120.0f, 120.0f));
+        tracker.observe (observation (0.5, 120.0f, 120.0f));
+        auto bad = observation (
+            std::numeric_limits<double>::quiet_NaN (), 120.0f, 120.0f);
+        const auto vetoed = tracker.observe (bad);
+        const auto resumed =
+            tracker.observe (observation (1.0, 120.0f, 120.0f));
+        expect (vetoed.veto == vp::TempoMotionVeto::badObservation
+                    && vetoed.authority == 0.0f
+                    && predictedBpmInRange (vetoed.predictedBpm)
+                    && resumed.veto == vp::TempoMotionVeto::none
+                    && std::fabs (resumed.predictedBpm - 120.0f) < 0.5f,
+                "a non-finite observation is vetoed without poisoning the anchor");
+    }
+
+    {
         vp::TempoMotionTracker ramp;
         const auto active = feedAccelerando (ramp, 28);
         expect (active.authority > 0.0f, "accelerando activates before veto checks");
@@ -346,13 +420,40 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         decoder.setLineFeed (true);
 
         bool fixedSilent = true;
+        bool sawValid = false;
+        bool sawAdvancingBeatSerial = false;
+        bool sawProvingFixedShadow = false;
+        int fixedFrames = 0;
+        uint32_t previousBeatSerial = 0;
         for (int frame = 0; frame < static_cast<int> (90.0 * fps); ++frame)
         {
             const float activation = (frame % framesPerBeat) == 0 ? 0.95f : 0.02f;
-            decoder.observe (activation, 0.02f, 1.0f - activation);
+            const auto hypothesis =
+                decoder.observe (activation, 0.02f, 1.0f - activation);
             const auto diagnostics = decoder.diagnostics();
             fixedSilent &= diagnostics.motionShadowAuthority == 0.0f;
+            sawValid |= hypothesis.valid;
+            sawAdvancingBeatSerial |= hypothesis.beatSerial > previousBeatSerial;
+            previousBeatSerial = hypothesis.beatSerial;
+            if (hypothesis.regime == vp::TempoRegime::fixed)
+            {
+                ++fixedFrames;
+                sawProvingFixedShadow |=
+                    diagnostics.motionShadowState
+                        == static_cast<int> (vp::TempoMotionShadowState::proving);
+            }
         }
+        expect (sawValid && sawAdvancingBeatSerial && previousBeatSerial > 100,
+                "fixed decoder fixture publishes valid advancing beats");
+        expect (fixedFrames > static_cast<int> (30.0 * fps),
+                "fixed decoder fixture spends meaningful time fixed");
+        expect (sawProvingFixedShadow,
+                "fixed decoder fixture exercises a proving shadow");
         expect (fixedSilent, "fixed decoder never publishes motion authority");
+
+        decoder.setUserOctave (1);
+        expect (decoder.diagnostics().motionShadowVeto
+                    == static_cast<int> (vp::TempoMotionVeto::octaveOrGrid),
+                "explicit octave reset reason survives regime exit");
     }
 }
