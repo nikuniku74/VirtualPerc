@@ -195,3 +195,117 @@ L'obiettivo e' raggiunto soltanto quando:
 5. accelerando e rallentando reali con beat-grid affidabile superano misura e
    ascolto;
 6. le invarianti realtime e di continuita' del clock restano provate.
+
+## Emendamento: prova ibrida al confine `fixed -> live`
+
+Il primo tentativo di Task 5 ha falsificato l'ipotesi che bastasse accordare le
+soglie del regressore lineare. Con le soglie originali nessuna delle quattro
+popolazioni continue rapide ha prodotto autorita'. Ridurre la significativita'
+da 4 a 3 ha attivato soltanto una popolazione continua, ma ha anche dato
+autorita' a due popolazioni a gradino, cambiandone i trace hash e producendo
+violazioni del rientro. Ridurre il numero di prove ha mostrato lo stesso
+conflitto. Nessuna di queste varianti viene mantenuta.
+
+La causa misurata e' l'ordine delle decisioni. Il tracker osserva il beat prima
+che il decoder valuti il regime; l'ingresso in `fixed` azzera correttamente il
+modello e il beat successivo serve da ancora. Sul moto continuo, pero', il
+rilascio `fixed -> live` esistente usa l'evidenza utile prima che il tracker
+possa accumulare tre prove. Sul gradino il decoder puo' restare `fixed` piu' a
+lungo, mentre la finestra che attraversa i due plateau assomiglia
+temporaneamente a una retta. Una soglia piu' permissiva premia quindi il caso
+sbagliato.
+
+Il confronto tra segno della pendenza e differenza tra fit corto e BPM commesso
+non e' la causa operativa: nei campioni con finestra piena e significativita'
+alta i segni concordano. Le discordie osservate appartengono soprattutto a
+finestre ancora incomplete dopo un reset.
+
+### Decisione ibrida
+
+La prova viene divisa in due livelli indipendenti:
+
+1. **ponte minimo sul beat di rilascio:** il tracker espone il fronte della
+   prima prova stretta. Se, sullo stesso beat accettato, quel fronte coincide
+   con il predicato di rilascio `fixed -> live` gia' esistente, il decoder puo'
+   applicare una sola correzione preventiva con autorita' massima `0.35`.
+   La correzione avviene mentre il regime e' ancora `fixed`, prima di entrare
+   in `live`; poi il percorso `live` esistente prende il controllo;
+2. **autorita' piena dalla forma:** se il decoder resta `fixed`, una finestra
+   causale da sette a dodici punti confronta quattro spiegazioni dei residui di
+   fase: affine, quadratica, hinge a due rette e affine con un outlier escluso.
+   Il quadratico deve vincere su due beat accettati consecutivi prima che
+   l'autorita' possa crescere oltre il ponte minimo. Una vittoria hinge
+   identifica un gradino, azzera la prova e mette la finestra in quarantena.
+
+Il ponte minimo e' deliberatamente falsificabile: nei banchi rapidi analizzati
+la coincidenza prima-prova/rilascio appare sul moto continuo e non sui gradini,
+ma non viene trattata come un'invariante finche' banco pieno, offset
+indipendenti e gate mirati non lo confermano. Se cambia anche un solo trace
+hash a gradino, il ponte minimo viene rifiutato; non se ne allarga la soglia.
+
+### Modello dei residui
+
+All'ingresso in `fixed` il tracker salva soltanto un nuovo riferimento
+`entryTime`, il periodo commesso `p0` e un indice di griglia cumulativo. Non
+porta velocita', autorita' o pendenza dal regime precedente. Per ogni beat
+accettato:
+
+```text
+gridIndex += gridQuarterSteps
+residual = beatTime - entryTime - gridIndex * p0
+```
+
+Una variazione continua del periodo curva il residuo cumulativo; un gradino
+crea due tratti quasi lineari uniti da un hinge; un tempo costante o uno
+spostamento permanente di fase resta affine; un onset isolato viene assorbito
+dal modello con un punto escluso. Tutti i fit usano array fissi e provano un
+numero limitato di split, senza allocazioni.
+
+Il verdetto usa miglioramenti normalizzati rispetto al rumore robusto della
+finestra, non soglie in BPM derivate da un brano. Dai sette punti in poi il
+modello viene rivalutato a ogni beat fino a dodici punti; non esiste una prova
+forzata allo scadere. Un moto troppo debole o ambiguo resta senza autorita'.
+
+### Stato e priorita'
+
+Il tracker aggiunge diagnostica limitata per:
+
+- fronte della prima prova stretta;
+- modello vincente (`affine`, `quadratico`, `hinge`, `outlier`);
+- margine quadratico-versus-hinge;
+- beat consecutivi di conferma;
+- beat residui di quarantena.
+
+Transizione `suspected`/`rapid`, refit, ottava, ricostruzione della griglia,
+input epoch, discontinuita', percorso non diretto, perdita di `fixed`,
+osservazione non valida o evidenza scaduta azzerano immediatamente ogni
+autorita'. Un hinge o un edge brusco osservato dal decoder apre una quarantena
+di dodici beat. Durante la quarantena il tracker puo' aggiornare la diagnostica,
+ma non pubblicare autorita'. Un gradino completato diventa poi affine e non puo'
+essere reinterpretato come moto.
+
+Il ramo con autorita' zero resta bit-identico. Entrambi i livelli usano solo
+`commit`, il limite di `0.75%` per beat e la distanza massima del `4%`; non
+scrivono `fixedAnchorBpm`, beat history, `gridAnchorSec`, stato o seriali di
+transizione, ottava o battuta.
+
+### Verifica dell'emendamento
+
+Prima dell'implementazione devono fallire test mirati che provano:
+
+- la coincidenza prima-prova/rilascio su una rampa e la sua assenza su un
+  gradino con finestra apparentemente lineare;
+- la singola correzione minima prima del passaggio a `live`;
+- la vittoria quadratica su accelerando e rallentando;
+- la vittoria hinge su gradini tra ogni coppia di posizioni della finestra,
+  anche col primo beat nuovo mancante;
+- affine su tempo fisso e spostamento di fase permanente;
+- outlier su un beat spostato e corretta normalizzazione dei beat mancanti;
+- quarantena, reset, rail `0.75%`/`4%` e seriali/griglia immutati.
+
+L'accettazione resta quella originale e non viene negoziata: trace hash e
+autorita' dei gradini invariati, miglioramento di media e p95 in ogni
+popolazione continua, autorita' continua non nulla e zero violazioni oltre due
+beat. Prima si eseguono quattro offset rapidi; poi banco pieno, nuovi offset,
+`VPAlign`, gate tempo e probe standalone. Soltanto dopo questi risultati si
+procede all'audio reale.
