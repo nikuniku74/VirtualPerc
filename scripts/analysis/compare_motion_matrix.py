@@ -8,14 +8,23 @@ FIELDS = {
     "recovery_violations", "authority_frames"
 }
 
+CSV_HEADER = (
+    "offset,family,runs,mean,p95,p995,over50,bpm_error,bpm_over4,releases,"
+    "curve,trace_hash,recovery_violations,authority_frames"
+)
+
+
+def load_stream(stream):
+    rows = list(csv.DictReader(line for line in stream if not line.startswith("#")))
+    rows = [row for row in rows if row.get("offset") != "offset"]
+    if not rows or not FIELDS.issubset(rows[0]):
+        raise ValueError("colonne mancanti")
+    return {(int(r["offset"]), r["family"]): r for r in rows}
+
 
 def load(path):
     with open(path, newline="") as stream:
-        rows = list(csv.DictReader(line for line in stream if not line.startswith("#")))
-    rows = [row for row in rows if row.get("offset") != "offset"]
-    if not rows or not FIELDS.issubset(rows[0]):
-        raise ValueError(f"{path}: colonne mancanti")
-    return {(int(r["offset"]), r["family"]): r for r in rows}
+        return load_stream(stream)
 
 
 def compare(control, candidate):
@@ -40,7 +49,46 @@ def compare(control, candidate):
     return failures
 
 
+def _fixture_rows(continuo_mean, continuo_p95, continuo_recovery="0"):
+    return (
+        f"{CSV_HEADER}\n"
+        "0,fisso,16,10.0,20.0,30.0,0,0,0,0,0,fissohash,0,0\n"
+        "0,gradino,16,11.0,21.0,31.0,0,0,0,0,0,gradhash,0,0\n"
+        f"0,continuo,16,{continuo_mean},{continuo_p95},200.0,0,0,0,0,0,"
+        f"conthash,0,0\n"
+    )
+
+
+def run_self_test():
+    control = load_stream(io.StringIO(_fixture_rows("50.0", "100.0")))
+
+    improved = load_stream(io.StringIO(_fixture_rows("40.0", "90.0")))
+    pass_failures = compare(control, improved)
+    if pass_failures:
+        print("self-test FAIL: valid candidate should pass", file=sys.stderr)
+        for failure in pass_failures:
+            print(f"  {failure}", file=sys.stderr)
+        return 1
+
+    equal = load_stream(io.StringIO(_fixture_rows("50.0", "100.0")))
+    equal_failures = compare(control, equal)
+    expected = {
+        "(0, 'continuo'): media non migliorata",
+        "(0, 'continuo'): p95 non migliorato",
+    }
+    if set(equal_failures) != expected:
+        print("self-test FAIL: equal continuo should fail mean and p95 only",
+              file=sys.stderr)
+        print(f"  got: {equal_failures}", file=sys.stderr)
+        return 1
+
+    print("PASS compare_motion_matrix self-test")
+    return 0
+
+
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        return run_self_test()
     if len(sys.argv) != 3:
         print("usage: compare_motion_matrix.py CONTROL.csv CANDIDATE.csv",
               file=sys.stderr)
