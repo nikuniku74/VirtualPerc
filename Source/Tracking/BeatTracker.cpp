@@ -1029,12 +1029,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                           static_cast<double> (numSamples) / sampleRate,
                           hyp.shortFitResidual);
 
-    // A tracked direct feed leans back towards the decoder's own line fit as
-    // this song's evidence goes wide - see trackedPhaseWeight.
+    // A tracked direct feed leans back towards the decoder's own line fit only
+    // while the kick channel says the drummer is out - see trackedPhaseWeight.
     float trackedWeight = 0.0f;
     if (haveHyp && hyp.valid && hyp.phaseTracked)
     {
-        trackedWeight = trackedPhaseWeight (evidence.trust());
+        trackedLean = trackedPhaseWeight (trackedLean, evidence.drumsAreOut(),
+                                          static_cast<double> (numSamples) / sampleRate);
+        trackedWeight = trackedLean;
         if (trackedWeight < 1.0f)
         {
             hyp.beatPhase = wrap01 (hyp.fitBeatPhase
@@ -1122,7 +1124,13 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // passage whose beats are worse placed than the song's own is averaged
     // instead of followed. A tempo the listener owns is not the analysis's to
     // slow down.
-    follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
+    // The residual trust reads a band slowing down as badly placed beats - the
+    // 24-beat line stops fitting either way - so a tracked feed, whose filter
+    // already follows the motion, applies it only in proportion to the lean.
+    const float clockTrust = hyp.phaseTracked
+                                 ? 1.0f - (1.0f - trackedWeight) * (1.0f - evidence.trust())
+                                 : evidence.trust();
+    follower.setTempoTrust (tempoOwned ? 1.0f : clockTrust);
     // Serial identity belongs to the neural beat, never the audio callback.
     // Reject a backlog older than one beat instead of confirming stale audio.
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
@@ -1563,7 +1571,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                               * (kGridTauTracked - kGridTauHolding)
                                     : cleanTempoMotion ? kGridTauMotion
                                                        : kGridTauHolding,
-                                    holding, evidence.trust());
+                                    holding, clockTrust);
             follower.setGridPhase (songPhase, phaseTau);
         }
     }

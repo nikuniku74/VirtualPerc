@@ -275,11 +275,17 @@ The details that made it globally safe, each measured on `probe_motion_matrix`:
   owns the step until the committed tempo arrives within 4%.
 - **Phase just before the newest corrected beat date is the end of the previous
   beat,** not zero: that clamp was a 60 ms one-frame spike.
-- **Lean back on poor evidence.** A passage without a drummer makes onsets
-  *late* for seconds and the filter follows lateness as faithfully as motion.
-  `BeatTracker` blends tracked -> line-fit phase/rate and 0.15 -> 0.90 s phase
-  constant by `trackedPhaseWeight(evidence.trust())`; a band speeding up with
-  its drummer never leaves trust 1, so ramps keep the full benefit.
+- **Lean back only when the kick channel says the drummer is out.** A passage
+  without a drummer makes onsets *late* for seconds and the filter follows
+  lateness as faithfully as motion, so `BeatTracker` eases tracked -> line-fit
+  phase/rate and 0.15 -> 0.90 s over 0.5 s while `drumsAreOut()`. It does
+  **not** lean on the residual trust: on a real song (SPLENDIDA GIORNATA, 108 ->
+  105 BPM at 32 s and 104 s) that trust hit its 0.30 floor exactly while the
+  band slowed and put the clock 90 ms behind. Measured through `VPTrack` against
+  an offline non-causal reference (not taps), offset removed, mean/p95/>50 ms:
+  pre-filter 22.9/63.4/10.5% -> residual lean 19.1/63.5/7.3% -> drums-out lean
+  17.7/47.7/4.3%. Accepted cost: without an assigned kick channel the synthetic
+  drum-hole bench goes 20.9/34.9 -> 30.3/66.1 and 25.3/66.2 -> 37.5/102.8 ms.
 
 Sounding MIXER clock phase against the written grid (`probe_motion_matrix`,
 HEAD -> filter). Tuning used offsets 0/16/32/48 only; 64/96/128 were never
@@ -298,9 +304,7 @@ sixteenth-note grid confusion, which neither path solves. `VPAlign` MIXER ramps
 19.5/52.1; flat 7.1/33.3 -> 8.3/34.6 and 7.2/22.0 -> 6.4/22.0. Only 128->120
 still misses its gate (19.5/52.0), by 0.1 ms of worst: at the end of that
 rallentando the target is 18-27 ms late and the clock loop adds ~20 ms more.
-All six steps still PASS. The drum-hole bench costs a little (MIXER, eight
-songs, mean/worst: 20.9/34.9 -> 23.6/45.4 and 25.3/66.2 -> 27.4/68.7) while its
-accelerando column improves 23.6/46.5 -> 14.1/37.4. The room path is unchanged
+All six steps still PASS. The drum-hole cost is in the lean bullet above. The room path is unchanged
 (the filter publishes only on `lineFeed`). Real beat-grid and listening are
 still required.
 

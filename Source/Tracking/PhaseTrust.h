@@ -29,16 +29,19 @@ constexpr float kGridTauMotion = 0.30f;
     accelerando; a short constant only smooths the per-frame refresh. */
 constexpr float kGridTauTracked = 0.15f;
 
-/** How far the clock may follow the beat-date filter rather than the decoder's
-    line fit, from the evidence trust below: all the way while this song's
-    beats are as well placed as usual, not at all at the trust floor. A
-    passage without a drummer makes the onsets *late* for seconds, and the
-    filter follows lateness as faithfully as it follows a band speeding up;
-    the long fit and its long constant were what held that passage. */
-inline float trackedPhaseWeight (float trust) noexcept
+/** How far the clock follows the beat-date filter rather than the decoder's
+    line fit: all the way, easing to none over half a second while the kick
+    channel says the drummer is out, and back when the kick returns. A
+    passage without a drummer makes the onsets *late* for seconds and the
+    filter follows lateness as faithfully as motion. The residual trust
+    below cannot be the switch: on a real song (SPLENDIDA GIORNATA, 108 ->
+    106 BPM at 32 s) it fell to its floor exactly while the band slowed,
+    and leaning on it put the clock 90 ms behind. */
+inline float trackedPhaseWeight (float previous, bool drumsOut, double seconds) noexcept
 {
-    constexpr float kFloor = 0.30f;
-    return std::clamp ((trust - kFloor) / (1.0f - kFloor), 0.0f, 1.0f);
+    constexpr double kEaseSec = 0.5;
+    const float step = static_cast<float> (std::min (1.0, seconds / kEaseSec));
+    return std::clamp (previous + (drumsOut ? -step : step), 0.0f, 1.0f);
 }
 
 /** A held direct-feed tempo is only called musically in motion once the

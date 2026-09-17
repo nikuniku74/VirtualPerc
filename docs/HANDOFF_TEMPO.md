@@ -61,6 +61,25 @@ Test mirati: `--tempo-motion` 294/0 (5 nuovi sul filtro), `--tempo-step` 11/0,
 10/0 (una corsa 8/2 sotto carico, poi sei 10/0: intermittente). Suite completa
 non eseguita.
 
+**17/09/2026 — primo brano reale e scelta sul buco batteria.** Su
+`26 SPLENDIDA GIORNATA.mp3` (157 s, ~108 BPM che respira fra 105 e 110) il motore
+completo (`VPTrack --pulses`) e' stato confrontato, nello stesso `build-host`,
+con il codice prima del filtro. Riferimento: beat tracker offline a
+programmazione dinamica (non causale) lisciato con quadratica locale su +/-4
+battiti; indipendente dall'app ma **non** tap umano. Replay strumentato delle
+attivazioni: a 32-37 s e 103-107 s la band rallenta ~2,5%, la fiducia del
+residuo va al pavimento 0,30 esattamente li' (la retta lunga smette di
+adattarsi anche su un rallentamento), il peso del filtro va a zero e il clock
+torna alla retta ferma a 108: +65/+90 ms, poi rientro brusco. Ora il ritorno al
+fit segue solo `EvidenceTrust::drumsAreOut()` (canale cassa), con rampa di 0,5 s,
+e la fiducia del residuo pesa sul clock solo in proporzione a quel ritorno.
+Clock, offset costante tolto (media / p95 / >50 ms): prima del filtro
+22,9/63,4/10,5% -> filtro con fiducia 19,1/63,5/7,3% -> **17,7/47,7/4,3%**.
+Costo: il segnale cassa esiste solo con canale assegnato; senza, il buco batteria
+sintetico di `VPAlign` passa da 20,9/34,9 a 30,3/66,1 ms e da 25,3/66,2 a
+37,5/102,8 (HEAD -> ora). Rampe e gradini `VPAlign` invariati rispetto al commit
+del filtro; suite mirate verdi (294/11/10/2/3/10/3).
+
 **Restano aperti.** 128->120 a filo del gate (loop del clock); costo sul buco
 batteria; sedicesimi presi per battito (griglia, non inseguimento); microfono
 iPad invariato; beat-grid manuale e ascolto su un accelerando/rallentando reale.
