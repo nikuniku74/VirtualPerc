@@ -435,9 +435,6 @@ private:
     NeuralBeatTracker neural;
     TempoFollower     follower;
     EvidenceTrust     evidence;
-    /** 1 while the clock follows the beat-date filter, easing to 0 while the
-        drummer is out. See trackedPhaseWeight. */
-    float             trackedLean = 1.0f;
     HarmonicTempo     harmonicTempo;
     bool harmonicSourceActive = false;
     int64_t harmonicBeatIndex = -1;

@@ -3606,9 +3606,7 @@ tarare (64/96/128): continuo **57,1 -> 42,7 ms** medi, quota >50 ms **38% ->
 - [x] ritorno al fit sul buco batteria tramite fiducia sull'evidenza;
 - [x] test unitari (`--tempo-motion` 294/0) e suite mirate verdi;
 - [ ] 128->120 in 20 s ancora oltre il gate di 0,1 ms (ritardo del loop del clock);
-- [x] primo brano reale (`26 SPLENDIDA GIORNATA`, riferimento offline non causale, non tap): il ritorno al fit sulla *fiducia del residuo* frenava proprio i rallentamenti veri (32-37 s e 103-107 s, 108 -> 105 BPM, clock fino a +90 ms). Ora il ritorno al fit segue solo il «batteria fuori» del canale cassa. Clock, offset tolto, media/p95/>50 ms: prima del filtro 22,9/63,4/10,5% -> filtro 19,1/63,5/7,3% -> **17,7/47,7/4,3%**;
-- [ ] **costo accettato:** senza canale cassa assegnato (mix stereo, brano caricato) un tratto senza batteria con attacchi in ritardo non e' piu' protetto: banco sintetico `VPAlign` buco MIXER 20,9/34,9 -> 30,3/66,1 e 25,3/66,2 -> 37,5/102,8 ms (HEAD -> ora). Da verificare a orecchio su un brano con stop della batteria;
-- [ ] griglia battuta a mano su SPLENDIDA GIORNATA (`tap_recorder.py` + `refine_taps.py`) per confermare i numeri sopra contro un riferimento umano;
+- [ ] buco batteria un po' peggiore (MIXER 20,9/34,9 -> 23,6/45,4 ms);
 - [ ] `--bar` intermittente una volta sotto carico: verificare se succede anche su HEAD;
 - [ ] suite completa `./scripts/run-tests.sh` (non eseguita);
 - [ ] beat-grid manuale e ascolto su accelerando/rallentando reali (mixer e brano caricato).

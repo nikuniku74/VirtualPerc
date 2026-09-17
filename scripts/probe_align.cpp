@@ -507,7 +507,6 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
     clock.setTempoTrimEnabled (trimClock);
     clock.resetClock();
     vp::EvidenceTrust trust;
-    float trackedLean = 1.0f;
     const int blockPerFrame = static_cast<int> (kSr / kFps);
     uint32_t lastBeatSerial = 0;
     bool seenSerial = false;
@@ -546,25 +545,18 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
                 lastBeatSerial = hy.beatSerial;
                 seenSerial = true;
             }
-            // BeatTracker's lean back to the line fit, which follows only the
-            // kick channel's drums-out call; this bench has no kick channel, so
-            // a tracked feed keeps the filter and ignores the residual trust.
+            clock.setTempoTrust (trustClock ? trust.trust() : 1.0f);
+            // BeatTracker's lean back to the line fit on poor evidence.
             float trackedWeight = 0.0f;
             auto hyLean = hy;
             if (hy.phaseTracked)
             {
-                trackedLean = vp::trackedPhaseWeight (trackedLean, false, 1.0 / kFps);
-                trackedWeight = trackedLean;
+                trackedWeight = vp::trackedPhaseWeight (trustGrid ? trust.trust() : 1.0f);
                 hyLean.beatPhase = vp::wrap01 (hy.fitBeatPhase
                                                + trackedWeight * vp::wrapCentered (hy.beatPhase
                                                                                    - hy.fitBeatPhase));
                 hyLean.clockBpm = hy.bpm + trackedWeight * (hy.clockBpm - hy.bpm);
             }
-            const float residualTrust = trust.trust();
-            const float leanTrust = hy.phaseTracked
-                                        ? 1.0f - (1.0f - trackedWeight) * (1.0f - residualTrust)
-                                        : residualTrust;
-            clock.setTempoTrust (trustClock ? leanTrust : 1.0f);
             if (hy.bpm > 50.0f)
                 clock.setTargetTempo (hy.phaseTracked && hyLean.clockBpm > 50.0f ? hyLean.clockBpm
                                                                             : hy.bpm,
@@ -585,7 +577,7 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
                                                             * (vp::kGridTauTracked - baseTau)
                                                       : baseTau,
                                                   true,
-                                                  trustGrid ? leanTrust : 1.0f));
+                                                  trustGrid ? trust.trust() : 1.0f));
         }
         clock.advance (blockPerFrame);
         const auto diag = dec.diagnostics();
