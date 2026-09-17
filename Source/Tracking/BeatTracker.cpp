@@ -1108,11 +1108,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
     // Serial identity belongs to the neural beat, never the audio callback.
     // Reject a backlog older than one beat instead of confirming stale audio.
-    const bool directLivePhaseFollow = haveHyp && hyp.valid && ! speakerFollow
-                                       && hyp.regime == TempoRegime::live
-                                       && hyp.transitionState
-                                              == TempoTransitionState::stable
-                                       && hyp.transitionRefitBeats == 0;
+    const bool stableDirectFeed = haveHyp && hyp.valid && ! speakerFollow
+                                  && hyp.transitionState
+                                         == TempoTransitionState::stable
+                                  && hyp.transitionRefitBeats == 0;
+    const bool directLivePhaseFollow = stableDirectFeed
+                                       && hyp.regime == TempoRegime::live;
     follower.setDirectLivePhaseFollow (
         directLivePhaseFollow && ! tempoOwned && tempoFollow
         && ! harmonicSourceActive && periodic && ! tapHold);
@@ -1123,14 +1124,17 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
              && hyp.analysisSample > 0
              && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
     {
-        // The normal VIVO correction is continuous in TempoFollower. This
-        // separate two-observation path remains available only after evidence
-        // was genuinely poor long enough to arm dropout/re-entry recovery.
-        // Abrupt changes retain their dedicated path and refit quarantine.
+        // A stable file/mixer feed is corrected by the normal monotonic phase
+        // servo. Low fit trust alone must not add a second controller: the iPad
+        // trace measured one-shot rate lurches of 108.56 -> 101.71 and 107.54
+        // -> 120.13 BPM. Re-enable the one-shot only when the tracker itself is
+        // recovering from a real loss. Abrupt changes retain their dedicated
+        // path and refit quarantine.
         follower.observeRecoveryBeat (
             wrapCentered (follower.beatPhase() - songPhase), hyp.beatSerial,
             ! speakerFollow,
-            hyp.motionBridgeAuthority >= 0.999f || directLivePhaseFollow);
+            hyp.motionBridgeAuthority >= 0.999f || directLivePhaseFollow,
+            ! stableDirectFeed || currentState == TrackingState::recovering);
     }
 
     // Trim exists to close a standing rate error the tempo source cannot see.

@@ -412,6 +412,19 @@ fixed, TAP/manual, harmonic, speaker/microphone and refit-quarantine behavior is
 unchanged. This candidate is global and dimensionless, still never snaps or
 restarts the grid, and is not yet listening-accepted or automated-test-verified
 at the user's request.
+The first listening pass was better but still drifted. Its full trace showed
+that the remaining audible gestures were one-shots armed by only 200 ms of low
+fit trust, not residual error from the continuous servo: 108.56 -> 101.71 BPM,
+106.12 -> 109.03 BPM and 107.54 -> 120.13 BPM. The first and third even occurred
+while the decoder called the tempo `fixed`. On a stable direct file/mixer feed,
+normal following now vetoes every one-shot regardless of whether it was armed
+by low trust or persistent debt. The same accepted phase continues through the
+monotonic ordinary/continuous servo. A one-shot is permitted again only when
+the tracker state itself is `recovering`, which distinguishes an actual loss
+and re-entry from ordinary confidence movement. Room/speaker recovery and all
+transition/refit guards retain their existing behavior. This is still an
+uncommitted listening candidate; no automated tests were run at the user's
+request.
 debug `clock` value now reports the effective steered rate actually advancing
 the grid; groove/voice consumers still receive the nominal PLL tempo, so this
 diagnostic correction cannot change playback by itself.

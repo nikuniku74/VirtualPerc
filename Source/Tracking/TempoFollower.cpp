@@ -254,7 +254,8 @@ void TempoFollower::cancelPhaseRecovery() noexcept
 
 void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
                                          bool allowMissedBeats,
-                                         bool allowUntrustedDirectMotion) noexcept
+                                         bool allowUntrustedDirectMotion,
+                                         bool allowOneShotRecovery) noexcept
 {
     if (recoverySerialSeen && serial == recoverySerial)
         return;
@@ -321,8 +322,10 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
     // is now reserved for its original job: recovery after evidence was poor
     // long enough to arm `recoveryArmed`. Other paths retain persistent phase
     // recovery exactly as before.
-    const bool mayStartRecovery = recoveryArmed
-                                  || (! allowUntrustedDirectMotion && persistent);
+    const bool mayStartRecovery = allowOneShotRecovery
+                                  && (recoveryArmed
+                                      || (! allowUntrustedDirectMotion
+                                          && persistent));
     if (mayStartRecovery && agrees && recoveryCooldownSamples <= 0
         && std::fabs (error) > phaseFloorFor (period)
         && std::fabs (error) < 0.25f)

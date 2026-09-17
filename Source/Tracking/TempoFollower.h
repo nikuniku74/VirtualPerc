@@ -90,12 +90,14 @@ public:
         A direct feed may keep a candidate across missed quarter detections:
         its propagation path is stable, while a room needs the tighter window.
         On a direct feed, either full residual-shape proof or an established
-        live regime outside abrupt-change refit may replace only the stale
-        constant-fit trust gate; two independent phase observations remain
-        mandatory. */
+        live regime outside abrupt-change refit may shorten only the serial
+        independence window. `allowOneShotRecovery` is false while a stable
+        direct feed is following normally: its phase servo owns that job. It is
+        true again for an actual tracker dropout/re-entry. */
     void observeRecoveryBeat (float errorBeats, uint32_t serial,
                               bool allowMissedBeats = false,
-                              bool allowUntrustedDirectMotion = false) noexcept;
+                              bool allowUntrustedDirectMotion = false,
+                              bool allowOneShotRecovery = true) noexcept;
     void cancelPhaseRecovery() noexcept;
     bool phaseRecoveryActive() const noexcept { return phaseRecoverySamplesRemaining > 0; }
     uint32_t phaseRecoveryEvents() const noexcept { return recoveryEvents; }
