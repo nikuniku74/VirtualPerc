@@ -3585,39 +3585,40 @@ contenenti anche casi d'ottava ambigui, non una certificazione.
 - [ ] beat-grid manuale su almeno due tratti con accelerando/rallentando;
 - [ ] ascolto umano della parte renderizzata contro quei tratti.
 
-### 45. Riallineamento sui cambi di tempo: filtro sulle date dei battiti 🟡 (2026-09-16, misurato su banchi sintetici — resta ascolto e beat-grid reale)
+### 45. Riallineamento sui cambi di tempo: candidati respinti, percorso sicuro ripristinato 🔴 (2026-09-17)
 
-Il ponte ibrido del piano Codex (Task 3-4) e' stato respinto dal banco globale e
-rimosso. Al suo posto, su file/mixer, la fase e il tempo che il clock insegue
-vengono da `Source/AI/BeatKalman.h`: un filtro IMM sulle date dei battiti che
-segue rampe senza rilasciare FISSO e misura da se' i gradini che la griglia del
-decoder rifiuta per secondi. BPM mostrato, regime e ottava non cambiano;
-microfono iPad invariato. Dettagli e limiti in `docs/HANDOFF_TEMPO.md` e nella
-skill `realtime-tempo`.
+Sia il ponte ibrido del piano Codex sia il successivo filtro IMM sulle date dei
+battiti sono stati respinti e rimossi. Il filtro migliorava alcune rampe
+sintetiche, ma non superava il contratto globale: ai quattro offset rapidi
+0/16/32/48 cambiava gli hash di **tutti** i casi fissi e a gradino. Inoltre il
+primo confronto con tap umani peggiorava tutte le metriche. Non e' quindi un
+percorso produttivo valido, anche se non conteneva eccezioni esplicite per quel
+brano.
 
-Clock MIXER contro griglia vera, `probe_motion_matrix` su offset mai usati per
-tarare (64/96/128): continuo **57,1 -> 42,7 ms** medi, quota >50 ms **38% ->
-23%**; gradini **46,6 -> 36,7 ms**, p95 192 -> 164; fisso 17,5 -> 16,5.
-`VPAlign`: 100->110 in 12 s **40,8/127,2 -> 18,3/56,6 ms**, 120->132 in 20 s
-28,5/95,5 -> 20,2/53,3; gradini tutti PASS.
+Dopo la rimozione, `probe_motion_matrix` torna bit-identico al controllo su
+fisso e su tutti i gradini. Le righe continue restano volutamente rosse nel
+comparatore (autorita' zero e nessun miglioramento): e' la prova che la
+diagnostica non viene scambiata per una soluzione. `VPAlign --ramps` riproduce
+la baseline: 22,0/84,7; 40,8/127,2; 28,5/95,5; 20,2/48,0 ms MIXER. Il problema
+del riallineamento continuo resta aperto.
 
-- [x] filtro IMM + gate a frazione di periodo + riseeding dalla griglia;
-- [x] gradini misurati dai battiti rifiutati (5-30%), possesso fino all'arrivo del decoder;
-- [x] ritorno al fit sul buco batteria tramite fiducia sull'evidenza;
-- [x] test unitari (`--tempo-motion` 294/0) e suite mirate verdi;
-- [ ] **primo brano reale con tap umani: il filtro NON migliora, peggiora un poco** (2026-09-17, sotto);
-- [ ] 128->120 in 20 s ancora oltre il gate di 0,1 ms (ritardo del loop del clock);
-- [ ] buco batteria un po' peggiore (MIXER 20,9/34,9 -> 23,6/45,4 ms);
-- [ ] `--bar` intermittente una volta sotto carico: verificare se succede anche su HEAD;
-- [ ] suite completa `./scripts/run-tests.sh` (non eseguita);
-- [ ] beat-grid manuale e ascolto su accelerando/rallentando reali (mixer e brano caricato).
+- [x] respingere e rimuovere il ponte ibrido che alterava i gradini;
+- [x] respingere e rimuovere il filtro IMM che alterava fisso/gradini;
+- [x] conservare classificatore, diagnostica e gate anti-vacuita';
+- [x] suite mirate verdi dopo il ripristino (`--tempo-motion` 289/0 e gli altri gruppi 0 fail);
+- [ ] progettare un nuovo candidato **globale**, senza titoli, seed, offset o fasce BPM speciali;
+- [ ] ottenere autorita' positiva e media/p95 strettamente migliori su ogni riga continua;
+- [ ] mantenere hash identici e autorita' zero su fisso e su tutti i gradini;
+- [ ] superare `VPAlign`, gate indipendenti e suite completa;
+- [ ] validare almeno due beat-grid reali e ascoltare accelerando/rallentando su mixer e file;
+- [ ] affrontare il microfono iPad solo dopo la chiusura del percorso diretto.
 
 **Tap umani su `26 SPLENDIDA GIORNATA` (2026-09-17).** 117 quarti battuti
 dall'utente fra 10,8 e 75,4 s (~107,8 BPM), griglia lisciata con quadratica
 locale; motore completo `VPTrack --pulses`, offset costante tolto. Errore del
 clock, media / p95 / quota >50 ms:
 
-| riferimento | prima del filtro | filtro (HEAD) | filtro + ritorno solo su cassa (revertito) |
+| riferimento | percorso ripristinato | filtro respinto | filtro + ritorno solo su cassa (revertito) |
 |---|---|---|---|
 | tap lisciati +/-4 | **27,5 / 72,6 / 13,0%** | 31,3 / 76,9 / 14,3% | 32,9 / 77,2 / 14,5% |
 | tap lisciati +/-8 | **26,2 / 67,2 / 11,2%** | 30,3 / 72,7 / 16,6% | 31,9 / 74,8 / 18,3% |
@@ -3636,9 +3637,8 @@ riferimento offline, e' stato quindi revertito (`8e08590`). Lezioni:
 - `tap_recorder.py` ha misurato ~200-220 ms di ritardo costante contro sia
   l'app sia il riferimento offline: probabile avvio di `afplay` non contato.
 
-- [ ] decidere se tenere il filtro: sintetico nettamente meglio, un brano reale
-      (64 s, un solo tapper) un poco peggio. Serve almeno un secondo brano con
-      tap, idealmente con un cambio di tempo vero;
+- [x] rimuovere il filtro: i gate globali e il primo confronto reale non ne
+      consentono l'uso; i brani reali restano verifiche, mai condizioni nel DSP;
 - [ ] `tap_recorder.py`: misurare/compensare la latenza di avvio di `afplay`.
 
 ## Standby

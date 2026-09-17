@@ -1,7 +1,6 @@
 #include "TestTempoMotion.h"
 #include "TestTempoMotionShape.h"
 #include "AI/BeatDecoder.h"
-#include "AI/BeatKalman.h"
 #include "AI/TempoMotionTracker.h"
 #include "Tracking/BeatTracker.h"
 
@@ -202,82 +201,6 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         condition ? ++passed : ++failed;
         std::printf ("  %s  %s\n", condition ? "PASS" : "FAIL", name);
     };
-
-    {
-        // Deterministic +/-15 ms onset scatter, no RNG.
-        const auto jitter = [] (int k) { return 0.015 * std::sin (k * 2.399963); };
-        const auto phaseError = [] (const vp::BeatKalman& f, double now, double truthBeat,
-                                    double truthPeriod)
-        {
-            double phase = 0.0, period = 0.0;
-            if (! f.phaseAt (now, phase, period))
-                return 1.0;
-            double e = phase - (now - truthBeat) / truthPeriod;
-            return std::fabs (e - std::round (e));
-        };
-
-        vp::BeatKalman steady;
-        steady.start (0.0, 0.5);
-        for (int k = 1; k <= 32; ++k)
-            steady.observe (k * 0.5 + jitter (k));
-        expect (std::fabs (steady.period() - 0.5) < 0.002
-                    && phaseError (steady, 16.1, 16.0, 0.5) < 0.03,
-                "beat filter holds a steady tempo through onset scatter");
-
-        {
-            // Just before the corrected date of the newest beat is the end of
-            // the previous beat, not phase zero: that clamp was a 60 ms spike.
-            vp::BeatKalman late;
-            late.start (0.0, 0.5);
-            for (int k = 1; k <= 8; ++k)
-                late.observe (k * 0.5);
-            double phase = 0.0, p = 0.0;
-            const bool ok = late.phaseAt (3.99, phase, p);
-            expect (ok && phase > 0.95, "beat filter phase just before its newest beat wraps back");
-        }
-
-        // 100 -> 115 BPM, linear in tempo over 24 beats, then held.
-        vp::BeatKalman ramp;
-        ramp.start (0.0, 0.6);
-        double t = 0.0, period = 0.6;
-        for (int k = 1; k <= 32; ++k)
-        {
-            const double bpm = 100.0 + 15.0 * std::min (1.0, k / 24.0);
-            period = 60.0 / bpm;
-            t += period;
-            ramp.observe (t + jitter (k));
-        }
-        expect (std::fabs (ramp.period() / period - 1.0) < 0.015
-                    && phaseError (ramp, t + 0.1, t, period) < 0.06,
-                "beat filter follows an accelerando without a regime release");
-
-        vp::BeatKalman offbeats;
-        offbeats.start (0.0, 0.5);
-        for (int k = 1; k <= 8; ++k)
-            offbeats.observe (k * 0.5);
-        bool refusedAll = true;
-        // Six, not more: past eight beats without one on the grid the filter
-        // hands itself back to the decoder's grid, which is intended.
-        for (int k = 9; k <= 14; ++k)
-            refusedAll &= ! offbeats.observe (k * 0.5 + 0.29);
-        expect (refusedAll && ! offbeats.lostTrack()
-                    && phaseError (offbeats, 8.1, 8.0, 0.5) < 0.02,
-                "swung offbeats are refused without losing the beat");
-
-        vp::BeatKalman step;
-        step.start (0.0, 0.5);
-        for (int k = 1; k <= 8; ++k)
-            step.observe (k * 0.5);
-        double beat = 0.0, newPeriod = 0.0;
-        bool measured = false;
-        for (int k = 1; k <= 4 && ! measured; ++k)
-        {
-            step.observe (4.0 + k * 0.5714);
-            measured = step.measuredStep (beat, newPeriod);
-        }
-        expect (measured && std::fabs (newPeriod / 0.5714 - 1.0) < 0.02,
-                "a 120 -> 105 step is measured from the refused beats");
-    }
 
     {
         vp::BeatHypothesis hyp {};

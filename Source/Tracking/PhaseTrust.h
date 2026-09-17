@@ -23,24 +23,6 @@ constexpr float kGridTauRapid = 0.10f;
     clock motion. */
 constexpr float kGridTauMotion = 0.30f;
 
-/** A direct feed whose phase comes from the beat-date filter (BeatKalman) has
-    already been averaged over beats by a model that knows the tempo can move.
-    Averaging it again over most of a second is what made the clock trail an
-    accelerando; a short constant only smooths the per-frame refresh. */
-constexpr float kGridTauTracked = 0.15f;
-
-/** How far the clock may follow the beat-date filter rather than the decoder's
-    line fit, from the evidence trust below: all the way while this song's
-    beats are as well placed as usual, not at all at the trust floor. A
-    passage without a drummer makes the onsets *late* for seconds, and the
-    filter follows lateness as faithfully as it follows a band speeding up;
-    the long fit and its long constant were what held that passage. */
-inline float trackedPhaseWeight (float trust) noexcept
-{
-    constexpr float kFloor = 0.30f;
-    return std::clamp ((trust - kFloor) / (1.0f - kFloor), 0.0f, 1.0f);
-}
-
 /** A held direct-feed tempo is only called musically in motion once the
     responsive fit is two percent away and still tightly placed. These are the
     same two facts that earn the decoder's early fixed-regime release; below

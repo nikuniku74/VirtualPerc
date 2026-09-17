@@ -309,11 +309,8 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                  diagnostics.motionFitImprovement);
             }
             curveProofActive = curveProof;
-            // Same glue as BeatTracker: a tracked direct feed steers the clock
-            // with the filter's local rate, not the committed tempo.
-            const float clockBpm = h.phaseTracked && h.clockBpm > 50.0f ? h.clockBpm : h.bpm;
             if (h.bpm > 50.0f)
-                clock.setTargetTempo (clockBpm, h.confidence);
+                clock.setTargetTempo (h.bpm, h.confidence);
             if (! haveSerial)
             {
                 lastSerial = h.beatSerial;
@@ -326,9 +323,9 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                          h.confidence, 1);
             }
             clock.setGridPhase (h.beatPhase,
-                                vp::gridPhaseTau (h.phaseTracked ? vp::kGridTauTracked
-                                                  : cleanMotion  ? vp::kGridTauMotion
-                                                                 : vp::kGridTauHolding,
+                                vp::gridPhaseTau (cleanMotion
+                                                      ? vp::kGridTauMotion
+                                                      : vp::kGridTauHolding,
                                                   true, 1.0f));
 
             if (previousRegime == vp::TempoRegime::fixed

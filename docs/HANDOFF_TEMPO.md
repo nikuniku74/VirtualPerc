@@ -7,75 +7,44 @@ sporchi/non tracciati e non sono stati toccati.
 
 ## Stato
 
-### 16/09/2026 (sera) — filtro sulle date dei battiti: fase che segue rampe e gradini
+### 17/09/2026 — filtro sulle date dei battiti respinto e rimosso
 
-**Prima, l'esito del piano Codex.** Il ponte ibrido (prova stretta + forma dei
-residui + autorita' dentro FISSO, Task 3-4 del piano
-`docs/superpowers/plans/2026-09-16-hybrid-tempo-motion-proof.md`) e' stato
-respinto sul quick bank a quattro offset: 3 continui su 4 senza autorita', falsi
-su 2 fissi e 3 gradini (hash cambiati), una violazione di rientro. Rimosso per
-intero; restano classificatore, diagnostici e il gate anti-vacuita' (`c6664dc`).
-La Task 5 e' chiusa solo per `BeatTracker::Output::setTempoMotionDiagnostics`
-(test copia/azzeramento); snapshot engine e colonne VPTrack non aggiunti.
+Il ponte ibrido e il successivo filtro IMM sulle date dei battiti sono entrambi
+fuori dal percorso di produzione. Il ponte aveva attivazioni false su fissi e
+gradini; il filtro migliorava le medie sintetiche ma cambiava tutti gli hash di
+fissi e gradini sui quattro offset, peggiorava la coda p99,5 e non superava il
+gate `VPAlign`. Sul primo riferimento umano reale peggiorava inoltre
+media/p95/>50 ms da 27,5/72,6/13,0% a 31,3/76,9/14,3%.
 
-**Causa misurata.** In FISSO la fase pubblicata e' `(ora - ancora retta 24
-battiti) / periodo committed`: in rampa ritardano entrambi. Sul quick bank la
-fase del *decoder* aveva gia' 40,6 ms medi sul continuo, il clock ne aggiungeva
-~19. Sui gradini lenti (-13%) il cancello di griglia rifiuta tutti i battiti per
-~3 s e la transizione puo' non confermare: il clock fa un giro di fase intero.
+Sono stati rimossi `BeatKalman`, i campi clock speciali, il blending nel tracker
+e la relativa simulazione nei probe. Restano il classificatore, la diagnostica
+ombra, il test copia/azzeramento e il comparatore anti-vacuita': nessuno di loro
+guida BPM o fase.
 
-**Cosa e' entrato.** `Source/AI/BeatKalman.h`: filtro IMM (tre modelli: costante,
-vagante, accelerazione costante) sulle date dei battiti. Solo su `lineFeed`
-sostituisce `beatPhase`/`periodSec` e pubblica `clockBpm` + `phaseTracked`; BPM
-committed, regime, ottava e display non cambiano. `BeatTracker` usa `clockBpm`
-come target e tau 0,15 s, pesati dalla fiducia sull'evidenza verso fit/0,90 s
-(`trackedPhaseWeight`). Dettagli che lo rendono sicuro, tutti misurati: gate a
-frazione fissa di periodo (0,15) e non sulla sigma; verosimiglianza temperata;
-riseeding sempre dalla griglia fittata, mai dal picco; i rifiuti a frazione
-costante (ottavi swing) non sono perdita; il filtro vede anche i picchi rifiutati
-dalla griglia solo come prova e misura da se' un gradino 5-30% (tre rifiuti che
-derivano e concordano su un periodo); fase subito prima dell'ultima data corretta
-= fine del battito precedente (era un picco da 60 ms).
+**RED prima del rollback.** Il quick A/B 0/16/32/48 falliva su ogni riga:
+hash diversi per fisso e gradino, autorita' nulla per il contratto continuo.
+`VPAlign --ramps` falliva sul 128->120 e il riferimento umano reale era peggiore.
 
-**Numeri (clock MIXER contro griglia scritta, HEAD -> filtro).**
-`probe_motion_matrix`, medie ms / p95 / quota >50 ms:
+**GREEN di sicurezza dopo il rollback.** Sullo stesso quick A/B fissi e gradini
+sono di nuovo bit-identici al controllo. Il comparatore continua a fallire solo
+le righe continue (`media/p95 non migliorata`, `autorita' non positiva`): e'
+voluto, perche' il problema resta aperto e non va nascosto. Test mirati:
+`--tempo-motion` 289/0, `--tempo-step` 11/0, `--tempo-slow` 10/0,
+`--evidence` 2/0, `--new-input` 3/0, `--swing` 3/0, `--bar` 10/0.
+`VPAlign --ramps` riproduce il controllo e resta RED sulle quattro rampe:
+22,0/84,7; 40,8/127,2; 28,5/95,5; 20,2/48,0 ms.
+`probe_tempo_step` chiude PASS e `probe_recovery` chiude 84/84. La suite
+generale fresca ha superato tutta la sezione tempo, mostrando soltanto failure
+gia' presenti nei gate storici, ma e' stata interrotta dopo diversi minuti
+senza output nello stesso banco lungo gia' segnalato dai tentativi precedenti:
+non viene dichiarata verde ne' usata come prova di regressione.
 
-- quick offset 0-48 (usati per tarare): fisso 19,8/53,2 -> 18,9/53,0; continuo
-  54,1/124,3/37,8% -> 37,9/96,1/18,9%; gradino 48,0/201,7/23,4% -> 35,9/163,0/18,0%;
-- offset 64/96/128 mai visti: fisso 17,5/45,8 -> 16,5/45,4; continuo
-  57,1/132,3/38,2% -> 42,7/117,4/22,9%; gradino 46,6/192,2/23,6% -> 36,7/163,8/18,8%;
-- banco completo offset 0: fisso 18,9/50,1 -> 17,8/48,7; continuo 64,4/149,3 ->
-  47,7/132,8 (p99,5 peggiora 480,1 -> 513,9: coda di confusione sui sedicesimi);
-  gradino 52,5/218,2 -> 39,8/181,2.
-
-`VPAlign` MIXER (media/peggio ms): 100->110/30 s 22,0/84,7 -> 18,1/56,1;
-100->110/12 s 40,8/127,2 -> 18,3/56,6; 120->132/20 s 28,5/95,5 -> 20,2/53,3;
-128->120/20 s 20,2/48,0 -> 19,5/52,1 (**ancora FAIL per 0,1 ms di peggio**, gate
-19,5/52,0: il target e' 18-27 ms tardi a fine rallentando, il loop del clock
-aggiunge ~20); fissi 7,1/33,3 -> 8,3/34,6 e 7,2/22,0 -> 6,4/22,0 PASS. Sei
-gradini PASS. Buco batteria (otto brani, MIXER reale): 20,9/34,9 -> 23,6/45,4 e
-25,3/66,2 -> 27,4/68,7, accelerando della stessa tabella 23,6/46,5 -> 14,1/37,4.
-
-Test mirati: `--tempo-motion` 294/0 (5 nuovi sul filtro), `--tempo-step` 11/0,
-`--tempo-slow` 10/0, `--evidence` 2/0, `--new-input` 3/0, `--swing` 3/0, `--bar`
-10/0 (una corsa 8/2 sotto carico, poi sei 10/0: intermittente). Suite completa
-non eseguita.
-
-**17/09/2026 — tap umani su un brano reale: il filtro non si conferma.** Su
-`26 SPLENDIDA GIORNATA.mp3`, 117 quarti battuti a mano (10,8-75,4 s), motore
-completo, offset costante tolto: prima del filtro 27,5 ms medi / p95 72,6 / 13,0%
-oltre 50 ms; filtro (HEAD) 31,3 / 76,9 / 14,3%. Una variante che lasciava il
-filtro solo quando la cassa dice «batteria fuori» sembrava migliore contro un
-beat tracker offline (17,7 / 47,7 / 4,3%) ma contro i tap e' la peggiore
-(32,9 / 77,2 / 14,5%): a 32-36 s gli attacchi arrivano tardi come in un
-rallentamento, i tap restano a 108,5-109 BPM. Revertita (`8e08590`). Tabella e
-limiti del riferimento in `docs/TODO.md` item 45. Prossimo passo: tap su un
-secondo brano, possibilmente con un cambio di tempo vero, prima di decidere se il
-filtro resta.
-
-**Restano aperti.** 128->120 a filo del gate (loop del clock); costo sul buco
-batteria; sedicesimi presi per battito (griglia, non inseguimento); microfono
-iPad invariato; beat-grid manuale e ascolto su un accelerando/rallentando reale.
+**Regola per il prossimo candidato.** Nessun titolo, timestamp, seed, offset o
+BPM isolato puo' scegliere codice o costanti. Prima di entrare in produzione un
+candidato deve mantenere identici fissi e gradini, migliorare media e p95 in
+ogni popolazione continua, avere autorita' applicata e zero violazioni di
+rientro, quindi passare beat-grid e ascolto su accelerando e rallentando reali
+indipendenti. Microfono iPad ancora differito.
 
 ### 15/09/2026 — il pettine vecchio non annulla piu' un cambio confermato
 
