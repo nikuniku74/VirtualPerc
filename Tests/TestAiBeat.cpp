@@ -9781,6 +9781,55 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
                 "violent line change survives the stale fold and holds its new tempo");
     }
     expectTransitionRefitRejectsOldComb();
+
+    // Quarter-by-quarter detector: with 6 ms of onset scatter the interval
+    // detector stands down (4 of these 12 steps confirmed before), and a +44 ms
+    // drummer displacement at constant tempo must never read as a step.
+    auto jittered = [] (float to, bool displaced, unsigned seed)
+    {
+        std::mt19937 rng (seed);
+        std::normal_distribution<double> jitter (0.0, 0.006);
+        std::vector<double> beats;
+        for (double t = 0.5; t < 40.0; t += 60.0 / (! displaced && t >= 20.0 ? to : 120.0))
+            beats.push_back (t + jitter (rng) + (displaced && t >= 20.0 && t < 30.0 ? 0.044 : 0.0));
+        vp::BeatDecoder dec;
+        dec.prepare (50.0);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (true);
+        uint32_t serial = 0;
+        int transitions = 0;
+        double confirmAt = -1.0;
+        vp::BeatHypothesis h {};
+        for (int f = 0; f < 40 * 50; ++f)
+        {
+            const double now = f / 50.0;
+            float a = 0.02f;
+            for (double b : beats)
+            {
+                const double d = (now - b) / 0.027;
+                if (std::fabs (d) < 5.0)
+                    a = std::max (a, 0.94f * static_cast<float> (std::exp (-0.5 * d * d)));
+            }
+            h = dec.observe (a, 0.02f, 1.0f - a);
+            if (now >= 15.0 && h.transitionSerial != serial && ++transitions == 1)
+                confirmAt = now - 20.0;
+            serial = h.transitionSerial;
+        }
+        std::printf ("tempo-step jittered %s->%.0f seed=%u transitions=%d confirm=%+.2fs final=%.2f\n",
+                     displaced ? "120+44ms" : "120", static_cast<double> (to), seed,
+                     transitions, confirmAt, static_cast<double> (h.bpm));
+        return displaced ? transitions == 0
+                         : transitions == 1 && confirmAt <= 3.0 * 60.0 / to + 0.1
+                               && std::fabs (h.bpm - to) < 1.0f;
+    };
+    bool steps = true, displacements = true;
+    for (unsigned seed = 1; seed <= 6; ++seed)
+    {
+        steps &= jittered (132.0f, false, seed) && jittered (110.0f, false, seed);
+        displacements &= jittered (120.0f, true, seed);
+    }
+    expect (steps, "jittered line step confirms within three quarters");
+    expect (displacements, "a constant onset displacement is never confirmed as a step");
 }
 
 void vpRunHarmonicEntryTest (int& passed, int& failed)

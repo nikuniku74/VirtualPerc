@@ -90,6 +90,43 @@ Abrupt 5-10% steps use a separate bounded transition path: two completed causal
 intervals must agree, and the first changed interval must differ by at least 3%
 from the immediately preceding accepted interval.
 
+**Quarter-by-quarter step detector (2026-09-17, uncommitted).** The interval
+path compares consecutive intervals, so its noise is twice the onset scatter;
+it stands down once `3 * jitter > 5%` and never claims less than 5%. Measured on
+decoder+clock: clean 3-5% steps took 8-13 s, and with 6 ms of onset scatter a
++10% step at 120 opened no candidate at all (~4 s through the ordinary release).
+`BeatDecoder::observeGridStep` (direct feed only, after each accepted beat)
+extrapolates the eight-beat line fitted up to a pivot and reads the newest 2-4
+accepted quarters against it: a step leaves the line by `k * step`, a drummer
+drop or late mix by a constant. It confirms at the earliest m in {2,3,4} when:
+every quarter is consecutive, beat-strength (0.70 x median) and leans the same
+way; the through-pivot step fits within `(m+2) sigma^2`; it beats the best
+"displacement starting at any of the m quarters" by `16 sigma^2` (sigma = the
+8/24-beat pre-pivot residual, floor 0.5% of a period); 2.5% <= |step| <= 30%;
+the two four-beat periods before the pivot agree within 30% of the step (ramp /
+tilted-window guard); no beat-strength peak was rejected by the grid since the
+pivot (75 -> 140 lands every other new beat 7% late and otherwise delayed the
+octave path 10.7 -> 23.6 s); and it does not oppose a proven causal direction.
+It publishes through the same `rapid` transition (history = pivot + new
+quarters, grid on the fitted line, `live`, refit quarantine), so the clock path
+is the measured one. Inert with a manual octave shift (grid gap != 1).
+
+Evidence: `probe_tempo_step` byte-identical; `probe_small_steps` 52->50 FAIL->PASS
+(4.92 -> 3.74 s), all other rows identical; `probe_motion_matrix --quick`,
+offsets 0/16/32/48: **fixed trace hashes identical on all four**, step mean/p95
+36.8/180 -> 36.0/175, 49.3/209 -> 45.1/174, 47.9/196 -> 43.0/171, 34.8/165 ->
+32.4/139 ms, continuous mean/p95 better on all four and recovery violations
+9/2/10/16 -> 5/0/8/3; `VPAlign --ramps` identical; `VPTests --tempo-step` 13/0
+(new jittered 120->132/110 x 6 seeds: 4/12 -> 12/12 confirmed in 0.92-1.40 s;
++44 ms displacement: 0 transitions), `--tempo-slow` 10/0, `--tempo-motion`
+same 291/2 and `--octave` same 5/6 verdicts as HEAD. Scratch sweep (decoder+clock, 70-150 BPM, +/-3..15%, 3
+seeds): mean time to stable 5.4 -> 1.9 s clean, 12.1 -> 5.6 s at 6 ms, 14.3 ->
+11.5 s at 12 ms. Known cost: at the start of very steep ramps (10% in 12 s at
+60-80 BPM) it fires 4-12 times per 9 minutes; mean BPM error still improves
+(1.73 -> 1.52% at 60) but time outside 2.5% at 100 BPM rises 5.1 -> 6.7%.
+Not covered: jittered steps beyond ~15% (the new beats fall off the grid).
+No real recording or listening yet.
+
 **Wide non-octave line steps (2026-09-10).** The old transition path stopped at
 25% and also required the candidate to remain within a quarter octave. The
 octave machinery was supposed to own everything beyond that, but it only knows

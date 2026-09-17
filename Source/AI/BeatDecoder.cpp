@@ -479,6 +479,16 @@ namespace
     // maxima a room supplies between them.
     constexpr float kTransitionStrengthFraction = 0.70f;
     constexpr int   kTransitionStrengthBeats = 8;
+
+    // Quarter-by-quarter step detector (direct feed only; see observeGridStep).
+    // Sizes are relative to the beat period, evidence is in units of the
+    // measured onset scatter, so none of them depends on BPM or song.
+    constexpr float  kGridStepMinimum = 0.025f;      // smallest step claimed
+    constexpr float  kGridStepMaximum = 0.30f;       // larger: interval detector / octave
+    constexpr double kGridStepSigmaFloor = 0.005;    // same floor as line jitter
+    constexpr double kGridStepEvidence = 16.0;       // (4 sigma)^2 step over offset
+    constexpr double kGridStepCurvature = 0.30;      // ramp guard, share of the step
+    constexpr int    kGridStepMaxBeats = 4;
 }
 
 void BeatDecoder::prepare (double framesPerSecond)
@@ -1498,6 +1508,7 @@ void BeatDecoder::clearTempoTransition (TempoTransitionReason reason) noexcept
     // are not two ends of one interval.
     transitionPrevEventSec = -1.0;
     transitionPrevStrength = 0.0f;
+    strongOffGridPeakSec = -1.0;
     // The beats this was waiting for are gone with everything else, and the
     // fold is the right thing to acquire a tempo from again.
     transitionRefitBeats = 0;
@@ -1965,6 +1976,179 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     transitionIntervals = 1;
     transitionConfidence = 0.0f;
     transitionRapidBeats = 0;
+    return false;
+}
+
+bool BeatDecoder::observeGridStep() noexcept
+{
+    // The interval detector compares consecutive intervals, so its noise is
+    // twice the onset scatter and it stands down entirely once 3 * jitter
+    // passes 5%. Measured with 6 ms of onset scatter at 120 BPM, a +10% step
+    // never opened a candidate and took ~4 s through the ordinary release;
+    // clean 3-5% steps took 8-13 s because they are below its smallest step.
+    //
+    // This asks a different question of the same accepted beats. Extrapolate
+    // the line fitted through the beats up to a pivot; after a real step the
+    // newest beats leave that line by k * step (k = 1, 2, 3...), while a
+    // drummer drop or a late mix leaves it by a constant, and one pushed
+    // stroke leaves it once. Two to four quarters, earliest that proves it.
+    if (! lineFeed || ! established || provisional || bpm < kMinBpm
+        || transitionState == TempoTransitionState::rapid
+        || transitionRefitBeats > 0)
+        return false;
+
+    for (int m = 2; m <= kGridStepMaxBeats; ++m)
+    {
+        if (beatFilled < kShortFit + m)
+            return false;
+
+        // p4/p4b: the last four beats before the pivot and the four before
+        // those. A step comes out of a steady tempo; a ramp or a window tilted
+        // by an onset offset does not.
+        float p8 = 0, res8 = 0, cov8 = 0, gap8 = 1, p4 = 0, p4b = 0, res4 = 0, cov4 = 0;
+        double anchor = -1, anchor4 = -1;
+        if (! fitPeriodBefore (kShortFit, p8, res8, cov8, anchor, &gap8, m)
+            || cov8 < 0.85f || gap8 != 1.0f
+            || ! fitPeriodBefore (4, p4, res4, cov4, anchor4, nullptr, m)
+            || ! fitPeriodBefore (4, p4b, res4, cov4, anchor4, nullptr, m + 4))
+            continue;
+        const double period = p8;
+
+        // Scatter of this song, not of these eight beats alone: the 24-beat
+        // residual before the pivot when there is one. Floor as the line path.
+        double sigma = std::max (static_cast<double> (res8), kGridStepSigmaFloor);
+        float pl = 0, resl = 0, covl = 0;
+        double anchorl = -1;
+        if (fitPeriodBefore (kLongFit, pl, resl, covl, anchorl, nullptr, m))
+            sigma = std::max (sigma, static_cast<double> (resl));
+        sigma *= period;
+        const double variance = sigma * sigma;
+
+        const int pivot = (beatWrite - 1 - m + kBeatHistory) % kBeatHistory;
+        if (std::fabs (beatTime[pivot] - anchor) > 2.5 * sigma)
+            continue;   // the pivot itself is not on the old line
+        // A beat-strength peak the grid rejected between these quarters means
+        // the accepted ones may be every other beat of a much faster pulse:
+        // 75 -> 140 lands every second new beat 7% late on the old grid, and
+        // calling that a step delayed the octave path from 10.7 to 23.6 s.
+        if (strongOffGridPeakSec > beatTime[pivot])
+            return false;
+
+        // Beat-strength quarters only, the rule the interval detector already
+        // applies to a room: a subdivision or a ghost standing in for a missed
+        // beat moved a 119.5 BPM sixteenth-note grid to 136.9 on two peaks.
+        const float strengthFloor = kTransitionStrengthFraction * recentBeatStrengthMedian();
+        double r[kGridStepMaxBeats + 1] {};
+        double sk = 0, skk = 0;
+        double previous = beatTime[pivot];
+        bool consecutive = true;
+        for (int k = 1; k <= m; ++k)
+        {
+            const double t = beatTime[(pivot + k) % kBeatHistory];
+            const double interval = t - previous;
+            previous = t;
+            consecutive &= interval > 0.7 * period && interval < 1.3 * period
+                           && beatStrength[(pivot + k) % kBeatHistory] >= strengthFloor;
+            r[k] = t - (anchor + k * period);
+            sk += k * r[k];
+            skk += k * k;
+        }
+        if (! consecutive)
+            continue;
+
+        const double step = sk / skk;
+        const double rel = step / period;
+        if (std::fabs (rel) < kGridStepMinimum || std::fabs (rel) > kGridStepMaximum)
+            continue;
+
+        // Every new quarter leans the same way: one pushed stroke followed by
+        // one dragged stroke is not a tempo.
+        bool sameWay = true;
+        double sseStep = 0;
+        previous = beatTime[pivot];
+        for (int k = 1; k <= m; ++k)
+        {
+            const double t = beatTime[(pivot + k) % kBeatHistory];
+            sameWay &= (t - previous - period) * step > 0.0;
+            previous = t;
+            sseStep += (r[k] - step * k) * (r[k] - step * k);
+        }
+        // The competing explanation is a displacement that starts at any of
+        // these quarters (on the grid before it, constant after): measured on
+        // a +44 ms drummer drop, a shift at the second quarter plus jitter
+        // passed a step test that only compared against a shift at the first.
+        double sseOffset = 1.0e30;
+        for (int from = 1; from <= m; ++from)
+        {
+            double sse = 0, shift = 0;
+            for (int k = from; k <= m; ++k)
+                shift += r[k];
+            shift /= m - from + 1;
+            for (int k = 1; k <= m; ++k)
+                sse += k < from ? r[k] * r[k] : (r[k] - shift) * (r[k] - shift);
+            sseOffset = std::min (sseOffset, sse);
+        }
+
+        // Explained by a step through the pivot, not by an offset or an
+        // outlier, and not a ramp.
+        if (! sameWay
+            || sseStep > (m + 2) * variance
+            || sseOffset - sseStep < kGridStepEvidence * variance
+            || std::fabs (p4 - p4b) > kGridStepCurvature * std::fabs (step))
+            continue;
+
+        const float newBpm = static_cast<float> (60.0 / (period + step));
+        if (newBpm < kMinBpm || newBpm > kMaxBpm
+            || std::fabs (newBpm - bpm) < 0.5f * kGridStepMinimum * bpm)
+            continue;
+        // Same veto as the interval detector: a proven causal ramp is not
+        // reversed by a step candidate until accepted beats reverse it.
+        if (fastDriftBeats >= 2 && fastDriftSign != 0
+            && (newBpm > bpm ? 1 : -1) != fastDriftSign)
+            return false;
+
+        // Confirmed. Same publication as the interval detector, but the fit
+        // keeps the pivot and every new quarter, and the grid is placed on the
+        // fitted line, not on the newest onset.
+        double keepTime[kGridStepMaxBeats + 1];
+        float keepStrength[kGridStepMaxBeats + 1];
+        for (int k = 0; k <= m; ++k)
+        {
+            keepTime[k] = beatTime[(pivot + k) % kBeatHistory];
+            keepStrength[k] = beatStrength[(pivot + k) % kBeatHistory];
+        }
+        beatWrite = 0;
+        beatFilled = 0;
+        longWrite = 0;
+        longFilled = 0;
+        for (int k = 0; k <= m; ++k)
+            storeBeatForFit (keepTime[k], keepStrength[k]);
+
+        bpm = std::clamp (newBpm, kMinBpm, kMaxBpm);
+        gridAnchorSec = anchor + m * (period + step);
+        foldPhaseBeats = 0;
+        fastDriftBeats = 0;
+        fastDriftLargeBeats = 0;
+        fastDriftSign = 0;
+        enterRegime (TempoRegime::live);
+
+        transitionState = TempoTransitionState::rapid;
+        transitionReason = TempoTransitionReason::confirmed;
+        transitionPeriodSec = 60.0f / bpm;
+        transitionIntervals = m;
+        transitionConfidence = static_cast<float> (
+            std::clamp (1.0 - sseStep / ((m + 2) * variance), 0.0, 1.0));
+        transitionRapidBeats = 0;
+        transitionRapidDeadlineSec =
+            timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
+                          * static_cast<double> (transitionPeriodSec);
+        transitionRefitBeats = kShortFit + kTransitionCombLagBeats;
+        transitionFirstSec = keepTime[0];
+        transitionLastSec = keepTime[m];
+        ++transitionSerial;
+        resetMotionShadow (false, TempoMotionVeto::transition);
+        return true;
+    }
     return false;
 }
 
@@ -3862,6 +4046,9 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     {
         transitionPrevEventSec = eventTimeSec;
         transitionPrevStrength = prevPulse;
+        if (! acceptedByCurrentGrid && ! confirmedTransition
+            && prevPulse >= kTransitionStrengthFraction * recentBeatStrengthMedian())
+            strongOffGridPeakSec = eventTimeSec;
     }
     else if (transitionState == TempoTransitionState::suspected
              && transitionLastSec >= 0.0
@@ -3907,6 +4094,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
             ++downbeatSerial;
             observeDownbeatCadence();
         }
+        observeGridStep();
         updateTempo();
     }
     else if (! established && (frame % 8) == 0)

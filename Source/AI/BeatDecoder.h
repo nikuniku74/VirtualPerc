@@ -214,6 +214,10 @@ private:
         the caller may admit a peak the current grid rejected. */
     bool  observeTempoTransition (double eventTimeSec, float strength,
                                   bool acceptedByCurrentGrid) noexcept;
+    /** Direct-feed step detector on accepted quarters: the newest two to four
+        beats against the line fitted through the beats before them. Publishes
+        through the same confirmed transition as `observeTempoTransition`. */
+    bool  observeGridStep() noexcept;
     /** Forget the candidate *and* the interval reference it was measured from.
         For the boundaries at which no interval spanning them means anything. */
     void  clearTempoTransition (TempoTransitionReason reason) noexcept;
@@ -515,6 +519,9 @@ private:
         is needed. */
     double transitionPrevEventSec = -1.0;
     float  transitionPrevStrength = 0.0f;
+    /** Newest eligible peak the grid rejected at beat strength. Vetoes
+        `observeGridStep` over the quarters after it. */
+    double strongOffGridPeakSec = -1.0;
 
     BeatHypothesis hyp {};
 };

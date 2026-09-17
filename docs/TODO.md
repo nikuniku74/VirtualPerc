@@ -3641,6 +3641,60 @@ riferimento offline, e' stato quindi revertito (`8e08590`). Lezioni:
       consentono l'uso; i brani reali restano verifiche, mai condizioni nel DSP;
 - [ ] `tap_recorder.py`: misurare/compensare la latenza di avvio di `afplay`.
 
+### 46. Cambio brusco di tempo riconosciuto quarto per quarto 🟡 (2026-09-17, codice + banchi ok, non committato — resta ascolto)
+
+Segnalazione: *«se c'è un rallentamento o velocizzazione brusca, ci impiega
+qualche secondo ad arrivare al tempo corretto»*.
+
+**Causa misurata** (decoder + clock, battiti sintetici): il rilevatore a
+intervalli confronta intervalli consecutivi, quindi il suo rumore è il doppio
+dell'imprecisione dei colpi. Con 6 ms di imprecisione si spegne del tutto
+(`3 * jitter > 5%`): un +10% a 120 BPM non apriva nemmeno un candidato (~4 s).
+E sotto il 5% non interviene mai: gradini puliti del 3-5% costavano 8-13 s.
+
+**Fatto:** `BeatDecoder::observeGridStep`, solo mixer/brano caricato. Dopo ogni
+battito accettato prolunga la retta dei battiti prima di un perno e guarda gli
+ultimi 2-4 quarti: un cambio vero se ne allontana di `k * passo`, un batterista
+che si sposta di una costante. Conferma al primo m che lo prova contro
+spostamento, colpo isolato, rampa, sedicesimi/fantasmi e quasi-ottava (dettagli
+e numeri nella skill `realtime-tempo`, §2). Consegna al clock con la stessa
+transizione `rapid` già misurata: niente snap, niente impulsi saltati.
+
+| banco | prima | dopo |
+|---|---|---|
+| gradini ±3..15%, 70-150 BPM, puliti: tempo a stabile | 5,4 s | **1,9 s** |
+| stessi, 6 ms di imprecisione | 12,1 s | **5,6 s** |
+| stessi, 12 ms | 14,3 s | **11,5 s** |
+| `VPTests --tempo-step` gradini con 6 ms (12 casi) | 4/12 confermati | **12/12 in 0,92-1,40 s** |
+| `probe_motion_matrix --quick` fisso, 4 offset | — | **hash identici** |
+| idem gradini, p95 ms | 180/209/196/165 | **175/174/171/139** |
+| idem continuo, p95 ms | 132/109/87/133 | **130/105/82/127** |
+
+Invariati: `probe_tempo_step`, `VPAlign --ramps`, `--tempo-slow` 10/0,
+`--tempo-motion` 291/2 e `--octave` 5/6 (gli stessi rossi di HEAD). `probe_small_steps`:
+52->50 passa da FAIL a PASS. Costo noto: all'inizio di rampe molto ripide (10%
+in 12 s a 60-80 BPM) scatta; l'errore medio migliora, ma a 100 BPM il tempo
+fuori 2,5% sale da 5,1 a 6,7%. Non coperti: gradini oltre ~15% con
+imprecisione (i nuovi battiti escono dalla griglia) e il microfono iPad.
+
+- [x] misurare dove si perdono i secondi (soglia di instabilità e buco 3-5%);
+- [x] rilevatore quarto per quarto con i veti (spostamento, rampa, fantasmi, ottava);
+- [x] test `--tempo-step` (gradini con imprecisione + spostamento di 44 ms);
+- [x] banchi globali A/B contro HEAD (fisso identico);
+- [ ] ascolto su brano caricato e mixer con un cambio brusco vero;
+- [ ] commit (non fatto su richiesta).
+
+### 47. All'avvio del brano parte da ~150 e scende per molti secondi prima di allinearsi 🔴 (2026-09-17, segnalato, non indagato)
+
+Segnalazione durante l'ascolto: brano a ~108 BPM; all'apertura dell'app il
+tempo è già circa 150, e quando il brano parte ci mette molti secondi, scendendo,
+prima di stabilizzarsi. Atteso: aggancio in pochi quarti. Percorso diverso
+dall'item 46 (acquisizione, non cambio a brano agganciato).
+
+- [ ] capire da dove viene ~150 prima del brano (stanza/silenzio agganciato? tempo precedente tenuto da `notifyInputRestart`?);
+- [ ] riprodurre offline sul file dell'utente con la rete vera e la traccia `VP_TEMPO_TRACE`;
+- [ ] misurare quanto del ritardo è acquisizione del decoder e quanto è la discesa del clock.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
