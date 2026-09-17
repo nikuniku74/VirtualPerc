@@ -165,7 +165,7 @@ public:
     void setLineFeed (bool on) noexcept { lineFeed = on; }
     /** Whether a part is sounding right now. Only the octave snap reads it:
         see the note beside `levelHeldWhilePlaying` in `updateTempo`. */
-    void setSounding (bool on) noexcept { sounding = on; }
+    void setSounding (bool on) noexcept { sounding = on; soundedOnInput = soundedOnInput || on; }
 
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
@@ -218,6 +218,7 @@ private:
         beats against the line fitted through the beats before them. Publishes
         through the same confirmed transition as `observeTempoTransition`. */
     bool  observeGridStep() noexcept;
+    float holdLevel (float candidateBpm, float referenceBpm) const noexcept;
     /** Forget the candidate *and* the interval reference it was measured from.
         For the boundaries at which no interval spanning them means anything. */
     void  clearTempoTransition (TempoTransitionReason reason) noexcept;
@@ -327,6 +328,8 @@ private:
         BeatHypothesis::beatDownbeat. */
     float  lastBeatDownbeat = 0.0f;
     int    refractoryFrames = 0;
+    /** Events dated before this belong to the input before the last restart. */
+    double inputRestartSec = -1.0;
     int    beatsInBar = 0;
     uint64_t frame = 0;
     bool   established = false;
@@ -422,6 +425,13 @@ private:
     bool  useAnchor = false;
     bool  lineFeed = false;
     bool  sounding = false;
+    /** The level held since the part first sounded on this input (reported
+        units). Acquisitions and comb pulls a whole octave away are folded back
+        onto it; cleared only by `reset` and a non-continuous
+        `notifyInputRestart`. Zero while the part has not sounded. */
+    float levelReferenceBpm = 0.0f;
+    /** The part has sounded since the last new input: from then the level is held. */
+    bool  soundedOnInput = false;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear

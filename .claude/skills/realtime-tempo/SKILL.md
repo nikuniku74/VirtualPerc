@@ -790,6 +790,34 @@ returning (returning needs the reading to fall under `kOctaveTooSlow`). A new
 input still earns its own level - `setInputEpoch` clears it - and ÷2/×2 stays
 available while playing, which is the manual way out of a held wrong level.
 
+**No automatic double or halve once the part has sounded (2026-09-17, user
+decision).** ÷2/×2 are the only way the level moves. AUTO octave in
+`BeatTracker` is removed (`updateAutoOctave`, `kOctaveTooFast/Slow`, the epoch
+reset of the level); AUTO now means "no manual shift". In `BeatDecoder`,
+`soundedOnInput` latches from `setSounding(true)`; from then
+`levelReferenceBpm` follows the committed tempo and (a) every octave argument
+of the comb snap is refused - playing, between takes or provisional - and (b)
+`holdLevel` folds any acquisition, provisional refinement, stale-grid
+re-acquisition or no-fit comb pull that is a whole octave (+/-0.15 log2) from
+it back onto it. Before the part has ever sounded on the input, first-reading
+corrections still happen (inaudible): 52 read 104, swung cells. `reset` and a
+non-continuous `notifyInputRestart` clear both. An earlier "lock after 16
+settled beats" version still doubled early and was replaced. Decoder-only
+benches never sound, so `probe_matrix --quick` is identical to HEAD; the cost
+exists only after entry, as a wrong level kept until ÷2/×2. Do not add any
+automatic octave change back.
+
+**An input restart must not inherit the old song's last beat (2026-09-17,
+uncommitted).** The first frames after `notifyInputRestart` still analyse the
+previous source; its last beat (dated before the change) entered the fresh
+history and fast acquisition built 123.7 from it for an 80 BPM song over a 120
+one (13.2 s to 80; cold start 1.6 s). `inputRestartSec` refuses events dated
+before the restart plus half an analysis window. Full-engine switch bank (real
+network, 4 genres x 5 tempo pairs): 120->80 rock/dance/pop decoder 1.6 s (was
+13.2 s / double / 12.8 s); cost: 100->140 decoder +0.4 s and clock +2-3.6 s of
+phase catch-up overshoot. Zeroing activations or resetting features/model at
+the restart were worse and rejected.
+
 ### For one class of material it is not "partly" unsolvable - it is undecidable
 
 The slow case is the sharp one, and it has been measured to the end: a straight

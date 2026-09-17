@@ -3695,6 +3695,94 @@ dall'item 46 (acquisizione, non cambio a brano agganciato).
 - [ ] riprodurre offline sul file dell'utente con la rete vera e la traccia `VP_TEMPO_TRACE`;
 - [ ] misurare quanto del ritardo è acquisizione del decoder e quanto è la discesa del clock.
 
+**Caso generale, «da 120 carico/suono un brano a 80» (2026-09-17).** Banco
+nuovo in scratch: motore completo con la rete vera, brano sintetico A 40 s poi B
+40 s (`renderSong`, 8 ms di imprecisione, 4 generi x 5 coppie), tre modi:
+`load` (`notifyInputRestart` al cambio), `gap` (3 s di silenzio, niente
+restart), `cut`. Riferimento `cold` = solo B da zero.
+
+Causa trovata sul `load`: il reset del decoder avviene mentre i primi frame
+analizzano ancora audio del brano vecchio. L'ultimo battito di A (datato 26 ms
+*prima* del cambio, forza 0,89) entra nella storia nuova; con due picchi deboli
+di B l'aggancio rapido prende 2 x 0,243 s = **123,7**, lo stato-spazio (ancora
+sul 120 di A) lo avalla, e la griglia provvisoria sbagliata scarta 3 picchi su
+4 per ~12 s finché il pettine non si assesta. Da zero lo stesso B aggancia 80 in
+1,6 s.
+
+Candidato nel tree (non committato): `inputRestartSec` in `notifyInputRestart`;
+nessun picco datato prima del nuovo ingresso + mezza finestra d'analisi entra
+nella storia. Non tocca pettine, HMM né attivazioni. Decoder/clock (s, 2% tenuto
+3 s):
+
+| caso | prima | dopo |
+|---|---|---|
+| rock 120->80 | 13,2 / 15,4 | **1,6 / 4,6** |
+| dance 120->80 | finiva a 161 (doppio) | **1,6 / 4,6** |
+| pop 120->80 | 12,8 / 17,3 | **1,6** / 12,0 |
+| rock/dance/pop 90->120 | 2,6 / 4,3 · 2,6 / 4,1 · 1,0 / 3,5 | 1,6 / 3,2 · 1,6 / 3,2 · 1,6 / 2,7 |
+| rock/dance/pop 100->140 | 0,9 / 1,6 · 0,9 / 1,6 · 0,9 / 2,2 | 1,3 / **5,2** · 1,4 / **4,8** · 1,3 / 3,6 |
+| latin 120->80 | 1,2 / 15,2 | doppio (160) |
+| latin 80->120, 90->120 | 1,1 ma pubblica 60 | 60, decoder non entro 2% |
+| pop 140->100 | 12,6 / 14,0 | invariato |
+
+Scartati: azzerare le attivazioni per ~9 frame dopo il restart (dance 120->80
+a 24 s, clock più lento su 100->140) e resettare feature/modello al restart
+(pop 11,3 s): rimescolano a caso le prime scelte.
+
+Gate del candidato: `--new-input` 3/0, `--tempo-slow` 10/0, `--tempo-step`
+13/0, `--evidence` 2/0; `--bar` 8/2 una volta sotto carico, poi 10/0 su 8
+ripetizioni (test a tempo, instabile). Non girati: `probe_matrix` (non fa
+restart), `--octave`, `--makeup`.
+
+Aperti, cause diverse:
+- [ ] **clock dopo un aggancio nuovo mentre suona**: su 100->140 il decoder è
+      giusto a +1,5 s ma il clock sovrasterza a 146-148 BPM per ~4 s per
+      recuperare la fase (piega la velocità invece di riposizionarsi); pop
+      120->80 clock 12 s con decoder a 1,6 s;
+- [ ] **mixer senza silenzio lungo**: l'epoch vuole ~4 s di quiete; con 3 s o
+      cambio diretto 120->80 finisce su 160 e ci resta (salto largo confermato
+      sugli ottavi, livello tenuto mentre suona);
+- [ ] latin: metà/doppio pubblicato dal tracker (60 per 120) e pop 140->100 a 12,6 s;
+- [ ] decidere se tenere il candidato dopo ascolto.
+
+**Decisione dell'utente (2026-09-17): niente raddoppi/dimezzamenti automatici;
+si fanno solo a mano con ÷2/×2.** Una prima versione (blocco 16 battiti dopo
+l'assestamento) all'ascolto ha raddoppiato di nuovo ed è stata sostituita.
+
+Implementato (non committato):
+- `BeatTracker`: AUTO ottava rimosso (`updateAutoOctave`, soglie 168/49, reset
+  del livello a ogni epoch). AUTO = nessuno spostamento manuale (livello 0).
+- `BeatDecoder`: da quando la parte ha suonato su questo ingresso
+  (`soundedOnInput`) il livello è tenuto: la correzione d'ottava del pettine è
+  rifiutata sempre (suonando, tra STOP e START, anche in provvisorio) e
+  `holdLevel` riporta sul livello tenuto ogni riacquisizione, rifinitura
+  provvisoria, watchdog o spinta del pettine che cada a un'ottava intera.
+  Prima che la parte abbia mai suonato le prime letture possono ancora
+  correggersi (non si sente nulla: 52 letto 104, swing a 1,5x). Si azzera solo
+  con un ingresso nuovo.
+
+Verifiche: `--tempo-slow` 12/0 (nuovo test: parte suonata, 100 BPM, poi un
+battito sì e uno no -> resta 100; ÷2 -> 50; ingresso nuovo a 50 -> 50; HEAD
+scendeva a 50 da solo), `--tempo-step` 13/0, `--new-input` 3/0, `--bar` 10/0,
+`--evidence` 2/0, `--octave` e `--tempo-motion` stessi esiti di HEAD;
+`probe_matrix --quick` identico a HEAD (i banchi del solo decoder non suonano).
+
+Anche il ripiego armonico (`selectHarmonicSource`) non viene più usato se il suo
+tempo è a un'ottava intera dal clock già agganciato (`--harmonic-entry` 4/4).
+
+Banco motore completo con rete vera (36 casi x HEAD/nuovo, parte che suona):
+**salti ×2/÷2 a parte udibile 4 -> 0**. latin 80->120 e 90->120: HEAD finiva
+dimezzato a 60, ora 120. Cambi rispetto a HEAD da seguire: dance 140->100
+caricato 1,0 -> 12,6 s (in HEAD il brano A a 140 veniva dimezzato a 70; ora
+resta 140 e l'aggancio provvisorio di B a 97,3 converge piano); latin 120->80
+caricato e con pausa, e pop con pausa: letti al doppio o fermi (160 / 73,7)
+dove HEAD arrivava a 80. dance/latin partiti da zero a 55 restano letti 110 in
+entrambe le versioni (prima lettura prima dell'entrata).
+
+- [ ] ascolto: nessun ×2/÷2 da solo dopo l'entrata della parte, né tra STOP e START;
+- [ ] dance 140->100 caricato: aggancio provvisorio 2,7% sbagliato che resta 5 s senza fit;
+- [ ] mixer senza silenzio lungo: resta aperto (vedi sopra).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

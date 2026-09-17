@@ -122,19 +122,6 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     constexpr double kBarMoveHoldSeconds = 9.6;
 
 
-    // AUTO half/double. The upper bound still folds an uncomfortably fast pulse
-    // down. The lower bound deliberately sits below BeatDecoder's 50 BPM
-    // reported floor: 50 is a real requested playing tempo, not a value AUTO
-    // may silently double. Slow music with loud eighths is decided instead by
-    // the causal bar-cadence evidence published by BeatDecoder.
-    constexpr float kOctaveTooFast = 168.0f;
-    constexpr float kOctaveTooSlow = 49.0f;
-
-    // Held before it is taken. Changing the metrical level in the middle of a
-    // song is one of the most audible things this app can do, and a reading that
-    // has only just arrived is not evidence enough to do it on.
-    constexpr double kAutoOctaveHoldSeconds = 2.5;
-
     // How long the one stays marked after a tap has declared it.
     constexpr double kBarDeclaredFlashSeconds = 0.9;
 
@@ -231,10 +218,7 @@ void BeatTracker::reset() noexcept
     needsResync = false;
     waitForSongBeat = false;
     armed = false;
-    autoOctave = octaveAuto ? 0 : userOctave;
-    autoWant = autoOctave;
-    autoHoldSamples = 0;
-    neural.setUserOctave (autoOctave);
+    neural.setUserOctave (octaveAuto ? 0 : userOctave);
     tapHoldSamples = 0;
     downbeatHoldSamples = 0;
     barLocked = false;
@@ -590,77 +574,9 @@ void BeatTracker::setTempoOctaveAuto (bool on) noexcept
         return;
 
     octaveAuto = on;
-    // Switching AUTO on starts from the level the listener had chosen rather
-    // than from the analysis's own reading: what they picked is the best
-    // evidence there is about the pulse they want, and jumping levels the
-    // instant the button is released would change the part under their hands.
-    autoOctave = userOctave;
-    autoWant = userOctave;
-    autoHoldSamples = 0;
-    neural.setUserOctave (octaveAuto ? autoOctave : userOctave);
-}
-
-void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,
-                                    bool metricalHintValid, int metricalHint) noexcept
-{
-    if (! periodic || bpm < 40.0f)
-    {
-        autoHoldSamples = 0;
-        return;
-    }
-
-    // Never under a part that is playing. Halving or doubling the level
-    // mid-performance is not a tempo correction to a percussionist: it is the
-    // grid they are playing against moving, and everything after it - the
-    // density of the part, where the bar falls, what the display says - is
-    // wrong at once. Measured on a band drifting through the upper bound: a
-    // take at 168 BPM climbs to 168.20 at 23 s and the level halves to 84 at
-    // 26 s, mid-song, and never comes back, because returning would need the
-    // reading to fall under kOctaveTooSlow.
-    //
-    // So the level is chosen while nothing is sounding - before the part comes
-    // in, at a stand-down, after STOP - and held for as long as it plays. A new
-    // input is not covered by this and must not be: setInputEpoch clears the
-    // level so a new song earns its own. And if the held level is the wrong
-    // one, ÷2/×2 is the way out, which is the case those controls exist for
-    // (TODO items 1 and 15; docs/HANDOFF_OCTAVE_50BPM.md).
-    if (sounding)
-    {
-        autoWant = autoOctave;
-        autoHoldSamples = 0;
-        return;
-    }
-
-    // The reading already carries whatever shift is in force, so a level too
-    // fast is answered by going one below the shift now applied, not one below
-    // zero.
-    int want = autoOctave;
-    if (metricalHintValid)
-        want = std::clamp (metricalHint, -1, 1);
-    else if (bpm > kOctaveTooFast && want > -1)
-        --want;
-    else if (bpm < kOctaveTooSlow && want < 1)
-        ++want;
-
-    if (want != autoWant)
-    {
-        autoWant = want;
-        autoHoldSamples = 0;
-        return;
-    }
-    if (want == autoOctave)
-    {
-        autoHoldSamples = 0;
-        return;
-    }
-
-    autoHoldSamples += numSamples;
-    if (autoHoldSamples > static_cast<int> (sampleRate * kAutoOctaveHoldSeconds))
-    {
-        autoOctave = want;
-        autoHoldSamples = 0;
-        neural.setUserOctave (autoOctave);
-    }
+    // AUTO never moves the level by itself (user decision, 2026-09-17): it is
+    // simply no manual shift, and changes only when the listener presses.
+    neural.setUserOctave (octaveAuto ? 0 : userOctave);
 }
 
 void BeatTracker::nudgeBar (int beats) noexcept
@@ -958,8 +874,14 @@ bool BeatTracker::selectHarmonicSource (BeatHypothesis& hyp, bool haveHyp, int n
     // valid at 17.317 s while the share peaked at 0.313. Tonal share still
     // protects the separate bar-vote path; source acquisition is protected by
     // phase coherence itself and by immediate priority for any neural tempo.
+    // Never an automatic double or halve (user decision, 2026-09-17): once the
+    // clock has a tempo, a harmonic reading a whole octave away is not used.
+    const float octaves = lockedOnce && harmonicTempo.bpm() > 40.0f && follower.currentTempo() > 40.0f
+        ? std::log2 (harmonicTempo.bpm() / follower.currentTempo()) : 0.0f;
+    const bool octaveAway = std::fabs (std::round (octaves)) >= 1.0f
+        && std::fabs (octaves - std::round (octaves)) < 0.15f;
     const bool selected = !neuralHasTempo && eligible && !speakerFollow && tempoFollow
-        && !tapEstablished && harmonicTempo.phaseValid();
+        && !tapEstablished && harmonicTempo.phaseValid() && ! octaveAway;
     if (selected != harmonicSourceActive)
     {
         seenSerials = false;
@@ -1408,11 +1330,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         needsResync = false;
     }
 
-    if (octaveAuto && tempoFollow && !harmonicSourceActive)
-        updateAutoOctave (nnBpm, periodic, numSamples,
-                          hyp.metricalOctaveHintValid,
-                          hyp.metricalOctaveHint);
-
     // The analysis has thrown its grid away and built another one.
     //
     // This used to be inferred here, from the network's BPM disagreeing with
@@ -1702,7 +1619,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.observedPhaseErrorBeats = follower.observedPhaseErrorBeats();
     out.phaseRecoveryEvents = follower.phaseRecoveryEvents();
     out.confidence = smoothedConf;
-    out.tempoOctave = octaveAuto ? autoOctave : userOctave;
+    out.tempoOctave = octaveAuto ? 0 : userOctave;
     out.beatPhase = follower.beatPhase();
     out.barPhase = follower.barPhase();
     barDeclaredSamples = std::max (0, barDeclaredSamples - numSamples);
@@ -1820,8 +1737,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     out.percussionShouldPlay = canPlay && ! waitForQuantize;
     sounding = out.percussionShouldPlay;
-    // The decoder holds its own metrical level under a playing part for the
-    // same reason `updateAutoOctave` holds the shift above it.
     neural.setSounding (sounding);
     if (out.percussionShouldPlay)
         hadPlayed = true;

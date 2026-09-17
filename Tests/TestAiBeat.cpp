@@ -9905,6 +9905,55 @@ void vpRunSlowTempoRegressionTest (int& passed, int& failed)
                 "100 BPM stays at 100 automatically and manual octave steps return through 100");
     }
 
+    // Once the part has sounded the level is never halved or doubled
+    // automatically: 100 BPM for 30 s,
+    // then every other beat vanishes (the fold names 50; before the hold the
+    // decoder snapped to 50). Only the listener's ÷2 moves it, and a new input
+    // chooses its level again.
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (true);
+        dec.setSounding (true);
+        auto feed = [&dec] (double from, double to, double period, bool sparse)
+        {
+            vp::BeatHypothesis h {};
+            float lowest = 999.0f;
+            for (int f = static_cast<int> (from * fps); f < static_cast<int> (to * fps); ++f)
+            {
+                const double t = f / fps;
+                const double k = std::round (t / period);
+                const double d = (t - k * period) / 0.027;
+                const bool silent = sparse && (static_cast<long> (k) % 2) != 0;
+                const float a = silent ? 0.02f
+                    : std::max (0.02f, 0.94f * static_cast<float> (std::exp (-0.5 * d * d)));
+                h = dec.observe (a, 0.02f, 1.0f - a);
+                if (t >= from + 1.0)
+                    lowest = std::min (lowest, h.bpm);
+            }
+            return std::pair<vp::BeatHypothesis, float> { h, lowest };
+        };
+        const auto settled = feed (0.0, 30.0, 0.6, false);
+        const auto sparse = feed (30.0, 90.0, 0.6, true);
+        dec.setUserOctave (-1);
+        const auto manual = feed (90.0, 92.0, 0.6, true);
+        dec.setUserOctave (0);
+        dec.setSounding (false);
+        dec.notifyInputRestart();
+        const auto fresh = feed (92.0, 130.0, 1.2, false);
+        std::printf ("tempo-held settled=%.2f sparse-lowest=%.2f manual=%.2f new-input=%.2f\n",
+                     static_cast<double> (settled.first.bpm),
+                     static_cast<double> (sparse.second), static_cast<double> (manual.first.bpm),
+                     static_cast<double> (fresh.first.bpm));
+        expect (std::fabs (settled.first.bpm - 100.0f) < 1.0f
+                    && std::fabs (sparse.second - 100.0f) < 1.0f,
+                "a settled level is not halved automatically");
+        expect (std::fabs (manual.first.bpm - 50.0f) < 1.0f
+                    && std::fabs (fresh.first.bpm - 50.0f) < 1.0f,
+                "manual half still applies and a new input chooses its level again");
+    }
+
     auto run = [] (float bpm, bool gap)
     {
         vp::BeatDecoder dec;

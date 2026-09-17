@@ -216,17 +216,6 @@ public:
             noNetworkTempoSamples = 0;
             follower.cancelPhaseRecovery();
             sawInputStart = true;
-            // A new input must earn its own metrical level. In particular, a
-            // 50 BPM file may have taught AUTO to divide the hat pulse by two;
-            // carrying that choice into an unrelated 100 BPM file would turn
-            // the fix into the same sticky-octave bug in the other direction.
-            if (octaveAuto && autoOctave != 0)
-            {
-                autoOctave = 0;
-                autoWant = 0;
-                autoHoldSamples = 0;
-                neural.setUserOctave (0);
-            }
         }
         lastInputEpoch = epoch;
         seenEpoch = true;
@@ -436,8 +425,6 @@ private:
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
     bool barIsTrustedNow() const noexcept;
-    void updateAutoOctave (float bpm, bool periodic, int numSamples,
-                           bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
     int  pulsesFor (Subdivision s) const noexcept;
 
@@ -513,13 +500,9 @@ private:
         nothing to disturb by moving it, which is the difference between placing
         the clock and having to lean it into place. */
     bool sounding = false;
-    /** The level the listener chose, the level AUTO has settled on, the level it
-        is arguing for, and how long it has been arguing. */
+    /** The level the listener chose; under AUTO no shift is applied. */
     int  userOctave = 0;
     bool octaveAuto = true;
-    int  autoOctave = 0;
-    int  autoWant = 0;
-    int  autoHoldSamples = 0;
     int tapHoldSamples = 0;
     int downbeatHoldSamples = 0;
     bool barLocked = false;

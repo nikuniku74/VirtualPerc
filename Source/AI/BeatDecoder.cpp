@@ -1,4 +1,5 @@
 #include "AI/BeatDecoder.h"
+#include "AI/BeatModelConfig.h"
 
 #include "Core/Types.h"
 
@@ -503,6 +504,9 @@ void BeatDecoder::reset() noexcept
 {
     tempo.reset();
     timeSec = 0.0;
+    inputRestartSec = -1.0;
+    levelReferenceBpm = 0.0f;
+    soundedOnInput = false;
     lastBeatSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
@@ -828,6 +832,20 @@ float BeatDecoder::applyUserOctave (float bpmValue) const noexcept
     return shifted;
 }
 
+float BeatDecoder::holdLevel (float candidateBpm, float referenceBpm) const noexcept
+{
+    // A candidate a whole number of octaves from the level already held is
+    // that level: the tempo never doubles or halves by itself (user decision,
+    // 2026-09-17; ÷2/×2 are manual). Anything else is a real tempo and passes.
+    if (referenceBpm < kMinBpm || candidateBpm < kMinBpm)
+        return candidateBpm;
+    const float octaves = std::log2 (candidateBpm / referenceBpm);
+    const float whole = std::round (octaves);
+    if (whole == 0.0f || std::fabs (octaves - whole) >= kOctaveArgumentTolerance)
+        return candidateBpm;
+    return candidateBpm * std::pow (2.0f, -whole);
+}
+
 void BeatDecoder::pushLongFit (float bpmValue) noexcept
 {
     if (bpmValue < kMinBpm || bpmValue > kMaxBpm)
@@ -1061,6 +1079,19 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     beatFilled = 0;
     beatsInBar = 0;
     ++gridSerial;
+    // The first frames after this still analyse audio of the previous source.
+    // Measured loading an 80 BPM song over a 120 BPM one: the old song's last
+    // beat (dated before the change) entered the fresh history, fast
+    // acquisition took 123.7 from it, and 80 arrived 13.2 s later. No event
+    // dated before the new source (plus half an analysis window) is its beat.
+    inputRestartSec = timeSec + 0.5 * kBeatModelFrame / kBeatModelSampleRate + 1.0 / fps;
+    // A new source chooses its metrical level again; a continuous arrangement
+    // keeps the one it already has (see `levelReferenceBpm`).
+    if (! preserveComb)
+    {
+        levelReferenceBpm = 0.0f;
+        soundedOnInput = false;
+    }
 
     // Evidence chains, and the verdict they fed. A tempo called fixed on a room
     // is the most expensive thing to keep: it is designed to be stubborn.
@@ -2355,7 +2386,14 @@ bool BeatDecoder::tryFastAcquire() noexcept
         if (previousRaw > 0.0f && std::fabs (previousRaw / raw - 1.0f) < 0.14f)
             bestPeriod *= 0.5f * (1.0f + previousRaw / raw);
     }
-    const float acquiredRawBpm = 60.0f / bestPeriod;
+    float acquiredRawBpm = 60.0f / bestPeriod;
+    // Once the part has sounded, re-acquisition within the input (provisional
+    // refinement, stale-grid restart) keeps the committed level: no ÷2/×2.
+    {
+        const float asReported = applyUserOctave (acquiredRawBpm);
+        const float held = holdLevel (asReported, levelReferenceBpm);
+        acquiredRawBpm *= held / std::max (1.0f, asReported);
+    }
 
     // The top of the range is where the interval alone cannot tell a pulse from
     // a subdivision and where being wrong costs the most. The paired and
@@ -2549,7 +2587,7 @@ void BeatDecoder::updateTempo() noexcept
             // to test that candidate's slower octave, so adopting it outright
             // is how loud eighths at 76 BPM briefly became 152 BPM. The fast
             // interval/HMM path below is specifically built for this interval.
-            bpm = std::clamp (combBpm, kMinBpm, kMaxBpm);
+            bpm = std::clamp (holdLevel (combBpm, levelReferenceBpm), kMinBpm, kMaxBpm);
             established = true;
             provisional = false;
             intervalAcquired = false;
@@ -2582,7 +2620,8 @@ void BeatDecoder::updateTempo() noexcept
             // fine to play on. The least-squares fit owns the tempo from the
             // fourth beat, and the fold corrects the level if it disagrees when
             // it finally arrives, at the provisional cost of two beats.
-            bpm = std::clamp (applyUserOctave (anchorBpm), kMinBpm, kMaxBpm);
+            bpm = std::clamp (holdLevel (applyUserOctave (anchorBpm), levelReferenceBpm),
+                              kMinBpm, kMaxBpm);
             established = true;
             provisional = true;
             intervalAcquired = false;
@@ -2600,7 +2639,7 @@ void BeatDecoder::updateTempo() noexcept
             double anchor = -1.0;
             if (fitPeriod (kShortFit, period, residual, coverage, anchor) && residual < 0.06f)
             {
-                bpm = std::clamp (60.0f / period, kMinBpm, kMaxBpm);
+                bpm = std::clamp (holdLevel (60.0f / period, levelReferenceBpm), kMinBpm, kMaxBpm);
                 gridAnchorSec = anchor;
                 established = true;
                 provisional = true;
@@ -2880,7 +2919,14 @@ void BeatDecoder::updateTempo() noexcept
     // `established` through `notifyInputRestart` and is not covered by this at
     // all; and if the held level is the wrong one, the way out is the same one
     // item 17 names - the listener taps ÷2 or ×2.
-    const bool levelHeldWhilePlaying = sounding && ! provisional && octaveArgument;
+    //
+    // Product decision (2026-09-17): once the part has sounded on this input
+    // the tempo never doubles or halves by itself - not while playing, not
+    // between takes, not while provisional. A wrong level stays until the
+    // listener taps ÷2/×2; a new input chooses its own. Before the part has
+    // ever sounded nobody hears a correction, so first readings may still be
+    // fixed (52 BPM read 104, a swung cell read at 1.5x).
+    const bool levelHeldWhilePlaying = octaveArgument && levelReferenceBpm >= kMinBpm;
 
     if (combDisagrees && ! levelHeldWhilePlaying
         && tempo.salience() > kOctaveSnapSalience)
@@ -3247,7 +3293,7 @@ void BeatDecoder::updateTempo() noexcept
                                  || tempo.levelSettled();
         if (combReady && foldMayPull && tempoRegime != TempoRegime::fixed
             && transitionState != TempoTransitionState::rapid)
-            commit (combBpm, kRateAcquiring);
+            commit (holdLevel (combBpm, levelReferenceBpm), kRateAcquiring);
         return;
     }
 
@@ -4019,6 +4065,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     // detector has to be asked the first one - on a step large enough to
     // matter, every peak carrying the evidence is one the grid rejects.
     const bool eligiblePeak = localMaximum && refractoryFrames == 0
+                              && eventTimeSec >= inputRestartSec
                               && (lastBeatSec < 0.0
                                   || (eventTimeSec - lastBeatSec)
                                          >= 0.4 * static_cast<double> (eventReferencePeriod));
@@ -4124,6 +4171,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
+    if (established && soundedOnInput && bpm >= kMinBpm)
+        levelReferenceBpm = bpm;
     hyp.metricalOctaveHint = metricalOctaveHint;
     hyp.metricalOctaveHintValid = metricalOctaveHintValid;
     hyp.fitResidual = lastFitResidual;
