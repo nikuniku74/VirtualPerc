@@ -1108,35 +1108,29 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
     // Serial identity belongs to the neural beat, never the audio callback.
     // Reject a backlog older than one beat instead of confirming stale audio.
-    const bool directLiveRecovery = haveHyp && hyp.valid && ! speakerFollow
-                                    && hyp.regime == TempoRegime::live
-                                    && hyp.transitionState
-                                           == TempoTransitionState::stable
-                                    && hyp.transitionRefitBeats == 0;
+    const bool directLivePhaseFollow = haveHyp && hyp.valid && ! speakerFollow
+                                       && hyp.regime == TempoRegime::live
+                                       && hyp.transitionState
+                                              == TempoTransitionState::stable
+                                       && hyp.transitionRefitBeats == 0;
+    follower.setDirectLivePhaseFollow (
+        directLivePhaseFollow && ! tempoOwned && tempoFollow
+        && ! harmonicSourceActive && periodic && ! tapHold);
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();
     else if (!harmonicSourceActive && hadBeat
-             && (hyp.confidence > 0.40f || directLiveRecovery)
+             && (hyp.confidence > 0.40f || directLivePhaseFollow)
              && hyp.analysisSample > 0
              && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
     {
-        // Once a direct feed is genuinely VIVO, low trust from the constant-
-        // tempo fit is not a reason to leave a persistent audible displacement
-        // unpaid: curvature itself lowers that score. Abrupt changes retain
-        // their dedicated one-beat path and the full refit quarantine. The
-        // follower still requires two fresh phase observations in agreement,
-        // so neither a single onset nor a BPM publication can move the clock.
-        // A beat already accepted by the decoder is eligible in this one case
-        // even when its aggregate confidence is below 0.40. The iPad trace
-        // showed 86 ms of coherent phase debt decaying over four seconds while
-        // low-confidence accepted beats never reached the two-beat recovery
-        // proof. Direct propagation plus live/refit guards and two agreeing
-        // serials are the evidence here; a second confidence threshold only
-        // delayed the same decision.
+        // The normal VIVO correction is continuous in TempoFollower. This
+        // separate two-observation path remains available only after evidence
+        // was genuinely poor long enough to arm dropout/re-entry recovery.
+        // Abrupt changes retain their dedicated path and refit quarantine.
         follower.observeRecoveryBeat (
             wrapCentered (follower.beatPhase() - songPhase), hyp.beatSerial,
             ! speakerFollow,
-            hyp.motionBridgeAuthority >= 0.999f || directLiveRecovery);
+            hyp.motionBridgeAuthority >= 0.999f || directLivePhaseFollow);
     }
 
     // Trim exists to close a standing rate error the tempo source cannot see.
@@ -1567,6 +1561,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const float phaseTau =
                 follower.tempoTransitionActive()
                     ? kGridTauRapid
+                    : directLivePhaseFollow ? kGridTauMotion
                     : gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
                                          ? kGridTauProvenMotion
                                          : cleanTempoMotion ? kGridTauMotion

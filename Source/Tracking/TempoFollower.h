@@ -51,6 +51,15 @@ public:
     {
         directTempoDirectionGuard = on;
     }
+    /** A stable direct mixer/file feed whose decoder is already in the live
+        regime. Its accepted beats have one propagation path, so phase can be
+        followed continuously instead of accumulating debt for a one-shot
+        catch-up. Abrupt transitions, TAP/manual ownership and room input never
+        enable this mode. */
+    void setDirectLivePhaseFollow (bool on) noexcept
+    {
+        directLivePhaseFollow = on;
+    }
     /** The decoder has a clean short fit moving away from a held direct-feed
         tempo. This does not select a tempo; it only lets phase drift build the
         existing rate trim faster. `proven` means the residual-shape path has
@@ -183,6 +192,7 @@ private:
     bool havePhaseObservation = false;
     bool tempoTrimEnabled = false;
     bool directTempoDirectionGuard = false;
+    bool directLivePhaseFollow = false;
     bool tempoMotionHint = false;
     bool tempoMotionProven = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */

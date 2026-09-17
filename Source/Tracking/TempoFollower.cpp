@@ -172,6 +172,7 @@ void TempoFollower::reset() noexcept
     havePhaseObservation = false;
     tempoTrimEnabled = false;
     directTempoDirectionGuard = false;
+    directLivePhaseFollow = false;
     tempoMotionHint = false;
     tempoMotionProven = false;
     tempoTrust = 1.0f;
@@ -184,6 +185,7 @@ void TempoFollower::reset() noexcept
 void TempoFollower::resetClock() noexcept
 {
     cancelPhaseRecovery();
+    directLivePhaseFollow = false;
     phase = 0.0;
     beatInBar = 0;
     phaseErrEma = 0.0f;
@@ -213,10 +215,11 @@ void TempoFollower::setTempoTrust (float trust) noexcept
     // A fill, a newly enabled percussion voice or a level change can make the
     // fitted beats temporarily poor. While that is true the lean cap is
     // deliberate, but once clean beats return it used to leave the residual
-    // offset to the ordinary 0.9 s target filter. The analysis had already
-    // answered "the drummer is back" and the clock still behaved as if it had
-    // not. Arm a half-beat catch-up only after at least 200 ms of genuinely poor
-    // evidence; one bad six-Hz hypothesis is shorter and cannot trigger it.
+    // offset to the ordinary target filter. The analysis had already answered
+    // "the drummer is back" and the clock still behaved as if it had not. Arm
+    // a bounded dropout/re-entry catch-up only after at least 200 ms of
+    // genuinely poor evidence; one bad six-Hz hypothesis is shorter and cannot
+    // trigger it. Normal direct-live movement uses the continuous servo below.
     constexpr float kRecoveredAbove = 0.80f;
     const int poorLongEnough = static_cast<int> (sampleRate * 0.20);
     if (next >= kRecoveredAbove && poorTrustSamples >= poorLongEnough
@@ -228,11 +231,9 @@ void TempoFollower::setTempoTrust (float trust) noexcept
     tempoTrust = next;
     if (next < kRecoveredAbove)
     {
-        // The direct-live caller may have proved the phase debt independently
-        // of this constant-tempo fit. Cancelling that window on the following
-        // callback reduced a recovery to one short rate spike and left the
-        // remainder to the slow loop. Ordinary/dropout recovery retains the
-        // original trust cancellation.
+        // A recovery is useful only after clean evidence has returned. If the
+        // fit becomes unreliable again, stop its temporary steering and let
+        // the continuous direct-live servo remain inside its normal rail.
         if (! phaseRecoveryTrustOverride)
             phaseRecoverySamplesRemaining = 0;
         recoveryCandidate = false;
@@ -259,14 +260,10 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
         return;
     recoverySerialSeen = true;
     recoverySerial = serial;
-    // A constant-tempo fit loses trust when a real band curves its tempo. On a
-    // direct path the caller may identify that case either from the independent
-    // shape proof or from an established live regime outside the complete
-    // abrupt-change refit quarantine. This bypasses only that stale trust
-    // number: the two fresh, agreeing phase observations below remain the
-    // causal proof and no phase/grid state is moved here.
-    const float recoveryTrust = allowUntrustedDirectMotion && allowMissedBeats
-                                    ? 1.0f : tempoTrust;
+    // One-shot recovery requires clean evidence. A constant-tempo fit may lose
+    // trust while a real band curves its tempo, but direct-live curvature is
+    // now handled continuously and must not borrow this recovery path.
+    const float recoveryTrust = tempoTrust;
     if (! locked || recoveryTrust < 0.80f || tempoTransitionActive()
         || ! std::isfinite (errorBeats))
     {
@@ -281,11 +278,10 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
     // replace its first observation either: eighths otherwise reset this age
     // every half beat and prevent confirmation forever. Keep the accumulated
     // steering so the next eligible beat is compared on the same reference.
-    // On a proved direct-live path the decoder's serial already distinguishes
-    // accepted observations and propagation is stable. Two coherent eighths
-    // may therefore close the mandatory two-observation proof; waiting past
-    // 0.55 beat discarded the second one and delayed recovery by another beat.
-    // Every other path retains the quarter-beat independence window.
+    // On a direct path the decoder's serial already distinguishes accepted
+    // observations and propagation is stable. After a real low-evidence gap,
+    // two coherent eighths may therefore close the mandatory two-observation
+    // proof; every other path retains the quarter-beat independence window.
     const float minimumIndependentBeats = allowUntrustedDirectMotion
                                               ? 0.45f : 0.55f;
     if (recoveryCandidate
@@ -318,20 +314,23 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
     const bool persistent = std::fabs (error) > persistentFloor
         && std::fabs (expected) > persistentFloor
         && std::fabs (error - expected) < 0.015f;
-    if ((recoveryArmed || persistent) && agrees && recoveryCooldownSamples <= 0
+    // Normal direct-live motion is handled continuously by the phase servo.
+    // Letting the same phase debt also arm this bounded one-shot produced the
+    // audible chase measured in the iPad trace: 106.55 -> 103.32 -> 106.34 BPM
+    // in 0.21 s, and elsewhere 105 -> 109.99. In direct-live mode the one-shot
+    // is now reserved for its original job: recovery after evidence was poor
+    // long enough to arm `recoveryArmed`. Other paths retain persistent phase
+    // recovery exactly as before.
+    const bool mayStartRecovery = recoveryArmed
+                                  || (! allowUntrustedDirectMotion && persistent);
+    if (mayStartRecovery && agrees && recoveryCooldownSamples <= 0
         && std::fabs (error) > phaseFloorFor (period)
         && std::fabs (error) < 0.25f)
     {
-        // Once two independent beats agree, spend the confirmed offset without
-        // another proof delay. Dropout/re-entry retains the old quarter-beat
-        // catch-up. During continuous direct-feed motion that minimum can turn
-        // a modest 25--40 ms debt into an audible 12--20% lurch, so a player-
-        // like correction starts immediately and may close over the next half
-        // beat. The direct path is band-led, and listening established that a
-        // slower one-beat gesture remains audible as lag on the sixteenth-note
-        // grid. The trust override below makes this a continuous
-        // correction rather than a one-callback rate spike; it adds no new
-        // authority. The 20% rail keeps the grid monotonic, so this can shorten
+        // Once two independent beats agree after a genuine dropout/re-entry,
+        // spend the confirmed offset without another proof delay. The direct
+        // path may close over half a beat; other paths retain the quarter-beat
+        // minimum. The 20% rail keeps the grid monotonic, so this can shorten
         // intervals sharply without duplicating or skipping a pulse.
         const float excess = std::max (0.0f, std::fabs (error) - kRecoveryToleranceSeconds / period);
         const float minimumCorrectionBeats = allowUntrustedDirectMotion ? 0.5f
@@ -339,7 +338,7 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
         const float correctionBeats = std::max (minimumCorrectionBeats,
                                                 excess / kRecoverySteerRail);
         phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (std::ceil (sampleRate * period * correctionBeats)));
-        phaseRecoveryTrustOverride = allowUntrustedDirectMotion && allowMissedBeats;
+        phaseRecoveryTrustOverride = false;
         ++recoveryEvents;
         recoveryArmed = false;
         recoveryCooldownSamples = static_cast<int> (sampleRate * period * 2.5);
@@ -704,6 +703,8 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // follower controls; it neither changes the decoded target nor survives
     // loss of full shape authority.
     const float controlTrust = tempoMotionProven ? 1.0f : tempoTrust;
+    const float phaseControlTrust = (tempoMotionProven || directLivePhaseFollow)
+                                        ? 1.0f : tempoTrust;
     recoveryCooldownSamples = std::max (0, recoveryCooldownSamples - numSamples);
     recoveryAgeSamples = std::min (recoveryAgeSamples + numSamples, static_cast<int> (sampleRate * 30.0));
     ClockTick tick;
@@ -813,7 +814,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // kPoorLeanBeats: a passage whose beats are badly placed moves the
         // analysis's phase as an offset held for the length of the passage, and
         // an offset is the one thing a low-pass cannot take out.
-        const float poorLean = (1.0f - std::clamp (controlTrust, kMinTempoTrust, 1.0f))
+        const float poorLean = (1.0f - std::clamp (phaseControlTrust, kMinTempoTrust, 1.0f))
                                / (1.0f - kMinTempoTrust);
         if (poorLean > 0.0f && std::fabs (phaseTarget) < kLeanIsElsewhere)
         {
@@ -868,6 +869,23 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
                 break;
             case FollowStrength::medium:
                 break;
+        }
+        // A stable direct feed in VIVO follows accepted beats as they arrive.
+        // The old path first averaged them for up to 2.2 s, then spent the
+        // accumulated debt at a 20% one-shot rail. A percussionist does the
+        // opposite: small continuous leans prevent a conspicuous catch-up.
+        // Keep this proportional and tightly bounded; removing the derivative
+        // prevents a fresh 6 Hz publication becoming a short tempo spike.
+        if (directLivePhaseFollow && ! rapidTransition)
+        {
+            switch (follow)
+            {
+                case FollowStrength::low:    tau = 0.65f; steerLim = 0.035f; break;
+                case FollowStrength::medium: tau = 0.45f; steerLim = 0.055f; break;
+                case FollowStrength::high:   tau = 0.35f; steerLim = 0.075f; break;
+            }
+            steerCeil = steerLim;
+            dGain = 0.0f;
         }
         // Rate needed to close `phaseErrEma` beats in `tau` seconds, as a
         // fraction of the tempo. Derived rather than tuned per tempo: the same
@@ -987,7 +1005,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         && std::isfinite (rawGridPhaseError) && std::isfinite (tempo))
     {
         // Clean beats have returned after a passage that the evidence itself
-        // marked unreliable, or two beats confirmed a persistent displacement.
+        // marked unreliable, or a non-direct path confirmed displacement.
         // Land within 8 ms over the bounded recovery window, updating the
         // command from every projected phase. This is a player's fast rientro:
         // temporarily lengthen or shorten the next interval, never restart the

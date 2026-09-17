@@ -395,6 +395,23 @@ serial at an eighth-note distance was discarded by the 0.55-beat minimum, so
 the controller waited for the following quarter. Direct `live` now uses 0.45
 beat, allowing two coherent eighths to satisfy the same two-observation proof;
 fixed, transition/refit, dropout and speaker paths retain 0.55 beat.
+The subsequent complete iPad trace showed that making this one-shot earlier was
+the wrong gesture for normal band motion. At 158.45 s the target/clock were
+106.37/105.27 BPM with +28 ms phase error; when recovery armed, the sounding
+clock moved 106.55 -> 103.32 -> 106.34 BPM in 0.21 s. An earlier recovery moved
+roughly 105 -> 109.99 BPM. These rate lurches were the audible accelerations and
+slowdowns. Stable direct-feed `live` now uses a continuous proportional phase
+servo instead: 0.65/0.45/0.35 s response and a symmetric 3.5/5.5/7.5% rail for
+low/medium/high follow. Its derivative term is zero, so a fresh 6 Hz
+publication cannot become a short rate spike. The direct grid observation uses
+the existing 0.30 s motion average instead of stretching to 2.2 s when the
+constant-fit trust falls on valid curvature. The one-shot path can no longer
+arm from ordinary persistent debt in this mode; it remains available after a
+real poor-evidence interval has armed dropout/re-entry recovery. Transition,
+fixed, TAP/manual, harmonic, speaker/microphone and refit-quarantine behavior is
+unchanged. This candidate is global and dimensionless, still never snaps or
+restarts the grid, and is not yet listening-accepted or automated-test-verified
+at the user's request.
 debug `clock` value now reports the effective steered rate actually advancing
 the grid; groove/voice consumers still receive the nominal PLL tempo, so this
 diagnostic correction cannot change playback by itself.
