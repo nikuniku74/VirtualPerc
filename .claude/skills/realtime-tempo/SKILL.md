@@ -304,6 +304,19 @@ accelerando column improves 23.6/46.5 -> 14.1/37.4. The room path is unchanged
 (the filter publishes only on `lineFeed`). Real beat-grid and listening are
 still required.
 
+**Human taps did not confirm it (2026-09-17).** On `26 SPLENDIDA GIORNATA`
+(117 hand-tapped quarters, 10.8-75.4 s, full engine via `VPTrack`, constant
+offset removed) the sounding clock was 27.5/72.6 ms mean/p95 with 13.0% over
+50 ms before the filter and 31.3/76.9/14.3% with it. A variant that left the
+filter only on the kick channel's drums-out signal scored best against an
+offline onset-based beat tracker (17.7/47.7/4.3%) and worst against the taps
+(32.9/77.2/14.5%): at 32-36 s the onsets arrive late as if the band slowed to
+106.5 while the taps stay at 108.5-109. It was reverted. Do not use an
+onset-derived reference as phase truth - it disagreed with the taps by 30 ms
+mean, more than the versions differ - and `refine_taps.py` made these taps worse
+(jitter 30 -> 92 ms). Whether the filter stays needs at least one more tapped
+song, ideally with a real tempo change.
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with

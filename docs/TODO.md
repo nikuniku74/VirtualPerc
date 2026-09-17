@@ -3605,11 +3605,41 @@ tarare (64/96/128): continuo **57,1 -> 42,7 ms** medi, quota >50 ms **38% ->
 - [x] gradini misurati dai battiti rifiutati (5-30%), possesso fino all'arrivo del decoder;
 - [x] ritorno al fit sul buco batteria tramite fiducia sull'evidenza;
 - [x] test unitari (`--tempo-motion` 294/0) e suite mirate verdi;
+- [ ] **primo brano reale con tap umani: il filtro NON migliora, peggiora un poco** (2026-09-17, sotto);
 - [ ] 128->120 in 20 s ancora oltre il gate di 0,1 ms (ritardo del loop del clock);
 - [ ] buco batteria un po' peggiore (MIXER 20,9/34,9 -> 23,6/45,4 ms);
 - [ ] `--bar` intermittente una volta sotto carico: verificare se succede anche su HEAD;
 - [ ] suite completa `./scripts/run-tests.sh` (non eseguita);
 - [ ] beat-grid manuale e ascolto su accelerando/rallentando reali (mixer e brano caricato).
+
+**Tap umani su `26 SPLENDIDA GIORNATA` (2026-09-17).** 117 quarti battuti
+dall'utente fra 10,8 e 75,4 s (~107,8 BPM), griglia lisciata con quadratica
+locale; motore completo `VPTrack --pulses`, offset costante tolto. Errore del
+clock, media / p95 / quota >50 ms:
+
+| riferimento | prima del filtro | filtro (HEAD) | filtro + ritorno solo su cassa (revertito) |
+|---|---|---|---|
+| tap lisciati +/-4 | **27,5 / 72,6 / 13,0%** | 31,3 / 76,9 / 14,3% | 32,9 / 77,2 / 14,5% |
+| tap lisciati +/-8 | **26,2 / 67,2 / 11,2%** | 30,3 / 72,7 / 16,6% | 31,9 / 74,8 / 18,3% |
+| offset tolto ogni 10 s | **16,6 / 43,7 / 3,2%** | 18,6 / 71,4 / 7,9% | 21,1 / 74,8 / 9,1% |
+
+A 32-36 s i tap restano a 108,5-109 BPM mentre gli attacchi dell'audio (beat
+tracker offline non causale) arrivano come se la band rallentasse a ~106,5: il
+filtro segue gli attacchi, l'orecchio no. Il commit `ec68386`, tarato sul
+riferimento offline, e' stato quindi revertito (`8e08590`). Lezioni:
+
+- un riferimento costruito sugli attacchi non e' verita' di fase: su questo
+  brano si scosta dai tap di 30 ms medi (p95 65), piu' della differenza fra le
+  versioni;
+- `refine_taps.py` su questo brano peggiora i tap (jitter 30 -> 92 ms, spostamenti
+  al bordo della finestra -120 ms): niente cassa netta su ogni quarto;
+- `tap_recorder.py` ha misurato ~200-220 ms di ritardo costante contro sia
+  l'app sia il riferimento offline: probabile avvio di `afplay` non contato.
+
+- [ ] decidere se tenere il filtro: sintetico nettamente meglio, un brano reale
+      (64 s, un solo tapper) un poco peggio. Serve almeno un secondo brano con
+      tap, idealmente con un cambio di tempo vero;
+- [ ] `tap_recorder.py`: misurare/compensare la latenza di avvio di `afplay`.
 
 ## Standby
 

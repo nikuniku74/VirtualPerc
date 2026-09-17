@@ -61,6 +61,18 @@ Test mirati: `--tempo-motion` 294/0 (5 nuovi sul filtro), `--tempo-step` 11/0,
 10/0 (una corsa 8/2 sotto carico, poi sei 10/0: intermittente). Suite completa
 non eseguita.
 
+**17/09/2026 — tap umani su un brano reale: il filtro non si conferma.** Su
+`26 SPLENDIDA GIORNATA.mp3`, 117 quarti battuti a mano (10,8-75,4 s), motore
+completo, offset costante tolto: prima del filtro 27,5 ms medi / p95 72,6 / 13,0%
+oltre 50 ms; filtro (HEAD) 31,3 / 76,9 / 14,3%. Una variante che lasciava il
+filtro solo quando la cassa dice «batteria fuori» sembrava migliore contro un
+beat tracker offline (17,7 / 47,7 / 4,3%) ma contro i tap e' la peggiore
+(32,9 / 77,2 / 14,5%): a 32-36 s gli attacchi arrivano tardi come in un
+rallentamento, i tap restano a 108,5-109 BPM. Revertita (`8e08590`). Tabella e
+limiti del riferimento in `docs/TODO.md` item 45. Prossimo passo: tap su un
+secondo brano, possibilmente con un cambio di tempo vero, prima di decidere se il
+filtro resta.
+
 **Restano aperti.** 128->120 a filo del gate (loop del clock); costo sul buco
 batteria; sedicesimi presi per battito (griglia, non inseguimento); microfono
 iPad invariato; beat-grid manuale e ascolto su un accelerando/rallentando reale.
