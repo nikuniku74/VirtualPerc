@@ -3781,6 +3781,32 @@ entrambe le versioni (prima lettura prima dell'entrata).
 
 - [ ] ascolto: nessun ×2/÷2 da solo dopo l'entrata della parte, né tra STOP e START;
 - [ ] dance 140->100 caricato: aggancio provvisorio 2,7% sbagliato che resta 5 s senza fit;
+
+**Clock dopo un aggancio nuovo (2026-09-17, non committato).** Causa: al cambio
+ingresso `gridSerial` si muove al reset, quando la fiducia è zero, e non
+all'aggancio del brano nuovo; il tracker quindi non si riallineava e recuperava
+la fase piegando la velocità (100->140: 146-148 BPM per 4 s). Ora
+`BeatTracker::newInputGrid`: dopo `setInputEpoch` aspetta un'ipotesi non valida
+(la griglia vecchia è sparita), poi alla prima valida con fiducia > 0,40, se la
+parte suona, `beginTempoTransition` + `snapPhase` sul brano. Nessuna modifica al
+decoder, niente riavvio del clock.
+
+Banco motore completo, rete vera, sorgente brano caricato (niente canceller),
+4 generi x 7 coppie: decoder identico nelle due versioni; clock al tempo e fase
+entro 30 ms **uguali al decoder, 1,26-1,56 s, in 19 casi** (prima clock 2,2-8,5
+s, fase 1,7-10,4 s); nessun caso peggiore. Con sorgente mixer il riposizionamento
+cambia di poco ciò che il canceller sottrae e su materiale ambiguo 80/160 sposta
+la prima lettura in 4 casi su 28 (deterministico): da ascoltare sul mixer.
+Test: `--new-input` 3/0, `--bar` 10/0, `--tempo-slow` 12/0, `--tempo-step` 13/0,
+`--evidence` 2/0, `--swing` 3/0.
+
+Riconoscimento del BPM: nei casi normali il decoder è già al minimo causale
+(3 battiti: 1,3-1,6 s dall'inizio del brano). I casi lenti sono prime letture
+sbagliate su materiale ambiguo: pop 140->100 letto 65,7 (2/3) corretto dal
+pettine solo a 11,5 s perché il voto conta battiti della griglia lenta; latin
+80->120 12,6 s; dance 130->95 9,5 s.
+- [ ] voto del pettine sulle prime letture non d'ottava misurato in tempo, non in battiti della griglia sbagliata;
+- [ ] ascolto: cambio brano con START acceso, parte che entra subito a tempo.
 - [ ] mixer senza silenzio lungo: resta aperto (vedi sopra).
 
 ## Standby

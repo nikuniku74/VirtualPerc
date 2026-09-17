@@ -216,6 +216,7 @@ public:
             noNetworkTempoSamples = 0;
             follower.cancelPhaseRecovery();
             sawInputStart = true;
+            newInputGrid = 1;
         }
         lastInputEpoch = epoch;
         seenEpoch = true;
@@ -501,6 +502,8 @@ private:
         the clock and having to lean it into place. */
     bool sounding = false;
     /** The level the listener chose; under AUTO no shift is applied. */
+    /** 1: a new input was declared; 2: its old grid has gone; 0: done. */
+    int  newInputGrid = 0;
     int  userOctave = 0;
     bool octaveAuto = true;
     int tapHoldSamples = 0;

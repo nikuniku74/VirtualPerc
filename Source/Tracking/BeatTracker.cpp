@@ -217,6 +217,7 @@ void BeatTracker::reset() noexcept
     sounding = false;
     needsResync = false;
     waitForSongBeat = false;
+    newInputGrid = 0;
     armed = false;
     neural.setUserOctave (octaveAuto ? 0 : userOctave);
     tapHoldSamples = 0;
@@ -1346,6 +1347,25 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // closing, so it will always be outrun. The decoder is the one that knows:
     // it says so directly when it drops a grid, and that is the only moment at
     // which the bar count is worth nothing rather than merely stale.
+    // A new input's first grid is a new song, not a drift of the old one. The
+    // loop used to lean onto it: measured 100 -> 140 with the part sounding, the
+    // decoder was right 1.5 s after the change while the clock bent to 146-148
+    // BPM for four seconds paying off phase debt; pop 120 -> 80 took 12 s. Wait
+    // for the old grid to go (an invalid hypothesis), then put rate and phase
+    // on the first confident new one at once - a rate change and a re-anchor
+    // the percussion engine already handles, never a clock restart.
+    if (haveHyp && newInputGrid == 1 && ! hyp.valid)
+        newInputGrid = 2;
+    if (haveHyp && newInputGrid == 2 && hyp.valid && nnBpm > 40.0f && nnConf > 0.40f)
+    {
+        newInputGrid = 0;
+        if (armed && sounding && periodic && tempoFollow && ! tapEstablished)
+        {
+            follower.beginTempoTransition (nnBpm);
+            follower.snapPhase (songPhase, true);
+        }
+    }
+
     if (haveHyp && seenSerials && hyp.gridSerial != lastGridSerial)
     {
         lastGridSerial = hyp.gridSerial;

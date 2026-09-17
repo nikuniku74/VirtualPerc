@@ -807,6 +807,18 @@ benches never sound, so `probe_matrix --quick` is identical to HEAD; the cost
 exists only after entry, as a wrong level kept until ÷2/×2. Do not add any
 automatic octave change back.
 
+**A new input's first grid is re-joined, not leaned into (2026-09-17,
+uncommitted).** `gridSerial` moves at the restart (confidence 0), not at the new
+acquisition, so the regrab block never fired and the loop paid the phase debt by
+bending rate (100->140: clock at 146-148 BPM for 4 s). `BeatTracker::newInputGrid`
+waits for an invalid hypothesis after `setInputEpoch`, then on the first valid
+one with confidence > 0.40 while sounding calls `beginTempoTransition` and
+`snapPhase`. Full engine, real network, internal-player source, 28 switches:
+decoder identical, clock rate and phase (30 ms) equal to the decoder at
+1.26-1.56 s in 19 cases (was 2.2-8.5 s / 1.7-10.4 s), none worse. On the mixer
+path the re-anchor slightly changes what the canceller subtracts and moved an
+ambiguous 80/160 first reading in 4 of 28 runs (deterministic).
+
 **An input restart must not inherit the old song's last beat (2026-09-17,
 uncommitted).** The first frames after `notifyInputRestart` still analyse the
 previous source; its last beat (dated before the change) entered the fresh
