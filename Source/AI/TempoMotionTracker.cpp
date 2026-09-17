@@ -219,7 +219,11 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
     if (! o.lineFeed)
         return publishAnchoredVeto (TempoMotionVeto::notDirect);
 
-    if (o.fixedRegime)
+    // A genuine ramp often leaves FISSO before the shape has won twice. Keep
+    // extending a tenure that was seeded in FISSO after the ordinary decoder
+    // moves to VIVO; never create a new shape tenure from VIVO alone.
+    if (o.fixedRegime
+        || (o.lineFeed && shapeEntryTimeSec >= 0.0 && shapeFilled > 0))
     {
         if (shapeEntryTimeSec < 0.0 || shapeFilled <= 0
             || ! std::isfinite (shapeEntryPeriodSec)
@@ -300,11 +304,35 @@ TempoMotionOutput TempoMotionTracker::observe (const TempoMotionObservation& o) 
                     lastOutput.shapePredictedBpm =
                         finitePredictedBpm (60.0f / shapePeriod);
 
+                    // A hinge owns its bounded twelve-beat quarantine, not the
+                    // rest of the input session. Once that edge has aged out of
+                    // the sliding window and the full quarantine has elapsed,
+                    // a later independent accelerando/rallentando must be able
+                    // to start a new proof. Keeping this latch forever made a
+                    // single earlier step veto every later CURVA even with
+                    // quarantine=0. The step itself is still protected: a
+                    // surviving hinge refreshes the quarantine below, and no
+                    // authority exists until all twelve beats have passed.
+                    if (shapeQuarantineBeats == 0
+                        && shape.model != TempoMotionShapeModel::hinge)
+                        shapeHingeActive = false;
+
                     if (shape.model == TempoMotionShapeModel::hinge)
                     {
+                        // One physical edge can remain the best explanation for
+                        // several overlapping 12-point windows. Re-arming on
+                        // every such verdict turns the bounded quarantine into
+                        // an unbounded one and delays a later independent ramp.
+                        // A persistent hinge is still unable to gain authority;
+                        // only its first verdict starts the twelve-beat guard.
+                        // After the guard expires, the latch stays set while the
+                        // hinge survives and a later non-hinge verdict releases
+                        // it above. A genuinely new hinge can then arm a new
+                        // quarantine.
+                        if (! shapeHingeActive)
+                            shapeQuarantineBeats = kShapeQuarantineBeats;
                         shapeHingeActive = true;
                         shapeQuadraticWins = 0;
-                        shapeQuarantineBeats = kShapeQuarantineBeats;
                         authority = 0.0f;
                         proofBeats = 0;
                         direction = 0;

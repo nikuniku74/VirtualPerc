@@ -1108,12 +1108,36 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setTempoTrust (tempoOwned ? 1.0f : evidence.trust());
     // Serial identity belongs to the neural beat, never the audio callback.
     // Reject a backlog older than one beat instead of confirming stale audio.
+    const bool directLiveRecovery = haveHyp && hyp.valid && ! speakerFollow
+                                    && hyp.regime == TempoRegime::live
+                                    && hyp.transitionState
+                                           == TempoTransitionState::stable
+                                    && hyp.transitionRefitBeats == 0;
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();
-    else if (!harmonicSourceActive && hadBeat && hyp.confidence > 0.40f && hyp.analysisSample > 0
+    else if (!harmonicSourceActive && hadBeat
+             && (hyp.confidence > 0.40f || directLiveRecovery)
+             && hyp.analysisSample > 0
              && neural.samplesFed() - hyp.analysisSample < sampleRate * beatSeconds)
-        follower.observeRecoveryBeat (wrapCentered (follower.beatPhase() - songPhase),
-                                      hyp.beatSerial, ! speakerFollow);
+    {
+        // Once a direct feed is genuinely VIVO, low trust from the constant-
+        // tempo fit is not a reason to leave a persistent audible displacement
+        // unpaid: curvature itself lowers that score. Abrupt changes retain
+        // their dedicated one-beat path and the full refit quarantine. The
+        // follower still requires two fresh phase observations in agreement,
+        // so neither a single onset nor a BPM publication can move the clock.
+        // A beat already accepted by the decoder is eligible in this one case
+        // even when its aggregate confidence is below 0.40. The iPad trace
+        // showed 86 ms of coherent phase debt decaying over four seconds while
+        // low-confidence accepted beats never reached the two-beat recovery
+        // proof. Direct propagation plus live/refit guards and two agreeing
+        // serials are the evidence here; a second confidence threshold only
+        // delayed the same decision.
+        follower.observeRecoveryBeat (
+            wrapCentered (follower.beatPhase() - songPhase), hyp.beatSerial,
+            ! speakerFollow,
+            hyp.motionBridgeAuthority >= 0.999f || directLiveRecovery);
+    }
 
     // Trim exists to close a standing rate error the tempo source cannot see.
     // Under TAP there is no source at all. On a fixed tempo the decoder has
@@ -1158,17 +1182,23 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                            || (! speakerFollow && !harmonicSourceActive && periodic
                                && ! tapHold && tempoFollow);
     follower.setTempoTrimEnabled (trimTempo);
+    follower.setDirectTempoDirectionGuard (
+        ! tapOwnsTempo && ! tempoOwned && ! speakerFollow
+        && ! harmonicSourceActive && periodic && ! tapHold && tempoFollow);
     // This hint must obey the same ownership rules as the trim it accelerates.
     // In particular, analysis may still see a moving band while TAP or manual
     // tempo owns the clock; it is evidence then, not authority.
     const bool cleanTempoMotion = trimTempo && ! tapOwnsTempo && ! tempoOwned
                                   && ! speakerFollow && ! harmonicSourceActive
                                   && periodic && ! tapHold && tempoFollow && haveHyp
-                                  && hyp.regime == TempoRegime::fixed
-                                  && std::fabs (hyp.fastTempoDeviation)
-                                         > kTempoMotionDeviation
-                                  && hyp.shortFitResidual < kTempoMotionResidual;
-    follower.setTempoMotionHint (cleanTempoMotion);
+                                  && ((hyp.regime == TempoRegime::fixed
+                                       && std::fabs (hyp.fastTempoDeviation)
+                                              > kTempoMotionDeviation
+                                       && hyp.shortFitResidual
+                                              < kTempoMotionResidual)
+                                      || hyp.motionBridgeAuthority > 0.0f);
+    follower.setTempoMotionHint (
+        cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f);
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
         follower.beginTempoTransition (hyp.transitionBpm);
@@ -1537,8 +1567,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const float phaseTau =
                 follower.tempoTransitionActive()
                     ? kGridTauRapid
-                    : gridPhaseTau (cleanTempoMotion ? kGridTauMotion
-                                                     : kGridTauHolding,
+                    : gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
+                                         ? kGridTauProvenMotion
+                                         : cleanTempoMotion ? kGridTauMotion
+                                                            : kGridTauHolding,
                                     holding, evidence.trust());
             follower.setGridPhase (songPhase, phaseTau);
         }
@@ -1667,6 +1699,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                          && (lockedOnce || tapEstablished || periodic || userOwnsTempo);
     out.bpm = showBpm ? (tempoOwned ? follower.currentTempo() : heldBpm) : 0.0f;
     out.targetBpm = follower.targetTempo() + follower.tempoTrimBpm();
+    out.tempoTrimBpm = follower.tempoTrimBpm();
+    out.observedPhaseErrorBeats = follower.observedPhaseErrorBeats();
+    out.phaseRecoveryEvents = follower.phaseRecoveryEvents();
     out.confidence = smoothedConf;
     out.tempoOctave = octaveAuto ? autoOctave : userOctave;
     out.beatPhase = follower.beatPhase();

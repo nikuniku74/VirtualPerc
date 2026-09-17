@@ -7,8 +7,12 @@ namespace vp
 
 struct ClockTick
 {
-    /** The tempo the clock is actually running at over this block. */
+    /** The nominal PLL tempo before its temporary phase-steering lean. Audio
+        consumers retain this stable value for groove/voice decisions. */
     float tempoBpm = 0.0f;
+    /** The rate that actually advanced the grid over this block. Diagnostic
+        only: this is what a listener hears while phase is being recovered. */
+    float soundingTempoBpm = 0.0f;
     /** The grid was placed onto a newly accepted song phase in this block.
         Anything scheduled for the future on the old grid is stale. */
     bool reanchored = false;
@@ -40,13 +44,23 @@ public:
     void setFollowStrength (FollowStrength s) noexcept { follow = s; }
     void setLocked (bool on) noexcept { locked = on; }
     void setTempoTrimEnabled (bool on) noexcept;
+    /** On a direct file/mixer feed, a correction integrated during the previous
+        motion must not reverse the direction requested by a fresh decoder
+        target. Room, TAP and manually owned tempo keep their existing path. */
+    void setDirectTempoDirectionGuard (bool on) noexcept
+    {
+        directTempoDirectionGuard = on;
+    }
     /** The decoder has a clean short fit moving away from a held direct-feed
-        tempo. This does not select a tempo; it only lets repeated phase drift
-        build the existing rate trim faster while that independent evidence is
-        present. */
-    void setTempoMotionHint (bool on) noexcept
+        tempo. This does not select a tempo; it only lets phase drift build the
+        existing rate trim faster. `proven` means the residual-shape path has
+        already supplied two independent quadratic wins, so the follower need
+        not demand three more signs before using one fresh phase interval or
+        reapply the stale constant-fit trust penalty to that curved motion. */
+    void setTempoMotionHint (bool on, bool proven = false) noexcept
     {
         tempoMotionHint = on;
+        tempoMotionProven = on && proven;
     }
     /** How much the clock should believe the tempo it is being handed, 0..1,
         relative to how well the analysis has been fitting this song. 1 - the
@@ -65,11 +79,17 @@ public:
     /** Only fresh accepted neural beats may confirm a phase recovery.
 
         A direct feed may keep a candidate across missed quarter detections:
-        its propagation path is stable, while a room needs the tighter window. */
+        its propagation path is stable, while a room needs the tighter window.
+        On a direct feed, either full residual-shape proof or an established
+        live regime outside abrupt-change refit may replace only the stale
+        constant-fit trust gate; two independent phase observations remain
+        mandatory. */
     void observeRecoveryBeat (float errorBeats, uint32_t serial,
-                              bool allowMissedBeats = false) noexcept;
+                              bool allowMissedBeats = false,
+                              bool allowUntrustedDirectMotion = false) noexcept;
     void cancelPhaseRecovery() noexcept;
     bool phaseRecoveryActive() const noexcept { return phaseRecoverySamplesRemaining > 0; }
+    uint32_t phaseRecoveryEvents() const noexcept { return recoveryEvents; }
     void resetClock() noexcept;
 
     /** Where the analysis says the song's pulse is, and how long the loop
@@ -110,6 +130,10 @@ public:
     float currentTempo() const noexcept { return tempo; }
     float targetTempo() const noexcept { return target; }
     float tempoTrimBpm() const noexcept { return tempoTrim; }
+    /** Most recent accepted onset's signed distance from the nearest beat.
+        Diagnostics only: positive means the sounding clock had already passed
+        the observed band beat. */
+    float observedPhaseErrorBeats() const noexcept { return lastObservedPhaseErr; }
     float beatPhase() const noexcept { return static_cast<float> (phase); }
     float barPhase() const noexcept { return static_cast<float> ((beatInBar + phase) * 0.25); }
     int   beatInBarIndex() const noexcept { return beatInBar; }
@@ -158,7 +182,9 @@ private:
     bool reanchor = false;
     bool havePhaseObservation = false;
     bool tempoTrimEnabled = false;
+    bool directTempoDirectionGuard = false;
     bool tempoMotionHint = false;
+    bool tempoMotionProven = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */
     float tempoTrust = 1.0f;
     // Poor evidence may hold the clock slightly away from the song. Once clean
@@ -166,6 +192,10 @@ private:
     // by the 20% rate rail) spends that residue promptly.
     int poorTrustSamples = 0;
     int phaseRecoverySamplesRemaining = 0;
+    // A direct live recovery may be proved while the constant-tempo fit is
+    // intentionally scoring a curved trajectory poorly. Preserve that proved
+    // window until it is spent; this never bypasses the two-beat phase proof.
+    bool phaseRecoveryTrustOverride = false;
     bool recoveryArmed = false;
     bool recoveryCandidate = false;
     bool recoverySerialSeen = false;
@@ -174,6 +204,7 @@ private:
     float recoveryCorrection = 0.0f;
     int recoveryAgeSamples = 0;
     int recoveryCooldownSamples = 0;
+    uint32_t recoveryEvents = 0;
     int transitionSamplesRemaining = 0;
     FollowStrength follow = FollowStrength::medium;
 };

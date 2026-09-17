@@ -171,10 +171,13 @@ void TempoFollower::reset() noexcept
     reanchor = false;
     havePhaseObservation = false;
     tempoTrimEnabled = false;
+    directTempoDirectionGuard = false;
     tempoMotionHint = false;
+    tempoMotionProven = false;
     tempoTrust = 1.0f;
     poorTrustSamples = 0;
     phaseRecoverySamplesRemaining = 0;
+    recoveryEvents = 0;
     transitionSamplesRemaining = 0;
 }
 
@@ -225,7 +228,13 @@ void TempoFollower::setTempoTrust (float trust) noexcept
     tempoTrust = next;
     if (next < kRecoveredAbove)
     {
-        phaseRecoverySamplesRemaining = 0;
+        // The direct-live caller may have proved the phase debt independently
+        // of this constant-tempo fit. Cancelling that window on the following
+        // callback reduced a recovery to one short rate spike and left the
+        // remainder to the slow loop. Ordinary/dropout recovery retains the
+        // original trust cancellation.
+        if (! phaseRecoveryTrustOverride)
+            phaseRecoverySamplesRemaining = 0;
         recoveryCandidate = false;
     }
 }
@@ -234,20 +243,31 @@ void TempoFollower::cancelPhaseRecovery() noexcept
 {
     poorTrustSamples = 0;
     phaseRecoverySamplesRemaining = 0;
+    phaseRecoveryTrustOverride = false;
     recoveryArmed = recoveryCandidate = recoverySerialSeen = false;
     recoveryError = recoveryCorrection = 0.0f;
     recoveryAgeSamples = 0;
     recoveryCooldownSamples = 0;
+    recoveryEvents = 0;
 }
 
 void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
-                                         bool allowMissedBeats) noexcept
+                                         bool allowMissedBeats,
+                                         bool allowUntrustedDirectMotion) noexcept
 {
     if (recoverySerialSeen && serial == recoverySerial)
         return;
     recoverySerialSeen = true;
     recoverySerial = serial;
-    if (! locked || tempoTrust < 0.80f || tempoTransitionActive()
+    // A constant-tempo fit loses trust when a real band curves its tempo. On a
+    // direct path the caller may identify that case either from the independent
+    // shape proof or from an established live regime outside the complete
+    // abrupt-change refit quarantine. This bypasses only that stale trust
+    // number: the two fresh, agreeing phase observations below remain the
+    // causal proof and no phase/grid state is moved here.
+    const float recoveryTrust = allowUntrustedDirectMotion && allowMissedBeats
+                                    ? 1.0f : tempoTrust;
+    if (! locked || recoveryTrust < 0.80f || tempoTransitionActive()
         || ! std::isfinite (errorBeats))
     {
         recoveryCandidate = false;
@@ -261,7 +281,15 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
     // replace its first observation either: eighths otherwise reset this age
     // every half beat and prevent confirmation forever. Keep the accumulated
     // steering so the next eligible beat is compared on the same reference.
-    if (recoveryCandidate && recoveryAgeSamples <= sampleRate * period * 0.55)
+    // On a proved direct-live path the decoder's serial already distinguishes
+    // accepted observations and propagation is stable. Two coherent eighths
+    // may therefore close the mandatory two-observation proof; waiting past
+    // 0.55 beat discarded the second one and delayed recovery by another beat.
+    // Every other path retains the quarter-beat independence window.
+    const float minimumIndependentBeats = allowUntrustedDirectMotion
+                                              ? 0.45f : 0.55f;
+    if (recoveryCandidate
+        && recoveryAgeSamples <= sampleRate * period * minimumIndependentBeats)
         return;
     // A mixed line feed does not reliably give BeatNet every quarter. The old
     // 1.8-beat ceiling discarded the first of two perfectly coherent phase
@@ -272,7 +300,8 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
     // the apparent onset between hits. Two fresh serials and phase agreement are
     // still mandatory, and no single onset can move the clock.
     const float maximumIndependentBeats = allowMissedBeats ? 4.5f : 1.8f;
-    const bool agrees = recoveryCandidate && recoveryAgeSamples > sampleRate * period * 0.55
+    const bool agrees = recoveryCandidate
+        && recoveryAgeSamples > sampleRate * period * minimumIndependentBeats
         && recoveryAgeSamples < sampleRate * period * maximumIndependentBeats
         && error * expected > 0.0f && std::fabs (error - expected) < 0.025f;
     // Two persistent errors beyond both the phase-noise floor and 20 ms.
@@ -294,12 +323,24 @@ void TempoFollower::observeRecoveryBeat (float errorBeats, uint32_t serial,
         && std::fabs (error) < 0.25f)
     {
         // Once two independent beats agree, spend the confirmed offset without
-        // an additional half-beat wait. A quarter-beat minimum keeps tiny
-        // corrections smooth; larger offsets retain the distance / 20% budget
-        // so the window never expires with a correction the rail cannot pay.
+        // another proof delay. Dropout/re-entry retains the old quarter-beat
+        // catch-up. During continuous direct-feed motion that minimum can turn
+        // a modest 25--40 ms debt into an audible 12--20% lurch, so a player-
+        // like correction starts immediately and may close over the next half
+        // beat. The direct path is band-led, and listening established that a
+        // slower one-beat gesture remains audible as lag on the sixteenth-note
+        // grid. The trust override below makes this a continuous
+        // correction rather than a one-callback rate spike; it adds no new
+        // authority. The 20% rail keeps the grid monotonic, so this can shorten
+        // intervals sharply without duplicating or skipping a pulse.
         const float excess = std::max (0.0f, std::fabs (error) - kRecoveryToleranceSeconds / period);
-        const float correctionBeats = std::max (0.25f, excess / kRecoverySteerRail);
+        const float minimumCorrectionBeats = allowUntrustedDirectMotion ? 0.5f
+                                                                         : 0.25f;
+        const float correctionBeats = std::max (minimumCorrectionBeats,
+                                                excess / kRecoverySteerRail);
         phaseRecoverySamplesRemaining = std::max (1, static_cast<int> (std::ceil (sampleRate * period * correctionBeats)));
+        phaseRecoveryTrustOverride = allowUntrustedDirectMotion && allowMissedBeats;
+        ++recoveryEvents;
         recoveryArmed = false;
         recoveryCooldownSamples = static_cast<int> (sampleRate * period * 2.5);
     }
@@ -337,6 +378,22 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
 
     if (bpm > 40.0f && bpm < 220.0f)
     {
+        // Phase-derived trim is deliberately persistent, but that persistence
+        // belongs only to the motion that created it. At an inflection the
+        // fresh decoder target can already ask the clock to slow while a trim
+        // accumulated through the preceding accelerando still asks it to speed
+        // up (and vice versa). Continuing in the old direction is never a
+        // useful correction on a direct feed, so discard only the integrator;
+        // the clock, grid and phase remain continuous.
+        const float rawError = bpm - tempo;
+        const float trimmedError = bpm + tempoTrim - tempo;
+        if (directTempoDirectionGuard && rawError * trimmedError < 0.0f)
+        {
+            tempoTrim = 0.0f;
+            lastDrift = 0.0f;
+            driftSameWay = 0;
+        }
+
         // A step of more than a few BPM is a different tempo, not a drift, so
         // the trim's whole state goes with it - the correction it had built and
         // the run of agreeing beats that earned it.
@@ -565,10 +622,19 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
             const float rateGain = tempoMotionHint
                                        ? std::clamp (strength * 0.20f, 0.20f, 0.40f)
                                        : std::clamp (strength * 0.08f, 0.10f, 0.28f);
-            const float trust = rateGain
-                                * rateTrustScale (tempoTrust)
-                                * (static_cast<float> (driftSameWay)
-                                   / static_cast<float> (kDriftAgreeing));
+            // Full residual-shape authority already contains two consecutive
+            // multi-beat quadratic decisions and an explicit rejection of a
+            // hinge/step. Requiring three additional phase-drift signs here
+            // repeats that proof after the decoder has finished it. One fresh
+            // phase interval is still mandatory; only its agreement multiplier
+            // is made whole. Provisional motion and every ordinary/fixed path
+            // retain the three-observation filter.
+            const float agreement = tempoMotionProven
+                                        ? 1.0f
+                                        : static_cast<float> (driftSameWay)
+                                              / static_cast<float> (kDriftAgreeing);
+            const float controlTrust = tempoMotionProven ? 1.0f : tempoTrust;
+            const float trust = rateGain * rateTrustScale (controlTrust) * agreement;
             tempoTrim = std::clamp (tempoTrim - measuredErrorBpm * trust, -3.5f, 3.5f);
         }
     }
@@ -587,6 +653,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
     {
         ClockTick tick;
         tick.tempoBpm = tempo;
+        tick.soundingTempoBpm = tempo;
         return tick;
     }
 
@@ -606,6 +673,7 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
         merged.wrappedBeat = merged.wrappedBeat || ordinary.wrappedBeat;
         merged.wrappedBar = merged.wrappedBar || ordinary.wrappedBar;
         merged.tempoBpm = ordinary.tempoBpm;
+        merged.soundingTempoBpm = ordinary.soundingTempoBpm;
 
         // Both segment ticks are chronological. If their combined pulse count
         // exceeds ClockTick's fixed capacity, retain the first eight exactly as
@@ -628,6 +696,14 @@ ClockTick TempoFollower::advance (int numSamples) noexcept
 
 ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
 {
+    // The ordinary trust score comes from a constant-tempo fit. A genuinely
+    // curved beat trajectory can lower that score precisely because the band
+    // is moving. Once the independent residual-shape path has proved that
+    // motion twice, using the linear-fit penalty here would reintroduce up to
+    // 2.5 seconds of lag after recognition. This override is local to the
+    // follower controls; it neither changes the decoded target nor survives
+    // loss of full shape authority.
+    const float controlTrust = tempoMotionProven ? 1.0f : tempoTrust;
     recoveryCooldownSamples = std::max (0, recoveryCooldownSamples - numSamples);
     recoveryAgeSamples = std::min (recoveryAgeSamples + numSamples, static_cast<int> (sampleRate * 30.0));
     ClockTick tick;
@@ -637,10 +713,10 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
                                         static_cast<int> (sampleRate * 30.0));
     samplesSincePulse = std::min (samplesSincePulse + numSamples,
                                   static_cast<int> (sampleRate * 30.0));
-    if (tempoTrust < 0.55f)
+    if (controlTrust < 0.55f)
         poorTrustSamples = std::min (poorTrustSamples + numSamples,
                                      static_cast<int> (sampleRate * 30.0));
-    else if (tempoTrust >= 0.80f && phaseRecoverySamplesRemaining <= 0)
+    else if (controlTrust >= 0.80f && phaseRecoverySamplesRemaining <= 0)
         poorTrustSamples = 0;
     if (samplesSinceObservation > static_cast<int> (sampleRate * 2.5))
     {
@@ -668,7 +744,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // like from inside the fit, and is measured in Tracking/PhaseTrust.h. At
     // full trust, which is everything else including an accelerando, `poor` is
     // zero and this is the same number it has always been.
-    const float poor = (1.0f - std::clamp (tempoTrust, kMinTempoTrust, 1.0f))
+    const float poor = (1.0f - std::clamp (controlTrust, kMinTempoTrust, 1.0f))
                        / (1.0f - kMinTempoTrust);
     const float tau = std::max (glide, poor * kPoorEvidenceTauSec);
     const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
@@ -737,7 +813,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // kPoorLeanBeats: a passage whose beats are badly placed moves the
         // analysis's phase as an offset held for the length of the passage, and
         // an offset is the one thing a low-pass cannot take out.
-        const float poorLean = (1.0f - std::clamp (tempoTrust, kMinTempoTrust, 1.0f))
+        const float poorLean = (1.0f - std::clamp (controlTrust, kMinTempoTrust, 1.0f))
                                / (1.0f - kMinTempoTrust);
         if (poorLean > 0.0f && std::fabs (phaseTarget) < kLeanIsElsewhere)
         {
@@ -1040,10 +1116,13 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     }
 
     tick.tempoBpm = tempo;
+    tick.soundingTempoBpm = effTempo;
     transitionSamplesRemaining =
         std::max (0, transitionSamplesRemaining - std::max (0, numSamples));
     phaseRecoverySamplesRemaining =
         std::max (0, phaseRecoverySamplesRemaining - std::max (0, numSamples));
+    if (phaseRecoverySamplesRemaining == 0)
+        phaseRecoveryTrustOverride = false;
     return tick;
 }
 

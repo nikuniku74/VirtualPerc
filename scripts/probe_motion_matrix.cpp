@@ -287,11 +287,14 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             activation, 0.025f, 1.0f - activation);
         if (h.valid)
         {
-            const bool cleanMotion = h.regime == vp::TempoRegime::fixed
-                                     && std::fabs (h.fastTempoDeviation)
-                                            > vp::kTempoMotionDeviation
-                                     && h.shortFitResidual < vp::kTempoMotionResidual;
-            clock.setTempoMotionHint (cleanMotion);
+            const bool cleanMotion =
+                (h.regime == vp::TempoRegime::fixed
+                 && std::fabs (h.fastTempoDeviation)
+                        > vp::kTempoMotionDeviation
+                 && h.shortFitResidual < vp::kTempoMotionResidual)
+                || h.motionBridgeAuthority > 0.0f;
+            clock.setTempoMotionHint (
+                cleanMotion, h.motionBridgeAuthority >= 0.999f);
             const auto diagnostics = decoder.diagnostics();
             const bool curveProof = h.regime == vp::TempoRegime::fixed
                                     && diagnostics.motionFitEvidence >= 3;
@@ -322,11 +325,12 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                 clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - h.beatPhase),
                                          h.confidence, 1);
             }
-            clock.setGridPhase (h.beatPhase,
-                                vp::gridPhaseTau (cleanMotion
-                                                      ? vp::kGridTauMotion
-                                                      : vp::kGridTauHolding,
-                                                  true, 1.0f));
+            const float phaseTau = h.motionBridgeAuthority >= 0.999f
+                                       ? vp::kGridTauProvenMotion
+                                       : cleanMotion ? vp::kGridTauMotion
+                                                     : vp::kGridTauHolding;
+            clock.setGridPhase (
+                h.beatPhase, vp::gridPhaseTau (phaseTau, true, 1.0f));
 
             if (previousRegime == vp::TempoRegime::fixed
                 && h.regime == vp::TempoRegime::live)

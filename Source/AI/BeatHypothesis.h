@@ -89,9 +89,10 @@ struct BeatHypothesis
     float    motionFitImprovement = 0.0f;
     int      motionFitEvidence = 0;
     int      motionFitDirection = 0;
-    /** Bounded tempo-motion model output. Diagnostic shadow only in this task:
-        neither the fixed-tempo branch nor the audio-thread clock may consume it
-        as tempo or phase authority. */
+    /** Bounded tempo-motion model output. The scalar shadow remains diagnostic.
+        `motionBridgeAuthority` reports the separate residual-shape decision
+        that may already have contributed a railed target through `commit()`;
+        the audio-thread clock still consumes only the ordinary published BPM. */
     float    motionShadowBpm = 0.0f;
     float    motionShadowPeriodDelta = 0.0f;
     float    motionShadowUncertainty = 1.0f;
@@ -163,6 +164,10 @@ struct BeatHypothesis
     float    transitionBpm        = 0.0f;
     float    transitionConfidence = 0.0f;
     int      transitionIntervals  = 0;
+    /** Accepted beats still reserved for rebuilding the ordinary fits after a
+        confirmed abrupt change. Consumers may use this only as a quarantine:
+        it is not a tempo source and does not extend the transition. */
+    int      transitionRefitBeats = 0;
     uint32_t transitionSerial     = 0;
 };
 

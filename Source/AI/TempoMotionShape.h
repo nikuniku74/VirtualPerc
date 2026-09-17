@@ -41,6 +41,10 @@ class TempoMotionShape
 public:
     static constexpr int kMinimumPoints = 7;
     static constexpr int kMaximumPoints = 12;
+    // BIC units, shared with the production handoff. This is model evidence,
+    // not a song/BPM threshold: the bridge must beat both the runner-up and
+    // the explicit step-shaped (hinge) explanation by this amount.
+    static constexpr double kEvidenceMarginBic = 2.0;
 
     static TempoMotionShapeResult classify (
         const std::array<TempoMotionShapePoint, kMaximumPoints>& points,

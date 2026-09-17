@@ -23,6 +23,12 @@ constexpr float kGridTauRapid = 0.10f;
     clock motion. */
 constexpr float kGridTauMotion = 0.30f;
 
+/** Once the residual shape has proved continuous motion twice, the clock may
+    see phase sooner. A first strong verdict uses kGridTauMotion instead. This
+    still averages several 6 Hz publications and never snaps or rewinds the
+    grid. */
+constexpr float kGridTauProvenMotion = 0.15f;
+
 /** A held direct-feed tempo is only called musically in motion once the
     responsive fit is two percent away and still tightly placed. These are the
     same two facts that earn the decoder's early fixed-regime release; below

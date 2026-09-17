@@ -361,6 +361,17 @@ private:
     std::atomic<int>   lastPhraseBar { 0 };
     std::atomic<float> lastEvidenceTrust { 1.0f };
     std::atomic<float> lastGridTauSec { 0.0f };
+    std::atomic<float> lastMotionBridgeAuthority { 0.0f };
+    std::atomic<float> lastMotionShapeBpm { 0.0f };
+    std::atomic<float> lastMotionShapeEvidence { 0.0f };
+    std::atomic<float> lastMotionShapeVsHinge { 0.0f };
+    std::atomic<int>   lastMotionShapeModel { 0 };
+    std::atomic<int>   lastMotionShapeWins { 0 };
+    std::atomic<int>   lastMotionShapeQuarantine { 0 };
+    std::atomic<float> lastFastTempoDeviation { 0.0f };
+    std::atomic<float> lastFastIntervalDeviation { 0.0f };
+    std::atomic<int>   lastFastTempoEvidence { 0 };
+    std::atomic<int>   lastFastTempoDirection { 0 };
     std::atomic<int>   lastBacklog { 0 };
     std::atomic<float> lastLeadMs { 0.0f };
     std::atomic<int>   lastRegime { 0 };
@@ -469,6 +480,9 @@ private:
         microphone, the canceller does not always find it, and a level that rose
         because we started playing is not the room turning into a band. */
     std::atomic<float> lastClockBpm { 0.0f };
+    std::atomic<float> lastTempoTrimBpm { 0.0f };
+    std::atomic<float> lastPhaseErrorBeats { 0.0f };
+    std::atomic<uint32_t> lastPhaseRecoveryEvents { 0 };
     std::atomic<uint32_t> lastRestarts { 0 };
     float ownPeakLast = 0.0f;
     float ownFast = 0.0f;

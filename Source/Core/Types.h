@@ -213,6 +213,12 @@ struct EngineSnapshot
         four per cent fast for a beat while the reported tempo sits still.
         The listener hears this one. See docs/TODO.md item 35. */
     float clockBpm             = 0.0f;
+    /** Display-only state of the phase loop. `phaseErrorBeats` is the newest
+        accepted band's beat relative to the sounding clock; `tempoTrimBpm` is
+        the rate correction accumulated from successive phase observations. */
+    float tempoTrimBpm         = 0.0f;
+    float phaseErrorBeats      = 0.0f;
+    uint32_t phaseRecoveryEvents = 0;
     float confidence           = 0.0f;
     float beatPhase            = 0.0f;
     float barPhase             = 0.0f;
@@ -325,6 +331,20 @@ struct EngineSnapshot
     float shortFitBpm          = 0.0f;
     float longFitBpm           = 0.0f;
     float shortFitResidual     = 1.0f;
+    /** Residual-shape bridge diagnostics. These are display-only copies of the
+        worker publication and never feed back into the audio path. */
+    float motionBridgeAuthority = 0.0f;
+    float motionShapeBpm        = 0.0f;
+    float motionShapeEvidence   = 0.0f;
+    float motionShapeVsHinge    = 0.0f;
+    int   motionShapeModel      = 0;
+    int   motionShapeWins       = 0;
+    int   motionShapeQuarantine = 0;
+    /** Display-only causal evidence behind the direct-feed FISSO release. */
+    float fastTempoDeviation    = 0.0f;
+    float fastIntervalDeviation = 0.0f;
+    int   fastTempoEvidence     = 0;
+    int   fastTempoDirection    = 0;
     TempoTransitionState tempoTransitionState = TempoTransitionState::stable;
     TempoTransitionReason tempoTransitionReason = TempoTransitionReason::none;
     float tempoTransitionBpm = 0.0f;

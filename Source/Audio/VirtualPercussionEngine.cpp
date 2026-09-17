@@ -1840,7 +1840,14 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
     lastTarget.store (tr.targetBpm, std::memory_order_relaxed);
-    lastClockBpm.store (tr.clock.tempoBpm, std::memory_order_relaxed);
+    lastClockBpm.store (tr.clock.soundingTempoBpm > 40.0f
+                            ? tr.clock.soundingTempoBpm : tr.clock.tempoBpm,
+                        std::memory_order_relaxed);
+    lastTempoTrimBpm.store (tr.tempoTrimBpm, std::memory_order_relaxed);
+    lastPhaseErrorBeats.store (tr.observedPhaseErrorBeats,
+                               std::memory_order_relaxed);
+    lastPhaseRecoveryEvents.store (tr.phaseRecoveryEvents,
+                                   std::memory_order_relaxed);
     lastConf.store (tr.confidence, std::memory_order_relaxed);
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
@@ -1866,6 +1873,26 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
+    lastMotionBridgeAuthority.store (tr.motionBridgeAuthority,
+                                     std::memory_order_relaxed);
+    lastMotionShapeBpm.store (tr.motionShapeBpm, std::memory_order_relaxed);
+    lastMotionShapeEvidence.store (tr.motionShapeEvidenceMargin,
+                                   std::memory_order_relaxed);
+    lastMotionShapeVsHinge.store (tr.motionShapeQuadraticVsHinge,
+                                  std::memory_order_relaxed);
+    lastMotionShapeModel.store (tr.motionShapeModel, std::memory_order_relaxed);
+    lastMotionShapeWins.store (tr.motionShapeQuadraticWins,
+                               std::memory_order_relaxed);
+    lastMotionShapeQuarantine.store (tr.motionShapeQuarantineBeats,
+                                     std::memory_order_relaxed);
+    lastFastTempoDeviation.store (tr.fastTempoDeviation,
+                                  std::memory_order_relaxed);
+    lastFastIntervalDeviation.store (tr.fastIntervalDeviation,
+                                     std::memory_order_relaxed);
+    lastFastTempoEvidence.store (tr.fastTempoEvidence,
+                                 std::memory_order_relaxed);
+    lastFastTempoDirection.store (tr.fastTempoDirection,
+                                  std::memory_order_relaxed);
     lastRestarts.store (analysisEpoch.load (std::memory_order_relaxed),
                         std::memory_order_relaxed);
     lastBacklog.store (tr.analysisBacklog, std::memory_order_relaxed);
@@ -1946,6 +1973,10 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.bpm = lastBpm.load (std::memory_order_relaxed);
     s.targetBpm = lastTarget.load (std::memory_order_relaxed);
     s.clockBpm = lastClockBpm.load (std::memory_order_relaxed);
+    s.tempoTrimBpm = lastTempoTrimBpm.load (std::memory_order_relaxed);
+    s.phaseErrorBeats = lastPhaseErrorBeats.load (std::memory_order_relaxed);
+    s.phaseRecoveryEvents = lastPhaseRecoveryEvents.load (
+        std::memory_order_relaxed);
     s.confidence = lastConf.load (std::memory_order_relaxed);
     s.beatPhase = lastBeat.load (std::memory_order_relaxed);
     s.barPhase = lastBar.load (std::memory_order_relaxed);
@@ -1996,6 +2027,20 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.phraseBar = lastPhraseBar.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
+    s.motionBridgeAuthority =
+        lastMotionBridgeAuthority.load (std::memory_order_relaxed);
+    s.motionShapeBpm = lastMotionShapeBpm.load (std::memory_order_relaxed);
+    s.motionShapeEvidence = lastMotionShapeEvidence.load (std::memory_order_relaxed);
+    s.motionShapeVsHinge = lastMotionShapeVsHinge.load (std::memory_order_relaxed);
+    s.motionShapeModel = lastMotionShapeModel.load (std::memory_order_relaxed);
+    s.motionShapeWins = lastMotionShapeWins.load (std::memory_order_relaxed);
+    s.motionShapeQuarantine =
+        lastMotionShapeQuarantine.load (std::memory_order_relaxed);
+    s.fastTempoDeviation = lastFastTempoDeviation.load (std::memory_order_relaxed);
+    s.fastIntervalDeviation =
+        lastFastIntervalDeviation.load (std::memory_order_relaxed);
+    s.fastTempoEvidence = lastFastTempoEvidence.load (std::memory_order_relaxed);
+    s.fastTempoDirection = lastFastTempoDirection.load (std::memory_order_relaxed);
     s.analysisRestarts = static_cast<int> (lastRestarts.load (std::memory_order_relaxed));
     s.analysisBacklog = lastBacklog.load (std::memory_order_relaxed);
     s.leadMs = lastLeadMs.load (std::memory_order_relaxed);

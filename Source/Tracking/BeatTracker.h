@@ -251,6 +251,9 @@ public:
         int           clockPulsesPerBeat = 4;
         float         bpm = 0.0f;
         float         targetBpm = 0.0f;
+        float         tempoTrimBpm = 0.0f;
+        float         observedPhaseErrorBeats = 0.0f;
+        uint32_t      phaseRecoveryEvents = 0;
         float         confidence = 0.0f;
         float         beatPhase = 0.0f;
         float         barPhase = 0.0f;
@@ -317,6 +320,10 @@ public:
         float motionShapeEvidenceMargin = 0.0f;
         int   motionShapeQuadraticWins = 0;
         int   motionShapeQuarantineBeats = 0;
+        float fastTempoDeviation = 0.0f;
+        float fastIntervalDeviation = 0.0f;
+        int   fastTempoEvidence = 0;
+        int   fastTempoDirection = 0;
 
         void setTempoMotionDiagnostics (const BeatHypothesis* latest) noexcept
         {
@@ -336,6 +343,10 @@ public:
             motionShapeEvidenceMargin = h.motionShapeEvidenceMargin;
             motionShapeQuadraticWins = h.motionShapeQuadraticWins;
             motionShapeQuarantineBeats = h.motionShapeQuarantineBeats;
+            fastTempoDeviation = h.fastTempoDeviation;
+            fastIntervalDeviation = h.fastIntervalDeviation;
+            fastTempoEvidence = h.fastTempoEvidence;
+            fastTempoDirection = h.fastTempoDirection;
         }
         /** True for a moment after a tap has declared where beat one is, so the
             UI can show that the gesture landed rather than leaving the player

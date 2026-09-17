@@ -11,7 +11,6 @@ namespace
 {
 constexpr int kMinimumSidePoints = 2;
 constexpr double kAbsoluteNoiseFloorSec = 0.0001;
-constexpr double kEvidenceMarginBic = 2.0;
 constexpr double kPivotFloor = 1.0e-12;
 constexpr int kAffineParameters = 2;
 constexpr int kQuadraticParameters = 3;
@@ -350,7 +349,7 @@ TempoMotionShapeResult TempoMotionShape::classify (
         TempoMotionShapeModel::hinge,
         TempoMotionShapeModel::affineWithOutlier
     };
-    result.model = result.evidenceMargin >= kEvidenceMarginBic
+    result.model = result.evidenceMargin >= TempoMotionShape::kEvidenceMarginBic
                        ? models[static_cast<size_t> (lowest)]
                        : TempoMotionShapeModel::affine;
 

@@ -2496,24 +2496,88 @@ void MainComponent::timerCallback()
     repaint();
 
    #if JUCE_DEBUG
-    static int vpLiveN = 0;
-    if ((++vpLiveN % 15) == 0)
-        juce::Logger::writeToLog ("VP live bpm=" + juce::String (snap.bpm, 1)
-            + " nn=" + juce::String (snap.neuralBpm, 1)
-            + " tgt=" + juce::String (snap.targetBpm, 1)
-            + " state=" + juce::String (vp::toString (snap.state))
-            + " bar=" + juce::String (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar)))
-            + " peak=" + juce::String (snap.inputPeak, 4)
-            + " an=" + juce::String (snap.analysisPeak, 4)
-            + " pBeat=" + juce::String (snap.pBeat, 2)
-            + " valid=" + juce::String (snap.hypValid ? 1 : 0)
-            + " onnx=" + juce::String (snap.aiOnnx ? 1 : 0)
-            + " src=" + juce::String (snap.source == vp::FollowSource::internalPlayer
-                                           ? "BRANO"
-                                           : (snap.source == vp::FollowSource::speaker ? "IPAD" : "MIXER"))
-            + " sr=" + juce::String (snap.sampleRate, 0)
-            + " hits=" + juce::String (engine.shakerHits())
-            + " armed=" + juce::String (userWantsArmed ? 1 : 0));
+    // Message-thread-only trace for an iPad listening pass. Five samples per
+    // second are enough to expose which stage starts late without putting I/O
+    // anywhere near the audio callback. JUCE_DEBUG keeps it out of performance
+    // builds; no on-device panel or screen recording is required.
+    static int vpTempoTraceTick = 0;
+    static const double vpTempoTraceStartMs =
+        juce::Time::getMillisecondCounterHiRes();
+    if ((++vpTempoTraceTick % 3) == 0)
+    {
+        const auto shape = static_cast<vp::TempoMotionShapeModel> (
+            snap.motionShapeModel);
+        const char* shapeName = "ATTESA";
+        switch (shape)
+        {
+            case vp::TempoMotionShapeModel::invalid:           shapeName = "INVALIDA"; break;
+            case vp::TempoMotionShapeModel::insufficient:      shapeName = "ATTESA"; break;
+            case vp::TempoMotionShapeModel::affine:            shapeName = "LINEARE"; break;
+            case vp::TempoMotionShapeModel::quadratic:         shapeName = "CURVA"; break;
+            case vp::TempoMotionShapeModel::hinge:             shapeName = "GRADINO"; break;
+            case vp::TempoMotionShapeModel::affineWithOutlier: shapeName = "PICCO"; break;
+        }
+
+        const char* bridgeName = snap.motionBridgeAuthority >= 0.999f
+                                     ? "PIENO"
+                                     : (snap.motionBridgeAuthority > 0.0f
+                                            ? "AVVIO" : "SPENTO");
+        const char* sourceName = snap.source == vp::FollowSource::internalPlayer
+                                     ? "BRANO"
+                                     : (snap.source == vp::FollowSource::speaker
+                                            ? "IPAD" : "MIXER");
+
+        juce::Logger::writeToLog (
+            "[VP_TEMPO_TRACE]"
+            " t=" + juce::String (
+                (juce::Time::getMillisecondCounterHiRes()
+                 - vpTempoTraceStartMs) * 0.001,
+                2)
+            + " src=" + juce::String (sourceName)
+            + " regime=" + juce::String (vp::regimeLabel (snap.tempoRegime))
+            + " shape=" + juce::String (shapeName)
+            + " bridge=" + juce::String (bridgeName)
+            + " auth=" + juce::String (snap.motionBridgeAuthority, 2)
+            + " bpm=" + juce::String (snap.bpm, 2)
+            + " nn=" + juce::String (snap.neuralBpm, 2)
+            + " short=" + juce::String (snap.shortFitBpm, 2)
+            + " long=" + juce::String (snap.longFitBpm, 2)
+            + " target=" + juce::String (snap.targetBpm, 2)
+            + " clock=" + juce::String (snap.clockBpm, 2)
+            + " trim=" + juce::String (snap.tempoTrimBpm, 2)
+            + " phaseErr=" + juce::String (snap.phaseErrorBeats * 1000.0f
+                                              * 60.0f
+                                              / std::max (40.0f, snap.clockBpm),
+                                              1)
+            + "ms"
+            + " recover=" + juce::String (snap.phaseRecoveryEvents)
+            + " barTrust=" + juce::String (snap.barTrusted ? 1 : 0)
+            + " barReentry=" + juce::String (snap.barReentry ? 1 : 0)
+            + " clapOn=" + juce::String (
+                engine.settings().clapEnabled.load (std::memory_order_relaxed) ? 1 : 0)
+            + " audible=" + juce::String (snap.percussionAudible ? 1 : 0)
+            + " standDown=" + juce::String (snap.standingDown ? 1 : 0)
+            + " shapeBpm=" + juce::String (snap.motionShapeBpm, 2)
+            + " wins=" + juce::String (snap.motionShapeWins)
+            + " bic=" + juce::String (snap.motionShapeEvidence, 2)
+            + " vsHinge=" + juce::String (snap.motionShapeVsHinge, 2)
+            + " quarantine=" + juce::String (snap.motionShapeQuarantine)
+            + " fast=" + juce::String (snap.fastTempoDeviation * 100.0f, 2)
+            + "% raw=" + juce::String (snap.fastIntervalDeviation * 100.0f, 2)
+            + "% votes=" + juce::String (snap.fastTempoEvidence)
+            + "/" + juce::String (snap.fastTempoDirection)
+            + " transition="
+            + juce::String (static_cast<int> (snap.tempoTransitionState))
+            + "/" + juce::String (static_cast<int> (snap.tempoTransitionReason))
+            + " transBpm=" + juce::String (snap.tempoTransitionBpm, 2)
+            + " intervals=" + juce::String (snap.tempoTransitionIntervals)
+            + " pBeat=" + juce::String (snap.pBeat, 3)
+            + " fit=" + juce::String (snap.fitResidual, 3)
+            + "/" + juce::String (snap.fitCoverage, 2)
+            + " tau=" + juce::String (snap.gridTauSec, 2)
+            + " hyp=" + juce::String (snap.hypValid ? 1 : 0)
+            + " state=" + juce::String (vp::toString (snap.state)));
+    }
    #endif
 }
 
@@ -3673,7 +3737,23 @@ void MainComponent::paint (juce::Graphics& g)
 
     if (debugOpen)
     {
-        auto dbg = getLocalBounds().reduced (24).removeFromTop (300);
+        const auto shape = static_cast<vp::TempoMotionShapeModel> (
+            snap.motionShapeModel);
+        const char* shapeName = "IN ATTESA";
+        switch (shape)
+        {
+            case vp::TempoMotionShapeModel::invalid:           shapeName = "INVALIDA"; break;
+            case vp::TempoMotionShapeModel::insufficient:      shapeName = "IN ATTESA"; break;
+            case vp::TempoMotionShapeModel::affine:            shapeName = "LINEARE"; break;
+            case vp::TempoMotionShapeModel::quadratic:         shapeName = "CURVA"; break;
+            case vp::TempoMotionShapeModel::hinge:             shapeName = "GRADINO"; break;
+            case vp::TempoMotionShapeModel::affineWithOutlier: shapeName = "PICCO ISOLATO"; break;
+        }
+        const char* bridgeName = snap.motionBridgeAuthority >= 0.999f
+                                     ? "PIENO"
+                                     : (snap.motionBridgeAuthority > 0.0f
+                                            ? "AVVIO" : "SPENTO");
+        auto dbg = getLocalBounds().reduced (24).removeFromTop (330);
         g.setColour (panel().withAlpha (0.97f));
         g.fillRoundedRectangle (dbg.toFloat(), 12.0f);
         g.setColour (text().withAlpha (0.12f));
@@ -3688,7 +3768,8 @@ void MainComponent::paint (juce::Graphics& g)
                                      : (snap.source == vp::FollowSource::speaker
                                             ? "source IPAD/SPEAKER" : "source MIXER")));
         lines.add ("BPM " + juce::String (snap.bpm, 2) + "  nn " + juce::String (snap.neuralBpm, 2)
-                   + "  target " + juce::String (snap.targetBpm, 2));
+                   + "  target " + juce::String (snap.targetBpm, 2)
+                   + "  clock " + juce::String (snap.clockBpm, 2));
         lines.add ("tempo " + juce::String (vp::regimeLabel (snap.tempoRegime))
                    + "  livello " + juce::String (snap.levelSettled ? "deciso" : "provvisorio")
                    + "  fold " + (snap.combBpm > 1.0f ? juce::String (snap.combBpm, 1)
@@ -3732,6 +3813,14 @@ void MainComponent::paint (juce::Graphics& g)
                    + " " + juce::String (snap.tempoTransitionBpm, 1)
                    + "@" + juce::String (snap.tempoTransitionConfidence, 2)
                    + " x" + juce::String (snap.tempoTransitionIntervals));
+        lines.add ("moto  " + juce::String (bridgeName)
+                   + " " + juce::String (snap.motionBridgeAuthority, 2)
+                   + "  " + juce::String (shapeName)
+                   + " x" + juce::String (snap.motionShapeWins)
+                   + "  bpm " + juce::String (snap.motionShapeBpm, 2)
+                   + "  bic " + juce::String (snap.motionShapeEvidence, 2)
+                   + "/" + juce::String (snap.motionShapeVsHinge, 2)
+                   + "  q " + juce::String (snap.motionShapeQuarantine));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
                    + juce::String (snap.leadMs, 1) + " ms");
@@ -3752,7 +3841,7 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  offHi " + juce::String (snap.styleOffHigh, 2)
                    + "  sync " + juce::String (snap.styleSync, 2)
                    + "  occ " + juce::String (snap.styleOccupancy, 2));
-        g.drawFittedText (lines.joinIntoString ("\n"), dbg.reduced (16), juce::Justification::topLeft, 16);
+        g.drawFittedText (lines.joinIntoString ("\n"), dbg.reduced (16), juce::Justification::topLeft, 22);
     }
 }
 

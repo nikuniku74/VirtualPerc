@@ -3,6 +3,7 @@
 #include "AI/BeatDecoder.h"
 #include "AI/TempoMotionTracker.h"
 #include "Tracking/BeatTracker.h"
+#include "Tracking/TempoFollower.h"
 
 #include <array>
 #include <cmath>
@@ -107,9 +108,12 @@ struct DecoderMotionFixtureResult
     bool sawHinge = false;
     bool sawQuarantine = false;
     bool sawQuadraticAuthority = false;
-    bool bridgeStayedZero = true;
+    bool bridgeApplied = false;
+    bool bridgeOnlyInLive = true;
     uint32_t strictProofBeatSerial = 0;
     uint32_t firstReleaseBeatSerial = 0;
+    uint32_t firstEligibleLiveBeatSerial = 0;
+    uint32_t firstBridgeBeatSerial = 0;
 };
 
 DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
@@ -176,8 +180,25 @@ DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
             d.motionShapeModel == static_cast<int> (vp::TempoMotionShapeModel::quadratic)
             && d.motionShapeQuadraticWins >= 2
             && d.motionShapeQuarantineBeats == 0;
-        result.bridgeStayedZero &= d.motionBridgeAuthority == 0.0f
-                                && h.motionBridgeAuthority == 0.0f;
+        const bool bridgeActive = d.motionBridgeAuthority > 0.0f
+                               || h.motionBridgeAuthority > 0.0f;
+        result.bridgeApplied |= bridgeActive;
+        result.bridgeOnlyInLive &= ! bridgeActive
+                                || h.regime == vp::TempoRegime::live;
+        const bool bridgeEligible =
+            h.regime == vp::TempoRegime::live
+            && d.motionShapeModel
+                   == static_cast<int> (vp::TempoMotionShapeModel::quadratic)
+            && d.motionShapeQuadraticWins >= 1
+            && d.motionShapeEvidenceMargin
+                   >= vp::TempoMotionShape::kEvidenceMarginBic
+            && d.motionShapeQuadraticVsHinge
+                   >= vp::TempoMotionShape::kEvidenceMarginBic
+            && d.motionShapeQuarantineBeats == 0;
+        if (bridgeEligible && result.firstEligibleLiveBeatSerial == 0)
+            result.firstEligibleLiveBeatSerial = h.beatSerial;
+        if (bridgeActive && result.firstBridgeBeatSerial == 0)
+            result.firstBridgeBeatSerial = h.beatSerial;
         if (previousRegime == vp::TempoRegime::fixed
             && h.regime == vp::TempoRegime::live)
         {
@@ -201,6 +222,59 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         condition ? ++passed : ++failed;
         std::printf ("  %s  %s\n", condition ? "PASS" : "FAIL", name);
     };
+
+    {
+        auto phaseTrimAfterOneInterval = [] (bool proven, float trust = 1.0f)
+        {
+            vp::TempoFollower follower;
+            follower.prepare (48000.0);
+            follower.forceTempo (100.0f);
+            follower.setLocked (true);
+            follower.setTempoTrimEnabled (true);
+            follower.setTempoMotionHint (true, proven);
+            follower.setTempoTrust (trust);
+            follower.observeOnsetPhase (0.0f, 1.0f, 1);
+            follower.advance (28800);
+            follower.observeOnsetPhase (0.02f, 1.0f, 1);
+            return follower.tempoTrimBpm();
+        };
+        expect (std::fabs (phaseTrimAfterOneInterval (false)) < 1.0e-6f
+                    && std::fabs (phaseTrimAfterOneInterval (true)) > 0.10f
+                    && std::fabs (phaseTrimAfterOneInterval (true, 0.30f)) > 0.10f,
+                "full shape proof removes duplicate phase-drift wait");
+
+        auto tempoAfterHalfSecond = [] (bool proven)
+        {
+            vp::TempoFollower follower;
+            follower.prepare (48000.0);
+            follower.forceTempo (100.0f);
+            follower.setLocked (true);
+            follower.setTempoTrust (0.30f);
+            follower.setTempoMotionHint (true, proven);
+            follower.setTargetTempo (101.0f, 1.0f);
+            follower.advance (24000);
+            return follower.currentTempo();
+        };
+        const float ordinary = tempoAfterHalfSecond (false);
+        const float proven = tempoAfterHalfSecond (true);
+        expect (proven > 100.75f && proven > ordinary + 0.50f,
+                "full shape proof bypasses stale linear-fit glide penalty");
+
+        auto recoveryAfterTwoBeats = [] (bool provenMotion)
+        {
+            vp::TempoFollower follower;
+            follower.prepare (48000.0);
+            follower.forceTempo (100.0f);
+            follower.setLocked (true);
+            follower.setTempoTrust (0.30f);
+            follower.observeRecoveryBeat (0.08f, 1u, true, provenMotion);
+            follower.advance (28800);
+            follower.observeRecoveryBeat (0.08f, 2u, true, provenMotion);
+            return follower.phaseRecoveryActive();
+        };
+        expect (! recoveryAfterTwoBeats (false) && recoveryAfterTwoBeats (true),
+                "full shape proof opens recovery on its first two fresh beats");
+    }
 
     {
         vp::BeatHypothesis hyp {};
@@ -313,15 +387,19 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
                     && ramp.fixedReleases > 0
                     && ramp.strictProofBeatSerial < ramp.firstReleaseBeatSerial,
                 "decoder ramp proves strict motion before its existing fixed release");
-        expect (ramp.bridgeStayedZero,
-                "strict diagnostics cannot apply bridge authority");
+        expect (ramp.bridgeApplied && ramp.bridgeOnlyInLive,
+                "quadratic ramp authority is applied only after release to live");
+        expect (ramp.firstEligibleLiveBeatSerial > 0
+                    && ramp.firstBridgeBeatSerial
+                           == ramp.firstEligibleLiveBeatSerial,
+                "ramp bridge starts on the first eligible live beat without added delay");
 
         const auto step = runDecoderMotionFixture (true);
         expect ((step.sawHinge || step.sawQuarantine)
                     && ! step.sawQuadraticAuthority,
                 "missed-first-beat step is hinged or quarantined without shape authority");
-        expect (step.bridgeStayedZero,
-                "diagnostics-only decoder always publishes zero bridge authority");
+        expect (! step.bridgeApplied,
+                "hinge/quarantined step never receives bridge authority");
     }
 
     for (float bpm : { 52.0f, 100.0f, 168.0f })

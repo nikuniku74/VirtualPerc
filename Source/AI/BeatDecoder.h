@@ -99,6 +99,8 @@ public:
         float motionFitImprovement = 0.0f;
         int   motionFitEvidence = 0;
         int   motionFitDirection = 0;
+        /** Scalar shadow diagnostics. Shape fields below explain the separate
+            bounded authority reported by `motionBridgeAuthority`. */
         float motionShadowBpm = 0.0f;
         float motionShadowPeriodDelta = 0.0f;
         float motionShadowUncertainty = 1.0f;
@@ -256,7 +258,9 @@ private:
         repeatedly and by more than a fifth of a beat. */
     void  checkGridPhase (float periodSec) noexcept;
     void  updateMotionShadow() noexcept;
+    void  refreshMotionBridgeAuthority() noexcept;
     void  resetMotionShadow (bool full, TempoMotionVeto reason) noexcept;
+    float bridgedMotionTarget (float ordinaryTarget) const noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
     /** Least squares through the newest `maxBeats` beat times. `anchorOut` is
@@ -457,6 +461,7 @@ private:
     TempoMotionOutput motionShadow {};
     uint32_t motionObservedBeatSerial = 0;
     float motionBridgeAuthority = 0.0f;
+    float motionBridgeAnchorBpm = 0.0f;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

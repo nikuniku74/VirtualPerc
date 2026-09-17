@@ -243,6 +243,24 @@ fired on two fixed and three step rows (trace hashes changed) and broke one
 recovery. It was removed whole; the classifier and diagnostics stay, and
 `compare_motion_matrix.py` now rejects a vacuous zero-authority "pass".
 
+**Same-beat direct-feed release ordering (2026-09-17).** The decoder observes
+the accepted beat before deciding whether `FISSO` must become `VIVO`. A retained
+quadratic shape could therefore be decisive on the release beat but still see
+the old regime and leave bridge authority at zero until the following accepted
+beat. Re-evaluate only the bridge-authority predicate immediately after the
+existing `fixed -> live` decision; do not observe the beat twice. This changes
+no proof threshold, history, grid, serial or clock state and retains all
+transition/refit/quarantine/direction vetoes. It is an ordering correction, not
+evidence that the global fixed/step gates have passed; those gates remain
+required before committing the experiment.
+
+For manual listening diagnostics the debug trace also reports `trim` (the
+phase loop's accumulated BPM correction) and `phaseErr` (the most recent
+accepted onset error converted from beats to milliseconds at the sounding
+clock rate). These are lock-free display copies only. Together with `bpm`,
+`target` and `clock` they distinguish late tempo recognition from a clock that
+knows the rate but has not yet closed phase debt.
+
 **The beat-date filter was rejected and removed (2026-09-17).** A later
 experiment replaced the direct-feed phase and rate with an IMM filter over beat
 dates. It improved aggregate synthetic ramp scores, but it did not satisfy the
@@ -262,8 +280,214 @@ by a rollback. `VPAlign --ramps` is likewise red on all four baseline ramps.
 Do not restore or retune this filter from one title, timestamp, seed, offset or
 BPM. A future candidate must pass fixed/step identity, every continuous row,
 recovery, targeted ramps and independent real accelerando/rallentando grids
-before it can drive the clock. The shape classifier and shadow diagnostics stay
-diagnostic-only.
+before it can be accepted. At this rollback checkpoint the shape classifier and
+shadow diagnostics were diagnostic-only; the explicitly untested listening
+candidate below is the only later exception.
+
+**Continuing the scalar shadow into `live` is also rejected (2026-09-17).**
+Keeping the existing strict proof alive after `fixed -> live`, then using its
+bounded BPM prediction only in the matrix clock, gave positive authority on all
+four continuous quick populations and left every fixed trace identical. It did
+not separate a step: offset 0 changed the step hash and accumulated 44 authority
+frames. Continuous mean improved only 0.12-0.23 ms, p95 was unchanged on offsets
+0 and 32, and every offset produced recovery violations (2/6/5/15). The whole
+experiment was removed without tuning thresholds. A future candidate cannot
+infer continuous ownership from `live` plus scalar slope alone.
+
+**Uncommitted iPad listening candidate (2026-09-17, deliberately untested).**
+Unlike the rejected scalar continuation, this keeps only the fixed-entry
+residual-shape window across the ordinary `fixed -> live` release. It grants
+authority only in `live`, with no hinge and no quarantine. After manual iPad
+feedback that correction began late, the first quadratic verdict retained into
+`live` may start at 35% authority rather than wait for a second shape win. Shape
+alone still cannot release `fixed`. The early verdict may act only when it beats
+both the generic BIC runner-up and the explicit hinge/step explanation by the
+classifier's existing 2-BIC
+evidence rule. A second consecutive quadratic win grants full authority. This
+is a model-selection rule, not a title, BPM, seed or offset threshold. The
+bridge remains limited to 0.75% per accepted beat and 4% from the BPM at first
+authority; it only leads an ordinary target that is still behind in the same
+direction, never pulls an already-current fit back. It reaches the decoder
+only through `commit()`.
+Transitions/refit, octave/grid rebuild, input
+epoch, discontinuity, stale beats and non-direct input reset or veto it. The
+tracker's faster phase/trim hint additionally obeys TAP/manual ownership and is
+disabled for speaker/microphone. The first verdict retains 0.30 s phase
+averaging; twice-proven shape motion uses 0.15 s. It still never snaps. No
+automated test has been run at the
+user's request; this is a listening candidate, not accepted production evidence.
+An attempted shape-only `fixed -> live` release was removed before handoff: it
+would let one classifier verdict replace the existing causal release predicate,
+contrary to the fixed/step contract. The earliest retained intervention is the
+first strong shape verdict after the ordinary release.
+The decoder fixture now records the first eligible live beat and requires bridge
+authority on that same beat, so the integration itself cannot add another beat
+of latency. `probe_motion_matrix` also mirrors the production phase policy:
+0.30 s on the provisional verdict and 0.15 s only at full shape authority.
+At full authority the follower also stops repeating the decoder's proof: one
+fresh phase interval may update the existing bounded tempo trim immediately,
+instead of waiting for three additional same-sign intervals. Provisional shape,
+fixed tempo, steps, TAP/manual ownership and speaker/microphone retain the
+ordinary three-interval filter. This changes only rate trim; it never snaps or
+restarts the clock.
+Full shape authority also substitutes full control trust inside the follower.
+The ordinary trust score is derived from linear-fit placement and may fall on a
+valid curved trajectory; applying its 2.5 s poor-evidence glide after two
+quadratic wins would add the old delay back after recognition. The override is
+revoked with bridge authority and does not change the decoder target, recovery
+serials or any fixed/step path.
+The same full proof is passed explicitly to `observeRecoveryBeat` on the direct
+path. It may replace the stale linear-fit trust check on the first proven beat,
+but never the two fresh, serial-distinct and phase-consistent observations. This
+removes an ordering delay of one accepted beat without turning recovery into a
+single-observation phase move; room/speaker calls cannot use the override.
+The following iPad trace exposed the remaining case: near the end of a loaded
+song the decoder target rose from 109.47 to 112.61 BPM while the sounding clock
+trailed by roughly 1.3--1.5 BPM; the accepted onset error grew from -44 to
+-62 ms and phase trim stayed near +0.04 BPM. Shape authority had already
+expired, so the constant-tempo fit's low trust prevented the existing two-beat
+fast recovery even though the decoder was stably `live`.
+
+The listening candidate therefore also lets an established direct-feed `live`
+regime bypass only that constant-fit trust check. A confirmed abrupt transition
+and every accepted beat in its complete refit window are excluded explicitly;
+fixed, TAP/manual, octave/grid and speaker/microphone paths are unchanged. The
+recovery itself is not weakened: it still needs two fresh serial-distinct phase
+observations, matching sign and placement, more than 40 ms of persistent debt,
+and it corrects by a bounded monotonic rate lean rather than a phase snap. This
+is still uncommitted and has not passed the automated fixed/step identity gates.
+The first full iPad pass with that candidate did recover an 86 ms displacement
+to 6--8 ms and a later 31 ms displacement to 3 ms, but took roughly four and
+two seconds respectively. The missing observations were already accepted by
+the decoder but did not clear the follower's second `confidence > 0.40` gate.
+In direct `live`, outside the complete abrupt-transition refit quarantine, that
+redundant gate is now omitted: decoder acceptance, a fresh analysis timestamp
+and the recovery's own two serial-distinct agreeing phases remain mandatory.
+Fixed, transition/refit, TAP/manual and speaker/microphone paths retain the old
+confidence rule. `phaseRecoveryEvents` is a display-only counter added to the
+debug trace so the next listening pass can prove whether the bounded recovery
+actually armed; it cannot influence DSP.
+That pass recorded ten recoveries and the listener still heard smaller exits.
+The remaining discontinuity was in the recovery gesture, not its trigger: the
+old quarter-beat minimum could spend a 25--40 ms debt as a 12--20% temporary
+rate lean. Direct `live` recovery now distributes the same monotonic correction
+over at least one complete beat. A later full trace exposed that this window
+was not actually being spent: `setTempoTrust()` cancelled it on the next audio
+callback whenever the constant-tempo fit remained below 0.80, even though the
+direct-live proof had explicitly been allowed to replace that stale score.
+This produced a short sounding-rate spike (for example 112 -> 122 BPM for one
+trace publication), then left the remaining debt to the slow ordinary loop.
+The direct-live proof now preserves only its already-bounded recovery window
+across low trust and clears the override when that window ends. The next trace
+confirmed complete recoveries in roughly 0.4--0.6 s. For the band-led direct
+path, listening still identified that duration as lag on the sixteenth-note
+grid, and the product decision explicitly permits a near-net rate gesture.
+The correction therefore starts on the same causal observation and uses a
+half-beat minimum; the 20% rail keeps phase monotonic, so pulses may move closer
+together but cannot be duplicated or skipped. This is dimensionless and applies
+at every supported BPM;
+dropout/re-entry keeps the old quarter-beat minimum, and the 20% hard rail
+remains a safety ceiling for larger debts. The
+next Xcode trace put an end-of-third recovery inside 3 ms within the following
+trace second, but listening still identified a small delay before it began.
+The remaining delay was the direct-live independence floor: a fresh accepted
+serial at an eighth-note distance was discarded by the 0.55-beat minimum, so
+the controller waited for the following quarter. Direct `live` now uses 0.45
+beat, allowing two coherent eighths to satisfy the same two-observation proof;
+fixed, transition/refit, dropout and speaker paths retain 0.55 beat.
+debug `clock` value now reports the effective steered rate actually advancing
+the grid; groove/voice consumers still receive the nominal PLL tempo, so this
+diagnostic correction cannot change playback by itself.
+The app's lock-free `EngineSnapshot` now carries bridge authority, shape model,
+quadratic wins, predicted BPM, BIC evidence, hinge separation and quarantine.
+The DEBUG panel and debug log show them. This is diagnostic propagation only:
+the UI cannot feed any value back into the decoder or follower. It also confirms
+that both `FollowSource::internalPlayer` and mixer/`kitMic` reach BeatNet with
+`lineFeed=true`; only speaker follow disables the bridge.
+The DEBUG panel labels shape decisions in words (`CURVA`, `GRADINO`, `LINEARE`,
+`PICCO ISOLATO`, `IN ATTESA`), labels bridge state (`SPENTO`, `AVVIO`, `PIENO`)
+and displays the heard clock BPM beside decoder and target BPM. That is the
+manual iPad seam for locating latency without interpreting enum integers.
+In a JUCE debug build the same decision chain is also emitted automatically to
+the Xcode console about five times per second. Filter on `VP_TEMPO_TRACE`; the
+trace is message-thread-only and is compiled out of performance builds.
+The first real iPad trace exposed a lifetime bug in the listening candidate: an
+earlier hinge kept `shapeHingeActive` latched after its visible twelve-beat
+quarantine reached zero, so later decisive `CURVA` frames in `live` remained at
+zero wins and the bridge could never start. The latch now clears only after the
+hinge has left the sliding window and the entire quarantine has elapsed. The
+second iPad trace then showed that overlapping windows describing the same
+physical hinge repeatedly restarted the twelve-beat countdown. A hinge episode
+now arms that bounded quarantine once; while the hinge survives its latch still
+prevents all authority, and after a non-hinge release a genuinely new hinge can
+arm a new quarantine. These follow-ups are uncommitted and have not run
+automated gates at the user's request.
+
+The next iPad trace exposed a separate abrupt-transition failure during a
+rallentando: the bridge remained off, but two coherent off-grid peaks confirmed
+an opposite 106.74 -> 110.38 BPM transition in one frame while accepted beats
+already carried a two-beat slowing direction. On a direct feed the rapid
+transition detector now rejects a candidate that opposes that proven causal
+direction. Stable tempo has no direction to oppose and retains the ordinary
+step path; a genuine reversal must first replace the earlier direction with
+accepted evidence. This is global and contains no song, BPM or offset value.
+
+The following trace exposed an independent shape-direction failure: during a
+rallentando both causal fits read downward (`short 108.71`, `long 107.41`) while
+a briefly winning quadratic endpoint extrapolated upward to `109.77` and gained
+initial bridge authority. Shape authority now additionally requires its BPM
+delta to have the same sign as the current short-fit delta. The short fit does
+not select the bridge target; it is a causal direction veto that prevents a
+statistically winning extrapolation from driving away from the band.
+
+The same trace showed a second inflection cost below the decoder: positive
+phase-derived `tempoTrim` accumulated during the preceding accelerando and made
+the effective target continue upward after the fresh decoder target had turned
+down. On the direct file/mixer path, `TempoFollower` now clears only that trim
+integrator when adding it would reverse the sign of the raw target error
+relative to the heard clock. This is a direction invariant, not a BPM or song
+threshold; it never moves phase, restarts the clock or changes the grid, and
+room, TAP and manually owned tempo retain their existing path.
+
+The subsequent iPad trace localized the remaining late correction before the
+follower: the direct short fit began falling at about 51.8 s while the committed
+tempo stayed fixed until the ordinary release at about 55.1 s; once published,
+the clock closed most of the gap in under a second. The DEBUG trace therefore
+also publishes the already-existing causal release evidence as `fast`, `raw`
+and `votes` (net count/direction). These fields are display-only and are meant
+to distinguish missing causal support from a late threshold without changing
+the fixed-tempo path during the listening run.
+
+That run also exposed premature re-entry into `fixed`: after a motion episode,
+the long window could satisfy the ordinary stability test while the responsive
+short fit was already 1-3 BPM away. The decoder then held the older rate until
+a late transition/release made the correction audible. The uncommitted direct-
+feed listening candidate therefore reuses the existing 0.4% cross-window
+agreement rail before `live -> fixed`. Initial acquisition is unchanged, as are
+room/speaker input and the already-fixed release path. This is a global state-
+certification invariant, not a title, timestamp or BPM exception; it remains
+untested except for the requested manual iPad pass.
+
+The next filtered trace located the complementary exit delay. At 95.54 s the
+direct path had accumulated three net causal votes: the responsive fit was
+2.87% below the held tempo and the newest measured interval was 2.27% below it,
+yet `fixed` persisted until 97.21 s because the twenty-four-beat trend had not
+also agreed. The listening candidate now lets the existing full three-vote
+direct proof release `fixed` without that redundant long-window confirmation.
+The earlier two-vote shortcut still requires both a clean fit and the agreeing
+long window; room/speaker input is unchanged. This does not lower a deviation
+threshold or allow release before three causal observations, and remains
+uncommitted and automated-test-free at the user's request.
+
+A fresh run showed why that first edit still waited: at 41.01 s the third vote
+was present but the generic four-beat minimum dwell still wrapped every release
+path; it reached six votes before the separate small-step path moved the target.
+The causal counter also survived `live -> fixed`, so simply bypassing the dwell
+could have made an old vote undo a new stability decision. `enterRegime(fixed)`
+now clears the fast count and deviations, and the direct path may bypass the
+generic dwell only after three fresh same-tenure votes. All other releases keep
+the four-beat minimum. This changes no threshold and gives neither old evidence
+nor fewer than three accepted causal observations authority.
 
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live

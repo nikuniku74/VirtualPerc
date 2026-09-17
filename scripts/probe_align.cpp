@@ -1250,10 +1250,13 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             if (! seenSerial) { lastSerial = hy.beatSerial; seenSerial = true; }
             const bool cleanTempoMotion =
                 mode == RampMode::trim
-                && hy.regime == vp::TempoRegime::fixed
-                && std::fabs (hy.fastTempoDeviation) > vp::kTempoMotionDeviation
-                && hy.shortFitResidual < vp::kTempoMotionResidual;
-            clock.setTempoMotionHint (cleanTempoMotion);
+                && ((hy.regime == vp::TempoRegime::fixed
+                     && std::fabs (hy.fastTempoDeviation)
+                            > vp::kTempoMotionDeviation
+                     && hy.shortFitResidual < vp::kTempoMotionResidual)
+                    || hy.motionBridgeAuthority > 0.0f);
+            clock.setTempoMotionHint (
+                cleanTempoMotion, hy.motionBridgeAuthority >= 0.999f);
             if (hy.bpm > 50.0f)
                 clock.setTargetTempo (hy.bpm, hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
@@ -1280,11 +1283,14 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             if (mode == RampMode::place && std::fabs (gridErr) > 0.04f)
                 clock.snapPhase (hy.beatPhase, true);
             else
-                clock.setGridPhase (hy.beatPhase,
-                                    vp::gridPhaseTau (cleanTempoMotion
-                                                          ? vp::kGridTauMotion
-                                                          : vp::kGridTauHolding,
-                                                      true, 1.0f));
+            {
+                const float phaseTau = hy.motionBridgeAuthority >= 0.999f
+                                           ? vp::kGridTauProvenMotion
+                                           : cleanTempoMotion ? vp::kGridTauMotion
+                                                              : vp::kGridTauHolding;
+                clock.setGridPhase (
+                    hy.beatPhase, vp::gridPhaseTau (phaseTau, true, 1.0f));
+            }
         }
 
         // Read before the block advances, so a block's own travel is not

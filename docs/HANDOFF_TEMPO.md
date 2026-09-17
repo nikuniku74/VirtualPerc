@@ -17,9 +17,10 @@ gate `VPAlign`. Sul primo riferimento umano reale peggiorava inoltre
 media/p95/>50 ms da 27,5/72,6/13,0% a 31,3/76,9/14,3%.
 
 Sono stati rimossi `BeatKalman`, i campi clock speciali, il blending nel tracker
-e la relativa simulazione nei probe. Restano il classificatore, la diagnostica
-ombra, il test copia/azzeramento e il comparatore anti-vacuita': nessuno di loro
-guida BPM o fase.
+e la relativa simulazione nei probe. Al checkpoint del rollback classificatore,
+diagnostica ombra, test copia/azzeramento e comparatore anti-vacuita' non
+guidavano BPM o fase. L'unica eccezione successiva e' il candidato manuale non
+certificato descritto sotto.
 
 **RED prima del rollback.** Il quick A/B 0/16/32/48 falliva su ogni riga:
 hash diversi per fisso e gradino, autorita' nulla per il contratto continuo.
@@ -45,6 +46,72 @@ candidato deve mantenere identici fissi e gradini, migliorare media e p95 in
 ogni popolazione continua, avere autorita' applicata e zero violazioni di
 rientro, quindi passare beat-grid e ascolto su accelerando e rallentando reali
 indipendenti. Microfono iPad ancora differito.
+
+**Primo candidato successivo, respinto senza commit.** Conservare il tracker
+scalare dopo l'uscita `fixed -> live` e applicarne la previsione soltanto al
+clock del probe ha lasciato identici tutti i fissi e prodotto autorita' su ogni
+offset continuo. Il quick A/B 0/16/32/48 lo ha pero' falsificato: il gradino
+dell'offset 0 ha cambiato hash con 44 frame di autorita'; il p95 continuo non e'
+migliorato agli offset 0 e 32; i quattro offset hanno contato 2/6/5/15
+violazioni di rientro. Il guadagno medio era soltanto 0,12-0,23 ms. Codice, test
+e seam sono stati rimossi integralmente; non sono state ritoccate soglie.
+
+**Candidato integrato per prova manuale su iPad, non committato e non
+certificato.** La finestra di forma avviata entrando in FISSO ora sopravvive al
+normale rilascio verso VIVO. Soltanto in VIVO, senza hinge/quarantena, il primo
+verdetto quadratico forte conservato dal tenure FISSO avvia la correzione al
+35%, senza attendere una seconda vittoria. La forma da sola non puo' rilasciare
+FISSO: deve prima prevalere il rilascio causale ordinario. Il verdetto deve
+battere sia il secondo modello sia l'ipotesi esplicita di gradino/hinge con la stessa
+regola generale di evidenza BIC del classificatore. La seconda vittoria
+consecutiva autorizza il rail pieno, limitato a 0,75% per beat e al 4% dal BPM
+presente alla prima autorita'. Non ci sono soglie per titolo, BPM, seed o offset.
+La prima prova iPad aveva mostrato che attendere la prova completa faceva
+cominciare tardi la correzione; il nuovo stadio provvisorio anticipa l'avvio di
+un beat dopo il rilascio ordinario, mentre il rail provato viene commesso
+interamente.
+Anticipa soltanto
+un fit ordinario ancora indietro nella stessa direzione e non lo tira indietro
+quando e' gia' arrivato. Il target passa da `commit()`; non scrive ancora,
+griglia, history o seriali. Transizione/refit,
+ottava/griglia, nuovo input, discontinuita', beat scaduti e ingresso non diretto
+lo revocano. Il suggerimento rapido del clock rispetta TAP/manuale ed e' escluso
+dal microfono iPad; il primo verdetto conserva 0,30 s di media di fase, mentre
+con due prove la fase viene mediata su 0,15 s, senza snap. Per richiesta
+dell'utente non e' stato eseguito alcun test:
+questa variante serve esclusivamente alla prima prova d'ascolto su dispositivo.
+Un tentativo di usare la sola forma per forzare l'uscita FISSO -> VIVO e' stato
+rimosso prima della consegna: avrebbe sostituito la prova causale ordinaria con
+un singolo verdetto del classificatore. L'intervento piu' precoce conservato e'
+quindi il primo verdetto forte dopo il rilascio ordinario.
+La fixture del decoder ora registra il primo beat VIVO idoneo e richiede
+l'autorita' del ponte sullo stesso beat, impedendo all'integrazione di aggiungere
+un ulteriore beat di ritardo. Anche `probe_motion_matrix` replica ora la politica
+di fase di produzione: 0,30 s durante la prova provvisoria e 0,15 s soltanto con
+autorita' completa. Questi controlli sono stati scritti ma non eseguiti.
+Con autorita' completa il clock non ripete piu' la stessa prova chiedendo altre
+tre derive di fase concordi: un intervallo di fase nuovo puo' aggiornare subito
+il trim di velocita' gia' limitato. Prova provvisoria, tempo fisso, gradini,
+TAP/manuale e speaker/microfono conservano il filtro ordinario a tre intervalli.
+Non viene effettuato alcuno snap o riavvio del clock.
+L'autorita' completa evita inoltre che la fiducia del vecchio fit lineare
+riapplichi fino a 2,5 s di inerzia a una traiettoria gia' riconosciuta come
+curva. L'override vale soltanto nei controlli interni del follower, decade con
+l'autorita' e non modifica target del decoder, seriali di recupero, fissi o
+gradini. Anche le nuove verifiche sono scritte ma non eseguite.
+La stessa prova completa viene passata esplicitamente al recupero di fase sul
+percorso diretto: puo' sostituire la fiducia lineare gia' obsoleta dal primo
+beat provato, ma restano obbligatorie due osservazioni fresche, con seriali
+distinti e fase coerente. Si elimina un beat dovuto all'ordine delle chiamate;
+speaker/microfono non puo' usare questa eccezione.
+Verificato inoltre il cablaggio reale: sia BRANO/FILE sia MIXER arrivano al
+decoder con `lineFeed=true`; soltanto IPAD/SPEAKER disabilita questo percorso.
+Lo snapshot lock-free, il pannello DEBUG e il log mostrano ora autorita' del
+ponte, modello/vittorie di forma, BPM previsto, evidenza BIC, separazione hinge
+e quarantena. Sono sole copie diagnostiche: la UI non puo' riscrivere il DSP.
+Nel pannello i modelli sono ora leggibili come `CURVA`, `GRADINO`, `LINEARE`,
+`PICCO ISOLATO` o `IN ATTESA`; il ponte appare come `SPENTO`, `AVVIO` o `PIENO`.
+La stessa riga BPM mostra anche il clock realmente udito, distinto dal target.
 
 ### 15/09/2026 — il pettine vecchio non annulla piu' un cambio confermato
 
