@@ -33,7 +33,7 @@ int main (int argc, char** argv)
 {
     std::string path;
     double reference = 0.0, gainDb = 0.0, traceStep = 2.0, until = 1.0e9;
-    bool trace = false, speaker = false;
+    bool trace = false, speaker = false, loadedFile = false;
     std::string pulses, follow;
 
     for (int i = 1; i < argc; ++i)
@@ -47,6 +47,7 @@ int main (int argc, char** argv)
         else if (a == "--step")       traceStep = std::atof (next());
         else if (a == "--until")      until = std::atof (next());
         else if (a == "--speaker")    speaker = true;
+        else if (a == "--player")     loadedFile = true;
         // Where the clock actually *is*, block by block, so the strokes can be
         // scored against the drummer instead of against the published BPM.
         // A right tempo and a slipped grid sound completely different and the
@@ -59,10 +60,11 @@ int main (int argc, char** argv)
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
-                         "            [--trace] [--step 2] [--until 90] [--speaker]\n\n"
-                         "  --bpm  il tempo vero, se lo sai: stampa quando ci arriva\n"
-                         "         e quanto ci resta. Senza, riporta solo la traccia.\n"
-                         "  --gain dB sul segnale prima dell'analisi, come il knob MIC\n");
+                         "            [--trace] [--step 2] [--until 90] [--speaker|--player]\n\n"
+                         "  --bpm     il tempo vero, se lo sai: stampa quando ci arriva\n"
+                         "            e quanto ci resta. Senza, riporta solo la traccia.\n"
+                         "  --gain    dB sul segnale prima dell'analisi, come il knob MIC\n"
+                         "  --player  brano caricato (nessun andata-ritorno, niente cancello)\n");
             return 1;
         }
     }
@@ -83,8 +85,10 @@ int main (int argc, char** argv)
     constexpr int block = 256;
     vp::VirtualPercussionEngine eng;
     eng.prepare (sr, block, 1);
-    eng.settings().followSource.store (static_cast<int> (speaker ? vp::FollowSource::speaker
-                                                                : vp::FollowSource::kitMic));
+    eng.settings().followSource.store (static_cast<int> (
+        speaker ? vp::FollowSource::speaker
+                : (loadedFile ? vp::FollowSource::internalPlayer
+                              : vp::FollowSource::kitMic)));
     if (! follow.empty())
     {
         const auto f = follow == "low"  ? vp::FollowStrength::low

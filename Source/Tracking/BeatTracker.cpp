@@ -1189,12 +1189,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const bool cleanTempoMotion = trimTempo && ! tapOwnsTempo && ! tempoOwned
                                   && ! speakerFollow && ! harmonicSourceActive
                                   && periodic && ! tapHold && tempoFollow && haveHyp
-                                  && ((hyp.regime == TempoRegime::fixed
-                                       && std::fabs (hyp.fastTempoDeviation)
-                                              > kTempoMotionDeviation
-                                       && hyp.shortFitResidual
-                                              < kTempoMotionResidual)
-                                      || hyp.motionBridgeAuthority > 0.0f);
+                                  && directTempoMotionHint (hyp.regime,
+                                                            hyp.fastTempoDeviation,
+                                                            hyp.shortFitResidual,
+                                                            hyp.motionBridgeAuthority,
+                                                            hyp.fastTempoEvidence,
+                                                            hyp.motionFitImprovement);
     follower.setTempoMotionHint (
         cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f);
 

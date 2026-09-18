@@ -556,6 +556,550 @@ generic dwell only after three fresh same-tenure votes. All other releases keep
 the four-beat minimum. This changes no threshold and gives neither old evidence
 nor fewer than three accepted causal observations authority.
 
+**Causal realignment still open (2026-09-18).** The listening candidate is in
+HEAD. Titles do not choose constants: a mixer excerpt that still lags is
+evidence that a *class* of motion is late (FISSO held through a ramp,
+already-VIVO with a dirty 8-beat window), and the next candidate has to
+move that class on the known-phase bank without changing fisso/gradino
+hashes. Smoke on the known-phase bank (offset 0, `--quick`) and
+`VPAlign --ramps` shows the listening candidate did not close the remaining
+lag, and three follow-ups were reverted rather than shipped:
+
+- Offset 0 HEAD: fisso 22.3/76.9 ms mean/p95, hash-stable, authority 0, 6
+  `FISSO->VIVO` releases; continuo 54.5/130.3 ms, 171 authority frames, 5
+  recovery violations; gradino 36.0/174.9 ms, **17 authority frames**.
+  `compare_motion_matrix.py` therefore still fails step-authority and continuous
+  anti-vacuity against any control that requires zero step authority and an
+  improved continuous row.
+- `VPAlign --ramps` MIXER is still the rollback checkpoint: 22.2/84.7,
+  40.3/127.2, 28.6/95.5, 20.3/48.0 ms mean/worst. Flat 100/130 controls stay
+  6.9/33.3 and 7.2/22.0. `probe_tempo_step` non-octave rows stay PASS.
+- `--trace-ramp 100 110 12` seed 101: ramp starts at t=20 s; committed BPM stays
+  100 until the three-vote release at t=26 s (truth already 105). Clock worst is
+  **-93.2 ms at that instant** (decoder **-63.1 ms**). Residual-shape
+  `auth=0.00` through the lag; first 35% win is t=30 s, after the ramp. The 8-beat
+  fit first exceeds 1.2% at t=25 s; one jittered IOI at t=24 s disagrees and
+  spends the vote. `kTempoMotionResidual` 0.030 never lets the existing motion
+  hint arm (short residual 0.047-0.048).
+- Reverted, in order: (1) unpublished FISSO walk from residual-shape wins plus
+  sliding the 4% live rail — changed fisso/step hashes, continuo bit-identical;
+  (2) live 16-beat curve lead at 20% improvement plus wiring
+  `setDirectLivePhaseFollow` into `VPAlign` MIXER — fisso 22.3→24.1 ms, continuo
+  54.5→57.2, ramp worsts 84.7→100.5 and 127.2→138.2; (3) FISSO walk toward
+  `motionFit` at 20% improvement — 130 BPM flat MIXER 7.2/22.0→9.9/65.3, 12 s
+  ramp decoder floor 23.8→35.5. Decoder restored; only `--trace-ramp` now prints
+  `auth` and quadratic wins.
+
+- Clock-side follow-ups, also reverted except the direction-guard
+  correction below: (4a) hint-rate trim plus 0.30 s grid tau on
+  persistent mixer phase debt — VPAlign MIXER collapsed onto LEANA
+  (12 s 50.2/146.1) because the direction guard compared decoder BPM
+  to the sounding clock and wiped the trim during FISSO; (4b) trim
+  boost without tau, 50 ms floor, still no worst-phase movement
+  (clock-versus-decoder gap peaks ~30 ms, below that floor; the 93 ms
+  peak is decoder-versus-truth); (4c) 18 ms floor with full agreement
+  — 12 s mean 40.3→39.3 but 128→120 worst 48.0→66.8. Clock trim cannot
+  close decoder lag to the notated grid. Do not retry a sub-50 ms
+  clock-decoder floor.
+
+The direction guard now keys off the decoder target turning around
+(`decoderDelta = bpm - target`, opposite the trim, `|delta| > 1 BPM`)
+instead of clock-versus-decoder. `VPAlign --ramps` MIXER enables it
+and stays at the rollback checkpoint (22.2/84.7, 40.3/127.2, 28.0/95.5,
+20.3/48.0; flats 6.9/33.3 and 7.2/22.0). Production mixer already
+had the guard on; the old test would have been the LEANA collapse.
+The known-phase bank probe is left without the guard so offset-0
+fisso hashes stay comparable to the existing control CSV.
+
+- Decoder-side unpublished FISSO walk toward the 8-beat short fit,
+  gated by 16-beat quadratic improvement >= 0.10, two consecutive
+  beats, one causal vote and short residual < 0.050: 30 s MIXER
+  22.2/84.7 -> 20.4/78.4 (PASS), flats stay 6.8/33.3 and 6.4/22.0,
+  12 s mean 40.3 -> 36.3 but worst 127.2 -> 128.7, 120 -> 132 worst
+  95.5 -> 104.4, 128 -> 120 worst 48.0 -> 57.3. Reverted. The 12 s
+  peak is the FISSO-release instant; one bounded kFixedMaxStep
+  cannot close it, and a looser residual/improvement gate walks on
+  the 130 BPM flat (7.2/22.0 -> 6.6/39.3). Do not retry a FISSO
+  short-fit walk without a gate that is silent on VPAlign 130 and
+  still moves published BPM at t=24 on the 12 s ramp.
+
+- Further walk attempts, also reverted: monotonic short-vs-anchor
+  growth plus a 0.18%/beat rate floor walked VPAlign 130 (worst
+  22.0->26.2) and delayed 120->132 by shrinking the three causal
+  votes (worst 95.5->119.9). Voting those releases against the
+  frozen long-fit anchor unstarved VIVO and took MIXER to
+  20.8/84.2, 32.4/93.2, 24.6/75.4, 19.8/48.0 with 130 still
+  7.0/22.0 — and changed the offset-0 fisso/gradino hashes
+  (fisso mean 22.26->22.40). Fourteen matrix false starts had
+  *cleaner* residuals (0.022-0.046) and *stronger* quadratics
+  (g=0.25-0.74) than the 12 s ramp (res 0.047-0.048, g=0.12-0.21).
+  A residual band just above `kMotionCurveResidual` (0.045, 0.050)
+  with g in [0.10, 0.50) restores those hashes bit-identically,
+  but one `kFixedMaxStep` in that band still left the 12 s
+  four-seed mean 40.3->41.1. Do not walk published BPM in FISSO
+  unless the offset-0 fisso hash stays `8e3c8d2cdc5854f5`.
+
+**Kept (2026-09-18), strain-line release, growing-clean votes, vote hold.**
+Same residual/quadratic band to leave FISSO one vote early
+(`strainLineRelease`). After an IOI-backed vote, a strictly growing
+clean 8-beat fit (residual <= 0.040, quadratic g>=0.08, same-sign
+rate) may add a vote without the newest interval. If that fit is
+still on the same side with the same quadratic but is not growing,
+the vote is held instead of spent. The two-vote clean path still
+requires that interval this beat.
+
+Offset-0 fisso/gradino hashes stay `8e3c8d2cdc5854f5` /
+`4746e366a35be8a7`. Continuo mean/p95 54.53/130.29 -> 54.12/128.39
+with recovery still 5. `probe_tempo_step` PASS. `VPAlign --ramps`
+MIXER is now **all PASS**: flats 6.9/33.3 and 7.2/22.0; 30 s
+19.9/78.4; 12 s 30.6/93.2; 120->132 **25.7/81.6**; 128->120
+**19.1/48.0**. Without the quadratic term one extra matrix F->V
+appeared; without the two-vote IOI check, 128->120 worst 48.0->56.5;
+without the hold, 120->132 stayed 28.0/95.5.
+
+Direct-path synthetic ramps are green. Step authority and the
+lifetime recovery latch are closed in the next kept note. Real
+beat-grids and listening remain open.
+
+**Kept (2026-09-18), two consecutive quadratic wins before any bridge
+authority.** The 35% first-verdict was the whole of the 17 offset-0
+gradino authority frames: one post-step window can briefly beat the
+hinge. Requiring `shapeQuadraticWins >= 2` before any lead zeros
+those frames and leaves the offset-0 fisso hash `8e3c8d2cdc5854f5`.
+Gradino hash moves `4746e366a35be8a7` -> `a6249731026d9f82` because
+the old hash included that false 0.30 s tau / 35% rail; mean 35.97
+-> 35.96, p95 identical, authority 17 -> 0. Continuo 54.53/130.29
+-> 54.03/128.40, 171 -> 27 authority frames (one seed, 129495, one
+beat at t=48 with qvh=2.5). `VPAlign --ramps` MIXER stays **all
+PASS**: flats 6.9/33.3 and 7.2/22.0; 30 s 19.9/78.4; 12 s **32.7/93.2**
+(mean +2.1 vs the strain-keep 30.6, worst unchanged — the first 35%
+win on that ramp was after the ramp, at t=30); 120->132 25.9/81.6;
+128->120 19.0/48.0. `probe_tempo_step` PASS. Do not restore the 35%
+first-verdict: it is the step false-positive.
+
+**Kept (2026-09-18), clock hint on two strained causal votes.** The 12 s
+MIXER worst class sits in FISSO with two votes while short residual is
+0.054, above `kTempoMotionResidual` 0.030, so the existing PLL hint
+never armed and the 93.2 ms peak was decoder-frozen-at-100 plus a
+clock still at the held rate. `directTempoMotionHint` now also arms
+from two causal votes, residual in (0.045, 0.056) and quadratic g in
+[0.10, 0.50) — the same shape band as strain, clock-only, no decoder
+residual-ceiling change. Offset-0 matrix hashes stay
+`8e3c8d2cdc5854f5` / `6b607d51a504b6a1` / `a6249731026d9f82`.
+`VPAlign --ramps` MIXER: flats 6.9/33.3 and 7.2/22.0; 30 s 19.9/78.4;
+12 s **32.4/89.4** (was 32.7/93.2); 120->132 25.9/81.6; 128->120
+19.0/48.0 unchanged. Decoder columns on the 12 s row were unchanged
+before the FISSO walk below. Do not reopen the decoder strain ceiling
+from that class (mean 32.7->34.1 when tried).
+
+**Kept (2026-09-18), one `kFixedMaxStep` toward the short fit after
+two strained votes, still FISSO.** Same class as the clock hint:
+direct feed, `fastDriftBeats >= 2`, residual in
+(`kMotionCurveResidual`, `kMotionCurveStrainResidual` 0.056), weak
+quadratic, rate and short on the same side of the held number. The
+long-fit anchor is skipped that beat so it cannot pull the step back.
+This is not an earlier VIVO release and not a residual-ceiling change
+for `strainLineRelease` (`kMotionCurveWalkResidual` stays 0.050).
+Walking the residual band *without* the two votes moved a 12 s seed
+that still had zero votes and made the four-seed mean worse; releasing
+on this class did the same (32.7→34.1). With the two-vote gate, offset-0
+hashes stay `8e3c8d2cdc5854f5` / `6b607d51a504b6a1` /
+`a6249731026d9f82` (fisso/gradino unchanged; the 09:09 control CSV is
+stale on gradino). `VPAlign --ramps` MIXER: flats 6.9/33.3 and 7.2/22.0;
+30 s 19.9/78.4; 12 s **32.1/82.0** (was 32.4/89.4); 120->132 25.9/81.6;
+128->120 19.0/48.0; decoder 18.3/-16.1 (coda was -16.3).
+`probe_tempo_step` PASS. Do not enlarge the step: landing on the
+lagging short fit would spend the votes. Do not reopen strain release
+from this class.
+
+**Rejected (2026-09-18), 6-beat fit as the vote source on a dirty
+8-beat line.** The 12 s class first crosses 1.2% on eight beats at
+t=25. Using `fitPeriod(6)` only to vote, and only while 8-beat
+residual is in (0.045, 0.056), left offset-0 hashes identical but
+moved VPAlign 130 MIXER **7.2/22.0 → 7.8/24.4** (decoder 6.5→7.6) and
+12 s mean **32.1→32.8** (worst still 82.0). 128→120 improved
+19.0/48.0→18.1/47.0. The 130 flat sometimes sits in that residual
+band, so a shorter vote window without the two-vote+quadratic gate
+is not silent on fixed tempo. Reverted. Do not retry a sub-8-beat
+vote on that residual band.
+
+**Rejected (2026-09-18), extending `bringSlowFitCurrent` from 75 to
+85 BPM.** Offset-0 continuo p95 is carried by slow unknown/live
+runs (seed 216604: 67 BPM, 16ths, kit gap, F->V 0, 5.5% late, 8-beat
+window 7 s). Fading the interval-median blend out at 85 instead of
+75 left VPAlign 100-130 identical but moved fisso **22.3→27.2** and
+changed fisso/gradino hashes. Live-only 85 (unknown kept 75) still
+changed the fisso hash: six F->V already exist on that family, and
+after those releases the stronger live blend rewrites the trace.
+Do not extend the slow-fit fade without a gate silent on those six
+fisso releases.
+
+**Rejected (2026-09-18), full interval-median weight in unknown when
+spread ≥ kLiveTrend.** The 75 BPM fade leaves a 5% weight at 74 BPM,
+so a slow sine that has overshot gets no causal pull from the newest
+intervals. Full weight (still ±4%) on `spread >= 0.018` in unknown,
+combined with the g≥0.50 curve target, moved fisso/gradino hashes,
+dropped continuo authority 27→0, and worsened p95 128.4→129.2
+while the mean improved. Settling flats spend unknown beats above
+that spread bar. Reverted with the curve-target attempt.
+
+**Rejected (2026-09-18), unknown→VIVO on the same causal votes as
+FISSO.** `mayFix` stayed first; `haveWindow` plus 3 votes (or 2 clean
++ interval + window) entered live, with the same catch-up bar as a
+FISSO release. VPAlign MIXER and `probe_tempo_step` were identical
+(12 s 32.1/82.0, 130 7.2/22.0, 128→120 19.0/48.0). Offset-0 fisso
+hash stayed `8e3c8d2cdc5854f5`, but gradino moved
+`a6249731026d9f82` → `d8efc65a66765c2e` and continuo got slightly
+worse (54.03/128.4 → 54.08/128.6). The votes never fire on the
+stuck-unknown class (residual 0.06–0.09, 16ths flip the interval
+sign); they do fire on steps still acquiring. Do not hoist FISSO
+release into unknown. The discriminator for that p95 class is not
+a vote count.
+
+**Rejected (2026-09-18), skip the unknown live-lead on a dirty
+8-beat residual.** Same strain ceiling (0.056) the ramps already
+use: if short residual is above it, unknown kept the short fit
+without extrapolating (short−long) as a rate. VPAlign MIXER
+identical, `probe_tempo_step` PASS, but offset-0 fisso/gradino
+hashes both moved and continuo mean/p95 got worse (54.03/128.4 →
+54.22/128.6). The six existing fisso F→V already spend unknown
+beats with residual in that band, so a residual gate on unknown
+commit is not silent on flats. Reverted. Do not gate unknown lead
+on residual without a predicate that those six never satisfy.
+
+**Rejected (2026-09-18), unknown→VIVO on 50% quadratic
+improvement.** `mayFix` first; enter live when the 16-beat curve
+removes half the linear error (the same `kMotionCurveImprovement`
+that was too late to release FISSO). Gradino hash and VPAlign
+MIXER stayed identical; fisso hash moved and fisso mean 22.3→20.2
+(the quadratic overfits jitter on some flats still acquiring).
+Continuo p95 unchanged: the stuck-unknown class never reaches 50%
+improvement (residual 0.06–0.09). Do not enter live from unknown
+on curvature while flats can still `mayFix`.
+
+**Rejected (2026-09-18), seed the residual-shape tenure in unknown.**
+`shapeMaySeed` once `beatFilled >= kLongFit`, then enter live on the
+same two-win quadratic vs hinge `shapeCanLead` uses. Offset-0 hashes
+and VPAlign MIXER were bit-identical: gaps and octave/grid resets
+clear the tenure before seven points accumulate, so the stuck-unknown
+class never reaches two wins (model stays `insufficient`). Entering
+live would not have repaired it anyway — unknown already chases at
+0.70; the 5% error is the 8-beat target, not the regime. Do not start
+a shape tenure from unknown until those resets leave a curve standing.
+
+**Rejected (2026-09-18), clock target = quadratic endpoint on the
+strained hint.** Same 2-vote + residual (0.045, 0.056) + weak
+quadratic gate already used for trim. VPAlign MIXER 12 s worst
+82.0→79.4 (mean 32.1), 128→120 19.0→19.1, flats still PASS; but
+offset-0 fisso/gradino hashes both moved (fisso mean 22.26→22.33).
+Trim-only was silent on those hashes; changing the clock's target
+BPM is not, because the matrix hashes clock tempo and phase. Do
+not retarget the PLL from `motionFitBpm` on that gate.
+
+**Rejected (2026-09-18), unknown target = 16-beat quadratic when
+g≥0.50.** On the stuck-unknown class the quadratic is the truth at
+t=29–31 (g=0.80, 71.8 vs 69.8) and the wrong way after the turn
+(g=0.23). Gating on `kMotionCurveImprovement` therefore only takes
+the forming-curve window. Wrapped in `beatsInRegime > kLongFit`
+that window is already over at 67 BPM with misses; fisso stayed
+`8e3c8d2cdc5854f5`, gradino moved, continuo was bit-identical.
+Lifted out of `kLongFit` (a step is `|short−long| ≥ 4.5%`) fisso
+and gradino both moved, VPAlign 100 MIXER 6.9/33.3→6.6/25.9, 12 s
+mean 32.1→32.4, continuo mean 54.03→53.56 with p95 128.4→128.7.
+The 24-beat wait is what keeps flats quiet and what misses the
+slow forming curve. Do not use `motionFitBpm` as an unknown target
+without a gate that those six fisso F→V never satisfy and that
+still opens before beat 24 at 60–70 BPM.
+
+**Rejected (2026-09-18), two consecutive clean unknown quadratic
+beats as the unknown target, before `kLongFit`.** Existing
+constants only: `g ≥ 0.50`, 8-beat residual in
+(`kFastLineCleanResidual`, `kMotionCurveResidual`), quadratic
+residual below the line, `|mot−short| > 1.2%`, `|short−long| < 1.2%`,
+`kShortFit < beatsInRegime ≤ kLongFit`, two beats in a row. Offset-0
+`--quick` fisso/gradino hashes stayed `8e3c8d2cdc5854f5` /
+`a6249731026d9f82`; `VPAlign --ramps` MIXER identical 32.1/82.0;
+`probe_tempo_step` PASS. Continuo p95 128.4→125.1 and BPM error
+2.09→2.00, but mean phase 54.03→54.19. The next kit gap then turns
+with a clock that is already current. Arming the PLL motion hint on
+the same gate made the mean worse still (54.22). A live-style
+`kLiveLead` blend toward the quadratic instead of the endpoint
+did the same. The gate is globally silent on flats and steps; the
+mean-phase cost is the hole after the proof. Reverted. Do not
+retarget unknown from the 16-beat quadratic until a follow that
+improves mean phase, not only the tail.
+
+**Rejected (2026-09-18), latch the two-win forming-curve proof and
+raise the interval-median weight to 1.0 below 75 BPM.** No quadratic
+retarget. Offset-0 fisso/gradino hashes stayed identical. Continuo
+mean 54.03→54.25 and p95 128.4→129.2, while BPM error fell 2.09→1.93.
+On the slow unknown deceleration the newest three intervals are not
+a safe "now": after a kit gap they pull rate without pulling phase.
+Reverted. Do not raise `bringSlowFitCurrent` from that proof.
+
+**Rejected (2026-09-18), four-beat line as the live/unknown target when
+the 8-beat residual is dirty.** `fitPeriod(4)` still indexes onsets on
+the committed grid (`guess = 60/bpm`, 0.28-beat gate). On the slow
+unknown deceleration that carries continuo p95 the decoder is already
+~10% fast, so the newest quarters are snapped onto the stale grid and
+the 4-beat slope stays at the held tempo — seed 216604 was
+bit-identical 155.9/403.9. Offset-0 fisso/gradino hashes both moved
+(fisso mean 22.3→25.5). VPAlign 130 MIXER 7.2/22.0→7.4/20.6. A shorter
+window on the same grid cannot name a tempo the grid has already left.
+Reverted.
+
+**Rejected (2026-09-18), comb as the live/unknown target when the
+8-beat residual is dirty and both fits still agree.** The on-grid gate
+(0.18 of the last accepted interval) keeps admitting the stale pulse
+once the decoder is ~10% fast, so `fitPeriod` and a reindex on the
+median IOI are fitting those peaks, not the band. The comb, which
+reads the activation autocorrelation, names the true tempo through
+that hole (seed 216604: comb error ~3% vs committed ~11%, salience
+above the floor, settled). `pullTowardsComb`'s 35% still weights the
+stale line, so committed BPM does not move. Taking the comb as the
+target (stale-grid band vs the short fit, |short−long|<4.5%, not
+during a rapid/refit, unknown or live past 4 beats) followed the
+rate — 74→63 against truth 65→63 — but the clock's 0.90 s unknown/live
+hold left phase at 200–450 ms. Offset-0 fisso hash identical;
+gradino moved; continuo mean 54.03→54.45 and p95 128.4→130.2;
+`VPAlign` 12 s MIXER 32.1→32.5. A current comb is not a phase. Do
+not retarget from the fold until the same evidence also steers the
+grid, and the gate is silent on every gradino trace.
+
+**Kept (2026-09-18), comb as the *ruler* in unknown, not the target.**
+Same discriminator as the rejected retarget (dirty 8-beat residual,
+both fits within 4.5%, comb in the stale-grid band vs the short fit,
+not during a rapid/refit), but only `TempoRegime::unknown`. Peaks
+are judged against the comb period with keep 0.12 (0.18 admits both
+pulses when they are ~16% apart) and the long/short/quadratic lines
+are indexed on that period. The LS fit still owns tempo and phase.
+Offset-0 fisso/gradino hashes stay `8e3c8d2cdc5854f5` /
+`a6249731026d9f82`. Continuo mean/p95 **54.03/128.40 → 53.79/127.71**,
+recovery 0, authority 27, F→V 13; hash `2a475d11b0366f6f`.
+`compare_motion_matrix.py` PASS. `VPAlign --ramps` MIXER identical
+6.9/33.3, 7.2/22.0, 19.9/78.4, **32.1/82.0**, 25.9/81.6, 19.0/48.0.
+`probe_tempo_step` PASS. Allowing the same ruler in live moved the
+gradino hash (mean 35.96→36.03); do not reopen live without a gate
+that those traces never satisfy. This is a step on the slow unknown
+deceleration, not the closed continuous-motion goal.
+
+**Kept (2026-09-18), comb-fold origin + 3.2% floor + split keep,
+unknown, after `kLongFit`.** The 8.7% floor never sees the slow
+unknown deceleration (comb−short 4–11%). Lowering it without
+steering `lastBeat` mixed the two pulses (mean-only, or 54.4/130
+with a tighter keep from the stale origin). Before the peak gate,
+`snapStalePulseToCombFold` slides `lastBeat` and `gridAnchorSec`
+onto `tempo.beatPhaseFor(comb)` when the shift is at least 0.08
+comb-beats and contrast clears `kFoldPhaseContrast`, dumps the
+stale beat history, and leaves the short/long readings so this
+frame still sees the ruler. Keep then tightens to
+`max(0.035, 0.40*split)` when the split is inside 0.12.
+Offset-0 fisso/gradino hashes identical. Continuo **53.79/127.71 →
+50.93/122.63**, p99.5 462.9→355.1, BPM error 2.09→1.93%, recovery
+0, authority 27; hash `5f49eb7680d27cd8`. Seed 216604
+153.3/393.7/462.9 → 107.5/312.3/355.1 (bpmErr 5.42→2.89). Live
+carriers 192847 and 153252 unchanged. `VPAlign --ramps` MIXER
+identical 6.9/33.3, 7.2/22.0, 19.9/78.4, **32.1/82.0**, 25.9/81.6,
+19.0/48.0. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_comb_origin.csv`. The remaining continuous hole is
+the live clean-rate class, not this unknown stale pulse.
+
+**Kept (2026-09-18), slow live 4-beat/IOI lead.** The 8-beat line
+is centred 3.5 beats back; at 60 BPM that is seconds of integrated
+phase while residual stays clean (seed 192847: short 3-5% off, IOI
+and a 4-beat fit indexed on that IOI sit on the pulse).
+`bringSlowFitCurrent` already blends toward the IOI but caps at 4%
+and then commits at `kRateLive` 0.30. When live, BPM < 75, both
+fits agree (<4.5%), short residual < 0.045, quadratic improvement
+≥ 0.50, |IOI−short| > 1.2%, and the comb names the same direction
+as the IOI vs the short fit: take the IOI-indexed 4-beat line (or
+the IOI if that fit fails) and commit at `kRateAcquiring`. Offset-0
+fisso/gradino hashes identical. Continuo **50.93/122.63 →
+50.57/122.42**, recovery 0, authority 27; hash `a937dbe9556953a4`.
+Seed 192847 113.5/232.2 → 109.7/229.7. 153252 and 216604 unchanged.
+`VPAlign --ramps` MIXER identical 32.1/82.0. `probe_tempo_step` PASS. Without the comb-sign
+term, slow gradino catch-up at 61-63 BPM fires; do not drop it.
+Next A/B control: `/tmp/motion_slow_ioi_clean.csv`. The live class
+is smaller, not closed.
+
+**Rejected (2026-09-18), snap that keeps beat history.** Same
+comb-fold origin, but every stored `beatTime[]` is shifted with
+`lastBeat`/`gridAnchorSec` instead of dumping the ring. Offset-0
+fisso/gradino hashes identical. Continuo **50.57/122.42 →
+56.82/128.04**; seed 216604 **107.5/312.3 → 207.4/402.3**. Mixed
+stale+true times after the origin move are worse than a quiet
+grid plus the fold. Leave the dump.
+
+**Rejected (2026-09-18), unknown no-fit origin from the comb fold
+when the 3-interval median is still alive.** After the snap dump
+the 8-beat line is gone for seconds, but 4–7 peaks still produce
+an IOI. Sliding `gridAnchorSec` onto `beatPhaseFor(comb)` on that
+gate is silent on offset-0 fisso/gradino (hashes identical) and
+fires only on seed 216604. Continuo mean **50.57→50.76**, p95
+122.42→120.54: that seed's p95 312.3→282.3, mean 107.4→110.4,
+max 355.1→361.4. The fold is still the late comb; yanking the
+origin onto an 8-bin late phase trades the tail for mean and a
+longer max. Do not steer unknown-gap phase from the fold while
+the comb itself is the stale rate.
+
+**Rejected (2026-09-18), unknown ruler floor 0.045 log2 after
+`kLongFit` beats, index-only or with the peak gate.** The 8.7%
+stale-grid floor never fires on the slow unknown deceleration
+(comb−short sits at 4–11%). Lowering it to ~3.2% once the long
+window has formed is silent on offset-0 fisso/gradino (hashes
+identical) and improves continuo mean 53.79→52.91, but p95
+127.71→128.27. Indexing alone produces the same hash as also
+changing the peak gate. Do not keep a mean-only gain against the
+p95 clause.
+
+**Rejected (2026-09-18), unknown ruler floor 0.045 plus keep
+tighter than the pulse split.** The p95 hit above was the 0.12
+keep admitting both pulses at 4-8%. Tightening keep to
+`max(0.035, 0.40*split)` only after `kLongFit` (and only while
+the split itself is inside 0.12) still left offset-0 fisso/gradino
+visually unchanged, but continuo **53.79/127.71 → 54.4/130.0**.
+From a stale `lastBeat` the tighter comb lattice rejects the next
+true peak as well as the stale one, so the grid goes quiet and
+re-anchors worse. Do not couple a lower floor to a tighter keep
+until the gate origin is the comb fold, not the last stale peak.
+
+**Rejected (2026-09-18), unknown short+lead veto when the line
+recedes from the comb.** Same silent band as the lowered ruler
+floor (dirty agreed 8-beat, bir > 24, comb−short 3.2–18.9%), but
+the commit kept the current BPM and let `pullTowardsComb` act
+instead of reindexing peaks. Offset-0 fisso/gradino hashes
+identical. Continuo mean 53.79→53.04; the only moved seed had
+mean 153.3→141.3 and p95 **393.7→404.9**, so family p95
+127.71→128.42. Rate without grid/phase still lengthens the tail.
+Do not retarget unknown from this band.
+
+**Rejected (2026-09-18), live ruler gated on comb motion
+(2.5–8% vs a 4 s delayed fold, same direction as comb−short).**
+The high-pass was meant to tell a gliding pulse from a step jump
+(~10-16% in one publication) and from a flat metrical fight (comb
+unmoved). Off the control log it looked silent on fisso/gradino
+and fired only on the slow live deceleration. On the product
+decoder it moved offset-0 gradino (mean 35.96→36.31, hash
+`a6249731026d9f82` → `059d7e48e2625b21`); continuo 53.79/127.71 →
+53.34/126.76 was not keepable. A delayed comb interpolating
+through a step still occupies the 2.5–8% band. Do not reopen live
+with a comb-velocity window.
+
+**Rejected (2026-09-18), FISSO walk toward `motionFitBpm` instead
+of the short fit.** Same two-vote strain gate and `kFixedMaxStep`
+cap. Offset-0 hashes bit-identical (the 1.5% cap already bound on
+the 12 s class). VPAlign 12 s unchanged 32.1/82.0; 130 MIXER *dopo*
+6.5→7.0. The cap is the walk; a further destination does not buy
+phase and can still tick a flat that sits in the strain band.
+
+**Rejected (2026-09-18), wider strain residual + two-vote strain
+release.** The 12 s MIXER worst class sits in FISSO with two
+causal votes while short residual is 0.051-0.054, just above
+`kMotionCurveWalkResidual` 0.050, so strain never counts and the
+two-vote clean door (`< 0.030`) stays shut. Raising the strain
+ceiling to 0.056 and releasing on `walk>=1 && votes>=2` left
+offset-0 fisso/gradino/continuo hashes bit-identical (the matrix
+never entered that band) but moved `VPAlign` 12 s MIXER mean
+**32.7→34.1** (worst still 93.2). Reverted. Do not reopen the
+strain residual ceiling from the 12 s worst class; flats and
+dropouts already overlap 0.046-0.052 and the quadratic does not
+save the four-seed mean.
+
+The remaining two recovery counts on seed 129495 were a dropout at
+t=63–65 (short residual 1.0, phase 216 ms) and a 55 ms wander at
+t=83–85, fifteen and thirty-five seconds after the one-beat proof.
+The probe now expires `shadowProven` twelve truth beats after the
+last authority frame (the shape quarantine), so a dropped claim
+does not put the rest of the run under a 50 ms SLA. During the
+proof itself phase was 21–38 ms. Offset-0 continuo recovery 5 -> 0
+under that window. `compare_motion_matrix.py` vs the HEAD control
+CSV then fails only on the new gradino hash; every other clause
+passes. A lifetime-latch follow after proof was tried and reverted:
+it did not close those later holes and nudged continuo mean
+54.03 -> 54.07.
+
+`Assets/Models/beatnet.onnx` is present (~1.6 MB). Direct-path real
+audio smoke (2026-09-18, ONNX, not iPad):
+
+- INFINITO mixer excerpt `mpg123 -k 1148 -n 1531` (~30-70 s) through
+  rebuilt `VPLive --mix --bpm 91`: BeatNet ONNX, mean BPM 91.15
+  (0.16%), relative drift **7.1 / 33.8 ms** mean/worst (documented
+  acquisition-refinement pass was 9.0 / 25.1; mean better, worst
+  worse, one run, no annotated grid). Loaded-file `VPTrack --player`
+  on the same wav: lock held 3 s at **2.26 s**, **98.4%** of time
+  inside 2% of 91 BPM. Click mix:
+  `/tmp/vp-real/infinito-clickmix.wav`.
+- `makedip.py` exact grid through `VPTrack --player --pulses`: after
+  the 90→86→90 dip, peak **+105.7 ms** at +3.4 s, **return ≤15 ms
+  held 4 s in 5.6 s** (item 40 was +88 ms / **18.1 s** on kitMic
+  without this causal release). Decoder now leaves FISSO (88.78 VIVO
+  at t=70). Click mix: `/tmp/vp-real/dip-clickmix.wav`.
+- `rall4.wav` loaded file: published 90.00 FISSO until ~t=68, then
+  VIVO 88.86→85.34→84.57 following the comb 86.08. Not a certified
+  phase grid (generator not in tree).
+- Flamingo brano 1 mixer send, standard `extract_live.swift` centre
+  (3 s silence + 140 s from t=75 of
+  `Flamingo Marco 09.07.26.m4a`) through `VPTrack --player --pulses`.
+  One analysis epoch at 3.3 s (silence into the song), then no further
+  restart. Comb briefly reads the double (163) until t=14, then the
+  folded 81. Published 80.0–86.5. Causal release: unknown until t=26,
+  VIVO at t=28 on the 82→84 climb, FISSO again at t=72 around 81.5,
+  VIVO again at t=84 on the 81→85 accelerando. Independent tempogram
+  (65–95 BPM): 82.8 / 83.3 / 80.7 / 81.4 / 84.4 / 85.3 / 81.6 along
+  the same minutes; published lag is 0.2–1.4 BPM on the quiet drift,
+  **2.9 BPM late** at t=80 (start of the accel, still FISSO) and
+  **3.9 BPM high** at t=100 (dirty residual 0.17 while catching the
+  ritardando). Beat-phase after t=16 never jumps more than 0.008
+  beats (6 ms) in a block — no sounding snap. One bar-trust jump at
+  t=43.68 (`bar` 0.52→0.77, beat phase continuous) when the downbeat
+  vote locks. Click mix: `/tmp/vp-real/flamingo-clickmix.wav`.
+
+No annotated beat-grid on the band recordings. Human listening of
+the click mixes (INFINITO, dip, Flamingo, Sally) is still required.
+Microfono iPad still waits. Sally click mix:
+`/tmp/vp-real/sally-clickmix.wav`.
+
+Grid-vs-music (`hist.py` / `prec.py` on `VPTrack --player` pulses),
+the measurement this repo uses when there is no click track:
+
+- INFINITO 8-38 s: struttura **5.73** (agganciato is >2), inter-window
+  phase slip **0.0 ms**, grid jerks 0.55% std / 1.4% worst. Every 8 s
+  window 0:00-0:32 is agganciato. The VPLive `--bpm 91` 7.1/33.8 ms
+  figure is spread against a rigid metronome, not against the band;
+  the same take's clock vs 91 after t=8 from pulses is **4.1 / 13.2 ms**.
+- dip 20-55 s (before the dip): struttura 5.88. After the dip (63-90 s):
+  struttura **6.80**, still agganciato, 8.0% worst rate jerk while
+  catching 90→86→90.
+- Flamingo brano 1, 8 s `hist.py` windows 0:00–2:16: every window
+  **agganciato**. The only acquisition slip is 0:08–0:16 (−288 ms,
+  octave fold). Body 16–80 s (slow drift): struttura **3.96**,
+  window slip worst **30.4 ms** (one 24-bin), jerks 1.23% / 4.6%.
+  Whole 16–140 s: struttura **3.59**, median slip 30.4 ms, worst
+  **152.1 ms**, jerks 2.54% / 8.1%. The 80–140 s accel+ritardando
+  is the remaining hole: struttura 2.76 (still >2), worst window
+  slip 152 ms, jerks 3.43% / 8.1%, four `<<< SLITTA` windows while
+  the decoder is 3–4 BPM off the tempogram. Historical HIGH on a
+  longer take of the same song was struttura 3.61 / worst 364 ms
+  (`docs/TODO.md` item 35); this smoke is not that take and not a
+  claim that the 364 ms hole is closed.
+- Flamingo Sally (centre t=680, same 3 s + 140 s extract) through
+  `VPTrack --player`: cold start locks the double (198–211 sounding
+  for 17.7 s) then folds to ~105 by t=36. Comb already reads 103 at
+  t=16. **HEAD without the uncommitted causal-release diff is
+  line-for-line the same through t=48** (198.57 / 206.33 VIVO /
+  208.22 vs 209.35 / 183→105); this is the pre-existing octave
+  hole, not a regression of the FISSO-release work. After the fold
+  (52–140 s): struttura **3.02**, median window slip 69.5 ms, worst
+  **185.5 ms**, jerks 4.01% / 15.3%. One sounding beat-phase step
+  of 0.19 beats (−109 ms) at t=45.16. Historical HIGH on Sally was
+  struttura 3.04 / worst 263 ms. Do not retune octave or live lag
+  from this one centre.
+
+Offset-16 `--quick` smoke (not the offset-0 control): fisso/gradino
+authority 0, continuo authority also 0 (the two-win shape lead is
+silent on that draw). Continuo mean 50.8 ms, recovery 0. Do not
+restore the 35% first-verdict to fill that anti-vacuity column.
+
 **Both of those "must"s were looser than they read, and the cost was heard.** A
 listener reported percussion that occasionally slowed or sped up on a live
 recording and took a long time to come back. Measured with
@@ -1545,6 +2089,11 @@ the 15 Hz timer remains only for the device watchdog and skips UI repainting.
 
 - Restart the loop or clock on a BPM change.
 - Snap BPM from a single onset or a volume spike.
+- Tune a residual, vote count, BPM band, timeout or exception from one
+  recording. Flamingo, Sally, INFINITO, dip and rall4 are witnesses of
+  the product, not knobs. A candidate that only helps one title is
+  rejected; the known-phase matrix, `VPAlign --ramps` and the tempo
+  gates decide whether the rule is global.
 - Take the beat's *position* from a single onset.
 - Quantize the drummer.
 - Run ONNX on the audio thread.

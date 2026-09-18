@@ -89,6 +89,19 @@ namespace
     constexpr int   kFastBeatsToLeaveFixed = 3;
     constexpr int   kFastBeatsToLeaveFixedLine = 2;
     constexpr float kFastLineCleanResidual = 0.030f;
+    /** A dropout's 8-beat residual sits at 0.046-0.052. A clean linear ramp
+        can sit at 0.026-0.035 (VPAlign 12 s seed 3032) while a single raw
+        interval disagrees and would spend the vote an IOI-backed beat just
+        earned. Below this residual a *continuing* short-fit run (already at
+        least one IOI-backed vote, strictly growing, quadratic agreeing at
+        g>=0.08) may add a vote without that interval. The same residual and
+        quadratic, without requiring growth, may *hold* an existing vote when
+        the interval disagrees: 120->132 seed 1078 dropped 2->0 between t=25
+        and t=26 while the 8-beat line was still 1.9% fast. The two-vote
+        clean path still requires the interval this beat, or 128->120
+        overshoots to 56.5 ms. Offset-0 fisso hashes stay identical only
+        with the quadratic term; without it one extra F->V appeared. */
+    constexpr float kLineCleanIoiOverride = 0.040f;
     constexpr int   kFastBeatsAlone = 5;
 
     // A quadratic over sixteen accepted line-feed beats estimates the local
@@ -100,6 +113,14 @@ namespace
     constexpr float kMotionCurveRate = 0.0010f;      // BPM/beat divided by BPM
     constexpr float kMotionCurveDeviation = 0.012f;
     constexpr float kMotionCurveResidual = 0.045f;
+    constexpr float kMotionCurveWalkResidual = 0.050f;
+    // Same ceiling as PhaseTrust::kStrainedMotionResidualHi. The clock hint
+    // already arms in this band; the decoder walk below uses it too. Do not
+    // raise kMotionCurveWalkResidual to this — that wider strain release
+    // moved the 12 s MIXER mean 32.7→34.1.
+    constexpr float kMotionCurveStrainResidual = 0.056f;
+    constexpr float kMotionCurveWalkImprovement = 0.10f;
+    constexpr float kMotionCurveWalkRate = 0.0010f;
     constexpr float kMotionCurveImprovement = 0.50f;
     constexpr int   kMotionCurveBeats = 3;
 
@@ -307,6 +328,10 @@ namespace
     constexpr float kStaleGridRelease   = 0.060f;   // hysteresis: it must actually resolve
     constexpr int   kStaleGridVoteBeats = 12;       // ~4.5 s at 160 BPM
     constexpr float kStaleGridVoteHold  = 0.10f;
+    // After kLongFit the committed pulse can sit 4-8% off the comb while
+    // both lines still agree. Inside kStaleGridThreshold the ordinary
+    // ruler never fires. 0.045 log2 is ~3.2%.
+    constexpr float kUnknownCombApartFloor = 0.045f;
 
     // Once a tempo is established, a peak has to land on the grid to count as a
     // beat. Subdivisions clear the activation threshold all the time - a hi-hat
@@ -319,6 +344,21 @@ namespace
     // and pulls the grid a quarter beat sideways - from where every real beat
     // looks off-grid too. Sixteenths sit at 0.25 of a beat, triplets at 0.33.
     constexpr double kOnGridTolerance = 0.18;
+    // Two pulses ~16% apart sit 0.16 of a comb-beat from each other, so the
+    // ordinary 0.18 gate admits both. When the comb is the ruler this has to
+    // be tighter than that split and still wider than onset jitter (~0.03
+    // at 60 BPM) and still below a sixteenth (0.25).
+    constexpr double kCombRulerTolerance = 0.12;
+    constexpr double kCombRulerMinKeep = 0.035;
+    // Origin correction onto the comb fold, in comb-beats. The ordinary
+    // offbeat bar is 0.20; a stale lastBeat is typically ~0.13 off after
+    // one wrong interval, which that bar would ignore, and a tighter
+    // keep would then reject the true peak too.
+    constexpr double kCombFoldOrigin = 0.08;
+    // A step's short and long disagree by construction (kGridStepMinimum
+    // 2.5%). A slow drift that has left the committed grid keeps both fits
+    // on the stale pulse. 4.5% sits between jitter and that floor.
+    constexpr float kStaleFitsAgree = 0.045f;
 
     // Unless the grid itself has gone quiet. If nothing has landed on it for
     // this long the grid is the wrong one - a new song, an edit, a section that
@@ -564,6 +604,7 @@ void BeatDecoder::reset() noexcept
     longFilled = 0;
     fixedAnchorBpm = 0.0f;
     fixedSamples = 0;
+    fixedWalkRun = 0;
     beatsInRegime = 0;
     fixedErrorBeats = 0;
     leftFixedBeats = 0;
@@ -876,6 +917,7 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
     leftFixedBeats = 0;
     fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
     fixedSamples = 0;
+    fixedWalkRun = 0;
     // A residual curve is meaningful only inside one uninterrupted fixed
     // tenure. Seed it from the accepted entry beat while leaving the scalar
     // interval tracker unanchored; carrying an interval across this boundary
@@ -934,6 +976,7 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     Diagnostics d;
     d.combBpm = tempo.bpm();
     d.combSalience = tempo.salience();
+    d.combReady = tempo.ready();
     d.shortFitRate = shortFitRate;
     d.motionFit = motionFitBpm;
     d.motionFitRate = motionFitRate;
@@ -964,6 +1007,26 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.beatsHeld = beatsOnLevel;
     d.levelSettled = tempo.levelSettled();
     d.userOctave = octaveShift;
+    d.beatsInRegime = beatsInRegime;
+    float recent = 0.0f;
+    if (recentPeriod (recent))
+    {
+        d.recentIoiBpm = 60.0f / recent;
+        float period = 0.0f, residual = 1.0f, coverage = 0.0f;
+        double anchor = -1.0;
+        if (fitPeriodBefore (kShortFit, period, residual, coverage, anchor, nullptr, 0,
+                             static_cast<double> (recent)))
+        {
+            d.ioiIndexedFit = 60.0f / period;
+            d.ioiIndexedResidual = residual;
+        }
+        if (fitPeriodBefore (4, period, residual, coverage, anchor, nullptr, 0,
+                             static_cast<double> (recent)))
+        {
+            d.ioiIndexedFit4 = 60.0f / period;
+            d.ioiIndexedResidual4 = residual;
+        }
+    }
     return d;
 }
 
@@ -1119,6 +1182,96 @@ float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
     return best;
 }
 
+bool BeatDecoder::stalePulseCombRuler() const noexcept
+{
+    // Comb as *target* followed rate and left phase behind, and moved
+    // gradino hashes. This only changes which activations count as beats
+    // and how those times are indexed. Only unknown: live is where a
+    // confirmed step rebuilds, and the offset-0 gradino hash moved when
+    // the ruler was allowed there. FISSO keeps rejecting subdivisions on
+    // the committed grid.
+    if (! lineFeed || tempoRegime != TempoRegime::unknown)
+        return false;
+    if (transitionState == TempoTransitionState::rapid || transitionRefitBeats > 0)
+        return false;
+    if (shortFitBpm < kMinBpm || longFitBpm < kMinBpm)
+        return false;
+    if (shortFitResidual <= kMotionCurveStrainResidual)
+        return false;
+    if (std::fabs (shortFitBpm - longFitBpm)
+            >= kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
+        return false;
+    if (! tempo.ready() || tempo.salience() <= kSalienceFloor || ! tempo.levelSettled())
+        return false;
+    const float comb = applyUserOctave (foldToAnchor (tempo.bpm()));
+    if (comb < kMinBpm)
+        return false;
+    const float apart = std::fabs (std::log2 (comb / shortFitBpm));
+    const float floor = beatsInRegime > kLongFit ? kUnknownCombApartFloor
+                                                 : kStaleGridThreshold;
+    return apart > floor && apart < kOctaveThreshold;
+}
+
+double BeatDecoder::pulseIndexGuess() const noexcept
+{
+    if (! stalePulseCombRuler())
+        return 0.0;
+    const float comb = applyUserOctave (foldToAnchor (tempo.bpm()));
+    return 60.0 / static_cast<double> (comb);
+}
+
+double BeatDecoder::stalePulseKeep (double rulerPeriod) const noexcept
+{
+    const double combPeriod = pulseIndexGuess();
+    if (combPeriod <= 0.0 || rulerPeriod <= 0.0 || beatsInRegime <= kLongFit
+        || shortFitBpm < kMinBpm)
+        return -1.0;
+    if (std::fabs (rulerPeriod - combPeriod) > 1.0e-9)
+        return -1.0;
+    const float combBpm = 60.0f / static_cast<float> (rulerPeriod);
+    if (combBpm < kMinBpm)
+        return -1.0;
+    const float split = std::fabs (1.0f - shortFitBpm / combBpm);
+    if (split <= 0.0f || split > static_cast<float> (kCombRulerTolerance))
+        return -1.0;
+    return std::max (kCombRulerMinKeep, 0.40 * static_cast<double> (split));
+}
+
+void BeatDecoder::snapStalePulseToCombFold() noexcept
+{
+    // The keep that splits two pulses is measured from lastBeat. If that
+    // origin is still the stale pulse, a tighter keep rejects the true
+    // peak as well. The fold at the comb period is the one origin that
+    // does not go through the on-grid gate. Same unknown-ruler gate as
+    // pulseIndexGuess, past kLongFit so an unknown step is left alone.
+    if (! stalePulseCombRuler() || beatsInRegime <= kLongFit)
+        return;
+    if (gridAnchorSec < 0.0 || lastBeatSec < 0.0 || ! tempo.ready())
+        return;
+    const float comb = applyUserOctave (foldToAnchor (tempo.bpm()));
+    if (comb < kMinBpm)
+        return;
+    const double period = 60.0 / static_cast<double> (comb);
+    float contrast = 1.0f;
+    const float foldPhase = tempo.beatPhaseFor (comb, contrast);
+    if (foldPhase < 0.0f || contrast > kFoldPhaseContrast)
+        return;
+    const double want = timeSec - static_cast<double> (foldPhase) * period;
+    double shift = want - gridAnchorSec;
+    shift -= std::round (shift / period) * period;
+    if (std::fabs (shift) < kCombFoldOrigin * period)
+        return;
+
+    gridAnchorSec += shift;
+    lastBeatSec += shift;
+    ++gridSerial;
+    clearTempoTransition (TempoTransitionReason::reset);
+    beatWrite = 0;
+    beatFilled = 0;
+    longWrite = 0;
+    longFilled = 0;
+}
+
 bool BeatDecoder::recentPeriod (float& period) const noexcept
 {
     // Median of the last few intervals. Far noisier than a fit, but it sees a
@@ -1153,7 +1306,8 @@ bool BeatDecoder::fitPeriod (int maxBeats, float& period, float& residual, float
 }
 
 bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual, float& coverage,
-                                   double& anchorOut, float* indexGapOut, int skipNewest) const noexcept
+                                   double& anchorOut, float* indexGapOut, int skipNewest,
+                                   double guessPeriod) const noexcept
 {
     coverage = 0.0f;
     anchorOut = -1.0;
@@ -1169,7 +1323,15 @@ bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual,
     for (int i = 0; i < n; ++i)
         t[i] = beatTime[(oldest + i) % kBeatHistory];
 
-    const double guess = 60.0 / static_cast<double> (bpm);
+    // Production always indexes on the committed period. A caller may pass the
+    // median of the newest raw intervals instead, which is the only guess that
+    // can still land later beats inside the 0.28-beat keep gate once the
+    // committed grid has already left the pulse.
+    const double guess = guessPeriod > 0.0 ? guessPeriod
+                                           : 60.0 / static_cast<double> (bpm);
+    double keepTol = 0.28;
+    if (const double splitKeep = stalePulseKeep (guess); splitKeep > 0.0)
+        keepTol = splitKeep;
 
     // Index each beat on the committed grid, dropping anything that does not
     // sit on it. One spurious peak must not tilt the whole fit.
@@ -1179,7 +1341,7 @@ bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual,
     {
         const double beats = (t[i] - t[0]) / guess;
         const double rounded = std::round (beats);
-        if (std::fabs (beats - rounded) > 0.28)
+        if (std::fabs (beats - rounded) > keepTol)
             continue;
         idx[keep] = rounded;
         t[keep] = t[i];
@@ -1274,14 +1436,19 @@ bool BeatDecoder::fitPeriodCurve (int maxBeats, float& periodNow, float& bpmPerB
     for (int i = 0; i < n; ++i)
         t[i] = beatTime[(oldest + i) % kBeatHistory];
 
-    const double guess = 60.0 / static_cast<double> (bpm);
+    double guess = pulseIndexGuess();
+    if (guess <= 0.0)
+        guess = 60.0 / static_cast<double> (bpm);
+    double keepTol = 0.28;
+    if (const double splitKeep = stalePulseKeep (guess); splitKeep > 0.0)
+        keepTol = splitKeep;
     double idx[kBeatHistory];
     int keep = 0;
     for (int i = 0; i < n; ++i)
     {
         const double beats = (t[i] - t[0]) / guess;
         const double rounded = std::round (beats);
-        if (std::fabs (beats - rounded) > 0.28)
+        if (std::fabs (beats - rounded) > keepTol)
             continue;
         idx[keep] = rounded;
         t[keep] = t[i];
@@ -2463,7 +2630,7 @@ void BeatDecoder::refreshMotionBridgeAuthority() noexcept
                               && transitionRefitBeats == 0
                               && motionShadow.shapeModel
                                      == TempoMotionShapeModel::quadratic
-                              && motionShadow.shapeQuadraticWins >= 1
+                              && motionShadow.shapeQuadraticWins >= 2
                               && motionShadow.shapeEvidenceMargin
                                      >= TempoMotionShape::kEvidenceMarginBic
                               && motionShadow.shapeQuadraticVsHinge
@@ -2477,12 +2644,15 @@ void BeatDecoder::refreshMotionBridgeAuthority() noexcept
     {
         if (motionBridgeAuthority == 0.0f)
             motionBridgeAnchorBpm = bpm;
-        // The first verdict already had to beat the generic BIC winner and the
-        // explicit hinge/step explanation. Let it begin correction one beat
-        // sooner, but reserve the full rail for the second consecutive win.
-        // Neither level may jump: bridgedMotionTarget() owns both hard rails.
-        motionBridgeAuthority = motionShadow.shapeQuadraticWins >= 2 ? 1.0f
-                                                                     : 0.35f;
+        // One quadratic window can briefly beat the hinge after an ordinary
+        // step release (offset-0 gradino accumulated 17 frames of 35%
+        // authority from that first verdict). Two consecutive wins is the
+        // same rule that already reserved the full rail; it is still a
+        // model-selection count, not a song or seed threshold. The 12 s
+        // MIXER ramp already had auth=0 through its lag, so this does not
+        // wait extra on the measured ramps. Neither level may jump:
+        // bridgedMotionTarget() owns the hard rails.
+        motionBridgeAuthority = 1.0f;
     }
     else
     {
@@ -3054,8 +3224,9 @@ void BeatDecoder::updateTempo() noexcept
     float shortPeriod = 0.0f, shortResidual = 0.0f, shortCoverage = 0.0f;
     double longAnchor = -1.0, shortAnchor = -1.0;
     float longIndexGap = 1.0f, shortIndexGap = 1.0f;
-    const bool haveLong = fitPeriod (kLongFit, longPeriod, longResidual, longCoverage,
-                                     longAnchor, &longIndexGap);
+    const double rulerGuess = pulseIndexGuess();
+    const bool haveLong = fitPeriodBefore (kLongFit, longPeriod, longResidual, longCoverage,
+                                           longAnchor, &longIndexGap, 0, rulerGuess);
     // How many beats the responsive fit looks back over.
     //
     // This is what actually decides how fast a tempo change is taken, and
@@ -3074,8 +3245,9 @@ void BeatDecoder::updateTempo() noexcept
     // afterwards is the wrong way round for an app that is judged on staying in
     // time. Eight stays; the seam and the bench stay with it, so the next
     // person can see the trade instead of re-deriving it.
-    const bool haveShort = fitPeriod (kShortFit, shortPeriod, shortResidual,
-                                      shortCoverage, shortAnchor, &shortIndexGap);
+    const bool haveShort = fitPeriodBefore (kShortFit, shortPeriod, shortResidual,
+                                            shortCoverage, shortAnchor, &shortIndexGap,
+                                            0, rulerGuess);
 
     // Where the grid is, from the same two fits and for the same reason the
     // tempo comes from them: the phase used to be `lastBeatSec`, one accepted
@@ -3222,6 +3394,25 @@ void BeatDecoder::updateTempo() noexcept
         motionFitDirection = 0;
     }
 
+    if (tempoRegime == TempoRegime::fixed && lineFeed && haveShort && haveMotionCurve
+        && bpm > kMinBpm)
+    {
+        const float heldDev = (shortFitBpm - bpm) / bpm;
+        const bool gatedBeat =
+            std::fabs (heldDev) > kFastDriftToleranceLine
+            && motionFitImprovement >= kMotionCurveWalkImprovement
+            && motionFitImprovement < kMotionCurveImprovement
+            && shortFitResidual > kMotionCurveResidual
+            && shortFitResidual < kMotionCurveWalkResidual
+            && motionFitResidual < kMotionCurveResidual
+            && std::fabs (motionFitRate / bpm) > kMotionCurveWalkRate
+            && motionFitRate * heldDev > 0.0f;
+        if (gatedBeat)
+            fixedWalkRun = std::min (fixedWalkRun + 1, 8);
+        else
+            fixedWalkRun = 0;
+    }
+
     updateMotionShadow();
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
@@ -3267,6 +3458,7 @@ void BeatDecoder::updateTempo() noexcept
     // These are published to the clock. Do not let a value from the last valid
     // interval survive a dropout or a history reset and masquerade as current
     // motion while no responsive measurement exists.
+    const float prevFastDeviation = lastFastDeviation;
     lastFastDeviation = 0.0f;
     lastIntervalDeviation = 0.0f;
     if (recentPeriod (recent))
@@ -3298,7 +3490,21 @@ void BeatDecoder::updateTempo() noexcept
         const bool intervalSupports = ! lineFeed
                                       || (std::fabs (intervalDeviation) > kLineIntervalSupport
                                           && intervalDeviation * fastDeviation > 0.0f);
-        if (std::fabs (fastDeviation) > fastTolerance && intervalSupports)
+        const bool sameWay = fastDriftSign != 0
+                             && fastDeviation * static_cast<float> (fastDriftSign) > 0.0f;
+        const bool growingClean = lineFeed && haveShort
+            && fastDriftBeats >= 1
+            && haveMotionCurve
+            && shortFitResidual <= kLineCleanIoiOverride
+            && std::fabs (fastDeviation) > fastTolerance
+            && std::fabs (prevFastDeviation) > fastTolerance
+            && fastDeviation * prevFastDeviation > 0.0f
+            && std::fabs (fastDeviation) > std::fabs (prevFastDeviation) + 1.0e-4f
+            && motionFitRate * fastDeviation > 0.0f
+            && std::fabs (motionFitRate / bpm) > kMotionCurveWalkRate
+            && motionFitImprovement >= 0.08f;
+        if (std::fabs (fastDeviation) > fastTolerance
+            && (intervalSupports || growingClean))
         {
             const int fastSign = fastDeviation > 0.0f ? 1 : -1;
             if (fastSign == fastDriftSign)
@@ -3315,6 +3521,20 @@ void BeatDecoder::updateTempo() noexcept
                 fastDriftBeats = 1;
                 fastDriftLargeBeats = std::fabs (fastDeviation) > kFastDriftLarge ? 1 : 0;
             }
+        }
+        else if (lineFeed && haveShort && haveMotionCurve
+                 && fastDriftBeats > 0 && sameWay
+                 && std::fabs (fastDeviation) > fastTolerance
+                 && shortFitResidual <= kLineCleanIoiOverride
+                 && motionFitRate * fastDeviation > 0.0f
+                 && motionFitImprovement >= 0.08f)
+        {
+            // Short fit still on the same side with a clean residual and an
+            // agreeing quadratic: the newest interval is the liar. Spending
+            // here dropped 120->132 seed 1078 from two votes to zero between
+            // t=25 and t=26 while the 8-beat line was still 1.9% fast.
+            // The two-vote path still requires intervalAgreesNow, so holding
+            // cannot repeat the 128->120 56.5 ms overshoot.
         }
         else
         {
@@ -3467,6 +3687,14 @@ void BeatDecoder::updateTempo() noexcept
             // only the full three-vote proof may release a direct feed alone.
             const bool causalLineRelease =
                 lineFeed && fastDriftBeats >= kFastBeatsToLeaveFixed;
+            // One kFixedMaxStep walk in this residual band moved seed 101 at
+            // t=25 and still left the 12 s four-seed mean 40.3->41.1. Releasing
+            // to VIVO on the same two-beat strain (residual just above
+            // kMotionCurveResidual, weak quadratic, one vote) lets the live
+            // rate chase instead. Offset-0 matrix hashes were identical with
+            // this gate as a walk, so it does not fire on noisy flats.
+            const bool strainLineRelease =
+                lineFeed && fixedWalkRun >= 2 && fastDriftBeats >= 1;
 
             // Three earlier things were tried here to make a tempo change land
             // sooner and none shipped. `VPAlign`'s tempo bench measures all of
@@ -3514,15 +3742,27 @@ void BeatDecoder::updateTempo() noexcept
             // at a flat part of the sine and then held 82.09 while the truth
             // fell to 80.23 - comb, long fit and short fit all following it
             // down, only the published number frozen - for ten seconds.
+            const int votesToLeave = (lineFeed && shortFitResidual < kFastLineCleanResidual)
+                                         ? kFastBeatsToLeaveFixedLine
+                                         : kFastBeatsToLeaveFixed;
+            // Growing-clean votes may raise the count without the newest
+            // interval. The two-vote line path must still see that interval
+            // this beat: otherwise 128->120 seed 1078 left at two clean votes
+            // and the clock overshot to 56.5 ms. Three IOI-less votes still
+            // take causalLineRelease above.
+            const bool intervalAgreesNow = ! lineFeed
+                || (std::fabs (lastIntervalDeviation) > 0.004f
+                    && lastIntervalDeviation * lastFastDeviation > 0.0f);
             const bool releaseFixed =
                 causalLineRelease
+                || strainLineRelease
                 || (beatsInRegime >= kRegimeMinBeats
                     && (moving
                     || fixedErrorBeats >= kBeatsToLeaveFixed
-                    || (fastDriftBeats >= (lineFeed && shortFitResidual < kFastLineCleanResidual
-                                                ? kFastBeatsToLeaveFixedLine
-                                                : kFastBeatsToLeaveFixed)
-                        && windowAgrees)
+                    || (fastDriftBeats >= votesToLeave
+                        && windowAgrees
+                        && (votesToLeave > kFastBeatsToLeaveFixedLine
+                            || intervalAgreesNow))
                     || (fastDriftLargeBeats >= kFastBeatsAlone
                         && (lineFeed || windowAgrees))
                     || (haveLong && std::fabs (anchorError) > 0.06f)));
@@ -3591,6 +3831,7 @@ void BeatDecoder::updateTempo() noexcept
                     beatFilled = 4;
                     longFilled = longWrite = 0;
                     fixedSamples = 0;
+                    fixedWalkRun = 0;
 
                     // And say so, in the one word the clock listens to.
                     //
@@ -3662,7 +3903,31 @@ void BeatDecoder::updateTempo() noexcept
             // the tempo that is actually true. Nothing jumps, no stroke can
             // be doubled or skipped, and the moment the long window clears
             // the event the two fits agree again and this stands down.
-            if (haveLong)
+            //
+            // Two causal votes and a strain-shaped 8-beat line: the held
+            // number is already known to be wrong, but the third vote / clean
+            // two-vote door has not opened. One kFixedMaxStep toward the short
+            // fit, then skip the long-fit anchor that would pull it back.
+            // Releasing on this class, or walking it without the two votes,
+            // made the 12 s MIXER mean worse. The clock hint already arms here.
+            const bool strainedTwoVoteWalk =
+                lineFeed && haveShort && haveMotionCurve && fastDriftBeats >= 2
+                && motionFitImprovement >= kMotionCurveWalkImprovement
+                && motionFitImprovement < kMotionCurveImprovement
+                && shortFitResidual > kMotionCurveResidual
+                && shortFitResidual < kMotionCurveStrainResidual
+                && motionFitResidual < kMotionCurveResidual
+                && std::fabs (motionFitRate / std::max (kMinBpm, bpm)) > kMotionCurveWalkRate
+                && (shortFitBpm - bpm) * motionFitRate > 0.0f
+                && std::fabs ((shortFitBpm - bpm) / bpm) > kFastDriftToleranceLine;
+            if (strainedTwoVoteWalk)
+            {
+                const float cap = kFixedMaxStep * bpm;
+                const float delta = std::clamp (shortFitBpm - bpm, -cap, cap);
+                if (std::fabs (delta) > kFixedDeadband)
+                    bpm = std::clamp (bpm + delta, kMinBpm, kMaxBpm);
+            }
+            else if (haveLong)
             {
                 if (fixedSamples == 0)
                     fixedAnchorBpm = longFitBpm;
@@ -3671,7 +3936,7 @@ void BeatDecoder::updateTempo() noexcept
                                              1.0f / static_cast<float> (fixedSamples));
                 fixedAnchorBpm += (longFitBpm - fixedAnchorBpm) * gain;
             }
-            if (fixedAnchorBpm > kMinBpm)
+            if (! strainedTwoVoteWalk && fixedAnchorBpm > kMinBpm)
             {
                 // And the fold gets a say here too, which it did not have.
                 //
@@ -3758,6 +4023,49 @@ void BeatDecoder::updateTempo() noexcept
             // The blend fades to zero by 75 BPM, leaving the faster-tempo
             // stability tuning untouched.
             target = bringSlowFitCurrent (target);
+
+            // Slow live with a clean 8-beat line is still 3.5 beats late.
+            // At 60 BPM that is seconds of integrated phase (seed 192847:
+            // short 3-5% off, IOI and a 4-beat line on that IOI period sit
+            // on the pulse). The ordinary IOI blend is capped at 4% and
+            // then committed at kRateLive, so the lag never unwinds.
+            //
+            // Gate, measured silent on the offset-0 control log: quadratic
+            // improvement already at the production curve bar, both 8/24
+            // fits still agree (a step's windows do not), the 3-interval
+            // median disagrees with the short fit by more than the line
+            // drift bar, and the comb names the same *direction* as that
+            // median. fisso 0, gradino 0, continuo 10 frames. Without the
+            // comb-sign term, slow gradino catch-up at 61-63 BPM fires.
+            bool slowIoiLeads = false;
+            if (lineFeed && haveShort && haveLong && haveMotionCurve
+                && recent > 0.0f && bpm < 75.0f && bpm > kMinBpm
+                && beatsInRegime >= 4
+                && shortFitResidual > 0.0f
+                && shortFitResidual < kMotionCurveResidual
+                && motionFitImprovement >= kMotionCurveImprovement
+                && combReady && combBpm > kMinBpm
+                && std::fabs (shortFitBpm - longFitBpm)
+                       < kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
+            {
+                const float ioiBpm = 60.0f / recent;
+                const float ioiDev = (ioiBpm - shortFitBpm)
+                    / std::max (kMinBpm, shortFitBpm);
+                if (std::fabs (ioiDev) > kFastDriftToleranceLine
+                    && (ioiBpm - shortFitBpm) * (combBpm - shortFitBpm) > 0.0f)
+                {
+                    float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                    double a4 = -1.0;
+                    if (fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                         static_cast<double> (recent))
+                        && r4 < kMotionCurveResidual && p4 > 0.0f)
+                        target = 60.0f / p4;
+                    else
+                        target = ioiBpm;
+                    slowIoiLeads = true;
+                }
+            }
+
             // Two states in which the committed number is stale by
             // construction, and in both the ordinary live rate is the wrong
             // tool: it exists for a clock that is already with the band.
@@ -3817,7 +4125,7 @@ void BeatDecoder::updateTempo() noexcept
                                     && std::fabs (motionTarget - wanted) > 1.0e-6f;
             commit (motionTarget,
                     shapeLeads ? 1.0f
-                               : (far ? kRateAcquiring : kRateLive));
+                               : (far || slowIoiLeads ? kRateAcquiring : kRateLive));
             break;
         }
 
@@ -4023,11 +4331,22 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                                   || (eventTimeSec - lastBeatSec)
                                          >= 0.4 * static_cast<double> (eventReferencePeriod));
 
+    snapStalePulseToCombFold();
+
     bool acceptedByCurrentGrid = eligiblePeak;
     if (acceptedByCurrentGrid && established && lastBeatSec >= 0.0)
     {
-        const double beats = (eventTimeSec - lastBeatSec) / static_cast<double> (period);
-        if (std::fabs (beats - std::round (beats)) > kOnGridTolerance && beats < kGridStaleBeats)
+        // The committed period is the usual ruler. When it has already left
+        // the pulse, the same comb that names the true tempo is the ruler
+        // instead, with a tighter keep so the stale pulse (0.16 of a
+        // comb-beat away at ~16%) cannot sneak in beside the true one.
+        const double ruler = pulseIndexGuess();
+        const double gatePeriod = ruler > 0.0 ? ruler : static_cast<double> (period);
+        double keep = ruler > 0.0 ? kCombRulerTolerance : kOnGridTolerance;
+        if (const double splitKeep = stalePulseKeep (ruler); splitKeep > 0.0)
+            keep = splitKeep;
+        const double beats = (eventTimeSec - lastBeatSec) / gatePeriod;
+        if (std::fabs (beats - std::round (beats)) > keep && beats < kGridStaleBeats)
             acceptedByCurrentGrid = false;
     }
 

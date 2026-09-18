@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AI/BeatHypothesis.h"
 #include "Core/Types.h"
 
 #include <algorithm>
@@ -35,6 +36,46 @@ constexpr float kGridTauProvenMotion = 0.15f;
     them the ordinary 0.90 s averaging remains in force. */
 constexpr float kTempoMotionDeviation = 0.020f;
 constexpr float kTempoMotionResidual = 0.030f;
+
+/** Clock-only. Two causal votes with an 8-beat residual too dirty for
+    `kTempoMotionResidual` (VPAlign 12 s MIXER seeds sit at 0.047-0.054)
+    and a weak quadratic in the same band `BeatDecoder` uses to count
+    strain. Does not release FISSO, walk published BPM, or change the
+    decoder strain ceiling (0.050). The quadratic keeps a dropout from
+    looking like those two votes. */
+constexpr float kStrainedMotionResidualLo = 0.045f;
+constexpr float kStrainedMotionResidualHi = 0.056f;
+constexpr float kStrainedMotionImprovementLo = 0.10f;
+constexpr float kStrainedMotionImprovementHi = 0.50f;
+constexpr int   kStrainedMotionVotes = 2;
+
+inline bool strainedDirectTempoMotionHint (int fastEvidence,
+                                           float motionImprovement,
+                                           float shortResidual) noexcept
+{
+    return fastEvidence >= kStrainedMotionVotes
+        && motionImprovement >= kStrainedMotionImprovementLo
+        && motionImprovement < kStrainedMotionImprovementHi
+        && shortResidual > kStrainedMotionResidualLo
+        && shortResidual < kStrainedMotionResidualHi;
+}
+
+inline bool directTempoMotionHint (TempoRegime regime,
+                                   float fastDeviation,
+                                   float shortResidual,
+                                   float bridgeAuthority,
+                                   int fastEvidence,
+                                   float motionImprovement) noexcept
+{
+    if (bridgeAuthority > 0.0f)
+        return true;
+    if (regime != TempoRegime::fixed)
+        return false;
+    if (std::fabs (fastDeviation) > kTempoMotionDeviation
+        && shortResidual < kTempoMotionResidual)
+        return true;
+    return strainedDirectTempoMotionHint (fastEvidence, motionImprovement, shortResidual);
+}
 
 /** However bad the evidence gets, the clock still has to be able to follow a
     band. Two and a fifth seconds is four bars at 110 BPM. */

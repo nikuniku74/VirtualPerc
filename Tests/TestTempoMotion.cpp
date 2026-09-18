@@ -189,7 +189,7 @@ DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
             h.regime == vp::TempoRegime::live
             && d.motionShapeModel
                    == static_cast<int> (vp::TempoMotionShapeModel::quadratic)
-            && d.motionShapeQuadraticWins >= 1
+            && d.motionShapeQuadraticWins >= 2
             && d.motionShapeEvidenceMargin
                    >= vp::TempoMotionShape::kEvidenceMarginBic
             && d.motionShapeQuadraticVsHinge

@@ -78,6 +78,7 @@ public:
     {
         float combBpm = 0.0f;
         float combSalience = 0.0f;
+        bool  combReady = false;
         float longFit = 0.0f;
         float shortFit = 0.0f;
         float residual = 1.0f;
@@ -120,6 +121,20 @@ public:
         /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
             2 on one an octave too fast. See `fitPeriod`. */
         float fitIndexGap = 1.0f;
+        /** Accepted beats spent in the current regime. Diagnostic; the
+            unknown commit waits for `kLongFit` of these before applying
+            the live lead. */
+        int   beatsInRegime = 0;
+        /** Eight- and four-beat lines indexed on the median of the last three
+            raw intervals instead of the committed period. Probe-only: they
+            never own the target. The committed-grid fit cannot name a tempo
+            the grid has already left (0.28-beat index gate); these ask whether
+            the same accepted times would, under a current guess. */
+        float recentIoiBpm = 0.0f;
+        float ioiIndexedFit = 0.0f;
+        float ioiIndexedResidual = 1.0f;
+        float ioiIndexedFit4 = 0.0f;
+        float ioiIndexedResidual4 = 1.0f;
     };
 
     Diagnostics diagnostics() const noexcept;
@@ -267,6 +282,27 @@ private:
     float bridgedMotionTarget (float ordinaryTarget) const noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
+    /** Direct-feed unknown: the committed pulse is the one the on-grid
+        gate is still admitting, the comb names a different tempo in the
+        stale-grid band, and both line fits still agree they are looking at
+        the same (wrong) pulse. Then the comb period is the ruler for peak
+        admission and for indexing the line, not a tempo target. After
+        `kLongFit` the stale-grid floor drops to ~3.2% and `lastBeat` is
+        taken from the comb fold before the keep tightens below the pulse
+        split; without that origin a tighter keep rejects the true peak
+        too. Live is excluded: that is where a confirmed step rebuilds,
+        and the ruler there moved the offset-0 gradino hash. */
+    bool  stalePulseCombRuler() const noexcept;
+    double pulseIndexGuess() const noexcept;
+    /** Peak/fit keep on the comb ruler when the two pulses sit closer
+        than `kCombRulerTolerance`. Negative when the ordinary 0.12 keep
+        already splits them, or the ruler is off. */
+    double stalePulseKeep (double rulerPeriod) const noexcept;
+    /** Slide `lastBeat` / `gridAnchorSec` onto the comb fold so the
+        tighter keep is measured from the true pulse, not the stale one.
+        Dumps beat history; leaves the last short/long readings so this
+        frame's peak gate still sees the ruler. */
+    void  snapStalePulseToCombFold() noexcept;
     /** Least squares through the newest `maxBeats` beat times. `anchorOut` is
         the other half of the line and the half the phase needs: the time the
         fit predicts for the newest beat in its own window, which is an average
@@ -280,7 +316,8 @@ private:
     bool  fitPeriod (int maxBeats, float& period, float& residual, float& coverage,
                      double& anchorOut, float* indexGapOut = nullptr) const noexcept;
     bool  fitPeriodBefore (int maxBeats, float& period, float& residual, float& coverage,
-                           double& anchorOut, float* indexGapOut, int skipNewest) const noexcept;
+                           double& anchorOut, float* indexGapOut, int skipNewest,
+                           double guessPeriod = 0.0) const noexcept;
     bool  fitPeriodCurve (int maxBeats, float& periodNow, float& bpmPerBeat,
                           float& residual, float& improvement) const noexcept;
     bool  recentPeriod (float& period) const noexcept;
@@ -478,6 +515,10 @@ private:
         it settles. */
     float fixedAnchorBpm = 0.0f;
     int   fixedSamples = 0;
+    /** Consecutive slightly-strained 8-beat fits this FISSO tenure. Used
+        to release a direct feed one vote early on a weak linear ramp without
+        walking the published BPM. */
+    int   fixedWalkRun = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;
     /** Beats of catch-up still owed after leaving FISSO. The number held

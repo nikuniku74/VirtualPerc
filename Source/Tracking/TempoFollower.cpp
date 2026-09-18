@@ -387,9 +387,18 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
         // up (and vice versa). Continuing in the old direction is never a
         // useful correction on a direct feed, so discard only the integrator;
         // the clock, grid and phase remain continuous.
-        const float rawError = bpm - tempo;
-        const float trimmedError = bpm + tempoTrim - tempo;
-        if (directTempoDirectionGuard && rawError * trimmedError < 0.0f)
+        // Key off the decoder turning around, not clock-versus-decoder.
+        // While FISSO holds the published BPM the trim is the only term
+        // that can follow the band. Comparing `bpm` to the sounding clock
+        // makes that disagreement look like an inflection and wipes the
+        // integrator: VPAlign MIXER then collapsed onto LEANA
+        // (50.2/146.1 vs 40.3/127.2 on the 12 s ramp, seed-matched).
+        // A real inflection is a new target whose sign disagrees with
+        // the trim. Steps of more than 3 BPM still clear below.
+        const float decoderDelta = bpm - target;
+        if (directTempoDirectionGuard
+            && decoderDelta * tempoTrim < 0.0f
+            && std::fabs (decoderDelta) > 1.00f)
         {
             tempoTrim = 0.0f;
             lastDrift = 0.0f;

@@ -18,6 +18,7 @@
 // Run the default 192 cases, or 48 while developing:
 //   /tmp/probe_motion_matrix
 //   /tmp/probe_motion_matrix --quick
+//   /tmp/probe_motion_matrix --quick --trace-seed 129495
 
 #include "AI/BeatDecoder.h"
 #include "Tracking/PhaseTrust.h"
@@ -38,6 +39,9 @@ constexpr double kSampleRate = 48000.0;
 constexpr int kSamplesPerFrame = static_cast<int> (kSampleRate / kFps);
 constexpr double kDuration = 90.0;
 constexpr double kWarmup = 24.0;
+unsigned gTraceSeed = 0;
+FILE* gCurveLog = nullptr;
+const char* gCurveFamily = "";
 
 enum class MotionKind { flat, smooth, step };
 
@@ -262,12 +266,14 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
     bool haveSerial = false;
     bool curveProofActive = false;
     bool shadowProven = false;
+    size_t lastAuthorityTruth = 0;
     size_t excursionTruthBeat = 0;
     bool excursionOpen = false;
     bool excursionFailed = false;
     vp::TempoRegime previousRegime = vp::TempoRegime::unknown;
     std::mt19937 floorRng (seed * 2246822519u + 3266489917u);
     std::uniform_real_distribution<float> floor (0.012f, 0.032f);
+    unsigned lastTraceSerial = 0;
 
     const int totalFrames = static_cast<int> (kDuration * kFps);
     for (int frame = 0; frame < totalFrames; ++frame)
@@ -288,11 +294,12 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
         if (h.valid)
         {
             const bool cleanMotion =
-                (h.regime == vp::TempoRegime::fixed
-                 && std::fabs (h.fastTempoDeviation)
-                        > vp::kTempoMotionDeviation
-                 && h.shortFitResidual < vp::kTempoMotionResidual)
-                || h.motionBridgeAuthority > 0.0f;
+                vp::directTempoMotionHint (h.regime,
+                                           h.fastTempoDeviation,
+                                           h.shortFitResidual,
+                                           h.motionBridgeAuthority,
+                                           h.fastTempoEvidence,
+                                           h.motionFitImprovement);
             clock.setTempoMotionHint (
                 cleanMotion, h.motionBridgeAuthority >= 0.999f);
             const auto diagnostics = decoder.diagnostics();
@@ -336,6 +343,66 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                 && h.regime == vp::TempoRegime::live)
                 ++score.fixedToLive;
             previousRegime = h.regime;
+
+            if (h.beatSerial != lastTraceSerial)
+            {
+                lastTraceSerial = h.beatSerial;
+                const auto d = diagnostics;
+                const double now = frame / kFps;
+                double phaseMs = -1.0;
+                if (truth + 1 < beats.size())
+                {
+                    const double span = beats[truth + 1] - beats[truth];
+                    const float truePhase = span > 1.0e-9
+                        ? static_cast<float> ((now - beats[truth]) / span)
+                        : 0.0f;
+                    const double phaseBeats = std::fabs (vp::wrapCentered (
+                        clock.beatPhase() - truePhase));
+                    phaseMs = phaseBeats * 60000.0 / s.bpmAt (now);
+                }
+                if (gCurveLog != nullptr)
+                {
+                    const float shortBpm = d.shortFit;
+                    const float motDelta = (shortBpm > 50.0f && d.motionFit > 50.0f)
+                        ? (d.motionFit - shortBpm) / shortBpm : 0.0f;
+                    const float leadDelta = (shortBpm > 50.0f && d.longFit > 50.0f)
+                        ? (shortBpm - d.longFit) / shortBpm : 0.0f;
+                    std::fprintf (gCurveLog,
+                                  "%s,%u,%.2f,%d,%.3f,%.3f,%.1f,%.3f,%.3f,%.3f,%.3f,"
+                                  "%+.4f,%.4f,%.4f,%.4f,%.4f,%d,%d,%.3f,%.3f,%.4f,%.3f,%.4f,%.3f,%.3f,%d,%.3f,%d\n",
+                                  gCurveFamily, seed, now,
+                                  static_cast<int> (h.regime), h.bpm, s.bpmAt (now),
+                                  phaseMs, d.shortFit, d.longFit, d.motionFit,
+                                  d.motionFitImprovement, d.motionFitRate,
+                                  h.shortFitResidual, d.motionFitResidual,
+                                  motDelta, leadDelta, d.beatsInRegime,
+                                  score.fixedToLive,
+                                  d.recentIoiBpm, d.ioiIndexedFit, d.ioiIndexedResidual,
+                                  d.ioiIndexedFit4, d.ioiIndexedResidual4,
+                                  d.combBpm, d.combSalience,
+                                  d.levelSettled ? 1 : 0, h.combBpm,
+                                  d.combReady ? 1 : 0);
+                }
+                if (gTraceSeed == seed)
+                {
+                    std::printf ("trace t=%5.2f r=%d bpm=%6.2f truth=%6.2f ph=%6.1f"
+                                 " auth=%.2f wins=%d model=%d qvh=%.1f ev=%.1f"
+                                 " sres=%.3f"
+                                 " short=%6.2f long=%6.2f mot=%6.2f g=%.2f rate=%+.4f"
+                                 " mres=%.3f bir=%d ioi=%6.2f i8=%6.2f r8=%.3f"
+                                 " i4=%6.2f r4=%.3f\n",
+                                 now, static_cast<int> (h.regime), h.bpm,
+                                 s.bpmAt (now), phaseMs, h.motionBridgeAuthority,
+                                 d.motionShapeQuadraticWins, d.motionShapeModel,
+                                 d.motionShapeQuadraticVsHinge,
+                                 d.motionShapeEvidenceMargin, h.shortFitResidual,
+                                 d.shortFit, d.longFit, d.motionFit,
+                                 d.motionFitImprovement, d.motionFitRate,
+                                 d.motionFitResidual, d.beatsInRegime,
+                                 d.recentIoiBpm, d.ioiIndexedFit, d.ioiIndexedResidual,
+                                 d.ioiIndexedFit4, d.ioiIndexedResidual4);
+                }
+            }
         }
 
         // Performance scoring starts after acquisition, but false authority is
@@ -343,8 +410,20 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
         // field keeps the existing stale gate on this wider counter.
         const float motionAuthority = h.motionBridgeAuthority;
         if (motionAuthority > 0.0f)
+        {
             ++score.authorityFrames;
-        shadowProven = shadowProven || motionAuthority > 0.0f;
+            shadowProven = true;
+            lastAuthorityTruth = truth;
+        }
+        else if (shadowProven && truth > lastAuthorityTruth + 12)
+        {
+            // A 0.5 s quadratic win must not put the rest of the run under a
+            // 50 ms SLA: that counted dropouts and later 55 ms wander as
+            // "failed recovery" of a curve the classifier had already dropped.
+            // Twelve truth beats is the shape quarantine; after it the claim
+            // has expired and a new proof must start.
+            shadowProven = false;
+        }
 
         const double now = frame / kFps;
         while (truth + 1 < beats.size() && beats[truth + 1] <= now)
@@ -423,6 +502,7 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
     {
         const unsigned seed = offset + 1009u + static_cast<unsigned> (i) * 7919u
                               + static_cast<unsigned> (kind) * 104729u;
+        gCurveFamily = label;
         const Scenario scenario = makeScenario (kind, seed);
         Score score = run (scenario, seed, verbose);
         double sum = 0.0;
@@ -446,14 +526,15 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
         {
             std::printf ("  seed=%10u bpm=%6.1f sub=%d swing=%.3f jitter=%4.1fms"
                          " miss=%4.1f%% false=%4.2f/s phase=%6.1f/%6.1f/%6.1fms"
-                         " bpmErr=%5.2f%% F->V=%d curve=%d\n",
+                         " bpmErr=%5.2f%% F->V=%d curve=%d rec=%d auth=%d\n",
                          seed, scenario.baseBpm, scenario.subdivision, scenario.swing,
                          scenario.jitterSec * 1000.0, scenario.missChance * 100.0,
                          scenario.falsePeaksPerSec, sum / n,
                          percentile (score.phaseMs, 0.95),
                          percentile (score.phaseMs, 0.995),
                          score.tempoErrorSum / n, score.fixedToLive,
-                         score.curveProofs);
+                         score.curveProofs, score.recoveryViolations,
+                         score.authorityFrames);
         }
     }
 
@@ -495,6 +576,17 @@ int main (int argc, char** argv)
             csv = true;
         else if (std::strcmp (argv[i], "--offset") == 0 && i + 1 < argc)
             offset = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
+        else if (std::strcmp (argv[i], "--trace-seed") == 0 && i + 1 < argc)
+            gTraceSeed = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
+        else if (std::strcmp (argv[i], "--curve-log") == 0)
+        {
+            gCurveLog = std::fopen ("/tmp/motion_curve_log.csv", "w");
+            if (gCurveLog != nullptr)
+                std::fprintf (gCurveLog,
+                              "family,seed,t,regime,bpm,truth,phase,short,long,mot,g,"
+                              "rate,sres,mres,motDelta,leadDelta,beatsInRegime,releases,"
+                              "ioi,i8,r8,i4,r4,comb,sal,settled,fold,ready\n");
+        }
     }
     const int cases = quick ? 16 : 64;
     if (csv && offset == 0)
@@ -516,6 +608,9 @@ int main (int argc, char** argv)
     const Aggregate smooth =
         printFamily (MotionKind::smooth, "continuo", cases, offset, verbose, csv);
     printFamily (MotionKind::step, "gradino", cases, offset, verbose, csv);
+
+    if (gCurveLog != nullptr)
+        std::fclose (gCurveLog);
 
     if (csv)
         return 0;

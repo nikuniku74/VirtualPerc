@@ -505,6 +505,7 @@ Hole drumHole (float bpm, double driftPctPerSec, double holeFrom, double holeTo,
     clock.setFollowStrength (vp::FollowStrength::high);
     clock.setLocked (true);
     clock.setTempoTrimEnabled (trimClock);
+    clock.setDirectTempoDirectionGuard (trimClock);
     clock.resetClock();
     vp::EvidenceTrust trust;
     const int blockPerFrame = static_cast<int> (kSr / kFps);
@@ -1168,6 +1169,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     clock.setFollowStrength (vp::FollowStrength::high);
     clock.setLocked (true);
     clock.setTempoTrimEnabled (mode == RampMode::trim);
+    clock.setDirectTempoDirectionGuard (mode == RampMode::trim);
     clock.resetClock();
 
     std::mt19937 rng (seed);
@@ -1250,11 +1252,12 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             if (! seenSerial) { lastSerial = hy.beatSerial; seenSerial = true; }
             const bool cleanTempoMotion =
                 mode == RampMode::trim
-                && ((hy.regime == vp::TempoRegime::fixed
-                     && std::fabs (hy.fastTempoDeviation)
-                            > vp::kTempoMotionDeviation
-                     && hy.shortFitResidual < vp::kTempoMotionResidual)
-                    || hy.motionBridgeAuthority > 0.0f);
+                && vp::directTempoMotionHint (hy.regime,
+                                              hy.fastTempoDeviation,
+                                              hy.shortFitResidual,
+                                              hy.motionBridgeAuthority,
+                                              hy.fastTempoEvidence,
+                                              hy.motionFitImprovement);
             clock.setTempoMotionHint (
                 cleanTempoMotion, hy.motionBridgeAuthority >= 0.999f);
             if (hy.bpm > 50.0f)
@@ -1333,7 +1336,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             {
                 lastPrinted = sec;
                 std::printf ("   t=%-4d vero=%-7.2f dec=%-7.2f corto=%-7.2f lungo=%-7.2f "
-                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
+                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% auth=%.2f/%d clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
                              "(decoder %+7.1f)\n",
                              sec, bpmAt (t), static_cast<double> (lastHypBpm),
                              static_cast<double> (lastShortBpm),
@@ -1349,6 +1352,8 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                              hy.fastTempoEvidence, hy.fastTempoDirection,
                              static_cast<double> (hy.fastTempoDeviation * 100.0f),
                              static_cast<double> (hy.fastIntervalDeviation * 100.0f),
+                             static_cast<double> (hy.motionBridgeAuthority),
+                             hy.motionShapeQuadraticWins,
                              static_cast<double> (clock.currentTempo()),
                              static_cast<double> (clock.tempoTrimBpm()), ms, decMs);
             }
