@@ -16,6 +16,52 @@ namespace
     // Below this the fold found no pulse worth trusting.
     constexpr float kSalienceFloor = 0.14f;
 
+    // Kick vs hat on a file feed: four equal short intervals whose even/odd
+    // *low-band* means disagree. Pulse amplitude even/odd at 0.07 moved
+    // fisso/gradino hashes because 50 fps sampling of even clicks exceeds
+    // 7%. The click bank and every probe that omits observe's fourth
+    // argument pass lowBand=0, so this peek is false and tryFastAcquire
+    // is not called again. Not kCadenceCorrectionEnabled: that path is
+    // still off, and 50-vs-100 is not this band (rawBpm is not >145).
+    constexpr float kLowBandMute = 0.05f;
+    bool evenOddKickHatSubdivision (const double* beatTime,
+                                    const float* beatLowBand,
+                                    int history,
+                                    int beatWrite,
+                                    int beatFilled,
+                                    bool lineFeed) noexcept
+    {
+        if (beatFilled < 4 || beatTime == nullptr || beatLowBand == nullptr
+            || history <= 0)
+            return false;
+        const int i0 = (beatWrite - 4 + history) % history;
+        const int i1 = (beatWrite - 3 + history) % history;
+        const int i2 = (beatWrite - 2 + history) % history;
+        const int i3 = (beatWrite - 1 + history) % history;
+        const float b0 = beatLowBand[i0];
+        const float b1 = beatLowBand[i1];
+        const float b2 = beatLowBand[i2];
+        const float b3 = beatLowBand[i3];
+        const float present = std::max (std::max (b0, b1), std::max (b2, b3));
+        if (present < kLowBandMute)
+            return false;
+        const float d0 = static_cast<float> (beatTime[i1] - beatTime[i0]);
+        const float d1 = static_cast<float> (beatTime[i2] - beatTime[i1]);
+        const float d2 = static_cast<float> (beatTime[i3] - beatTime[i2]);
+        const float ioiMean = (d0 + d1 + d2) / 3.0f;
+        const float timingTolerance = lineFeed ? 0.12f : 0.20f;
+        const float evenTol = timingTolerance * std::max (0.05f, ioiMean);
+        if (! (d0 > 0.0f && d1 > 0.0f && d2 > 0.0f
+               && std::fabs (d0 - ioiMean) < evenTol
+               && std::fabs (d1 - ioiMean) < evenTol
+               && std::fabs (d2 - ioiMean) < evenTol))
+            return false;
+        const float evenMean = 0.5f * (b0 + b2);
+        const float oddMean = 0.5f * (b1 + b3);
+        const float mid = 0.5f * (evenMean + oddMean);
+        return std::fabs (evenMean - oddMean) > 0.35f * std::max (0.05f, mid);
+    }
+
     // How far ahead of the other metrical levels the state space has to be
     // before its answer is used as the level, in log-probability, and how much
     // better a different octave has to look before the level is moved. The
@@ -405,6 +451,12 @@ namespace
     // dropped the beat - and the next peak re-anchors it. Counting rejections
     // instead would re-anchor on a drum fill, which is exactly the material the
     // grid is there to ride out.
+    //
+    // The waive does not apply while a part is sounding. Hats-only stays
+    // loud, BeatNet treats those eighths as beats, and taking the first
+    // one after this hole flipped the grid under the player. After the
+    // same hole a crest on the committed fold, and not a half-beat off
+    // lastBeat, is still the pulse — see the sounding re-open in `observe`.
     constexpr double kGridStaleBeats = 2.5;
 
     // A grid that still lands on the beats being detected, and lands tightly, is
@@ -584,6 +636,8 @@ void BeatDecoder::reset() noexcept
     tempo.reset();
     timeSec = 0.0;
     lastBeatSec = -1.0;
+    lastAcceptedLowBand = 0.0f;
+    postHoleReopenSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
     foldPhaseBeats = 0;
@@ -651,6 +705,7 @@ void BeatDecoder::reset() noexcept
     std::fill (longHist, longHist + kLongHistory, 0.0f);
     std::fill (beatTime, beatTime + kBeatHistory, 0.0);
     std::fill (beatStrength, beatStrength + kBeatHistory, 0.0f);
+    std::fill (beatLowBand, beatLowBand + kBeatHistory, 0.0f);
     anchorBpm = 0.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     transitionSerial = 0;
@@ -691,6 +746,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     {
         gridAnchorSec = lastDownbeatSec;
         lastBeatSec = lastDownbeatSec;
+        lastAcceptedLowBand = 0.0f;
         beatsInBar = 0;
     }
 
@@ -1081,6 +1137,8 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     // long as the tempo held, and it is the same reasoning that keeps the tempo.
     // Dropping it would freeze the reported phase until the next peak.
     lastBeatSec = -1.0;
+    lastAcceptedLowBand = 0.0f;
+    postHoleReopenSec = -1.0;
     lastDownbeatSec = -1.0;
     foldPhaseBeats = 0;
     beatWrite = 0;
@@ -1157,6 +1215,8 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     // The grid and everything fitted to it. The next peak re-anchors, because
     // with no last beat the on-grid gate has nothing to reject against.
     lastBeatSec = -1.0;
+    lastAcceptedLowBand = 0.0f;
+    postHoleReopenSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
     foldPhaseBeats = 0;
@@ -1322,6 +1382,7 @@ void BeatDecoder::snapStalePulseToCombFold() noexcept
     const double keepSec = kCombRulerMinKeep * period;
     double keptTime[kBeatHistory];
     float keptStrength[kBeatHistory];
+    float keptLowBand[kBeatHistory];
     int nKept = 0;
     for (int i = 0; i < beatFilled; ++i)
     {
@@ -1333,6 +1394,7 @@ void BeatDecoder::snapStalePulseToCombFold() noexcept
         {
             keptTime[nKept] = t;
             keptStrength[nKept] = beatStrength[idx];
+            keptLowBand[nKept] = beatLowBand[idx];
             ++nKept;
         }
     }
@@ -1341,9 +1403,12 @@ void BeatDecoder::snapStalePulseToCombFold() noexcept
     longWrite = 0;
     longFilled = 0;
     for (int i = 0; i < nKept; ++i)
-        storeBeatForFit (keptTime[i], keptStrength[i]);
+        storeBeatForFit (keptTime[i], keptStrength[i], keptLowBand[i]);
     if (nKept > 0)
+    {
         lastBeatSec = keptTime[nKept - 1];
+        lastAcceptedLowBand = keptLowBand[nKept - 1];
+    }
 }
 
 bool BeatDecoder::recentPeriod (float& period) const noexcept
@@ -1650,6 +1715,19 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
         foldPhaseBeats = 0;
         return;
     }
+    // While a part is sounding the on-grid gate holds lastBeat so hats
+    // cannot steal it. The fold's buffer is twelve seconds, so after a
+    // hats hole it still names the off-beat. Three resume quarters then
+    // look like a flipped grid, this path slides lastBeat onto the hats,
+    // and the sounding keep freezes there (fixture B: phase 0.514 at
+    // t=30, then no accepted pulse). Same hold as the octave snap: do
+    // not re-argue the half under the player. The synthetic bank never
+    // sets sounding.
+    if (sounding)
+    {
+        foldPhaseBeats = 0;
+        return;
+    }
 
     float contrast = 1.0f;
     const float foldPhase = tempo.beatPhaseFor (bpm, contrast);
@@ -1709,16 +1787,19 @@ void BeatDecoder::commit (float candidateBpm, float rate) noexcept
     bpm = std::clamp (bpm + (candidateBpm - bpm) * rate, kMinBpm, kMaxBpm);
 }
 
-void BeatDecoder::registerBeat (double beatTimeSec, float strength) noexcept
+void BeatDecoder::registerBeat (double beatTimeSec, float strength,
+                                float lowBand) noexcept
 {
-    storeBeatForFit (beatTimeSec, strength);
+    storeBeatForFit (beatTimeSec, strength, lowBand);
     ++beatSerial;
 }
 
-void BeatDecoder::storeBeatForFit (double beatTimeSec, float strength) noexcept
+void BeatDecoder::storeBeatForFit (double beatTimeSec, float strength,
+                                   float lowBand) noexcept
 {
     beatTime[beatWrite] = beatTimeSec;
     beatStrength[beatWrite] = strength;
+    beatLowBand[beatWrite] = lowBand;
     beatWrite = (beatWrite + 1) % kBeatHistory;
     if (beatFilled < kBeatHistory)
         ++beatFilled;
@@ -2051,6 +2132,47 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
         {
             const float apart = std::fabs (std::log2 (
                 meanBpm / std::max (kMinBpm, bpm)));
+            // Post-pause leftover lattice: off-grid crests after a sounding
+            // hole form a coherent step while the comb still names the
+            // held tempo (fixture D: 100→150 at t=25.2, comb 100). A
+            // finite window just delayed the same yank (8 beats, then
+            // 150 at t=36). Real steps have no 2.5-beat hole. The
+            // synthetic bank never sets sounding. Octave-class or past
+            // the stale-grid bar; leftover 6% (216604) is below it.
+            // Door D is not this detector. IOI+4 already on the
+            // candidate is a real step the fits have seen.
+            const double heldPeriod =
+                static_cast<double> (60.0f / std::max (kMinBpm, bpm));
+            const bool afterHole =
+                (postHoleReopenSec >= 0.0
+                 && transitionFirstSec + 1.0e-9 >= postHoleReopenSec)
+                || (lastBeatSec >= 0.0
+                    && (transitionFirstSec - lastBeatSec)
+                           >= kGridStaleBeats * heldPeriod);
+            if (sounding && afterHole && apart > kStaleGridThreshold)
+            {
+                bool fourOnCandidate = false;
+                float recent = 0.0f, p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                if (recentPeriod (recent) && recent > 0.0f
+                    && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                        static_cast<double> (recent))
+                    && r4 < kMotionCurveResidual && p4 > 0.0f)
+                {
+                    const float ioiBpm = 60.0f / recent;
+                    const float fourBpm = 60.0f / p4;
+                    fourOnCandidate =
+                        std::fabs (fourBpm - ioiBpm)
+                            < kFastDriftToleranceLine * std::max (kMinBpm, ioiBpm)
+                        && std::fabs (fourBpm - meanBpm)
+                               < kFastDriftToleranceLine * std::max (kMinBpm, meanBpm);
+                }
+                if (! fourOnCandidate)
+                {
+                    dropTransitionCandidate (TempoTransitionReason::incoherent);
+                    return false;
+                }
+            }
             // Wider-than-ordinary line changes get one extra causal interval.
             // That still answers 120 -> 160 in about one second, while making
             // a triplet/fill pair insufficient to move the whole grid. The
@@ -2353,17 +2475,19 @@ bool BeatDecoder::observeGridStep() noexcept
         // fitted line, not on the newest onset.
         double keepTime[kGridStepMaxBeats + 1];
         float keepStrength[kGridStepMaxBeats + 1];
+        float keepLowBand[kGridStepMaxBeats + 1];
         for (int k = 0; k <= m; ++k)
         {
             keepTime[k] = beatTime[(pivot + k) % kBeatHistory];
             keepStrength[k] = beatStrength[(pivot + k) % kBeatHistory];
+            keepLowBand[k] = beatLowBand[(pivot + k) % kBeatHistory];
         }
         beatWrite = 0;
         beatFilled = 0;
         longWrite = 0;
         longFilled = 0;
         for (int k = 0; k <= m; ++k)
-            storeBeatForFit (keepTime[k], keepStrength[k]);
+            storeBeatForFit (keepTime[k], keepStrength[k], keepLowBand[k]);
 
         bpm = std::clamp (newBpm, kMinBpm, kMaxBpm);
         gridAnchorSec = anchor + m * (period + step);
@@ -2537,6 +2661,24 @@ bool BeatDecoder::tryFastAcquire() noexcept
             // phase even when every eighth has the same strength; accents are
             // still used above to reject four unrelated hits.
             acquireAnchorSec = d2 >= d1 ? beatTime[i2] : beatTime[i3];
+        }
+        else if (fastOctaveAmbiguous && evenOddKickHatSubdivision (
+                     beatTime, beatLowBand, kBeatHistory, beatWrite,
+                     beatFilled, lineFeed))
+        {
+            // 76 BPM kick+hats publish 152 at the third peak. Fold only
+            // when low-band even/odd means are kick vs hat. Amplitude
+            // even/odd at 0.07 moved the click hashes.
+            bestPeriod = raw * 2.0f;
+            bestError = 0.0f;
+            intervalSelfSufficient = true;
+            pairedSubdivision = true;
+            const int i0 = (beatWrite - 4 + kBeatHistory) % kBeatHistory;
+            const int i1 = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+            const float evenMean = 0.5f * (beatLowBand[i0] + beatLowBand[i2]);
+            const float oddMean = 0.5f * (beatLowBand[i1] + beatLowBand[i3]);
+            acquireAnchorSec = evenMean >= oddMean ? beatTime[i0]
+                                                   : beatTime[i1];
         }
     }
 
@@ -2880,6 +3022,26 @@ void BeatDecoder::updateTempo() noexcept
     // correct lock from about 12.5 s to the second interval (~2.3 s).
     if (provisional && ! intervalAcquired)
         tryFastAcquire();
+    else if (provisional && intervalAcquired && beatFilled >= 4 && lineFeed
+             && evenOddKickHatSubdivision (beatTime, beatLowBand, kBeatHistory,
+                                           beatWrite, beatFilled, lineFeed))
+    {
+        // Once: after the fold the committed tempo is no longer the
+        // eighth. Even clicks and the matrix pass lowBand=0, so the
+        // peek is false and tryFastAcquire is not called.
+        const int newestI = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+        const int olderI = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+        const float ioi = static_cast<float> (beatTime[newestI]
+                                              - beatTime[olderI]);
+        const float lastBpm = ioi > 0.0f ? 60.0f / ioi : 0.0f;
+        const bool stillOnEighth = lastBpm > 145.0f
+                                   && lastBpm * 0.5f >= kMinBpm
+                                   && std::fabs (std::log2 (std::max (kMinBpm, bpm)
+                                                            / lastBpm))
+                                          < 0.12f;
+        if (stillOnEighth)
+            tryFastAcquire();
+    }
 
     // The short-window grid is allowed to start the clock; it becomes an
     // ordinary committed grid only when the long-window fold has actually
@@ -3177,6 +3339,42 @@ void BeatDecoder::updateTempo() noexcept
 
     if (octaveMismatchBeats >= snapBeats)
     {
+        // Post-pause leftover comb: 100 vs 150 is not an octave argument
+        // (log2 0.585), so sounding does not hold the level, and eight
+        // fixed-regime votes snap onto the leftover (fixture D t=36.02,
+        // unknown, history wiped). Real steps have no 2.5-beat hole.
+        // The synthetic bank never sets sounding. IOI+4 on that comb
+        // is a real level the fits have seen.
+        bool refusePostHoleComb = false;
+        if (sounding && postHoleReopenSec >= 0.0
+            && combRawBpm > kMinBpm && bpm > kMinBpm
+            && std::fabs (std::log2 (combRawBpm / bpm)) > kStaleGridThreshold)
+        {
+            bool fourOnComb = false;
+            float recent = 0.0f, p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+            double a4 = -1.0;
+            if (recentPeriod (recent) && recent > 0.0f
+                && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                    static_cast<double> (recent))
+                && r4 < kMotionCurveResidual && p4 > 0.0f)
+            {
+                const float ioiBpm = 60.0f / recent;
+                const float fourBpm = 60.0f / p4;
+                fourOnComb =
+                    std::fabs (fourBpm - ioiBpm)
+                        < kFastDriftToleranceLine * std::max (kMinBpm, ioiBpm)
+                    && std::fabs (fourBpm - combRawBpm)
+                           < kFastDriftToleranceLine * std::max (kMinBpm, combRawBpm);
+            }
+            refusePostHoleComb = ! fourOnComb;
+        }
+        if (refusePostHoleComb)
+        {
+            octaveMismatchBeats = 0;
+            octaveVoteBpm = 0.0f;
+        }
+        else
+        {
         // Snap to what the fold measured, not to its reading folded back onto
         // the level being left. With `combBpm` here the snap was a no-op in the
         // only dimension it exists for: it threw the beat history away and
@@ -3228,6 +3426,7 @@ void BeatDecoder::updateTempo() noexcept
         shortFitResidual = 1.0f;
         resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
         return;
+        }
     }
 
     // The stale-grid watchdog. Runs only after the octave snap has declined the
@@ -3279,6 +3478,8 @@ void BeatDecoder::updateTempo() noexcept
             ++gridSerial;
             clearTempoTransition (TempoTransitionReason::reset);
             lastBeatSec = -1.0;
+            lastAcceptedLowBand = 0.0f;
+            postHoleReopenSec = -1.0;
             gridAnchorSec = -1.0;
             foldPhaseBeats = 0;
             beatWrite = 0;
@@ -4849,6 +5050,43 @@ void BeatDecoder::updateTempo() noexcept
             }
         }
     }
+
+    // Live fourBetween lastBeat origin before ioiClockLead can arm
+    // (bir < kShortFit). 192847 t=29.92 is the FISSO-leave max
+    // (i4=64.5 between short 63.2 and IOI 66.2, bir=1, phase 134 ms).
+    // Clock-only ioiLead at bir<4 REJECT; this only pulls origin, same
+    // cap. Offset-0 fisso/gradino: 0 frames (t≥0, fold already in i4).
+    if (lineFeed && ! ioiClockLead && tempoRegime == TempoRegime::live
+        && bpm < 75.0f && bpm > kMinBpm
+        && beatsInRegime > 0 && beatsInRegime < kShortFit
+        && haveShort && lastBeatSec >= 0.0 && gridAnchorSec >= 0.0)
+    {
+        float recent = 0.0f, p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+        double a4 = -1.0;
+        if (recentPeriod (recent) && recent > 0.0f
+            && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                static_cast<double> (recent))
+            && r4 < kMotionCurveResidual && p4 > 0.0f && a4 >= 0.0)
+        {
+            const float fourBpm = 60.0f / p4;
+            const float ioiBpm = 60.0f / recent;
+            const float fourToIoi = std::fabs (fourBpm - ioiBpm);
+            const float fourToShort = std::fabs (fourBpm - shortFitBpm);
+            const bool fourBetween =
+                (fourBpm - shortFitBpm) * (ioiBpm - shortFitBpm) > 0.0f
+                && fourToShort > kFastDriftToleranceLine
+                       * std::max (kMinBpm, shortFitBpm)
+                && fourToIoi >= fourToShort;
+            if (fourBetween)
+            {
+                const double period = static_cast<double> (recent);
+                double shift = lastBeatSec - gridAnchorSec;
+                shift -= std::round (shift / period) * period;
+                const double maxShift = kCombRulerTolerance * period;
+                gridAnchorSec += std::clamp (shift, -maxShift, maxShift);
+            }
+        }
+    }
 }
 
 float BeatDecoder::pullTowardsComb (float target, bool combReady, float combBpm) const noexcept
@@ -5025,9 +5263,120 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         double keep = ruler > 0.0 ? kCombRulerTolerance : kOnGridTolerance;
         if (const double splitKeep = stalePulseKeep (ruler); splitKeep > 0.0)
             keep = splitKeep;
+        // lastBeat stays the origin: a 5–20% step's next quarter is still
+        // inside keep of that interval (gating on gridAnchor rejected those
+        // peaks and moved offset-0 fisso/gradino). The hole-waive
+        // (beats >= kGridStaleBeats) is what hats-only used: BeatNet treats
+        // eighths as beats, so the first crest after 2.5 quiet quarters is
+        // an off-beat hat, lastBeat flips onto it, true quarters are then
+        // rejected, and checkGridPhase cannot unflip (fold contrast gone,
+        // kFoldPhaseContrast 0.70). While a part is sounding, the committed
+        // pulse is the one being played against — same hold the octave snap
+        // already uses. The synthetic bank never sets sounding, so offset-0
+        // fisso/gradino keep the waive. A confirmed transition still enters
+        // through eligiblePeak.
+        //
+        // That hold is also a freeze: updateTempo / checkGridPhase run
+        // only on an accepted peak, so refusing every off-lastBeat crest
+        // leaves lastBeat and the fits stuck. Mixer/file witness: with
+        // sounding, a ~123 BPM lock sat 28 s at conf 0 (max gap 29.3 s)
+        // and never re-accepted; without sounding the same activations
+        // re-anchored (max gap 2.0 s). Re-open after lastBeat is already
+        // stale only for a crest that sits on the fold of the committed
+        // tempo and is not a half-beat off lastBeat. On-fold alone
+        // follows hats-only (fixture A, frac 0.467). The 0.40 bar keeps
+        // the committed origin; the fold supplies a live period after
+        // lastBeat has drifted.
         const double beats = (eventTimeSec - lastBeatSec) / gatePeriod;
-        if (std::fabs (beats - std::round (beats)) > keep && beats < kGridStaleBeats)
+        bool hatKickHalfSteal = false;
+        if (std::fabs (beats - std::round (beats)) > keep
+            && (beats < kGridStaleBeats || sounding))
+        {
             acceptedByCurrentGrid = false;
+            if (sounding && beats >= kGridStaleBeats && bpm > kMinBpm
+                && tempo.ready())
+            {
+                float contrast = 1.0f;
+                const float foldPhase = tempo.beatPhaseFor (bpm, contrast);
+                if (foldPhase >= 0.0f && contrast <= kFoldPhaseContrast)
+                {
+                    const double foldPeriod = 60.0 / static_cast<double> (bpm);
+                    const float eventPhase = wrap01 (
+                        foldPhase - static_cast<float> (
+                            (timeSec - eventTimeSec) / foldPeriod));
+                    const double offLast = std::fabs (beats - std::round (beats));
+                    // The fold's peak is whichever pulse is loud. Hats-only
+                    // makes that the off-beat, so on-fold alone would flip
+                    // lastBeat (fixture A, 2 hats, frac 0.467). Keep the
+                    // committed origin: refuse a half-beat off lastBeat.
+                    // A drifted true pulse sits inside 0.40 and on the fold.
+                    if (offLast < 0.40
+                        && std::fabs (static_cast<double> (wrapCentered (eventPhase)))
+                               <= keep)
+                    {
+                        acceptedByCurrentGrid = true;
+                        postHoleReopenSec = eventTimeSec;
+                    }
+                }
+            }
+            // FEEL hats-then-Q: lastBeat parked on hats, first quarter 0.5
+            // later — not a hole, so the reopen above never runs. On-fold
+            // would follow the hats. Product sounding is false until
+            // following, so file-start is the snd=0 path which already
+            // unfreezes; this is percussion-in from t=0. Mute when
+            // lowBand is 0 (click bank, hats/rolls HOLD probes). Hats A
+            // lastBeat is kick-class on a file feed, so hats after a
+            // hole do not steal.
+            if (! acceptedByCurrentGrid && sounding && bpm > kMinBpm)
+            {
+                const float eventLowBand = std::max (prevLowBand,
+                                                     std::max (prevPrevLowBand, lowBand));
+                const double offLast = std::fabs (beats - std::round (beats));
+                if (lastAcceptedLowBand < kLowBandMute
+                    && eventLowBand >= kLowBandMute
+                    && offLast > 0.5 - kOnGridTolerance
+                    && offLast < 0.5 + kOnGridTolerance)
+                {
+                    acceptedByCurrentGrid = true;
+                    hatKickHalfSteal = true;
+                    if (gridAnchorSec >= 0.0)
+                    {
+                        const double periodSec = 60.0 / static_cast<double> (bpm);
+                        double shift = eventTimeSec - gridAnchorSec;
+                        shift -= std::round (shift / periodSec) * periodSec;
+                        gridAnchorSec += shift;
+                        ++gridSerial;
+                    }
+                }
+            }
+        }
+        else if (acceptedByCurrentGrid && sounding && beats >= kGridStaleBeats
+                 && bpm > kMinBpm)
+        {
+            // On-grid after a hole: leftover lattice's first crest sits
+            // on the committed fold (fixture D t=24.02, 7.0 beats at
+            // 100, then 150 IOIs). The reopen stamp above only fires
+            // when the crest was off lastBeat.
+            postHoleReopenSec = eventTimeSec;
+        }
+        // Syncopated snare-roll: crests ~0.87 of a beat off lastBeat still
+        // sit inside keep 0.18 and ratchet lastBeat off the fold (32nd/
+        // sync fixtures: frac 0.03→0.47, then a live ~10% yank). On-fold
+        // on every sounding accept rejected resume quarters after hats
+        // (fold buffer still sees the hats). Refuse a lastBeat-keep pass
+        // whose interval is past the stale-grid bar from the nearest
+        // integer — 0.87 is log2 0.20, a true quarter is 1.0. Hats are
+        // 0.5 and already fail keep. The synthetic bank never sets
+        // sounding. The hat-to-kick half steal is 0.5 by construction
+        // and would trip this log2 bar; it already named the pulse.
+        if (acceptedByCurrentGrid && sounding && beats < kGridStaleBeats
+            && beats > 0.5 && ! hatKickHalfSteal)
+        {
+            const double nearest = std::round (beats);
+            if (nearest >= 1.0
+                && std::fabs (std::log2 (beats / nearest)) > kStaleGridThreshold)
+                acceptedByCurrentGrid = false;
+        }
     }
 
     // A change is a change *from* something, so the grid has to be one. While
@@ -5065,8 +5414,11 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
 
     if (peak)
     {
-        registerBeat (eventTimeSec, prevPulse);
+        const float beatLowBandNow = std::max (prevLowBand,
+                                               std::max (prevPrevLowBand, lowBand));
+        registerBeat (eventTimeSec, prevPulse, beatLowBandNow);
         lastBeatSec = eventTimeSec;
+        lastAcceptedLowBand = beatLowBandNow;
         refractoryFrames = minRefr;
         beatsInBar = (beatsInBar + 1) % 4;
 
@@ -5082,9 +5434,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         // for the same reason. This is what says "kick or snare" rather than
         // "hi-hat", which is the one question the metrical level turns on and
         // the one the probabilities above cannot answer.
-        const float beatLowBand = std::max (prevLowBand,
-                                            std::max (prevPrevLowBand, lowBand));
-        observeMetricalCadence (eventTimeSec, beatLowBand);
+        observeMetricalCadence (eventTimeSec, beatLowBandNow);
         if (prevDownbeat > downThresh)
         {
             lastDownbeatStrength = prevDownbeat;

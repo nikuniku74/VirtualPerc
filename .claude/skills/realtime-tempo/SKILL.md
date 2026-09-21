@@ -1793,6 +1793,390 @@ p995 unchanged 254.81, recovery 0, authority 27. Hash
 **32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
 `/tmp/motion_kept_fourcloser_lastbeat.csv`.
 
+**Kept (2026-09-21), persist ioiLead lastBeat origin (live, when
+fourCloser/fourBetween miss).** Same cap. Unknown Door C lastBeat
+already REJECT. 0 offset-0 fisso/gradino (`ioiClockLead` never
+set there). Hashes identical. Continuo **37.425/91.187 →
+37.259/90.921**, p995 unchanged 254.81, recovery 0, authority
+27. Hash `4ffd0e25daf5b15a`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_persist_lastbeat.csv`.
+
+**Rejected (2026-09-21), on-grid origin = `gridAnchor`, drop the
+`kGridStaleBeats` waive.** Aimed at hats-only (off-beat hats after
+a hole flipping lastBeat). 5–20% gradino peaks are inside keep of
+lastBeat and outside keep of a lagged fit intercept: fisso hash
+`8e3c8d2cdc5854f5` → `76c7d4edfd6bb9cb`, gradino `a624` →
+`220b`, continuo **37.259/90.921 → 43.371/122.348**. Reverted.
+
+**Rejected (2026-09-21), refuse half-beat (`frac >= 0.40`) after
+the hole, no `sounding` gate.** The `--quick` bank has
+subdivision-2/4, so offset-0 fisso/gradino hashes moved
+(`8e3c` → `9375`, `a624` → `6790`). Continuo mean/p95
+36.919/90.603 (down) is not enough. Reverted.
+
+**Kept (2026-09-21), while sounding, do not waive the on-grid
+keep after `kGridStaleBeats`.** Hats-only is loud, so there is no
+mute; BeatNet treats hat eighths as beats; the first crest after
+2.5 quiet quarters was being taken as lastBeat; true quarters
+then sat 0.5 off it; `checkGridPhase` cannot unflip because fold
+contrast is gone (`kFoldPhaseContrast` 0.70, CORE_TIMING_AUDIT
+item 2). lastBeat stays the origin. Confirmed transitions still
+enter through `eligiblePeak`. The synthetic bank never sets
+`sounding`, so this is identity there: hashes `8e3c8d2cdc5854f5`
+/ `a6249731026d9f82` / continuo `4ffd0e25daf5b15a`, 37.259/90.921,
+recovery 0, authority 27. Dedicated fixture (100 BPM quarters,
+2 s hole, then off-beat hats only): `sounding=0` phase **0.500**
+at t=30 (flipped), `sounding=1` phase **1.000** / 26 accepted
+beats (pulse held, hats refused). `VPAlign --ramps` MIXER 12 s
+still **32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_hats_sounding.csv` (copy of persist). 1-vs-3
+clap after irregular snare (reggaeton) is still open: this only
+stops hats being counted as beats under a playing part.
+
+**Rejected (2026-09-21), live persist lastBeat origin when the
+4-beat is dirty (`r4` in `[kMotionCurveResidual,
+kMotionCurveFourBeatDirty)`).** Aimed at 169090 t=46.92 (r4=0.051,
+phase 109→153 into Door D). Unknown Door C lastBeat on this band
+already REJECT. 0 offset-0 fisso/gradino (`ioiClockLead` never
+set there). Hashes identical. Continuo **37.259/90.921 →
+37.282/91.215**. Pulling lastBeat on a mixed-window 4-beat
+follows the late lattice. Reverted.
+
+**Kept (2026-09-21), live fourBetween lastBeat origin before
+`ioiClockLead` can arm (`bpm<75`, `bir` in `[1, kShortFit)`).**
+192847 t=29.92 is the FISSO-leave max (i4=64.5 between short 63.2
+and IOI 66.2, bir=1, phase 134 ms). Clock-only ioiLead at bir<4
+REJECT; this only pulls origin, same `kCombRulerTolerance` cap.
+Silent census (t≥0, fold already in i4): 0 offset-0 fisso/gradino,
+1 continuo frame. Hashes identical. Continuo **37.259/90.921 →
+37.233/90.882**, p995 unchanged 254.81, recovery 0, authority 27.
+Hash `af3dbd034174d682`. 192847 44.7/105.7/130.9 → 44.3/105.0/130.7
+(leave max; the hole p95 stays). 145333 66.2/165.8 → 63.5/151.1.
+`VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_fisso_leave_origin.csv`.
+
+**Kept (2026-09-21), sounding stale-grid re-open.** The hats
+KEEP (do not waive after `kGridStaleBeats` while sounding) is
+also a freeze: `updateTempo` / `checkGridPhase` / the stale-grid
+watchdog run only on an accepted peak, so once every crest fails
+lastBeat keep, lastBeat never moves and conf overdue-ramps to 0.
+Mixer/file activations, sounding held after lock: BPM stayed
+~123 (comb too; not an octave dump), max gap **29.3 s**, conf 0
+for ~24 s, 240 accepted beats, still overdue at end. Same dump
+with sounding off re-anchored (max gap 1.96 s, 320 accepted).
+Not `waitForQuantize` / `rhythmSeen` / mute / epoch: the part
+is already sounding, so the waive stays off.
+
+Re-open after lastBeat is already stale (`beats >= kGridStaleBeats`)
+only for a crest that sits on the committed-tempo fold
+(`contrast <= kFoldPhaseContrast`) **and** is not a half-beat
+off lastBeat (`offLast < 0.40`). On-fold alone follows
+hats-only (the fold's peak is whichever pulse is loud): fixture
+A accepted 2 hats, last frac 0.467. The 0.40 bar keeps the
+committed origin; the fold supplies a live period after lastBeat
+has drifted. While sounding, `checkGridPhase` does not slide the
+origin: the fold buffer is 12 s, so three resume quarters after
+a hats hole look flipped and would put lastBeat on the hats,
+after which the keep freezes (fixture B: phase 0.514 at t=30,
+then no pulse). Same hold the octave snap already uses.
+
+The synthetic bank never sets `sounding`: identity vs
+`/tmp/motion_kept_fisso_leave_origin.csv`, hashes
+`8e3c8d2cdc5854f5` / `a6249731026d9f82` / continuo
+`af3dbd034174d682`, **37.233/90.882**, p995 254.81, recovery 0,
+authority 27. Fixture A 100 BPM, 2 s hole, off-beat hats only:
+`sounding=0` last frac **0.467** (flipped), `sounding=1` last
+frac **0.033** / afterHole hats **0** / phase 0.000 (pulse
+held). Fixture B, hats then quarters resume: `sounding=1`
+resume **20** accepted, phase **1.000**, conf 1.00, Q/H 0/0.
+Mixer/file dump with sounding: max gap **29.3 → 2.94 s**,
+overdue 41.6 → 10.5 s, low-conf 31.9 → 2.1 s, accepted 240 →
+300 (sounding-off is 320 / 1.96 s). `VPAlign --ramps` MIXER
+12 s still **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_kept_hats_reopen.csv` (copy of
+fisso_leave_origin). 1-vs-3 clap is still open: holding
+`checkGridPhase` while sounding will not unflip a half that
+was already wrong when the part came in.
+
+**Kept (2026-09-21), sounding post-hole leftover yank.** After
+a 2.5-beat hole while sounding, leftover lattice on the
+committed fold (fixture D: 100 BPM, 4 s hole, 150 IOIs
+coinciding every 1.2 s) was a sudden rate yank: the interval
+detector confirmed 100→150 at t=25.22 while comb still named
+100, then eight fixed-regime votes snapped onto combRaw 150
+at t=36.02 (unknown, history wiped). 100 vs 150 is not an
+octave argument (log2 0.585), so sounding did not hold the
+level. Stamp `postHoleReopenSec` on a sounding on-grid accept
+after `kGridStaleBeats` (the leftover's first crest is
+on-fold, so hats-reopen never fired) and on hats-reopen
+accept. Refuse a confirmed transition whose
+`|log2(mean/held)| > kStaleGridThreshold` after that stamp,
+unless IOI+4 already sit on the candidate. Same refuse at the
+octave snap onto combRaw. `hugeGapComb` (`!haveShort`,
+`|comb-held|` past stale unless IOI+4) moved offset-0
+gradino (`a6249731026d9f82` → `90904f52f574b8aa`) and
+continuo **37.233/90.882 → 38.343/92.242** — reverted;
+leftover 0.05 KEEP stands. Jump class: leftover 3:2 lattice
+after a gap, then comb/octave-class snap — not BLUE SKY
+quarter-slip, not hats freeze.
+
+The synthetic bank never sets `sounding`: identity vs
+`/tmp/motion_kept_hats_reopen.csv`, hashes
+`8e3c8d2cdc5854f5` / `a6249731026d9f82` / continuo
+`af3dbd034174d682`, **37.233/90.882**, p995 254.81, recovery
+0, authority 27. Fixture D `sounding=1` stays **100** through
+t=40 (comb 75 / fold 150, short/i4/ioi 100); `sounding=0`
+still takes 150. Hats A/B HOLD (A snd=1 last frac **0.033** /
+afterHole hats **0** / phase 0.000; B snd=1 resume **20** /
+phase **1.000** / Q/H 0/0). `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_postgap.csv` (copy of hats_reopen).
+
+**Kept (2026-09-21), sounding lastBeat walk through a roll.**
+Complex/syncopated snare rolls are dense extra onsets, not a
+missing 2-and-4. Census: lastBeat keep 0.18 lets a crest at
+~0.87 of a beat ratchet lastBeat off the fold (32nd/sync
+fixtures: frac 0.03→0.47 half-flip) and the interval detector
+then confirms a live ~10% yank (100→110). Not a freeze
+(resume still accepted) and not leftover-comb after a hole.
+Hats are 0.5 away and already fail keep. Requiring on-fold on
+every sounding accept rejected hats-B resume quarters (fold
+buffer still sees the hats: resume 20→16) — reverted. Refuse
+a lastBeat-keep pass while sounding and `beats < kGridStaleBeats`
+when `|log2(beats/round(beats))| > kStaleGridThreshold`
+(0.87 is log2 0.20; a true quarter is 1.0). Hats reopen and
+sounding no-waive unchanged.
+
+The synthetic bank never sets `sounding`: identity vs
+`/tmp/motion_kept_postgap.csv`, hashes
+`8e3c8d2cdc5854f5` / `a6249731026d9f82` / continuo
+`af3dbd034174d682`, **37.233/90.882**. Fixture sync/16th-off
+`sounding=1`: lastBeat stays frac **0.033**, BPM **100**,
+resume **20**. 32nd residual park frac **0.10** (still inside
+keep, BPM 100.1, no 110 yank), resume recovers 0.033. FEEL
+hats-only start `sounding=0` still acquires. Hats A/B HOLD
+(A snd=1 last frac **0.033** / afterHole hats **0** / phase
+0.000; B snd=1 resume **20** / phase **1.000** / Q/H 0/0).
+Post-gap D snd=1 stays **100**. `VPAlign --ramps` MIXER 12 s
+still **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_kept_rolls.csv` (copy of postgap).
+
+**Kept (2026-09-21), file-feed kick-vs-hat acquire fold.**
+When a track is loaded the user waits several seconds for the
+correct BPM. Census: sounding KEEP does not delay first
+accepts (`snd=0`/`snd=1` match). Regular quarters lock at the
+3rd peak (1.1–2.4 s). 76 BPM kick+hats published **152 at
+1.20 s and never recovered** (HMM names 158 at margin 5.5 and
+agrees with the eighth; comb `levelSettled` is 7.9 s at 76).
+Three-peak `|b−ends|` 0.18→0.12 never fires (50 fps contrast
+0.077 vs 0.097). Pulse-amplitude even/odd at 0.07, holding the
+3rd peak, and revisiting `tryFastAcquire` every provisional
+frame all moved offset-0 hashes or wrecked continuo
+(43.56/117.3, authority 0) — do not retry.
+
+Store per-beat `beatLowBand` (same three-frame window as
+cadence). On a direct feed, four equal short intervals whose
+even/odd *low-band* means differ by >0.35 of their mid fold
+the eighth once (`pairedSubdivision`, stillOnEighth so it
+does not repeat). Mute when the four peaks' max low-band is
+<0.05: the synthetic click bank and every probe that omits
+`observe`'s fourth argument pass 0. Not
+`kCadenceCorrectionEnabled` (still off); 50-vs-100 is not
+this band (`rawBpm` is not >145). Product file/mixer already
+passes `LogSpectFeatures::lowBandEnergy`.
+
+Identity vs `/tmp/motion_kept_rolls.csv`: hashes
+`8e3c8d2cdc5854f5` / `a6249731026d9f82` / continuo
+`af3dbd034174d682`, **37.233/90.882**, recovery 0, authority
+27. Fixture 76 kick+hats with kick low-band 0.85 vs hat 0.04:
+first valid still 1.20@152, correct **75.9 at 1.60 s** on-fold.
+168 even quarters unchanged 1.10@168. 168 kick+hats phase
+**0.868→0.071** at 0.74 s. Dembow still never-locks at 100/168
+(irregular IOI, even spacing fails). Hats A/B HOLD. Rolls HOLD
+(sync lastBeat 0.033, BPM 100, resume 20). Post-gap D snd=1
+stays 100. `VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_lowband.csv` (copy of rolls). Stop stacking
+acquisition even/odd variants.
+
+**Kept (2026-09-21), sounding hat-to-kick half steal.**
+FEEL hats-then-Q with `snd=1` still froze after the low-band
+acquire KEEP (last=15.92 frac 0.467, Q/H 0/27, conf 0). Product
+sounding is false until following, so file-start is the `snd=0`
+path which already unfreezes (last 27.62 frac 0.033). The hole
+is percussion-in from t=0: lastBeat parked on hats, first
+quarter 0.5 later — not a hole, so hats reopen never runs, and
+on-fold would follow the hats. `checkGridPhase` is held while
+sounding.
+
+When sounding, `lastAcceptedLowBand < kLowBandMute` (0.05) and
+the current three-frame low-band is at least mute, and
+`offLast` is a half (`0.5 ± kOnGridTolerance`), accept the kick
+and slide `gridAnchorSec` onto it. Skip the rolls integer-fold
+refuse (0.5 trips that `log2` bar). Mute when low-band is 0
+(click bank, hats/rolls HOLD probes). Hats A lastBeat is
+kick-class on a file feed, so hats after a hole do not steal.
+
+Identity vs `/tmp/motion_kept_lowband.csv`: hashes
+`8e3c8d2cdc5854f5` / `a6249731026d9f82` / continuo
+`af3dbd034174d682`, **37.233/90.882**, recovery 0, authority
+27. `compare_motion_matrix` FAIL continuo not improved is the
+identity KEEP for this fixture HOLD. F1 `snd=1` hat 0.04 / kick
+0.85: last **27.62** frac **0.033**, Q/H **20/27**, conf 1.00,
+lock. F1-mute still FREEZE. F2 `snd=1` last frac **0.033** Q/H
+**39/2** (was hat-steal). Phase at t=24 is still 0.500 (same as
+`snd=0`; lastBeat unfreeze is the freeze). Hats A/B HOLD. Rolls
+HOLD. Post-gap D snd=1 stays 100. 76 kick+hats still
+**1.60@75.9**. 168 kick+hats still 0.74 phase 0.071. Dembow
+still never-locks at 100/168 (irregular IOI; no silent
+non-acquisition path — even spacing fails; do not retry
+even/odd). `VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_feel.csv` (copy of lowband). Remaining hunt
+on 192847 / 145333 / 216604 / Door D hold is closed. Origin-lag
+sibling, product-path tau, and 8-beat intercept (below)
+are also closed.
+
+**Stopped (2026-09-21), 192847 / 145333 / 216604 / 169090
+Door D.** Census on the feel curve log (`--quick` offset-0).
+Live Door D fire is 0 fisso/gradino (3 continuo: 153252 t=67.36
+r4=0.036, 161171 t=66.60, 169090 t=47.58). 169090 origin error
+through the hold is **0.24 beat** (153–160 ms; cap 0.12 =
+77 ms). `kLiveLead` on that 4-beat is **+0.13 BPM** (i4 already
+on the IOI vs T). Hold 0.50 already identity-FAIL on the mean.
+Cap 0.18 already identity on family p95. Comb-fold origin snap
+on Door D is the leftover dump-ring (145333 live snap
+37.233→37.606). lastBeat/a4 are the mixed 8-beat; pulling them
+cannot name the pulse.
+
+192847 t=54.56 first crest after 4.0 beats of clustered
+`missChance`: ioi=59.1 i4=59.0 T=61.2 comb=58.1, quadratic
+rate −0.19. Post-hole first-crest lights **11 fisso / 36
+gradino**. Skip-comb and a `kGridStaleBeats` window light
+1009 and 210467. Door C at 1.0 REJECT. Nothing in the decoder
+measures the missing quarters.
+
+145333 leftover 174 vs comb 163, fits *agree*. Live
+yank/gate/snap all raise family mean and p95: dumping that
+ring still leaves the PLL on the remaining 174 times.
+
+216604 leftover+gap is the programmed kit gap (`seed&3=0`)
+walking a 73 lattice vs comb ~67 (3:2-class leftover).
+leftover 0.05 KEEP; skip-to-zero FAIL; hugeGapComb FAIL;
+dirty-r4 lastBeat origin mean up.
+
+Do not invent quarters, skip-comb on live, reopen the comb
+ruler on live, or stack leftover below 0.05. Branch closed.
+
+**Stopped (2026-09-21), 169090 origin-lag (lastBeat-relative
+pull is a no-op; sibling lights 1009 / 210467).** Feel curve
+log, `--quick` offset-0. Door D t=47.58 r4=0.007 (clean),
+fourCloser **hits** every hold frame through t=52.12, fourOnIoi,
+i4 on pulse, phase **0.24 beat** and stays there. fourCloser
+lastBeat origin is already KEEP: lastBeat and `gridAnchor`
+already agree inside the 0.12 cap, both late vs truth, so a
+larger lastBeat pull cannot accumulate (cap 0.18 was identity
+on family p95). persist dirty-r4 (t=46.92 r4=0.051) REJECT.
+Fold-at-i4 origin is the Door D comb-fold class (dump-ring).
+
+Sibling `live && !fourCloser && !fourBetween && i4≈T &&
+r4<0.015 && bir>=8`: **10 fisso** (1009, 32685, 48523, 64361,
+88118) and **97 gradino** (210467 first at t=62.08). Hash-unsafe.
+The one 169090 sibling-shaped frame (t=57.24, i4=short=98.8 vs
+T 99.8) is persist lastBeat already KEEP.
+
+VPAlign 12 s decoder floor 18.3 ms analog — FISSO,
+`sres∈(0.045,0.056]`, fourOnIoi: **18 fisso** including 1009
+and **11 gradino**. Same gate as strained clock-target REJECT
+(hashes moved). No silent KEEP.
+
+Do not pull origin on fourCloser-miss while i4 is on the
+pulse, and do not slide FISSO strain origin. Origin-lag
+branch closed.
+
+**Stopped (2026-09-21), product-path tau / 169090 0.24 beat
+is decoder-vs-truth, not PLL.** `BeatTracker` already arms
+`setDirectLivePhaseFollow` for every stable direct live
+hypothesis (`!speakerFollow`, `regime==live`,
+`transitionState==stable`, `refitBeats==0`, SEGUI, periodic
+= valid BPM≥50). Loaded track and mixer share that path
+(`setSpeakerFollow(false)` → decoder `lineFeed`). Flag on
+→ `kGridTauMotion` 0.30 s, bypassing `gridPhaseTau` and
+**winning over** `ioiLead` 0.01. Do not no-op-edit that
+flag. Do not wire it into VPAlign/matrix (22.3→24.1).
+
+Not 0.30 for the *whole* motion: unknown/FISSO while
+FOLLOWING stay on 0.90 unless `ioiLead` / clean 2% residual
+/ strained two-vote hint (already KEEP). LOCKING uses
+`kGridTauAcquire` 0.25. Confirmed steps use Rapid 0.10.
+iPad speaker never gets the flag. User ramps that sit in
+FISSO until the three-vote leave are decoder regime, not a
+missing 0.30 on live.
+
+169090's 0.24 beat (158 ms at 91 BPM) is the published
+`beatPhase` (lastBeat and `gridAnchor` both late). Matrix
+already uses `ioiLead` 0.01 on those Door D frames; product
+live uses 0.30. Faster PLL follows that late origin more
+closely (`PhaseTrust` line-feed 0.90→shorter 23.2→23.8 ms;
+clock-decoder floor cannot close decoder-vs-truth). Causal
+geometry: hop **20 ms** (`kBeatModelHop` 441 @ 22.05 kHz),
+window **64 ms**, product lead trim **17 ms**, file round
+trip **0**. 158 ms is ~8 hops = mixed 8-beat intercept lag,
+not one hop of BeatNet delay. Cannot fix without lookahead
+or BeatDecoder origin (exhausted). Tracking KEEP not taken.
+
+**Stopped (2026-09-21), 8-beat intercept / recency-weight.**
+`fitPeriodBefore` already reads the intercept at the **newest**
+beat of the window, not the centre. Live `gridAnchorSec` *is*
+that 8-beat `shortAnchor`. `fitPeriodCurve` is centred on the
+newest time, so the quadratic intercept at now **is** lastBeat.
+Origin pull already aligns `gridAnchor` to lastBeat inside
+0.12. Shortening 8→5 was measured as twice the settled wobble;
+eight stays.
+
+169090 t=47.58: clock/published phase **152.9 ms = 0.240 beat**,
+i4 **91.124 vs T 91.221**, short **95.775**, g **0.345**
+(clock-only needs 0.80 — not this frame). A centre-extrapolation
+of the 8-beat slope would be ~0.175 beat; observed 0.240 is the
+newest accepted times, not leftover centre lag. t=48.24 and
+t=49.54 have g≥0.80 and phase still 0.24: clock-only tau does
+not change the intercept buffer.
+
+Census, feel curve log, offset-0: live `|rate|>0.05` recency
+lights **fisso 1009 ×39**. Dirty-8 + i4-on-pulse + r4<0.015
+lights **1009 ×6** and **31 gradino**. `|short−T|>3%` and
+i4-on-pulse lights **1009 ×5**. Clock-only g≥0.80 `bir>=8` is
+0 fisso but **7 gradino** (234224, 257981). No silent
+recency/short-intercept gate. Do not weaken fisso. 8-beat
+branch closed.
+
+**Rejected (2026-09-21), live leftover-faster comb ruler/snap.**
+145333 t=58.88: short 174 vs comb 163, IOI already on the comb
+(T 160). Gating that lattice without a new origin left the
+clock on the first false peak (live comb gate REJECT). Opening
+the ruler on live for a *slower* short moved offset-0 gradino.
+This only re-indexed when `short>comb` by >5%, IOI on comb
+within `kUnknownIoiLead`, `sres>0.030`, fits agree, `bpm>=75`,
+`bir>=kLongFit`, `apart<0.18`. 0 offset-0 fisso/gradino on the
+feel curve log (2–6 continuo frames, all 145333). Hashes
+`8e3c` / `a624` identical. Continuo **37.233/90.882 →
+37.606/91.174**, hash `ad5419c764e72006`, recovery 0, authority
+27. Dumping the leftover ring still costs family phase. Do not
+reopen the comb ruler on live, including leftover-faster.
+
+**Rejected (2026-09-21), skip `pullTowardsComb` on live when
+comb is slower, quadratic rate is negative, and IOI > short.**
+Aimed at 192847 t=54.56–55.48 (unturned comb 58 while T 61–62).
+Even `|ioiDev|>1%` and comb apart >0.5% lights fisso 1009 t=84.60
+and gradino 210467. A post-gap window of `kGridStaleBeats`
+lights gradino 210467/281738. Receding onto the comb during
+that hole is already the documented Door C lag; do not invent
+the missing quarters. Unknown Door C lastBeat origin on 216604
+t=51.10 already REJECT (mean up). skip-to-zero and hugeGapComb
+already FAIL.
+
 **Listen candidate (2026-09-21).** Leftover 0.05 plus 4-beat
 origin pull (fourCloser and live fourBetween toward lastBeat;
 leftover-faster unknown origin skipped) plus clock-only ioiLead

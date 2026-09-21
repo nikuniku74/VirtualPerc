@@ -178,8 +178,13 @@ public:
         room. The two are not the same signal and the acquisition threshold is
         not the same number; see kAnchorAcquireMarginLine. */
     void setLineFeed (bool on) noexcept { lineFeed = on; }
-    /** Whether a part is sounding right now. Only the octave snap reads it:
-        see the note beside `levelHeldWhilePlaying` in `updateTempo`. */
+    /** Whether a part is sounding right now. The octave snap holds the
+        metrical level (`levelHeldWhilePlaying`); the on-grid gate holds the
+        committed pulse through a hats-only hole, re-opens for a crest on
+        that fold that is not a half-beat off lastBeat, and
+        `checkGridPhase` does not slide the origin while sounding. A
+        file-feed kick after a hat-class lastBeat may steal that half
+        (FEEL hats-then-Q); mute when lowBand is 0. */
     void setSounding (bool on) noexcept { sounding = on; }
 
     void setUserOctave (int octaves) noexcept;
@@ -190,7 +195,8 @@ private:
     /** Moves a tempo by whole octaves to whichever one the state space is
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
-    void  registerBeat (double beatTimeSec, float strength) noexcept;
+    void  registerBeat (double beatTimeSec, float strength,
+                        float lowBand = 0.0f) noexcept;
     /** Use repeated downbeat spacing to distinguish a 50 BPM quarter from its
         100 BPM hi-hat eighths: three true downbeats contain two complete
         intervals, each eight accepted fast-grid beats long instead of four.
@@ -220,7 +226,8 @@ private:
         from, and a stroke played for a beat that sounded a second ago is worse
         than the fit being late. So the history gets them and the counter does
         not. */
-    void  storeBeatForFit (double beatTimeSec, float strength) noexcept;
+    void  storeBeatForFit (double beatTimeSec, float strength,
+                           float lowBand = 0.0f) noexcept;
     /** The abrupt-change detector, fed every peak that clears the refractory
         and minimum-spacing checks - including the ones the on-grid gate is
         about to throw away, which on a large step is all of them.
@@ -339,6 +346,10 @@ private:
     double fps = 50.0;
     double timeSec = 0.0;
     double lastBeatSec = -1.0;
+    /** Low-band of the last accepted peak, same three-frame window as
+        cadence. Zero on the click bank. The sounding hat-to-kick half
+        steal reads this and must stay mute when it is zero. */
+    float  lastAcceptedLowBand = 0.0f;
     /** A time at which a beat of the committed grid falls, taken from the
         fit rather than from the last peak. The phase is read off this. */
     double gridAnchorSec = -1.0;
@@ -379,6 +390,11 @@ private:
 
     double beatTime[kBeatHistory] {};
     float  beatStrength[kBeatHistory] {};
+    /** Low-band energy at the accepted peak, same three-frame window as
+        cadence. Zero on the synthetic click bank and every probe that
+        omits `observe`'s fourth argument. Kick-vs-hat acquire fold
+        reads this and must stay mute when it is zero. */
+    float  beatLowBand[kBeatHistory] {};
     int    beatWrite = 0;
     int    beatFilled = 0;
     uint32_t beatSerial = 0;
@@ -505,6 +521,11 @@ private:
     float motionBridgeAnchorBpm = 0.0f;
     bool  ioiClockLead = false;
     int   ioiClockLeadBeats = 0;
+    // Sounding stale-grid reopen: a leftover lattice after a pause can
+    // look like a causal step (100→150) while the comb still names the
+    // held tempo. Remember the reopen so that confirmation can refuse a
+    // huge post-hole jump. The synthetic bank never sets sounding.
+    double postHoleReopenSec = -1.0;
     // Door D (live) and unknown Door B: keep aiming at that 4-beat
     // for kShortFit, including kit-gap !haveShort frames.
     float ioiTargetHoldBpm = 0.0f;
