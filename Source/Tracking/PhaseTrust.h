@@ -19,6 +19,10 @@ constexpr float kGridTauAcquire = 0.25f;
 /** A confirmed tempo step gets one beat of faster phase convergence. */
 constexpr float kGridTauRapid = 0.10f;
 
+/** ioiLead doors: 0.10 / 0.08 / 0.06 / 0.04 / 0.02 KEEP. 0.01 is
+    TempoFollower::setGridPhase's floor. Not kGridTauRapid. */
+constexpr float kGridTauIoiLead = 0.01f;
+
 /** A clean direct-feed ramp has independent rate evidence, so its phase may be
     averaged over fewer hypotheses without turning ordinary onset jitter into
     clock motion. */
@@ -65,9 +69,19 @@ inline bool directTempoMotionHint (TempoRegime regime,
                                    float shortResidual,
                                    float bridgeAuthority,
                                    int fastEvidence,
-                                   float motionImprovement) noexcept
+                                   float motionImprovement,
+                                   bool ioiLead = false) noexcept
 {
     if (bridgeAuthority > 0.0f)
+        return true;
+    // Door A/B/C/D already moved the decoder onto a 4-beat. Offset-0
+    // fisso/gradino never fire those doors (Door A's live band without
+    // bir>=4 lights fisso 1009; the product block does not). The
+    // 0.90 s hold tau would otherwise leave the clock on the late
+    // grid while the target has moved. Call sites use kGridTauIoiLead
+    // (0.01 s, the setGridPhase floor) for this flag; quadratic
+    // authority still gets kGridTauProvenMotion.
+    if (ioiLead)
         return true;
     if (regime != TempoRegime::fixed)
         return false;

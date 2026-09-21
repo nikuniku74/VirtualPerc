@@ -1194,9 +1194,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                                             hyp.shortFitResidual,
                                                             hyp.motionBridgeAuthority,
                                                             hyp.fastTempoEvidence,
-                                                            hyp.motionFitImprovement);
+                                                            hyp.motionFitImprovement,
+                                                            hyp.ioiLead);
     follower.setTempoMotionHint (
-        cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f);
+        cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f || hyp.ioiLead);
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
         follower.beginTempoTransition (hyp.transitionBpm);
@@ -1568,6 +1569,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                     : directLivePhaseFollow ? kGridTauMotion
                     : gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
                                          ? kGridTauProvenMotion
+                                         : hyp.ioiLead ? kGridTauIoiLead
                                          : cleanTempoMotion ? kGridTauMotion
                                                             : kGridTauHolding,
                                     holding, evidence.trust());
@@ -1733,8 +1735,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.kickTrusted = kickTrusted;
     out.drumsOut = evidence.drumsAreOut();
     out.evidenceTrust = evidence.trust();
-    out.gridTauSec = gridPhaseTau (cleanTempoMotion ? kGridTauMotion
-                                                    : kGridTauHolding,
+    out.gridTauSec = gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
+                                                    ? kGridTauProvenMotion
+                                                    : hyp.ioiLead ? kGridTauIoiLead
+                                                    : cleanTempoMotion ? kGridTauMotion
+                                                                       : kGridTauHolding,
                                        holding, evidence.trust());
 
     // Whether what the clock is following is known to be somebody playing.

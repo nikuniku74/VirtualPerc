@@ -1257,9 +1257,10 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                                               hy.shortFitResidual,
                                               hy.motionBridgeAuthority,
                                               hy.fastTempoEvidence,
-                                              hy.motionFitImprovement);
+                                              hy.motionFitImprovement,
+                                              hy.ioiLead);
             clock.setTempoMotionHint (
-                cleanTempoMotion, hy.motionBridgeAuthority >= 0.999f);
+                cleanTempoMotion, hy.motionBridgeAuthority >= 0.999f || hy.ioiLead);
             if (hy.bpm > 50.0f)
                 clock.setTargetTempo (hy.bpm, hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
@@ -1289,6 +1290,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             {
                 const float phaseTau = hy.motionBridgeAuthority >= 0.999f
                                            ? vp::kGridTauProvenMotion
+                                           : hy.ioiLead ? vp::kGridTauIoiLead
                                            : cleanTempoMotion ? vp::kGridTauMotion
                                                               : vp::kGridTauHolding;
                 clock.setGridPhase (

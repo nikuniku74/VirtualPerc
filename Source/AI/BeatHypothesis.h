@@ -107,6 +107,9 @@ struct BeatHypothesis
     int      motionShapeQuadraticWins = 0;
     int      motionShapeQuarantineBeats = 0;
     float    motionBridgeAuthority = 0.0f;
+    /** True when Door B/C/D (not Door A) retargeted this publication.
+        The clock may use the existing motion tau; it does not choose a tempo. */
+    bool     ioiLead = false;
 
     TempoRegime regime   = TempoRegime::unknown;
 

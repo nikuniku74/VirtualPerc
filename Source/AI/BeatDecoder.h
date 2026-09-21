@@ -503,6 +503,12 @@ private:
     uint32_t motionObservedBeatSerial = 0;
     float motionBridgeAuthority = 0.0f;
     float motionBridgeAnchorBpm = 0.0f;
+    bool  ioiClockLead = false;
+    int   ioiClockLeadBeats = 0;
+    // Door D (live) and unknown Door B: keep aiming at that 4-beat
+    // for kShortFit, including kit-gap !haveShort frames.
+    float ioiTargetHoldBpm = 0.0f;
+    int   ioiTargetHoldBeats = 0;
 
     float longHist[kLongHistory] {};
     int   longWrite = 0;

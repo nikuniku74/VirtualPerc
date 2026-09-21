@@ -85,6 +85,27 @@ namespace
     // record.
     constexpr float kFastDriftToleranceRoom = 0.024f;
     constexpr float kFastDriftToleranceLine = 0.012f;
+    // Two-vote FISSO leave without the 24-beat window: a ramp's
+    // 4-beat still sits on the 8-beat inside 1.5%, while offset-0
+    // steps have already left by 2%+. Walking the held number on
+    // 4/8 agreement lit gradino; this constant only gates a regime
+    // release.
+    constexpr float kCurveLatticeAgree = 0.015f;
+    // Unknown Door B: 0.033 lights offset-0 fisso 24766 (click IOI
+    // scatter at bir 26). 0.036 missed the first pulse-aligned
+    // 4-beat on the continuo log (0.0358 at t=43.5, clean 8-beat
+    // still centred on the faster tempo). 0.035 is silent on
+    // offset-0 fisso/gradino.
+    constexpr float kUnknownIoiLead = 0.035f;
+    // Door A without comb-sign: 0.012 misses 192847 t=54.56 (0.0107).
+    // 0.010 is silent on offset-0 fisso/gradino. Door B stays at
+    // kFastDriftToleranceLine.
+    constexpr float kDoorAIoiLead = 0.010f;
+    // Door D 4-beat residual. kMotionCurveResidual (0.045) includes
+    // 153252 t=67.36 (r4=0.036) and fattened family p95; 0.015 is
+    // silent on offset-0 fisso/gradino and keeps 169090 t=47.58
+    // (r4=0.007).
+    constexpr float kDoorDFourResidual = 0.015f;
     constexpr float kFastDriftLarge     = 0.045f;
     constexpr int   kFastBeatsToLeaveFixed = 3;
     constexpr int   kFastBeatsToLeaveFixedLine = 2;
@@ -119,9 +140,19 @@ namespace
     // raise kMotionCurveWalkResidual to this — that wider strain release
     // moved the 12 s MIXER mean 32.7→34.1.
     constexpr float kMotionCurveStrainResidual = 0.056f;
+    // Door B above 75 BPM: the 8-beat residual must already have
+    // failed this hard before the 4-beat is allowed to lead. 0.075
+    // lights offset-0 gradino; 0.080 does not. Below 75 BPM Door B
+    // already trusts the 4-beat with no 8-beat residual veto, because
+    // a clean slow 8-beat is still 3.5 beats late.
+    constexpr float kMotionCurveFourBeatDirty = 0.080f;
     constexpr float kMotionCurveWalkImprovement = 0.10f;
     constexpr float kMotionCurveWalkRate = 0.0010f;
     constexpr float kMotionCurveImprovement = 0.50f;
+    // Clock-only ioiLead above 75: 0.50 lights offset-0 gradino
+    // (234224 t=47.76). 0.80 is 0 fisso/gradino on the Door C origin
+    // log, 42 continuo frames (169090 t=43.16 before Door D).
+    constexpr float kClockOnlyQuadratic = 0.80f;
     constexpr int   kMotionCurveBeats = 3;
 
 
@@ -142,6 +173,15 @@ namespace
     // that step and the 120-to-140 accelerando are unchanged to the digit.
     constexpr float kRateAcquiring = 0.70f;
     constexpr float kRateLive      = 0.30f;
+    // Unknown leftover-faster comb on !haveShort: skip-to-zero
+    // fattened p995; 0.30 / 0.15 / 0.10 / 0.05 each KEEP vs the
+    // previous. Do not skip the commit.
+    constexpr float kRateLeftoverComb = 0.05f;
+    // Door D hold: 0.70 overshot 169090; 0.30 leaves phase climbing
+    // through the eight-beat window. Only the hold, not A/B/C
+    // (those are already kRateAcquiring via slowIoiLeads). 0.50
+    // moved p95 a hair and the family mean the wrong way.
+    constexpr float kRateDoorHold  = 0.45f;
 
     // A fixed tempo may only be refined, never dragged.
     constexpr float kFixedMaxStep = 0.015f;
@@ -1196,13 +1236,20 @@ bool BeatDecoder::stalePulseCombRuler() const noexcept
         return false;
     if (shortFitBpm < kMinBpm || longFitBpm < kMinBpm)
         return false;
-    if (shortFitResidual <= kMotionCurveStrainResidual)
+    if (shortFitResidual <= kMotionCurveWalkResidual)
         return false;
     if (std::fabs (shortFitBpm - longFitBpm)
             >= kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
         return false;
-    if (! tempo.ready() || tempo.salience() <= kSalienceFloor || ! tempo.levelSettled())
+    if (! tempo.ready() || ! tempo.levelSettled())
         return false;
+    // Door B already uses this comb at sal 0.129 (216604 t=52).
+    // The 0.14 floor left that frame on the 69.9 lattice; snap-geom
+    // below the floor is 1 offset-0 continuo frame, 0 fisso/gradino.
+    // Walk residual 0.050 (not strain 0.056): t=51.10 is 0.051 and
+    // 0 offset-0 fisso/gradino. Clean-lattice ruler (no residual
+    // floor) fattened p995. 0.035 snapped the 73 yank (t=50.18)
+    // and dumped the ring (mean/p95 up, p995 278→222).
     const float comb = applyUserOctave (foldToAnchor (tempo.bpm()));
     if (comb < kMinBpm)
         return false;
@@ -1266,10 +1313,37 @@ void BeatDecoder::snapStalePulseToCombFold() noexcept
     lastBeatSec += shift;
     ++gridSerial;
     clearTempoTransition (TempoTransitionReason::reset);
+
+    // Dumping the ring leaves a quiet grid for seconds when the next
+    // peaks are also missing (kit gap). Shifting every stored time
+    // with the origin keeps the stale period (measured 312→402 ms
+    // p95). Re-gate onto the new comb lattice instead: times that
+    // already sit on the fold stay, the other pulse does not.
+    const double keepSec = kCombRulerMinKeep * period;
+    double keptTime[kBeatHistory];
+    float keptStrength[kBeatHistory];
+    int nKept = 0;
+    for (int i = 0; i < beatFilled; ++i)
+    {
+        const int idx = (beatWrite - beatFilled + i + kBeatHistory) % kBeatHistory;
+        const double t = beatTime[idx];
+        double err = t - gridAnchorSec;
+        err -= std::round (err / period) * period;
+        if (std::fabs (err) <= keepSec)
+        {
+            keptTime[nKept] = t;
+            keptStrength[nKept] = beatStrength[idx];
+            ++nKept;
+        }
+    }
     beatWrite = 0;
     beatFilled = 0;
     longWrite = 0;
     longFilled = 0;
+    for (int i = 0; i < nKept; ++i)
+        storeBeatForFit (keptTime[i], keptStrength[i]);
+    if (nKept > 0)
+        lastBeatSec = keptTime[nKept - 1];
 }
 
 bool BeatDecoder::recentPeriod (float& period) const noexcept
@@ -2668,6 +2742,10 @@ void BeatDecoder::resetMotionShadow (bool full, TempoMotionVeto reason) noexcept
     motionObservedBeatSerial = beatSerial;
     motionBridgeAuthority = 0.0f;
     motionBridgeAnchorBpm = 0.0f;
+    ioiClockLead = false;
+    ioiClockLeadBeats = 0;
+    ioiTargetHoldBpm = 0.0f;
+    ioiTargetHoldBeats = 0;
 }
 
 float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
@@ -2701,6 +2779,19 @@ float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
 
 void BeatDecoder::updateTempo() noexcept
 {
+    // Keep the proven tau for one short window after a door so the
+    // PLL does not drop back to 0.90 s between the retarget and the
+    // peak. Unknown persists too, but not onto a post-gap 8-beat that
+    // is the same lattice as the 4-beat — that is the 73 yank.
+    const bool persistLead = ioiClockLeadBeats > 0
+                             && (tempoRegime == TempoRegime::live
+                                 || tempoRegime == TempoRegime::unknown);
+    ioiClockLead = false;
+    if (tempoRegime == TempoRegime::fixed)
+    {
+        ioiTargetHoldBpm = 0.0f;
+        ioiTargetHoldBeats = 0;
+    }
     const bool combReady = tempo.ready() && tempo.salience() > kSalienceFloor;
     const float combBpm = applyUserOctave (foldToAnchor (tempo.bpm()));
     // The same reading with the anchor fold left off: what the fold actually
@@ -3436,9 +3527,63 @@ void BeatDecoder::updateTempo() noexcept
         // or off-grid peaks mean no accepted beat arrives to close it sooner.
         const bool foldMayPull = ! provisional || ! intervalAcquired
                                  || tempo.levelSettled();
+        if (ioiTargetHoldBeats > 0 && ioiTargetHoldBpm > kMinBpm
+            && tempoRegime != TempoRegime::fixed
+            && transitionState != TempoTransitionState::rapid)
+        {
+            // Unknown Door B hold through a kit gap: the comb is the
+            // leftover lattice (216604 t=47-49 at 71 vs T 66). Live
+            // A/B/C hold fattened family p95; this is the Door D hold, in
+            // unknown, while the 4-beat is already on the pulse.
+            // Do not spend the beat window here: a kit-gap false
+            // peak is not a Door D beat. Offset-0 identity vs
+            // decrementing; keep the window for haveShort.
+            commit (ioiTargetHoldBpm, kRateDoorHold);
+            ioiClockLead = true;
+            ioiClockLeadBeats = kShortFit;
+            return;
+        }
         if (combReady && foldMayPull && tempoRegime != TempoRegime::fixed
             && transitionState != TempoTransitionState::rapid)
-            commit (combBpm, kRateAcquiring);
+        {
+            // Unknown kit-gap: leftover comb is faster than the line
+            // (216604 t=47, 71 vs T 67). Skipping that commit
+            // fattened p995 (t=48.56 143→11 ms is the pull).
+            // Acquiring climbed 70.1→71.2 while T fell through 67;
+            // live rate still follows it. When the comb has already
+            // receded *below* the committed number the leftover
+            // lattice is gone; 0.70 left 1.6 BPM on the table at
+            // t=51.56. bpm<75, kLongFit, comb<bpm, >0.5%: 0
+            // offset-0 fisso/gradino (48523 is 77 BPM; 119794 is 0.0%).
+            float gapRate = kRateAcquiring;
+            if (lineFeed && tempoRegime == TempoRegime::unknown
+                && bpm < 75.0f && bpm > kMinBpm
+                && beatsInRegime >= kLongFit
+                && combBpm > kMinBpm && combBpm < bpm
+                && (bpm - combBpm) > 0.005f * bpm)
+                gapRate = 1.0f;
+            else if (lineFeed && tempoRegime == TempoRegime::unknown
+                     && bpm < 75.0f && bpm > kMinBpm
+                     && beatsInRegime >= kLongFit
+                     && combBpm > bpm
+                     && (combBpm - bpm) > 0.005f * bpm)
+            {
+                // Skip leftover comb entirely fattened p995 (t=48.56
+                // 143→11 ms is that commit). Live rate still follows
+                // it; 0.70 climbed 70.1→71.2 while T fell through 67.
+                // 0.30 / 0.15 / 0.10 / 0.05 each KEEP vs the previous.
+                // 0.5% floor: fisso 119794 is 0.0%.
+                gapRate = kRateLeftoverComb;
+            }
+            commit (combBpm, gapRate);
+        }
+        if (persistLead)
+        {
+            ioiClockLead = true;
+            --ioiClockLeadBeats;
+        }
+        else
+            ioiClockLeadBeats = 0;
         return;
     }
 
@@ -3695,6 +3840,60 @@ void BeatDecoder::updateTempo() noexcept
             // this gate as a walk, so it does not fire on noisy flats.
             const bool strainLineRelease =
                 lineFeed && fixedWalkRun >= 2 && fastDriftBeats >= 1;
+            // One agreeing interval plus a 50% quadratic, without
+            // waiting for the 24-beat window, when the 4-beat is still
+            // on the 8-beat. A second 1.2% vote arrives after the
+            // 4-beat has left that lattice (offset-0 ramps 1.9%) and
+            // the gate closes. A step's 4-beat has already left
+            // (offset-0 gradino 2.0/3.7/14.9%). The previous FISSO
+            // walk on 4/8 agreement lit gradino because it moved the
+            // held number; this only releases the regime. Silent on
+            // offset-0 fisso/gradino.
+            bool curveOnLatticeRelease = false;
+            if (lineFeed && haveShort && haveMotionCurve
+                && beatsInRegime >= kLongFit
+                && fastDriftBeats >= 1
+                && motionFitImprovement >= kMotionCurveImprovement
+                && std::fabs (motionDeviation) > kLeaveFixedError)
+            {
+                float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                // Same IOI-indexed 4-beat the silent census used. The
+                // committed-period fit sits on the held grid and
+                // misses a 4-beat that is already on the moving pulse.
+                if (recent > 0.0f
+                    && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                        static_cast<double> (recent))
+                    && r4 < kMotionCurveResidual && p4 > 0.0f)
+                {
+                    const float fourBpm = 60.0f / p4;
+                    curveOnLatticeRelease =
+                        std::fabs (fourBpm - shortFitBpm)
+                            < kCurveLatticeAgree
+                                  * std::max (kMinBpm, shortFitBpm);
+                }
+            }
+
+            bool slowIoiFixedRelease = false;
+            if (lineFeed && haveShort && recent > 0.0f
+                && bpm < 75.0f && bpm > kMinBpm
+                && beatsInRegime >= kShortFit + 4
+                && haveMotionCurve
+                && motionFitImprovement >= 0.45f
+                && fastDriftBeats >= 1)
+            {
+                const float ioiBpm = 60.0f / recent;
+                // 0.035 + g 0.50 is KEEP (192847 t=29.92). 0.028 with
+                // |short−held|>1.2% and no extra quadratic was
+                // identity on p95 when the hole was this seed's tail.
+                // The leave frame is now the seed max (145 ms at
+                // t=29.92). g>=0.45 and |IOI−held|>0.025: 0 offset-0
+                // fisso/gradino, one continuo (192847 t=29.04 g=0.49).
+                // g 0.40 / 0.020 is identity (t=28.06 fails
+                // intervalAgreesNow).
+                slowIoiFixedRelease =
+                    std::fabs (ioiBpm - bpm) / bpm > 0.025f;
+            }
 
             // Three earlier things were tried here to make a tempo change land
             // sooner and none shipped. `VPAlign`'s tempo bench measures all of
@@ -3756,6 +3955,8 @@ void BeatDecoder::updateTempo() noexcept
             const bool releaseFixed =
                 causalLineRelease
                 || strainLineRelease
+                || (curveOnLatticeRelease && intervalAgreesNow)
+                || (slowIoiFixedRelease && intervalAgreesNow)
                 || (beatsInRegime >= kRegimeMinBeats
                     && (moving
                     || fixedErrorBeats >= kBeatsToLeaveFixed
@@ -4030,20 +4231,41 @@ void BeatDecoder::updateTempo() noexcept
             // on the pulse). The ordinary IOI blend is capped at 4% and
             // then committed at kRateLive, so the lag never unwinds.
             //
-            // Gate, measured silent on the offset-0 control log: quadratic
-            // improvement already at the production curve bar, both 8/24
-            // fits still agree (a step's windows do not), the 3-interval
-            // median disagrees with the short fit by more than the line
-            // drift bar, and the comb names the same *direction* as that
-            // median. fisso 0, gradino 0, continuo 10 frames. Without the
-            // comb-sign term, slow gradino catch-up at 61-63 BPM fires.
+            // Two doors, both measured silent on the offset-0 control log
+            // (fisso 0, gradino 0). Shared: both 8/24 fits still agree,
+            // |IOI−short| > the line drift bar.
+            //
+            // Door A: quadratic improvement already at the production
+            // curve bar, and the comb names the same *direction* as the
+            // IOI vs the short fit. Without that comb-sign term, slow
+            // gradino catch-up at 61-63 BPM fires (bir 7-15). After
+            // kLongFit the waive is silent on offset-0 fisso/gradino.
+            //
+            // Door B: past kLongFit the 4-beat line is closer to the IOI
+            // than to the 8-beat line, and that 4-beat residual is clean.
+            // Comb-sign is not required here: on a slow deceleration the
+            // fold is the last to turn, so the sign is false while i4
+            // already sits on the pulse. Below 75 BPM the 8-beat residual
+            // is not a veto (a clean slow 8-beat is still 3.5 beats late).
+            // Above 75 BPM the 8-beat is current enough unless it is
+            // already this dirty (kMotionCurveFourBeatDirty 0.080; 0.075
+            // lights offset-0 gradino). Raising Door A's residual ceiling
+            // instead lights gradino 210467 at bir 7-8.
+            //
+            // Door C: one beat before Door B (kLongFit-1) a clean 4-beat
+            // that is *not* closer to the IOI still sits between the
+            // late 8-beat and the IOI (192847 t=57.42, i4=60.6, short
+            // 59.5, IOI 61.8, truth 63.5, fold unturned). Taking it at
+            // |IOI−short| > kUnknownIoiLead is silent on offset-0
+            // fisso/gradino; 0.012 and 0.020 light gradino 281738.
+            // Door A's comb-sign waive after two short windows (20)
+            // at kDoorAIoiLead is KEEP only stacked with dirty unknown
+            // Door B at kRateAcquiring; 0.012 missed t=54.56.
             bool slowIoiLeads = false;
-            if (lineFeed && haveShort && haveLong && haveMotionCurve
-                && recent > 0.0f && bpm < 75.0f && bpm > kMinBpm
+            bool doorATake = false;
+            if (lineFeed && haveShort && haveLong
+                && recent > 0.0f && bpm > kMinBpm
                 && beatsInRegime >= 4
-                && shortFitResidual > 0.0f
-                && shortFitResidual < kMotionCurveResidual
-                && motionFitImprovement >= kMotionCurveImprovement
                 && combReady && combBpm > kMinBpm
                 && std::fabs (shortFitBpm - longFitBpm)
                        < kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
@@ -4051,19 +4273,225 @@ void BeatDecoder::updateTempo() noexcept
                 const float ioiBpm = 60.0f / recent;
                 const float ioiDev = (ioiBpm - shortFitBpm)
                     / std::max (kMinBpm, shortFitBpm);
-                if (std::fabs (ioiDev) > kFastDriftToleranceLine
-                    && (ioiBpm - shortFitBpm) * (combBpm - shortFitBpm) > 0.0f)
+                if (std::fabs (ioiDev) > kDoorAIoiLead)
+                {
+                    float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                    double a4 = -1.0;
+                    const bool have4 = fitPeriodBefore (
+                                           4, p4, r4, c4, a4, nullptr, 0,
+                                           static_cast<double> (recent))
+                                       && r4 < kMotionCurveResidual && p4 > 0.0f;
+                    const float fourBpm = have4 ? 60.0f / p4 : 0.0f;
+                    const bool combSign = (ioiBpm - shortFitBpm)
+                        * (combBpm - shortFitBpm) > 0.0f;
+                    const bool residualClean = shortFitResidual > 0.0f
+                        && shortFitResidual < kMotionCurveResidual;
+                    const bool curveOk = residualClean && haveMotionCurve
+                        && motionFitImprovement >= kMotionCurveImprovement
+                        && bpm < 75.0f
+                        && (combSign || beatsInRegime >= kShortFit * 2 + 4);
+                    const bool longCleanFour = have4
+                        && beatsInRegime >= kLongFit
+                        && std::fabs (ioiDev) > kFastDriftToleranceLine
+                        && std::fabs (fourBpm - ioiBpm)
+                               < std::fabs (fourBpm - shortFitBpm)
+                        && (bpm < 75.0f
+                            || shortFitResidual >= kMotionCurveFourBeatDirty)
+                        // A mixed post-gap 8-beat can sit an octave-ish
+                        // from an IOI-indexed 4-beat (offset-0 live
+                        // Door B: 0 fisso/gradino). That 4-beat is not
+                        // a refinement of the line; the octave snap
+                        // owns disagreements this wide.
+                        && std::fabs (std::log2 (fourBpm / std::max (kMinBpm, shortFitBpm)))
+                               < kOctaveThreshold;
+                    const bool midFour = have4
+                        && beatsInRegime >= kLongFit - 1
+                        && bpm < 75.0f
+                        && std::fabs (ioiDev) > kUnknownIoiLead
+                        && std::fabs (fourBpm - ioiBpm)
+                               >= std::fabs (fourBpm - shortFitBpm);
+                    if (curveOk || longCleanFour || midFour)
+                    {
+                        target = have4 ? fourBpm : ioiBpm;
+                        // Door C's 4-beat sits between the late 8-beat and
+                        // the IOI. Taking the 4-beat leaves the more current
+                        // interval on the table; taking the IOI on every
+                        // Door C frame yanks when the 4-beat has not moved
+                        // (a single displaced onset). Require the 4-beat to
+                        // have left the 8-beat by the line drift bar, same
+                        // sign as the IOI. Offset-0 live fisso/gradino: 0
+                        // Door C frames.
+                        if (midFour
+                            && (fourBpm - shortFitBpm) * (ioiBpm - shortFitBpm) > 0.0f
+                            && std::fabs (fourBpm - shortFitBpm)
+                                   > kFastDriftToleranceLine
+                                         * std::max (kMinBpm, shortFitBpm))
+                        {
+                            // The IOI is still the centre of the last
+                            // interval. The short-to-long gap is the
+                            // same rate kLiveLead already uses on the
+                            // 8-beat; apply it to the 4-beat→IOI gap
+                            // (192847 t=57.42 i4=60.6 IOI=61.8 T=63.5).
+                            // Door C at 1.0 REJECT; this only moves
+                            // the target. 0 offset-0 Door C frames.
+                            target = ioiBpm;
+                            const float doorCLead = kLiveLead * (ioiBpm - fourBpm);
+                            const float cap = 0.04f * ioiBpm;
+                            target += std::clamp (doorCLead, -cap, cap);
+                        }
+                        slowIoiLeads = true;
+                        // The live block is already behind bir>=4, so
+                        // Door A does not run on fisso 1009 (bir=1).
+                        // Offset-0 fisso/gradino: 0 Door A frames.
+                        ioiClockLead = true;
+                        // After two short windows: 0 offset-0
+                        // fisso/gradino Door A frames (210467 is bir 13).
+                        // Unknown Door C at 1.0 fattened p95; this is
+                        // Door A below 75 with a clean 4-beat on the IOI.
+                        if (curveOk && beatsInRegime >= kShortFit * 2 + 4)
+                            doorATake = true;
+                    }
+                    // Door A above 75 retargets BPM and overshoots
+                    // (177009 t=53.04 i4=124 vs T=119). This only
+                    // arms the 0.01 s tau, so the 8-beat number is
+                    // unchanged. 0.80 quadratic, 4-on-IOI, r4 clean.
+                    // kLongFit is KEEP. Two short windows (16) is
+                    // KEEP. One short window (8) is still 0 offset-0
+                    // fisso/gradino (44 vs 42 continuo on the g80 log).
+                    // 12 s VPAlign still does not hit 0.80+4-on-IOI.
+                    else if (bpm >= 75.0f
+                             && beatsInRegime >= kShortFit
+                             && haveMotionCurve
+                             && motionFitImprovement >= kClockOnlyQuadratic
+                             && have4 && r4 < kFastLineCleanResidual
+                             && std::fabs (fourBpm - ioiBpm)
+                                    < kFastDriftToleranceLine
+                                          * std::max (kMinBpm, ioiBpm)
+                             && std::fabs (fourBpm - ioiBpm)
+                                    < std::fabs (fourBpm - shortFitBpm))
+                    {
+                        ioiClockLead = true;
+                    }
+                }
+                // Decelerando: the 4-beat turns while the folded IOI
+                // is still the old period (192847 t=68.44 i4=65.3 vs
+                // IOI 66.0, T 64.2). Door A waits on |IOI−short|.
+                // Clock-only, live, bpm<75, quadratic 50%, 4-beat
+                // already off the 8-beat by Door A's bar: 0 offset-0
+                // fisso (1009 is FISSO) / gradino.
+                else if (bpm < 75.0f && beatsInRegime >= kShortFit
+                         && haveMotionCurve
+                         && motionFitImprovement >= kMotionCurveImprovement)
                 {
                     float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
                     double a4 = -1.0;
                     if (fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
                                          static_cast<double> (recent))
                         && r4 < kMotionCurveResidual && p4 > 0.0f)
-                        target = 60.0f / p4;
-                    else
-                        target = ioiBpm;
-                    slowIoiLeads = true;
+                    {
+                        const float fourBpm = 60.0f / p4;
+                        const float ioiBpm = 60.0f / recent;
+                        if (std::fabs (fourBpm - shortFitBpm)
+                                > kDoorAIoiLead
+                                      * std::max (kMinBpm, shortFitBpm)
+                            && std::fabs (fourBpm - ioiBpm)
+                                   < std::fabs (fourBpm - shortFitBpm))
+                            ioiClockLead = true;
+                    }
                 }
+            }
+
+            // Door D: Door B never opens when the 8-beat and 24-beat
+            // disagree — that guard is what keeps a step from taking an
+            // IOI. On a mixed window the IOI-indexed 4-beat can still
+            // sit on the pulse (169090 t=47.58: short 95.8, long 103.4,
+            // i4 91.1 vs truth 91.2). Comb-sign, |IOI−short| >
+            // kUnknownIoiLead, 4-closer, bir >= kLongFit are silent on
+            // offset-0 fisso/gradino. kDoorDFourResidual (not
+            // kMotionCurveResidual): 153252 t=67.36 r4=0.036 took the
+            // 4-beat through a 200 ms overshoot and fattened family
+            // p95. Acquiring-rate yank fattened 169090 p995; this only
+            // retargets, at kRateLive.
+            if (! slowIoiLeads && lineFeed && haveShort && haveLong
+                && recent > 0.0f && bpm > kMinBpm
+                && beatsInRegime >= kLongFit
+                && combReady && combBpm > kMinBpm
+                && std::fabs (shortFitBpm - longFitBpm)
+                       >= kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
+            {
+                const float ioiBpm = 60.0f / recent;
+                const float ioiDev = (ioiBpm - shortFitBpm)
+                    / std::max (kMinBpm, shortFitBpm);
+                if (std::fabs (ioiDev) > kUnknownIoiLead
+                    && (ioiBpm - shortFitBpm) * (combBpm - shortFitBpm) > 0.0f)
+                {
+                    float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                    double a4 = -1.0;
+                    if (fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                         static_cast<double> (recent))
+                        && p4 > 0.0f)
+                    {
+                        const float fourBpm = 60.0f / p4;
+                        const bool fourOnIoi =
+                            std::fabs (fourBpm - ioiBpm)
+                                < kFastDriftToleranceLine
+                                      * std::max (kMinBpm, ioiBpm);
+                        // r4<0.015 is KEEP. 0.045 took 153252 t=65.06
+                        // (i4=153 vs T=132) and fattened p95. The
+                        // leftover band is a dirty 8-beat (sres>=0.080)
+                        // whose 4-beat already sits on the IOI
+                        // (153252 t=67.36 r4=0.036, i4=132.7 vs T=131.3):
+                        // 0 offset-0 fisso/gradino.
+                        const bool fourClean = r4 < kDoorDFourResidual
+                            || (r4 < kMotionCurveResidual
+                                && shortFitResidual >= kMotionCurveFourBeatDirty
+                                && fourOnIoi);
+                        if (fourClean
+                            && std::fabs (fourBpm - ioiBpm)
+                                   < std::fabs (fourBpm - shortFitBpm))
+                        {
+                            target = fourBpm;
+                            ioiClockLead = true;
+                            // One frame: the next beat the 8/24 fits agree
+                            // again and Door B is blocked above 75 (sres
+                            // < 0.080). Hold the 4-beat at kRateLive.
+                            // Offset-0 fisso/gradino: 0 Door D frames.
+                            ioiTargetHoldBpm = fourBpm;
+                            ioiTargetHoldBeats = kShortFit;
+                        }
+                    }
+                }
+            }
+
+            // Door D is one frame. Keep aiming at that 4-beat while live
+            // so the 0.30 rate can walk there after the 8/24 fits agree
+            // again. Not slowIoiLeads: acquiring overshot 169090.
+            const bool doorHoldRate = ioiTargetHoldBpm > kMinBpm
+                                      && ioiTargetHoldBeats > 0;
+            if (! slowIoiLeads && ioiTargetHoldBeats > 0 && ! ioiClockLead
+                && ioiTargetHoldBpm > kMinBpm)
+            {
+                float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                if (recent > 0.0f
+                    && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                        static_cast<double> (recent))
+                    && r4 < kDoorDFourResidual && p4 > 0.0f)
+                {
+                    const float fourBpm = 60.0f / p4;
+                    const float ioiBpm = 60.0f / recent;
+                    if (std::fabs (fourBpm - ioiBpm)
+                            < std::fabs (fourBpm - shortFitBpm))
+                        ioiTargetHoldBpm = fourBpm;
+                }
+                target = ioiTargetHoldBpm;
+                ioiClockLead = true;
+                --ioiTargetHoldBeats;
+            }
+            else if (ioiTargetHoldBeats > 0 && ioiClockLead)
+            {
+                // Fired this beat; count it against the window.
+                --ioiTargetHoldBeats;
             }
 
             // Two states in which the committed number is stale by
@@ -4103,7 +4531,14 @@ void BeatDecoder::updateTempo() noexcept
             // committed value to 129.2 on the very next beat and the sounding
             // clock did not settle for 8.9 s. During the bounded refit window,
             // the new-beat fit is the only rate source that can be current.
-            const float wanted = lineFeed && transitionRefitBeats > 0
+            //
+            // The live doors are the same situation: the 8-beat is late and
+            // the comb is later (Door C: fold unturned). Pulling 35% toward
+            // it undoes the 4-beat/IOI the door just named, and the Door D
+            // hold. Offset-0 fisso/gradino never fire those doors.
+            const float wanted = lineFeed
+                                 && (transitionRefitBeats > 0
+                                     || slowIoiLeads || ioiClockLead)
                                      ? target
                                      : pullTowardsComb (target, combReady, combBpm);
             // And only while the gap is actually one a stale number would leave.
@@ -4125,7 +4560,9 @@ void BeatDecoder::updateTempo() noexcept
                                     && std::fabs (motionTarget - wanted) > 1.0e-6f;
             commit (motionTarget,
                     shapeLeads ? 1.0f
-                               : (far || slowIoiLeads ? kRateAcquiring : kRateLive));
+                               : (doorATake ? 1.0f
+                                  : (far || slowIoiLeads ? kRateAcquiring
+                                     : (doorHoldRate ? kRateDoorHold : kRateLive))));
             break;
         }
 
@@ -4164,9 +4601,252 @@ void BeatDecoder::updateTempo() noexcept
                 target = shortFitBpm
                        + std::clamp (lead, -0.04f * shortFitBpm, 0.04f * shortFitBpm);
             }
-            commit (pullTowardsComb (bringSlowFitCurrent (target), combReady, combBpm),
-                    kRateAcquiring);
+            target = bringSlowFitCurrent (target);
+            float rate = kRateAcquiring;
+            // Door B in unknown at kRateLive. A dirty 8-beat is not
+            // required: the 406 ms tail is integrated rate while the
+            // 8-beat is still clean and 3.5 beats late (t=43.5). The
+            // fold at sal 0.13 is not a usable origin. Acquiring-rate
+            // yank raised the family mean. kUnknownIoiLead (0.035)
+            // is silent on offset-0 fisso/gradino; 0.033 lights
+            // fisso 24766.
+            if (lineFeed && haveShort && haveLong && recent > 0.0f
+                && bpm < 75.0f && bpm > kMinBpm
+                && beatsInRegime >= kLongFit
+                && combBpm > kMinBpm
+                && std::fabs (shortFitBpm - longFitBpm)
+                       < kStaleFitsAgree * std::max (kMinBpm, longFitBpm))
+            {
+                const float ioiBpm = 60.0f / recent;
+                const float ioiDev = (ioiBpm - shortFitBpm)
+                    / std::max (kMinBpm, shortFitBpm);
+                const bool combSign = (ioiBpm - shortFitBpm)
+                    * (combBpm - shortFitBpm) > 0.0f;
+                float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                const bool have4 = fitPeriodBefore (
+                                       4, p4, r4, c4, a4, nullptr, 0,
+                                       static_cast<double> (recent))
+                                   && p4 > 0.0f;
+                const float fourBpm = have4 ? 60.0f / p4 : 0.0f;
+                const bool fourCloser = have4
+                    && std::fabs (fourBpm - ioiBpm)
+                           < std::fabs (fourBpm - shortFitBpm);
+                if (std::fabs (ioiDev) > kUnknownIoiLead
+                    && combSign && fourCloser
+                    && r4 < kMotionCurveResidual)
+                {
+                    target = fourBpm;
+                    // t=43.5 is a clean 8-beat (residual 0.010):
+                    // acquiring overshot and raised the family
+                    // mean. t=52 is already this dirty and 322 ms
+                    // off; live rate cannot unwind it before the
+                    // next gap. 0.70 left 1.7 BPM on the table;
+                    // 1.0 takes the 4-beat this frame. Strain is
+                    // silent on offset-0 fisso/gradino.
+                    rate = shortFitResidual >= kMotionCurveStrainResidual
+                               ? 1.0f
+                               : kRateLive;
+                    ioiClockLead = true;
+                    // Door D hold, unknown: the next beats (and the
+                    // kit gap) would otherwise take the leftover comb
+                    // or the post-gap 8-beat. Live A/B/C hold fattened
+                    // family p95; unknown Door B is silent on offset-0
+                    // fisso/gradino (0 unknown Door B frames).
+                    ioiTargetHoldBpm = fourBpm;
+                    ioiTargetHoldBeats = kShortFit;
+                }
+                else if (std::fabs (ioiDev) > kFastDriftToleranceLine
+                         && combSign && fourCloser
+                         && r4 >= kMotionCurveResidual
+                         && r4 < kMotionCurveFourBeatDirty
+                         && std::fabs (fourBpm - ioiBpm)
+                                < kFastDriftToleranceLine
+                                      * std::max (kMinBpm, ioiBpm))
+                {
+                    // Dirty 4-beat still on the IOI: arm the proven
+                    // tau, do not retarget BPM. Taking that 4-beat as
+                    // tempo fattened family p95 through the post-gap
+                    // 8-beat. Silent on offset-0 fisso/gradino
+                    // (bpm<75, kLongFit).
+                    ioiClockLead = true;
+                }
+                else if (std::fabs (ioiDev) > kUnknownIoiLead
+                         && combSign && have4 && ! fourCloser
+                         && r4 >= kMotionCurveResidual
+                         && r4 < kMotionCurveFourBeatDirty)
+                {
+                    // Live Door C, unknown: the dirty 4-beat has not
+                    // left the 8-beat so it is not Door B, but the IOI
+                    // and comb already have. Taking that IOI at 0.035
+                    // is silent on offset-0 fisso/gradino (the 73 yank
+                    // is a same-lattice 4-beat, r4 clean). 1.0 took
+                    // 216604 t=51.10 (mean 42.231→42.034, p995
+                    // 318→313) and fattened family p95 97.784→98.046.
+                    target = ioiBpm;
+                    rate = kRateAcquiring;
+                    ioiClockLead = true;
+                    ioiTargetHoldBpm = 0.0f;
+                    ioiTargetHoldBeats = 0;
+                }
+                else if (std::fabs (ioiDev) > kUnknownIoiLead
+                         && combSign && have4
+                         && std::fabs (fourBpm - shortFitBpm)
+                                < kFastDriftToleranceLine
+                                      * std::max (kMinBpm, shortFitBpm)
+                         && std::fabs (combBpm - shortFitBpm)
+                                > 0.03f * std::max (kMinBpm, shortFitBpm))
+                {
+                    // Same-lattice post-gap 8-beat; comb already left
+                    // it. Taking the IOI fattened family p95 (G1).
+                    // Commit the comb, do not arm tau: abortYank must
+                    // still drop the 73 lattice. Arming tau on this
+                    // comb commit locked the 73 peak and fattened
+                    // p95/p995 (98.010→98.194, 319→326). |comb-short|>3%
+                    // is 0 unknown frames on offset-0 fisso (24766 is 0.14%).
+                    target = combBpm;
+                }
+            }
+            if (! ioiClockLead && ioiTargetHoldBeats > 0
+                && ioiTargetHoldBpm > kMinBpm)
+            {
+                float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                if (recent > 0.0f
+                    && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                        static_cast<double> (recent))
+                    && r4 < kMotionCurveResidual && p4 > 0.0f)
+                    ioiTargetHoldBpm = 60.0f / p4;
+                target = ioiTargetHoldBpm;
+                rate = kRateDoorHold;
+                ioiClockLead = true;
+                --ioiTargetHoldBeats;
+            }
+            else if (ioiTargetHoldBeats > 0 && ioiClockLead)
+                --ioiTargetHoldBeats;
+            // Live doors already skip the comb: it is later than the
+            // 4-beat. Unknown Door B is the same geometry at t=52
+            // (i4≈comb, no-op) and the opposite at t=43.5 (comb toward
+            // T=70). Measured, not assumed.
+            commit (ioiClockLead ? target
+                                 : pullTowardsComb (target, combReady, combBpm),
+                    rate);
             break;
+        }
+    }
+
+    if (ioiClockLead)
+        ioiClockLeadBeats = kShortFit;
+    else if (persistLead)
+    {
+        bool abortYank = false;
+        if (tempoRegime == TempoRegime::unknown && shortFitBpm > kMinBpm)
+        {
+            float recent = 0.0f;
+            float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+            double a4 = -1.0;
+            if (recentPeriod (recent)
+                && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                    static_cast<double> (recent))
+                && p4 > 0.0f && shortFitBpm > kMinBpm)
+            {
+                const float fourBpm = 60.0f / p4;
+                abortYank = std::fabs (fourBpm - shortFitBpm)
+                    < kFastDriftToleranceLine
+                          * std::max (kMinBpm, shortFitBpm);
+            }
+        }
+        if (abortYank && ioiTargetHoldBeats <= 0)
+            ioiClockLeadBeats = 0;
+        else
+        {
+            ioiClockLead = true;
+            --ioiClockLeadBeats;
+        }
+    }
+    else
+        ioiClockLeadBeats = 0;
+
+    // Live already publishes the 8-beat origin. Door D can name a 4-beat
+    // on the pulse (169090 t=47.58 i4≈T) while the clock still follows
+    // that late origin at 0.01 s tau, so phase climbs 130→190 ms as BPM
+    // catches. Pull the origin toward the same 4-beat, at most one
+    // comb-ruler beat. fourCloser is Door D; live fourBetween is Door C
+    // (192847 t=57.42). Unknown persist is not fourBetween: pulling
+    // 216604 t=51.10 onto i4=70 while IOI was 67 fattened that p95.
+    // Offset-0 fisso/gradino never set ioiClockLead. Switching the
+    // origin outright was grid jerk (anchorBlend comment).
+    if (lineFeed && ioiClockLead && tempoRegime != TempoRegime::fixed
+        && haveShort && bpm > kMinBpm && gridAnchorSec >= 0.0)
+    {
+        float recent = 0.0f, p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+        double a4 = -1.0;
+        if (recentPeriod (recent) && recent > 0.0f
+            && fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                static_cast<double> (recent))
+            && r4 < kMotionCurveResidual && p4 > 0.0f && a4 >= 0.0)
+        {
+            const float fourBpm = 60.0f / p4;
+            const float ioiBpm = 60.0f / recent;
+            const float fourToIoi = std::fabs (fourBpm - ioiBpm);
+            const float fourToShort = std::fabs (fourBpm - shortFitBpm);
+            // fourCloser is KEEP (Door D 169090). Door C's 4-beat sits
+            // between the late 8-beat and the IOI (192847 t=57.42
+            // i4=60.6, short 59.5, IOI 61.8), so the closer-to-IOI
+            // gate skipped the p95 frame. Live-only: unknown persist
+            // through leftover comb (216604 t=51.10) is Door C too
+            // and pulling there fattened that seed's p95 146→176.
+            const bool fourCloser = fourToIoi < fourToShort;
+            const bool fourBetween = tempoRegime == TempoRegime::live
+                && (fourBpm - shortFitBpm) * (ioiBpm - shortFitBpm) > 0.0f
+                && fourToShort > kFastDriftToleranceLine
+                       * std::max (kMinBpm, shortFitBpm)
+                && fourToIoi >= fourToShort;
+            if (fourCloser || fourBetween)
+            {
+                // Leftover comb is faster than the line while the
+                // band is already down (216604 t=46.14 i4=69.3 vs
+                // comb 71.5, T 68.4). Pulling that 4-beat origin
+                // fattened this seed's p95 146→176. Live-only
+                // origin restrict failed the family mean; skip
+                // only the leftover-faster unknown frames.
+                // Offset-0 fisso/gradino never set ioiClockLead.
+                const bool leftoverUnknown =
+                    tempoRegime == TempoRegime::unknown
+                    && combReady && combBpm > bpm
+                    && (combBpm - bpm) > 0.005f * bpm;
+                if (! leftoverUnknown)
+                {
+                    // fourCloser and fourBetween: lastBeat is the
+                    // current interval (Door D 169090 t=47.58 a4 is
+                    // the mixed-window intercept, still on the late
+                    // grid; closerAfterGap KEEP is the same geometry
+                    // after a hole). Cap unchanged. 0 offset-0
+                    // fisso/gradino.
+                    const double origin = lastBeatSec >= 0.0
+                        ? lastBeatSec : a4;
+                    const double period = lastBeatSec >= 0.0
+                        ? static_cast<double> (recent)
+                        : static_cast<double> (p4);
+                    double shift = origin - gridAnchorSec;
+                    shift -= std::round (shift / period) * period;
+                    const double maxShift = kCombRulerTolerance * period;
+                    gridAnchorSec += std::clamp (shift, -maxShift, maxShift);
+                }
+            }
+            else if (tempoRegime == TempoRegime::live && lastBeatSec >= 0.0)
+            {
+                // Persist ioiLead after clock-only: the 4-beat has
+                // left the IOI (169090 t=45.60 i4=98 vs IOI 94) so
+                // fourCloser/fourBetween miss. lastBeat is still
+                // the interval. Unknown Door C lastBeat REJECT.
+                // Offset-0 fisso/gradino never set ioiClockLead.
+                const double period = static_cast<double> (recent);
+                double shift = lastBeatSec - gridAnchorSec;
+                shift -= std::round (shift / period) * period;
+                const double maxShift = kCombRulerTolerance * period;
+                gridAnchorSec += std::clamp (shift, -maxShift, maxShift);
+            }
         }
     }
 }
@@ -4496,6 +5176,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.motionShapeQuarantineBeats =
         fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
     hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
+    hyp.ioiLead = fastMotionCurrent && ioiClockLead;
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

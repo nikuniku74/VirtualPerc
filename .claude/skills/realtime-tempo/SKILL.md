@@ -922,6 +922,1232 @@ term, slow gradino catch-up at 61-63 BPM fires; do not drop it.
 Next A/B control: `/tmp/motion_slow_ioi_clean.csv`. The live class
 is smaller, not closed.
 
+**Kept (2026-09-18), slow live Door B: 4-beat closer to IOI after
+`kLongFit`, without the quadratic bar.** Door A (g ≥ 0.50) left
+the remaining 192847 tail on g=0 frames where the IOI-indexed
+4-beat still sat on the pulse. Dropping that g floor, or opening
+Door B before `kLongFit`, lights fisso 1009 and gradino
+210467/281738. Door B: live, BPM < 75, both fits agree, short
+residual < 0.045, |IOI−short| > 1.2%, comb-sign, `bir > kLongFit`,
+4-beat residual clean and closer to the IOI than to the 8-beat
+line. Offset-0 fisso/gradino hashes identical. Continuo
+**50.57/122.42 → 50.03/121.81**, recovery 0, authority 27; hash
+`1d164f96706c436c`. Seed 192847 mean 109.7→102.7 (p95 still
+229.7). 137414 47.8/108.5→46.6/98.7. 216604 and 153252 unchanged.
+`VPAlign --ramps` MIXER identical 6.9/33.3, 7.2/22.0, 19.9/78.4,
+**32.1/82.0**, 25.9/81.6, 19.0/48.0. `probe_tempo_step` PASS.
+Next A/B control: `/tmp/motion_long_four.csv` (copy
+`/tmp/motion_kept_long_four.csv`). The 192847 p95 tail is dirty
+residual (0.057–0.073) on the acceleration; Door B does not open
+there. Comb-sign still required on Door A: without it, slow
+gradino catch-up at 61-63 BPM fires.
+
+**Kept (2026-09-18), Door B without comb-sign.** On a slow
+deceleration the fold is the last to turn, so Door A's sign is
+false while i4 already sits on the pulse. Comb-sign stays on Door
+A; Door B no longer needs it. Silent on the post-Door-B log
+(fisso 0, gradino 0, continuo 20 frames). Offset-0 fisso/gradino
+hashes identical. Continuo **50.03/121.81 → 49.59/121.35**,
+recovery 0, authority 27; hash `a083cd1e01688f3a`. Seed 192847
+mean 102.7→100.0 (p95 still 229.7). 224523 49.6/90.6→47.0/83.3.
+137414 mean 46.6→44.9. `VPAlign --ramps` MIXER identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_door_b_nosign.csv` (copy
+`/tmp/motion_kept_door_b_nosign.csv`).
+
+**Kept (2026-09-18), Door B ignores the 8-beat residual.** The
+192847 p95 tail is an acceleration where the 8-beat residual is
+0.057–0.073 while the IOI-indexed 4-beat residual stays < 0.045
+and sits on the pulse. Raising Door A's residual ceiling lights
+gradino 210467 at bir 7-8 (g ≥ 0.50, dirty, just after a step).
+Door B already trusts the 4-beat; the 8-beat residual is not a
+veto. `bir >= kLongFit` (was `>`). Offset-0 fisso/gradino hashes
+identical. Continuo **49.59/121.35 → 49.39/120.21**, recovery 0,
+authority 27; hash `941f2743f215f20b`. Only seed 192847 moved:
+100.0/229.7/248.7 → 96.7/211.5/245.9. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_door_b_dirty.csv` (copy
+`/tmp/motion_kept_door_b_dirty.csv`).
+
+**Kept (2026-09-18), Door B above 75 BPM only when the 8-beat is
+already this dirty (0.080).** Below 75 BPM Door B trusts the
+4-beat with no 8-beat residual veto. At faster tempi that 8-beat
+is current enough unless residual ≥ `kMotionCurveFourBeatDirty`:
+0.075 lights offset-0 gradino 273819; 0.080 is silent (fisso 0,
+gradino 0, continuo 5 frames on two seeds). Door A stays below 75
+BPM. Offset-0 fisso/gradino hashes identical. Continuo
+**49.39/120.21 → 48.51/117.31**, recovery 0, authority 27; hash
+`89464609b5b5cff2`. Seed 153252 51.3/219.8/233.0 → 40.3/159.3/225.0.
+145333 mean 73.6→70.5, p95 146.6→160.8 (one frame where i4 ran
+away from the comb). `VPAlign --ramps` MIXER identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_fast_dirty.csv` (copy
+`/tmp/motion_kept_fast_dirty.csv`). The remaining family p95/p995
+carrier is still the unknown quiet-grid seed after the comb-fold
+snap.
+
+**Kept (2026-09-18), snap re-gates the beat ring onto the comb
+fold instead of dumping.** Dumping left a quiet grid for seconds
+through a kit gap; shifting every stored time with the origin
+kept the stale period (312→402). After the origin slides onto
+`beatPhaseFor(comb)`, times that already sit within
+`kCombRulerMinKeep` of the new lattice stay, the other pulse is
+dropped, `lastBeat` becomes the newest kept time. Offset-0
+fisso/gradino hashes identical. Continuo **48.51/117.31 →
+46.92/113.16**, recovery 0, authority 27; hash `f16b097470986515`.
+Only seed 216604 moved: 107.4/312.3/355.1 → 82.0/245.8/406.1.
+`VPAlign --ramps` MIXER identical **32.1/82.0**. `probe_tempo_step`
+PASS. Next A/B control: `/tmp/motion_snap_regate.csv` (copy
+`/tmp/motion_kept_snap_regate.csv`). The remaining tail on that
+seed is still a gap with no on-fold times; rate-from-IOI during
+the gap raised mean and p95 (rejected below).
+
+**Kept (2026-09-18), unknown Door B at `kRateLive` when the IOI
+has already left the dirty 8-beat by three line-votes.** Live
+already had Door B; unknown did not, so a dirty 8-beat with a
+clean 4-beat on the pulse stayed on the long+lead (216604 t=52,
+sal 0.129, i4 66.2 vs committed 69.6, phase 406 ms). The 4-beat
+is the current pulse there; `combReady` is false because
+salience is under 0.14, so this sign-check uses `combBpm` (the
+fold) without waiting on the floor. Offset-0 fisso/gradino
+hashes identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`).
+Continuo **46.92/113.16 → 46.90/113.04**, p995 406.07→405.76,
+recovery 0, authority 27; hash `10be2e86ecd8e5f4`. Only seed
+216604 moved: 82.0/245.8/406.1 → 81.7/244.0/405.8. `VPAlign
+--ramps` MIXER identical **32.1/82.0**. `probe_tempo_step`
+PASS. Next A/B control: `/tmp/motion_unk_doorb_live.csv` (copy
+`/tmp/motion_kept_unk_doorb_live.csv`). The 406 ms frame is
+still a half-beat, not a lag this rate can unwind.
+
+**Kept (2026-09-18), unknown Door B on a clean late 8-beat at
+`kUnknownIoiLead` 0.035.** The 406 ms peak is integrated rate
+through the deceleration, not a fold-origin error: at t=43.5 the
+8-beat is still clean (residual 0.010) and 3.5 beats late, while
+the IOI-indexed 4-beat already sits on the pulse. Requiring
+walk-residual (0.050) waited until t=52. `kUnknownIoiLead` 0.035
+is silent on offset-0 fisso/gradino; 0.033 lights fisso 24766
+(click IOI scatter). Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**46.90/113.04 → 46.88/112.49**, p995 405.76→401.39, recovery 0,
+authority 27; hash `5e804ba6cce474e2`. Only seed 216604 moved:
+81.7/244.0/405.8 → 81.3/235.2/401.4. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_unk_clean_035.csv` (copy
+`/tmp/motion_kept_unk_clean_035.csv`). After t=43.5 the phase is
+36 ms; the kit gap then pulls the stale comb (~71) at
+`kRateAcquiring`, and the first post-gap 8-beat is a *clean*
+lattice on that pulse (t=50.2 short=i4=73, residual 0.038,
+truth 66). That yank is the ~400 ms peak.
+
+**Kept (2026-09-18), live Door C: a clean 4-beat that is not
+closer to the IOI, one beat before Door B.** Door B needs
+`i4` closer to the IOI than to the 8-beat and `bir >= kLongFit`
+(24). On 192847 t=57.42 `bir=23`, `i4=60.6` sits *between*
+short 59.5 and IOI 61.8 (truth 63.5), residual 0.039, fold
+unturned, `g=0.046`, so A and B are both closed and phase is
+already 198 ms. Taking that 4-beat when `|IOI−short| >
+kUnknownIoiLead` (0.035) is silent on offset-0 fisso/gradino
+(0.012 and 0.020 light gradino 281738). Offset-0 hashes
+identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**46.88/112.49 → 46.86/112.43**, p995 401.39 unchanged,
+recovery 0, authority 27; hash `abb941f605d4d9d0`. `VPAlign
+--ramps` MIXER identical **32.1/82.0** (flats 6.9/33.3 and
+7.2/22.0, 30 s 19.9/78.4, 120→132 25.9/81.6, 128→120 19.0/48.0).
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_doorc.csv` (copy `/tmp/motion_kept_doorc.csv`).
+192847 t=59.32 peak 247→244 ms; 216604's post-gap 73 yank and
+401 ms p995 are untouched.
+
+**Kept (2026-09-18), unknown Door B at `kRateAcquiring` when the
+8-beat is already strained, stacked with live Door A without
+comb-sign after `kLongFit`.** Door B at live on a clean 8-beat
+(t=43.5 residual 0.010) must stay at `kRateLive` — acquiring
+there raised the family mean. At t=52 the 8-beat residual is
+already 0.061 and phase is 401 ms; `kRateAcquiring` on that one
+frame is silent on offset-0 fisso/gradino. Alone it moved
+continuo mean 46.856→46.860 (FAIL) and p95 112.43→111.97.
+Door A without comb-sign after `kLongFit` was mean-only alone
+(p95 identical). Together: offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**46.86/112.43 → 46.85/111.97**, p995 401.39→400.05, recovery 0,
+authority 27; hash `cb0cd495e0cf52a8`. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_stack.csv` (copy
+`/tmp/motion_kept_stack.csv`). The post-gap 73 yank and the
+~400 ms peak remain.
+
+**Kept (2026-09-18), Door A at `kDoorAIoiLead` 0.010 after two
+short windows, Door B still at 1.2%.** 0.012 missed 192847
+t=54.56 (ioiDev 0.0107, `g=0.55`, clean, bir=21, fold unturned).
+Dropping the shared outer bar to 0.010 without gating Door B
+lights fisso 88118 and gradino. Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**46.85/111.97 → 46.75/111.56**, p995 400.05 unchanged, recovery
+0, authority 27; hash `41a8424411cbd2d5`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_doora_010.csv` (copy
+`/tmp/motion_kept_doora_010.csv`). 216604's post-gap yank and
+~400 ms peak are untouched.
+
+**Kept (2026-09-18), live Door D: 4-beat on a mixed 8/24-beat
+window, at `kRateLive`.** Door B requires the two fits to agree,
+so it never sees 169090 t=47.58 (short 95.8, long 103.4, i4 91.1
+vs truth 91.2). Comb-sign, `|IOI−short| > kUnknownIoiLead`,
+4-closer, `bir >= kLongFit` are silent on offset-0 fisso/gradino
+(0 frames, all t, all regimes). Residual
+`kDoorDFourResidual` 0.015 — 0.045 includes 153252 t=67.36
+(r4=0.036) and fattened family p95. Not `slowIoiLeads`:
+acquiring-rate yank fattened 169090 p995 210→217. Offset-0
+hashes identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`).
+Continuo **46.75/111.56 → 46.71/111.51**, p995 400.05 unchanged,
+recovery 0, authority 27; hash `1a86e6856b530715`. `VPAlign
+--ramps` MIXER identical **32.1/82.0**. `probe_tempo_step` PASS.
+Next A/B control: `/tmp/motion_doord_live.csv` (copy
+`/tmp/motion_kept_doord_live.csv`). 216604's post-gap yank and
+~400 ms peak are untouched.
+
+**Kept (2026-09-18), clock motion tau on Door B/C/D, not Door A.**
+`directTempoMotionHint` was false for live/unknown unless
+`bridgeAuthority > 0`, so the PLL stayed on the 0.90 s hold tau
+after those doors had already moved the decoder onto a 4-beat.
+`BeatHypothesis::ioiLead` is set on live Door B/C, Door D, and
+unknown Door B. Door A is excluded: the same live band lights
+fisso 1009. Offset-0 B/C/D frames: fisso 0, gradino 0, continuo
+46. Do not reuse `motionBridgeAuthority` (that would pull
+`bridgedMotionTarget` toward the quadratic). Offset-0 hashes
+identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**46.71/111.51 → 45.96/110.44**, p995 400.05→401.02, recovery 0,
+authority 27; hash `fc4e0a45de4979de`. 192847 99.95/208.9/241.1
+→ 93.9/194.6/227.7. 216604's 401 ms peak is the t=52 Door B
+frame itself — shorter tau from that frame cannot unwind it.
+`VPAlign --ramps` MIXER identical **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_clock_bcd.csv` (copy `/tmp/motion_kept_clock_bcd.csv`).
+
+**Kept (2026-09-18), proven-motion tau (0.15 s) while Door B/C/D
+lead.** The KEEP above armed `kGridTauMotion` (0.30 s). Passing
+`ioiLead` as the existing proven flag uses `kGridTauProvenMotion`
+instead — still no snap, still silent on offset-0 fisso/gradino
+(0 B/C/D frames). Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**45.96/110.44 → 45.80/108.30**, p995 401.02→383.15, recovery 0,
+authority 27; hash `45151ba57b017436`. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_clock_proven.csv` (copy
+`/tmp/motion_kept_clock_proven.csv`).
+
+**Kept (2026-09-18), clock proven tau on live Door A too.** The
+previous KEEP excluded Door A because the *log band* (g, residual,
+bpm<75, no `bir>=4`) lights fisso 1009 at bir=1, already LIVE
+after an F→V. The product block is behind `beatsInRegime >= 4`,
+so offset-0 fisso/gradino have **0** Door A frames. Pure-A
+continuo frames (12) were still on the 0.90 s hold tau after the
+decoder had moved. Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**45.80/108.30 → 45.49/107.76**, p995 383.15 unchanged, recovery
+0, authority 27; hash `5f1dab0be1df1039`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_doora_clock.csv` (copy
+`/tmp/motion_kept_doora_clock.csv`).
+
+**Kept (2026-09-18), persist proven tau for `kShortFit` live
+beats after a door.** Door D on 169090 is one frame; the peak is
+two beats later, after the 8/24 fits agree again and the PLL had
+fallen back to 0.90 s. Counting down only while `live` is silent
+on offset-0 fisso/gradino (0 door frames) and does not follow
+the unknown post-gap 73 yank. Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**45.49/107.76 → 44.22/105.38**, p995 383.15 unchanged, recovery
+0, authority 27; hash `290b44562a37f120`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_live_persist.csv` (copy
+`/tmp/motion_kept_live_persist.csv`).
+
+**Kept (2026-09-18), `kGridTauRapid` (0.10 s) while a door
+leads, proven 0.15 s still for `bridgeAuthority`.** Same silent
+band as persist. Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**44.22/105.38 → 44.16/105.22**, p995 383.15→382.05, recovery 0,
+authority 27; hash `df0956c470e98c88`. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. Next A/B control:
+`/tmp/motion_rapid_ioi.csv` (copy `/tmp/motion_kept_rapid_ioi.csv`).
+
+**Kept (2026-09-18), persist the door tau in unknown too, aborted
+on the same-lattice post-gap 8-beat.** Live persist already
+covered Door D. Unknown Door B lost the 0.10 s tau on the next
+haveShort, and `!haveShort` returned before restoring it, so the
+PLL was on 0.90 s through the kit gap. Persisting while
+`unknown` is silent on offset-0 fisso/gradino (0 unknown Door B
+frames). Aborting when 4-beat and 8-beat agree within 1.2% is
+the 73 yank — do not chase it. Offset-0 hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**44.16/105.22 → 44.15/104.91**, p995 382.05→381.77, recovery 0,
+authority 27; hash `986f1ccdd8fe0c35`. `VPAlign --ramps` MIXER
+identical **32.1/82.0**. Next A/B control:
+`/tmp/motion_unk_persist.csv` (copy
+`/tmp/motion_kept_unk_persist.csv`).
+
+**Kept (2026-09-18), hold Door D's 4-beat for `kShortFit` live
+beats at `kRateLive`.** Door D is one frame; the next beat the
+8/24 fits agree and Door B above 75 needs residual 0.080, so
+the 4-beat on the pulse is dropped while phase is still
+climbing (169090 t=47.58→49.54). Opening that Door B band
+lights fisso 88118 and gradino. Holding only after Door D is
+silent on offset-0 fisso/gradino (0 Door D frames). Not
+`slowIoiLeads`: acquiring overshot 169090. Offset-0 hashes
+identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**44.15/104.91 → 43.94/104.31**, p995 381.77 unchanged, recovery
+0, authority 27; hash `da5514c86f9b0382`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS.
+
+**Rejected (2026-09-18), hold Door A/B/C's 4-beat the same way
+as Door D.** Silent on offset-0 fisso/gradino hashes. Continuo
+**43.94/104.31 → 44.44/106.94**. A late Door-A 4-beat held
+through the next window is worse than returning to the 8-beat.
+Do not persist A/B/C targets.
+
+**Kept (2026-09-18), Door C takes the IOI when the 4-beat has
+already left the 8-beat by `kFastDriftToleranceLine`, same
+sign.** Door C exists because the 4-beat sits *between* the
+late 8-beat and the IOI; targeting the 4-beat leaves the more
+current interval on the table. Taking the IOI on every Door C
+frame yanks when the 4-beat has not moved (a single displaced
+onset). Offset-0 live fisso/gradino: 0 Door C frames. Hashes
+identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**43.94/104.31 → 43.90/104.26**, p995 381.77 unchanged, recovery
+0, authority 27; hash `8b2b134cb8ddd162`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS.
+
+**Kept (2026-09-18), skip `pullTowardsComb` on live doors and
+their ioiLead persist.** The doors exist because the 8-beat is
+late; the comb is later (Door C: fold unturned). Pulling 35%
+toward it undid the 4-beat/IOI and the Door D hold, the same
+way a stale comb undid a confirmed step before the refit
+quarantine. Offset-0 fisso/gradino never fire those doors.
+Hashes identical (`8e3c8d2cdc5854f5` / `a6249731026d9f82`).
+Continuo **43.90/104.26 → 43.08/103.03**, p995 381.77 unchanged,
+recovery 0, authority 27, BPM>4% 5.49→5.00; hash
+`c78913566bb97268`. `VPAlign --ramps` MIXER identical
+**32.1/82.0**. `probe_tempo_step` PASS.
+
+**Kept (2026-09-18), Door D hold walks at 0.45, not 0.30 or
+0.70.** Acquiring overshot 169090; live rate left phase climbing
+through the hold window. A/B/C stay at acquiring (`slowIoiLeads`).
+Offset-0 fisso/gradino: 0 Door D frames. Hashes identical
+(`8e3c8d2cdc5854f5` / `a6249731026d9f82`). Continuo
+**43.08/103.03 → 42.96/102.66**, p995 381.77 unchanged, recovery
+0, authority 27; hash `95b9b2ccd94fb899`. `VPAlign --ramps`
+MIXER identical **32.1/82.0**. `probe_tempo_step` PASS.
+
+**Rejected (2026-09-18), unknown Door B takes the IOI when the
+4-beat has left the 8-beat (live Door C rule).** Silent on
+offset-0 fisso/gradino (0 unknown Door B frames). Continuo mean
+42.96→42.92, p95 **102.66→103.13**, p995 381→385. The three
+216604 Door B frames have a closer IOI, but swapping them
+fattens the family tail. Do not import Door C onto unknown.
+
+**Rejected (2026-09-18), Door B above 75 only while 4-beat and
+comb share a lattice (`kStaleGridThreshold`).** Silent on
+offset-0 hashes (0 Door B above 75 on fisso/gradino). Continuo
+**42.96/102.66 → 43.49/103.27**, BPM>4% 5.00→5.89. Only 145333
+moved (mean 62.5→68.0, p95 148→155, max 184→181): closing the
+false-peak 4-beat diverges the beat ring and the later windows
+are worse. Do not gate the dirty-above-75 door on comb distance.
+
+**Rejected (2026-09-18), Door D hold at 0.50.** Silent on
+offset-0 hashes. Continuo mean **42.9623→42.9624** (FAIL), p95
+102.662→102.652. 0.45 remains the measured hold rate.
+
+**Kept (2026-09-18), ioiLead clock tau walked 0.10 → 0.08 →
+0.06 → 0.04 → 0.02 → 0.01 s.** `kGridTauRapid` stays 0.10: that
+constant also times confirmed steps and would move offset-0
+gradino. New `kGridTauIoiLead` only. 0.01 is
+`TempoFollower::setGridPhase`'s floor (smaller values clamp).
+Each step silent on offset-0 hashes (`8e3c8d2cdc5854f5` /
+`a6249731026d9f82`), VPAlign MIXER **32.1/82.0**, recovery 0,
+authority 27. Continuo **42.96/102.66 → 42.87/102.17**, p995
+381.77→378.88; hash `6b02894541050654`. 216604/208685
+unchanged; 153252 p95 102.3→97.0 is most of the family move;
+192847 158.4→158.3; 145333 148.1→147.1. Next A/B control:
+`/tmp/motion_tau01.csv` (copy `/tmp/motion_kept_tau01.csv`).
+
+**Rejected (2026-09-18), persist ioiLead 12 beats instead of
+8.** Silent on offset-0 hashes. Continuo **42.94/102.59 →
+43.00/102.78**. Eight remains the persist window.
+
+**Kept (2026-09-18), skip `pullTowardsComb` on unknown Door B
+(ioiClockLead), matching live doors.** Offset-0 fisso/gradino: 0
+unknown Door B frames. Hashes identical. Continuo
+**42.87/102.17 → 42.86/101.51**, p995 378.88→370.73, BPM>4%
+5.00→4.84, recovery 0, authority 27; hash `b5e076ebc2e14727`.
+`VPAlign --ramps` MIXER identical **32.1/82.0**.
+`probe_tempo_step` PASS. Only 216604 moved: 82.8/201.5/384.6 →
+82.0/185.6/375.6. Persist frames still pull (the 73 yank abort
+must keep that). Next A/B control: `/tmp/motion_unk_skipcomb.csv`
+(copy `/tmp/motion_kept_unk_skipcomb.csv`).
+
+**Rejected (2026-09-21), persist-gap skip comb while
+`|comb−bpm|<kCombPullThreshold`.** Silent on offset-0 hashes.
+Continuo **42.86/101.51 → 42.87/101.55**. Comb commit during a
+persist dropout is how other live holes recover; the unturned
+fold and a runaway door do not separate on a 3% band.
+
+**Rejected (2026-09-21), unknown Door A (quadratic, bir>=4,
+`kDoorAIoiLead`).** Silent on offset-0 hashes. Continuo
+**42.86/101.51 → 48.39/113.97**, p995 371→433. Opening the
+quadratic door before `kLongFit` yanks unknown acquisition.
+Tightening to `kLongFit`+comb-sign+4-closer was identity.
+
+**Rejected (2026-09-21), live Door A quadratic 0.40 instead of
+0.50.** Lights offset-0 gradino (`fb0bf46723408a16`). Continuo
+mean 42.86→42.93, p95 101.51→101.92. 0.50 remains the silent
+curve bar.
+
+**Rejected (2026-09-21), unknown Door B on a dirty 4-beat
+(`r4` in `[kMotionCurveResidual, kMotionCurveFourBeatDirty)`)
+that still agrees with the IOI inside the line drift bar,
+below 75 BPM after `kLongFit`.** Silent on offset-0 hashes
+(the only dirty-4 fisso frame is above 75 BPM). Continuo mean
+**42.86→42.80**, p95 **101.51→104.00**, p995 371→356. One
+beat earlier on the pulse-aligned dirty 4-beat fattens family
+p95 the same way as taking that lattice through the gap.
+Clean Door B stays at 0.035.
+
+**Kept (2026-09-21), two-vote FISSO leave without the 24-beat
+window when the quadratic is already at `kMotionCurveImprovement`
+(0.50), `|mot−held| > kLeaveFixedError`, and the 4-beat is
+still on the 8-beat (`kCurveLatticeAgree` 0.015).** Offset-0
+fisso/gradino hashes identical (`8e3c8d2cdc5854f5` /
+`a6249731026d9f82`). The previous FISSO *walk* on 4/8
+agreement lit gradino because it moved the held number; this
+only releases the regime. A step's 4-beat has already left by
+2%+ on the offset-0 control log; a continuous ramp's has not.
+Continuo **42.86/101.51 → 42.78/101.28**, p995 370.73
+unchanged, recovery 0, authority 27, BPM>4% 4.84; hash
+`fe5d97305650251b`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0** (130 flat 7.2/22.0 → 7.4/23.8, still inside the
+9/25 gate). `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_curve_lattice.csv` (copy
+`/tmp/motion_kept_curve_lattice.csv`).
+
+**Kept (2026-09-21), same lattice leave on one agreeing
+interval and an IOI-indexed 4-beat.** The two-vote committed-grid
+fit missed the silent census: the second 1.2% vote arrives after
+the 4-beat has left the 8-beat (1.9%), and the held-period
+4-beat never sees the moving pulse. Offset-0 hashes identical.
+Continuo **42.78/101.28 → 42.62/99.37**, p995 370.73 unchanged,
+recovery 0, authority 27, BPM>4% 4.84; hash `fb876bc019fc6ab9`.
+`VPAlign --ramps` MIXER 12 s identical **32.1/82.0** (130 flat
+still 7.4/23.8). `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_lattice_1vote.csv` (copy
+`/tmp/motion_kept_lattice_1vote.csv`).
+
+**Kept (2026-09-21), unknown dirty 4-beat that still agrees
+with the IOI (`r4` in `[kMotionCurveResidual,
+kMotionCurveFourBeatDirty)`, `|four−IOI|` inside the line
+drift bar, below 75 BPM after `kLongFit`): clock tau only,
+do not retarget BPM.** Taking that 4-beat as tempo fattened
+family p95 (42.86→42.80 / 101.51→104.00). Offset-0 hashes
+identical. Continuo **42.62/99.37 → 42.59/99.36**, p995
+370.73→370.72, recovery 0, authority 27; hash
+`645593c737f855e8`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_dirty4_clock.csv` (copy
+`/tmp/motion_kept_dirty4_clock.csv`).
+
+**Kept (2026-09-21), live Door B does not take a 4-beat that
+is octave-apart from the 8-beat (`|log2(four/short)| <
+kOctaveThreshold`).** Offset-0 Door B frames with that split:
+0 fisso/gradino. A mixed post-gap 8-beat plus an IOI-indexed
+4-beat is not a refinement of the line; the octave snap owns
+disagreements this wide. Continuo **42.59/99.36 → 42.38/99.09**,
+p995 370.72 unchanged, recovery 0, authority 27, BPM>4%
+4.84→4.89; hash `ea677c1bb4134a0b`. `VPAlign --ramps` MIXER
+12 s identical **32.1/82.0**. `probe_tempo_step` PASS. Next
+A/B control: `/tmp/motion_octave_veto.csv` (copy
+`/tmp/motion_kept_octave_veto.csv`).
+
+**Kept (2026-09-21), unknown Door C on a dirty 4-beat that is
+not closer to the IOI (`r4` in `[kMotionCurveResidual,
+kMotionCurveFourBeatDirty)`, `|IOI−short| > kUnknownIoiLead`,
+comb-sign, below 75 BPM after `kLongFit`): take the IOI at
+`kRateAcquiring`.** Same geometry as live Door C; the dirty
+4-beat has not left the 8-beat so Door B stays closed, but the
+IOI and comb already have. The 73 yank is a same-lattice
+4-beat with clean r4 and does not fire. Offset-0 hashes
+identical. Continuo **42.38/99.09 → 42.26/98.73**, p995
+**370.72→339.12**, recovery 0, authority 27; hash
+`ccb188856d2bd818`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_unk_doorc.csv` (copy
+`/tmp/motion_kept_unk_doorc.csv`).
+
+**Rejected (2026-09-21), live recede to the comb when the
+8-beat has left it by >5% same-octave, g<0.10, residual
+clean, after `kLongFit`.** Silent on offset-0 hashes.
+Continuo **42.26/98.73 → 42.98/99.73**. Holding the comb
+while the accepted beats have formed a false lattice costs
+phase on the hashed clock. Do not recede live BPM onto the
+comb from that band.
+
+**Rejected (2026-09-21), live Door A above 75 BPM at g≥0.80,
+`r4 < kDoorDFourResidual`, 4-closer, after `kLongFit`.**
+Silent on offset-0 hashes (`g≥0.50` still lights gradino
+234224 at g=0.52). Continuo mean **42.26→41.51**, p95
+**98.73→100.37**. 169090 130→160 and 153252 97→127: taking
+that 4-beat as tempo overshoots. g≥0.99 is the same 169090
+frames. Do not open Door A above 75.
+
+**Kept (2026-09-21), hold unknown Door B's 4-beat for
+`kShortFit` at `kRateDoorHold`, including `!haveShort` kit
+gaps, and skip the same-lattice abort while the hold is
+live.** Live A/B/C hold fattened family p95; this is the
+Door D hold in unknown. Offset-0 fisso/gradino: 0 unknown
+Door B frames. Hashes identical. Continuo **42.260/98.729 →
+42.257/98.334**, p995 **339.12→337.08**, recovery 0,
+authority 27; hash `4341204575f0e1b2`. `VPAlign --ramps`
+MIXER 12 s identical **32.1/82.0** (130 flat 7.4/23.8).
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_unk_hold.csv` (copy
+`/tmp/motion_kept_unk_hold.csv`).
+
+**Rejected (2026-09-21), live Door C above 75 BPM when the
+8-beat has left the comb by >5% same-octave and the IOI still
+sits on it (`r4` dirty, 4-not-closer, `|IOI−short| >
+kUnknownIoiLead`).** Silent on offset-0 hashes (the residual
+band without the 5%/3% split lights fisso 88118 and gradino
+234224). Continuo **42.257/98.334 → 42.794/99.033**. Taking
+that IOI while the accepted beats are still the false lattice
+costs phase the same way receding onto the comb did. Do not
+open Door C above 75.
+
+**Kept (2026-09-21), unknown same-lattice post-gap 8-beat
+(`|four−short|` inside the line drift bar, `|IOI−short| >
+kUnknownIoiLead`, comb-sign, `|comb−short| > 3%`, below 75 BPM
+after `kLongFit`): commit the comb, do not arm `ioiClockLead`.**
+Taking the IOI here fattened family p95 (G1) because it kept
+the 73 lattice on the proven tau. The comb is already on that
+IOI; abortYank still drops the tau. `|comb−short|>3%` is 0
+unknown frames on offset-0 fisso (24766 is 0.14%). Hashes
+identical. Continuo **42.257/98.334 → 42.249/98.010**, p995
+**337.08→319.37**, recovery 0, authority 27; hash
+`db9d03ae88889232`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_yank_comb.csv` (copy
+`/tmp/motion_kept_yank_comb.csv`).
+
+**Kept (2026-09-21), unknown Door B at rate 1.0 when the 8-beat
+residual is already past strain.** Clean 8-beat Door B stays
+`kRateLive` (acquiring there overshot t=43.5). Strain is one
+216604 frame (t=52, i4=66.2 vs T=64.5): 0.70 left 1.7 BPM on
+the table; 1.0 takes the 4-beat this frame. Offset-0
+fisso/gradino hashes identical. Continuo **42.249/98.010 →
+42.231/97.784**, p995 **319.37→318.43**, recovery 0, authority
+27; hash `a4b488d7c03e10c2`. `VPAlign --ramps` MIXER 12 s
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_doorb_take.csv` (copy
+`/tmp/motion_kept_doorb_take.csv`).
+
+**Kept (2026-09-21), unknown comb ruler/snap without the 0.14
+salience floor.** Door B already names this comb at sal 0.129
+(216604 t=52); the floor left that frame on the 69.9 lattice.
+`tempo.ready()` and `levelSettled()` stay. Snap-geom below the
+floor is 1 offset-0 continuo frame, 0 fisso/gradino. Hashes
+identical. Continuo **42.231/97.784 → 42.213/97.593**, p995
+**318.43→316.56**, recovery 0, authority 27; BPM>4% 4.83→5.37
+(continuo only). Hash `683da3813129fd5b`. `VPAlign --ramps`
+MIXER 12 s identical **32.1/82.0**. `probe_tempo_step` PASS.
+Next A/B control: `/tmp/motion_snap_nosa.csv` (copy
+`/tmp/motion_kept_snap_nosa.csv`).
+
+**Kept (2026-09-21), unknown comb snap at walk residual 0.050
+instead of strain 0.056.** 216604 t=51.10 is 0.051 (Door C
+IOI, comb 67.3 vs short 71.4). Strain waited one more beat
+and left 322 ms on the 69.9 lattice; snapping here re-gates
+onto the comb a beat earlier. Offset-0 fisso/gradino: 0 extra
+frames (clean-lattice ruler with no residual floor fattened
+p995). Hashes identical. Continuo **42.213/97.593 →
+42.011/96.610**, p995 **316.56→278.14**, recovery 0, authority
+27; BPM>4% 5.37→4.84. Hash `d75cd5bc736337e2`. `VPAlign
+--ramps` MIXER 12 s identical **32.1/82.0**. `probe_tempo_step`
+PASS. Next A/B control: `/tmp/motion_snap_walk.csv` (copy
+`/tmp/motion_kept_snap_walk.csv`).
+
+**Kept (2026-09-21), live Door A below 75 BPM at rate 1.0 after
+two short windows (`bir >= kShortFit*2+4`).** Acquiring (0.70)
+left the 4-beat on the table; unknown Door C at 1.0 fattened
+p95. This band is 0 offset-0 fisso/gradino (210467 is bir 13).
+Hashes identical. Continuo **42.011/96.610 → 41.868/96.582**,
+p995 unchanged 278.14, recovery 0, authority 27. Hash
+`e5258be93c6e6dd3`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_doora_take.csv` (copy
+`/tmp/motion_kept_doora_take.csv`).
+
+**Kept (2026-09-21), unknown `!haveShort` comb at rate 1.0 when
+the comb has receded below the committed number.** Leftover
+comb is faster than the line (216604 t=47, 71 vs T 67);
+skipping it or slowing acquiring fattened p95 because t=48.56
+recovers 143→11 on that pull. After Door C the comb is already
+*slower* than the clock (t=51.56, 66.5 vs 67.1); 0.70 left
+1.6 BPM on the table. `lineFeed`, unknown, `bpm<75`,
+`bir>=kLongFit`, `comb<bpm`, `>0.5%`: 0 offset-0 fisso/gradino
+(48523 is 77 BPM; 119794 is 0.0%). Hashes identical. Continuo
+**41.868/96.582 → 41.692/95.838**, p995 unchanged 278.14,
+recovery 0, authority 27. Hash `706dd88d352d78c9`.
+`VPAlign --ramps` MIXER 12 s identical **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_gap_recede.csv` (copy
+`/tmp/motion_kept_gap_recede.csv`).
+
+**Kept (2026-09-21), Door D 4-beat residual up to
+`kMotionCurveResidual` when the 8-beat is already this dirty
+(`sres >= kMotionCurveFourBeatDirty`) and the 4-beat sits on
+the IOI (`|four−IOI| < 1.2%`).** Opening Door D at r4<0.045
+without those guards took 153252 t=65.06 (i4=153 vs T=132) and
+fattened p95. t=67.36 is r4=0.036, sres=0.081, i4=132.7 vs
+T=131.3: 0 offset-0 fisso/gradino. Hashes identical. Continuo
+**41.692/95.838 → 41.689/95.086**, p995 unchanged 278.14,
+recovery 0, authority 27. Hash `897a6a33cd8ddfbb`.
+`VPAlign --ramps` MIXER 12 s identical **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_doord_dirty8.csv` (copy
+`/tmp/motion_kept_doord_dirty8.csv`).
+
+**Kept (2026-09-21), FISSO leave below 75 BPM when the IOI has
+left the held number by `kUnknownIoiLead` (0.035), quadratic
+50%, `bir >= 12`, one agreeing interval.** Lattice leave waits
+for `|short−held|>2%` and 4-on-8; at 192847 t=29.92 the IOI is
+already 7% out and the 4-beat has left the 8-beat. Off-lattice
+1-vote lights gradino; this band is 0 offset-0 fisso/gradino.
+Hashes identical. Continuo **41.689/95.086 → 41.562/94.812**,
+p995 unchanged 278.14, recovery 0, authority 27. Hash
+`42c92feb74c55772`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_fisso_ioi.csv` (copy
+`/tmp/motion_kept_fisso_ioi.csv`).
+
+**Kept (2026-09-21), unknown `!haveShort` leftover-faster comb
+at `kRateLive` (0.30) instead of acquiring.** Recede 1.0 stays
+when `comb<bpm`. Skipping the leftover commit entirely fattened
+p995 (t=48.56 143→11 ms is that pull). 0.70 climbed 70.1→71.2
+while T fell through 67. The 0.5% floor is silent on offset-0
+fisso 119794 (0.0%). Hashes identical. Continuo
+**41.562/94.812 → 41.551/94.793**, p995 **278.14→268.82**,
+recovery 0, authority 27. Hash `7420a17859fc6e5b`.
+216604 max 275.0→267.9. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_leftover_live.csv` (copy
+`/tmp/motion_kept_leftover_live.csv`).
+
+**Kept (2026-09-21), unknown `!haveShort` leftover-faster comb
+at `kRateLeftoverComb` (0.15).** 0.30 is KEEP vs acquiring;
+skip-to-zero fattened p995. Same 0.5% floor, bpm<75, kLongFit.
+Hashes identical. Continuo **41.551/94.793 → 41.538/94.784**,
+p995 **268.82→261.50**, recovery 0, authority 27. Hash
+`25f0bf73f3ae4877`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_leftover_015.csv` (copy
+`/tmp/motion_kept_leftover_015.csv`).
+
+**Kept (2026-09-21), unknown `!haveShort` leftover-faster comb
+at `kRateLeftoverComb` 0.10.** Same band as 0.15. Hashes
+identical. Continuo **41.538/94.784 → 41.533/94.780**, p995
+**261.50→258.62**, recovery 0, authority 27. Hash
+`2daaa77c190a346d`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_leftover_010.csv` (copy
+`/tmp/motion_kept_leftover_010.csv`).
+
+**Kept (2026-09-21), unknown `!haveShort` leftover-faster comb
+at `kRateLeftoverComb` 0.05.** Same band. Skip-to-zero still
+REJECT. Hashes identical. Continuo **41.533/94.780 →
+41.527/94.773**, p995 **258.62→254.81**, recovery 0, authority
+27. Hash `031779d97ab1d21f`. `VPAlign --ramps` MIXER 12 s
+identical **32.1/82.0**. `probe_tempo_step` PASS. Next A/B
+control: `/tmp/motion_leftover_005.csv` (copy
+`/tmp/motion_kept_leftover_005.csv`).
+
+**Rejected (2026-09-21), live comb *gate* (no snap) at 5–8.7%
+(`log2` 0.070–`kStaleGridThreshold`), `sres>kFastLineCleanResidual`
+0.030, `bpm>75`, `kLongFit`, fits still agree.** Previous-beat
+census on leftover-0.05 was 0 offset-0 fisso/gradino (wider >5%
+gate and live snap both moved `a624`; 273819 t=42.88 is sres
+0.023). Hashes identical. Continuo **41.527/94.773 →
+42.248/99.952**, p995 unchanged 254.81, recovery 0. Gating the
+174 lattice (145333 t=57.84) without a new origin leaves the
+clock on the first false peak. Live yank-to-comb and live snap
+already REJECT. Do not reopen the comb ruler on live.
+
+**Rejected (2026-09-21), live false-lattice comb at
+`kRateLeftoverComb` 0.05 (no tau, no gate) in the same 5–8.7%
+band.** Hashes identical. Continuo **41.527/94.773 →
+42.280/96.519**. The PLL still follows the 174 times; walking
+BPM toward the comb without a new origin is the same geometry as
+live yank, only slower. Do not retarget live BPM onto the comb
+while accepted beats are that lattice.
+
+**Kept (2026-09-21), pull `gridAnchorSec` toward the IOI-indexed
+4-beat origin while `ioiClockLead`, at most `kCombRulerTolerance`
+(0.12) of that period, only while the 4-beat is closer to the IOI
+than to the 8-beat.** Live already publishes the 8-beat origin.
+Door D can name a 4-beat on the pulse (169090 t=47.58 i4≈T) while
+the 0.01 s tau follows that late origin, so phase climbed 130→190
+ms as BPM caught. Switching the origin outright was grid jerk
+(`anchorBlend`). Offset-0 doors are 0 fisso/gradino, so the pull
+is inert there. Hashes identical. Continuo **41.527/94.773 →
+39.686/94.047**, p995 **254.81→236.94**, recovery 0, authority
+27. Hash `d70649ee12079208`. `VPAlign --ramps` MIXER 12 s
+identical **32.1/82.0** (flats 6.8/33.3 and 7.4/23.8).
+`probe_tempo_step` PASS. Next A/B control then:
+`/tmp/motion_phase4.csv` (copy `/tmp/motion_kept_phase4.csv`).
+
+**Kept (2026-09-21), same origin pull on live Door C geometry
+(`fourBetween`: 4-beat between short and IOI, left the 8-beat by
+`kFastDriftToleranceLine`).** fourCloser skipped 192847 t=57.42
+(i4=60.6 sits between short 59.5 and IOI 61.8; r4=0.039).
+Unknown is not `fourBetween`: pulling 216604 t=51.10 (Door C,
+i4=70 vs IOI 67) had already fattened that seed's p95 146→176
+under the fourCloser KEEP. Raising the live cap 0.12→0.18
+(`kOnGridTolerance`) was identity on family p95 (hash moved,
+mean −0.00004 ms). Restricting the KEEP to live-only would give
+back 216604's mean and fail compare vs phase4. Hashes identical.
+Continuo **39.686/94.047 → 39.526/93.936**, p995 unchanged
+236.94, recovery 0, authority 27. Hash `3d8e2cab94a8e42b`.
+`VPAlign --ramps` MIXER 12 s identical **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_doorc_origin.csv` (copy `/tmp/motion_kept_doorc_origin.csv`).
+
+**Rejected (2026-09-21), live origin-pull cap 0.12→0.18
+(`kOnGridTolerance`) vs Door C origin KEEP.** Hashes
+identical. Continuo mean 39.526→39.526 (−0.00004 ms), p95
+**93.935533→93.935541**. The 192847 p95 frames are rate lag
+(origins already agree); extra cap does not touch them. Reverted.
+
+**Kept (2026-09-21), clock-only `ioiClockLead` above 75 BPM:
+quadratic ≥0.80, 4-beat on the IOI (`kFastDriftToleranceLine`),
+`r4<kFastLineCleanResidual`, fits agree, `bir>=kLongFit`, no BPM
+retarget.** Door A above 75 overshoots (177009 t=53.04). 0.50
+quadratic lights gradino 234224 t=47.76. 0.80 is 0 offset-0
+fisso/gradino (42 continuo frames; 169090 t=43.16 before Door D).
+Hashes identical. Continuo **39.526/93.936 → 38.316/93.856**,
+p995 unchanged 236.94, recovery 0, authority 27. Hash
+`9ff61148a61f14ef`. `VPAlign --ramps` MIXER 12 s identical
+**32.1/82.0**; 120→132 MIXER 25.9→25.8. `probe_tempo_step` PASS.
+
+**Kept (2026-09-21), same clock-only gate at `bir>=kShortFit*2`
+(16) instead of `kLongFit`.** Still 0 offset-0 fisso/gradino
+(46 vs 42 continuo frames on the Door C origin log). A 12 s ramp
+never reaches 24 live beats inside the scored window. Hashes
+identical. Continuo **38.316/93.856 → 38.073/93.838**, p995
+unchanged, recovery 0, authority 27. Hash `14909f5a42b3f7f5`.
+`VPAlign --ramps` MIXER 12 s still **32.1/82.0** (those seeds
+do not hit 0.80 quadratic + 4-on-IOI). `probe_tempo_step` PASS.
+
+**Kept (2026-09-21), same clock-only gate at `bir>=kShortFit`
+(8).** Still 0 offset-0 fisso/gradino (44 vs 42 continuo; extra
+113657 t=34.38 and 208685 t=41.16). `bir>=4` lights fisso
+64361. Hashes identical. Continuo **38.073/93.838 →
+37.791/93.832**, p995 unchanged, recovery 0, authority 27. Hash
+`a346ef4d20e36958`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_clockonly_bir8.csv` (copy
+`/tmp/motion_kept_clockonly_bir8.csv`).
+
+**Rejected (2026-09-21), Door D clock-only at `|IOI−short|>1.2%`
+(not 3.5%), comb-sign, fits disagree, `r4<0.045`, `bir>=16`,
+bpm≥75, no BPM retarget.** 0 offset-0 fisso/gradino. Continuo
+mean 37.791→37.713, p95 **93.832→94.021**. 0.01 s tau on
+145333 t=67.20 (i4=162 after the 174 lattice) fattened family
+p95. Reverted.
+
+**Rejected (2026-09-21), Door A four-lead as BPM when the IOI
+is quiet (`|i4−short|>0.010` and `|IOI−short|≤0.010`), bpm<75,
+quadratic ≥0.50, `r4<0.045`, fourCloser.** Aimed at 192847
+t=68.44 (i4=65.3 vs IOI 66.0, T 64.2). Hits **fisso 1009
+t=63.22** (i4=73.2 vs IOI 69.6 vs short 69.4, held 67.3,
+regime FISSO). Hash-unsafe. Do not implement.
+
+**Kept (2026-09-21), live clock-only four-lead when the IOI is
+quiet.** Same geometry as the Door A four-lead reject, but
+live-only (1009 is FISSO), no BPM retarget, quadratic ≥0.50,
+`r4<kMotionCurveResidual`, `|i4−short|>kDoorAIoiLead`,
+fourCloser, `bir>=kShortFit`. 0 offset-0 fisso/gradino (5
+continuo hits: 192847 t=68.44 and t=85.52, 137414, 224523).
+Hashes identical. Continuo **37.791/93.832 → 37.733/93.535**,
+p995 unchanged 236.94, recovery 0, authority 27. Hash
+`523e9187717ef6c8`. 192847's decelerando frame t=70.32 dropped
+145→109 ms (seed max moved to the FISSO-leave at t=29.92).
+`VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_fourlead_clock.csv`.
+
+**Rejected (2026-09-21), live Door B above 75 as BPM when the
+4-beat is clean on the IOI, quadratic ≥0.80, `r4<0.030`,
+`bir>=kLongFit`, `|IOI−short|>1.2%`.** 0 offset-0 fisso/gradino
+(37 continuo; 177009 t=53.04 is g=0.63). Continuo mean
+37.733→37.433, p95 **93.535→94.762**. 169090 t=43.16 took
+i4=94.6 (T 93.3) at 0.70 and the mixed window no longer
+disagreed at Door D t=47.58; that seed's max 159→217. Live
+Door B at 1.0 already REJECT. Reverted.
+
+**Kept (2026-09-21), skip unknown leftover-faster origin pull.**
+`fourCloser` origin pull while `comb>bpm` by 0.5% (216604
+t=46.14 i4=69.3 vs comb 71.5, T 68.4). Live-only origin
+restrict failed the family mean; this only skips the leftover
+unknown frames. 0 offset-0 fisso/gradino (`ioiClockLead` is
+already 0 there). Hashes identical. Continuo **37.733/93.535 →
+37.676/92.422**, p995 236.94→254.81 (216604 gap max 240→257
+at t=51.56; that seed's p95 180→171, t=46.14 167→125).
+Recovery 0, authority 27. Hash `244c639d3d7ce673`.
+`VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_unk_skip_leftover_origin.csv`.
+
+**Rejected (2026-09-21), Door B above 75 BPM take at `kRateLive`
+0.30 (no `slowIoiLeads`) on the same 4-on-IOI g80 lattice.**
+Hashes identical. Continuo **37.676/92.422 → 37.746/93.601**.
+0.70 already destroyed 169090's Door D; 0.30 still fattens
+mean and p95. Do not retarget BPM on that lattice. Reverted.
+
+**Kept (2026-09-21), Door C IOI target plus `kLiveLead` of the
+4-beat→IOI gap.** Same 4% cap as the 8-beat live lead. Door C
+at 1.0 REJECT; this only moves the target (192847 t=57.42
+i4=60.6 IOI=61.8 T=63.5). 0 offset-0 Door C frames. Hashes
+identical. Continuo **37.676/92.422 → 37.655/92.357**, p995
+unchanged 254.81, recovery 0, authority 27. Hash
+`f482abaac114da87`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_doorc_lead.csv`.
+
+**Kept (2026-09-21), FISSO `slowIoiFixedRelease` at quadratic
+≥0.45 and `|IOI−held|>0.025` (was 0.50 / 0.035).** 0.028 with
+`|short−held|>1.2%` and no extra quadratic was identity on p95
+when 192847's tail was the hole. After four-lead clock that
+leave frame is the seed max. 0 offset-0 fisso/gradino, one
+continuo (192847 t=29.04). Hashes identical. Continuo
+**37.655/92.357 → 37.546/91.811**, p995 unchanged 254.81,
+recovery 0, authority 27. Hash `37c3b1a2cbbc1887`.
+`VPAlign --ramps` MIXER 12 s still **32.1/82.0**.
+`probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_fisso_g45.csv`.
+
+**Rejected (2026-09-21), FISSO leave at g≥0.40 and `|IOI−held|>0.020`.**
+0 offset-0 fisso/gradino on the log (192847 t=28.06), but
+`intervalAgreesNow` does not fire: identity vs g 0.45 / 0.025
+(hash `37c3b1a2cbbc1887`). Reverted.
+
+**Rejected (2026-09-21), Door C IOI lead at 1.0×(IOI−4-beat)
+instead of `kLiveLead`.** Hashes identical. Continuo
+**37.546/91.811 → 37.758/92.818**. Overshoots the hole catch.
+`kLiveLead` stays. Reverted.
+
+**Kept (2026-09-21), Door C `fourBetween` origin pull toward
+`lastBeat` (IOI) not the 4-beat origin.** 4-beat origin was a
+no-op on 192847 t=57.42; lastBeat is the current interval.
+Cap still `kCombRulerTolerance`. 0 offset-0 fisso/gradino.
+Hashes identical. Continuo **37.546/91.811 → 37.470/91.653**,
+p995 unchanged 254.81, recovery 0, authority 27. Hash
+`af1d9139933c6c17`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_doorc_lastbeat.csv`.
+
+**Rejected (2026-09-21), fourBetween lastBeat cap 0.12→0.18.**
+Hashes identical. Identity on family p95 (the KEEP shift is
+already inside 0.12). Reverted.
+
+**Rejected (2026-09-21), clock-only Door A in quadratic
+`[0.40, 0.50)`, fourCloser, `|ioiDev|>kFastDriftToleranceLine`,
+`r4<kMotionCurveResidual`, `bir>=kShortFit`, BPM&lt;75.** 0
+offset-0 fisso/gradino (`|ioiDev|>0.010` lights gradino 210467
+t=86.50; 1.2% drops it). Continuo **37.470/91.653 →
+37.518/91.977**. 0.01 s tau on a 0.40 quadratic jerks the
+clock. Door A BPM at 0.40 already REJECT. Reverted.
+
+**Kept (2026-09-21), fourCloser origin pull toward `lastBeat`
+after a hole longer than `kGridStaleBeats` (2.5 periods).** The
+4-beat origin after 192847's 4 s miss is the folded hole, not
+the first onset. fourBetween already uses lastBeat; this is the
+same geometry on fourCloser. Cap still `kCombRulerTolerance`.
+0 offset-0 fisso/gradino (`ioiClockLead` never set there).
+Hashes identical. Continuo **37.470/91.653 → 37.470/91.621**,
+p995 unchanged 254.81, recovery 0, authority 27. Hash
+`b8ca632526b2226c`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_gap_origin.csv`.
+
+**Rejected (2026-09-21), unknown Door C lastBeat origin pull
+(dirty `r4` in `[kMotionCurveResidual, kMotionCurveFourBeatDirty)`,
+`!fourCloser`).** 0 offset-0 fisso/gradino (2 continuo, 216604
+t=51.10). Hashes identical. Continuo mean **37.470→37.656**,
+p95 91.621→91.577, p995 254.8→246.2. Helped the tail, fattened
+the mean. Pulling `a4` on that frame already REJECT. Reverted.
+
+**Kept (2026-09-21), fourCloser origin pull toward `lastBeat`
+always, period = IOI.** closerAfterGap KEEP is the hole case;
+Door D's 4-beat intercept after a mixed window is still the
+late grid (169090 t=47.58). Same cap. 0 offset-0 fisso/gradino.
+Hashes identical. Continuo **37.470/91.621 → 37.425/91.187**,
+p995 unchanged 254.81, recovery 0, authority 27. Hash
+`14672404b4a68188`. `VPAlign --ramps` MIXER 12 s still
+**32.1/82.0**. `probe_tempo_step` PASS. Next A/B control:
+`/tmp/motion_kept_fourcloser_lastbeat.csv`.
+
+**Listen candidate (2026-09-21).** Leftover 0.05 plus 4-beat
+origin pull (fourCloser and live fourBetween toward lastBeat;
+leftover-faster unknown origin skipped) plus clock-only ioiLead
+above 75 at quadratic 0.80, `bir>=8`, plus live four-lead
+clock-only when the IOI is quiet, plus Door C IOI+`kLiveLead`,
+plus FISSO IOI leave at g 0.45 / 2.5%. User listens on the
+product file/mixer path. That path already sets
+`directLivePhaseFollow` on stable direct live (`kGridTauMotion`
+0.30 s), so VPAlign MIXER 12 s at 0.90 s tau overstates live
+file/mixer. Wiring 0.30 into `VPAlign` MIXER moved the 100 BPM
+flat 22.3→24.1; do not rebase gradino hashes to hide that.
+
+The remaining matrix tails are not another rate. 192847's 4 s
+hole (50.50→54.56, p95 154 at Door C t=57.42) is an accelerando
+through clustered `missChance` of the strong quarters, not a
+programmed kit gap (`seed&3=3`). At t=50.50 phase is 2 ms and
+truth is turning up; comb is 58.3 (unturned) and `motionFitRate`
+is still negative. Receding onto the comb, or coasting the last
+rate, would slow the clock while the line speeds up. The first
+IOI after the hole is the *average* of four old-tempo periods
+(59.1 vs T 61.2), which is why Door A take 1.0 is two BPM late.
+Live Door C at 1.0 already REJECT. Do not invent the missing
+quarters and do not accept the remaining 0.23 swing offbeats as
+beats.
+
+Door A above 75 with comb-sign and `g>=0.60` is 0 offset-0
+fisso/gradino on the leftover-0.05 curve log (g=0.50 lights
+gradino 234224 t=47.76). The silent hits are 177009 t=53.04
+(i4=124 vs T=119) and 161171 t=79.70 (short already on T, IOI
+low). Same overshoot as the g=0.99 reject. Do not open Door A
+above 75.
+
+**Rejected (2026-09-21), FISSO-leave catch-up at rate 1.0 below
+75 BPM, quadratic 50%, `|IOI−held|>0.045`.** 0.020 moved fisso
+1009 (held 67.3 vs IOI 69.6). 0.045 is silent on offset-0
+hashes (192847 t=29.92). Continuo mean 41.527→41.469, p95
+**94.773→94.785**. Compare requires both strictly down.
+Reverted.
+
+**Rejected (2026-09-21), unknown Door B clean 4-beat (`r4<0.015`)
+at `kRateDoorHold` 0.45.** Silent on offset-0 hashes (216604
+t=43.54). Continuo mean 41.538→41.521, p95 **94.784→95.204**,
+p995 261→234. Live 0.30 stays when the 8-beat is clean. Strain
+1.0 stays. Reverted.
+
+**Rejected (2026-09-21), FISSO leave at |IOI−held|>0.028 plus
+`|short−held|>1.2%`, no extra quadratic.** Silent on offset-0
+hashes (192847 t=29.04, one beat earlier than 0.035). Continuo
+mean 41.562→41.452, p95 **94.812→94.814**. Compare requires
+both strictly down. Reverted.
+
+**Rejected (2026-09-21), live Door A above 75 at quadratic 0.99,
+r4<0.015, |IOI−short|>0.020, fourCloser, `kLongFit`.** Silent
+on offset-0 hashes (169090 t=43.80). Continuo **41.562/94.812
+→ 41.944/96.493**. ioiLead tau at 0.01 on a 4-beat still
+above truth fattened the family. Reverted.
+
+**Rejected (2026-09-21), live `!haveShort` recede comb at 1.0
+above 75 BPM, `|comb−bpm|>3%`, same octave.** Curve-log t≥24
+was 0 gradino; C++ `foldToAnchor` folded gradino 273819's 69
+comb onto 138 and moved the hash (`a624` → `533314`). Continuo
+mean **41.689→42.808**. Unknown recede stays below 75.
+
+**Rejected (2026-09-21), unknown dirty-4 as BPM when the
+8-beat is clean (`sres<0.015`).** Silent on offset-0 hashes
+(216604 t=42.68). Continuo **41.689/95.086 → 43.835/103.011**
+with hold, **43.798/102.917** one frame. Clock-only stays.
+
+**Rejected (2026-09-21), lattice leave at 1.2% short+motion.**
+Identity vs gap-recede (quadratic still closed). Reverted.
+
+**Rejected (2026-09-21), live Door C IOI at rate 1.0.** Silent
+on offset-0 hashes (192847 t=57.42). Continuo **41.868/96.582
+→ 41.878/96.792**. Same overshoot as unknown Door C at 1.0.
+
+**Rejected (2026-09-21), Door A take at `bir>=16`.** Silent on
+offset-0 hashes. Mean 41.868→41.861, p95 identical
+96.581763. Compare requires both strictly down.
+
+**Rejected (2026-09-21), live yank-to-comb (commit comb, no
+tau, no sal floor).** Silent on offset-0 hashes (145333
+t=58.88). Continuo **41.868/96.582 → 42.411/97.128**. PLL
+follows the 174 lattice; unknown yank-without-tau does not
+transfer to live.
+
+**Rejected (2026-09-21), live Door B take 1.0 with Door D
+residual and unknown IOI lead.** Silent on offset-0 hashes
+(192847 t=58.38). Continuo **41.868/96.582 → 42.092/96.966**.
+
+**Rejected (2026-09-21), unknown Door C at `kRateLive`.**
+Silent on offset-0 hashes. Continuo **41.868/96.582 →
+41.884/97.070**, p995 **278→280**. Acquiring stays.
+
+**Rejected (2026-09-21), unknown comb snap at residual 0.035.**
+Silent on offset-0 hashes. Continuo **42.011/96.610 →
+42.515/98.630**, p995 **278→222**. t=50.18 is the 73 yank:
+dumping that lattice quiets the grid (dump-ring) even as the
+tail drops. Walk residual 0.050 is the KEEP.
+
+**Rejected (2026-09-21), unknown Door C at rate 1.0.** Silent
+on offset-0 hashes. Continuo mean **42.231→42.034**, p995
+**318→313**, p95 **97.784→98.046**. Taking the IOI fully at
+t=51.10 (67.6 vs T=65.0) fattened the family percentile even
+as the tail dropped. Strain Door B at 1.0 is the KEEP; Door C
+stays `kRateAcquiring`.
+
+**Rejected (2026-09-21), live comb *gate* (no snap) when the
+8-beat has left the comb by >5% same-octave with no quadratic.**
+The accepted-beat log is 0 fisso/gradino, but the gate uses
+the previous peak's `g` on the *next* onset and moved offset-0
+gradino (`a6249731026d9f82` → `a687033bc3761433`). Continuo
+**42.231/97.784 → 42.832/102.173**. Snap on that band was
+already the dump-ring. Do not open the comb ruler on live.
+
+**Rejected (2026-09-21), live comb ruler when the 8-beat has
+left the comb by >5% same-octave with no quadratic.** Silent
+on the curve log (0 fisso/gradino rows) but snap uses the
+previous peak's `g`, so offset-0 gradino hash moved
+(`a6249731026d9f82` → `571ff96683c1038b`). Continuo mean
+**42.249→43.110** even though p95 dipped. Dumping the 174
+lattice is the dump-ring failure: nKept is small and the grid
+goes quiet. Do not open the comb ruler on live.
+
+**Rejected (2026-09-21), arm `ioiClockLead` on the unknown
+yank-to-comb.** Silent on offset-0 hashes. Continuo mean
+dipped 42.249→42.240, p95 **98.010→98.194**, p995
+**319→326**. G1 took the IOI with tau; this kept the comb and
+still locked the 73 peak. Do not arm tau on that comb commit.
+
+**Rejected (2026-09-21), live rate 0.15 when the 8-beat has
+left the comb by >5% same-octave with no quadratic.** Silent
+on offset-0 hashes. Continuo **42.249/98.010 → 42.840/98.941**.
+Receding onto the comb fattened p95 because the PLL followed
+the 174 times; slowing the walk toward those times is the
+same geometry. Do not slow the live rate on that band.
+
+**Rejected (2026-09-21), Door A above 75 with g≥0.99, r4<0.015,
+4-closer, Door D hold at 0.45, no comb-sign.** Comb-sign plus
+`combReady` is identity: the one comb-sign frame is sal 0.087,
+below the floor. Dropping comb-sign is silent on offset-0
+hashes. Continuo **42.249/98.010 → 42.517/99.806**. Acquiring
+yanked past that 4-beat; holding it still overshoots. Do not
+open Door A above 75.
+
+**Rejected (2026-09-21), skip the unknown `!haveShort` comb
+commit when `|comb−bpm|>1.2%` after `kLongFit` below 75 BPM.**
+Silent on offset-0 hashes (fisso 119794 is 0.0%). Continuo
+**42.249/98.010 → 45.108/107.524**, p995 **319→458**. The
+leftover comb is how other unknown gaps recover phase
+(216604 t=48.56 143→11 ms). Do not skip it.
+
+**Rejected (2026-09-21), keep the Door B/D 4-beat hold across
+`staleBeats` (1.5 periods), skip refresh onto a same-lattice
+8-beat, and do not arm tau on `!haveShort` hold.** Silent on
+offset-0 hashes. Continuo **42.249/98.010 → 43.139/99.254**,
+BPM>4% 4.85→5.44. Holding the pre-gap 4-beat through false
+peaks costs the family; the comb commit on the 73 yank is the
+KEEP. Do not keep a held 4-beat past the motion-stale
+timeout.
+
+**Rejected (2026-09-21), keep motion authority 4 periods after
+the last beat on direct live/unknown.** Silent on offset-0
+hashes. Continuo mean **42.249→41.593**, p95 **98.010→98.514**,
+recovery **0→7**, authority 27→1203. A kit gap and a drummer
+stop do not separate on a longer stale window; the 1.5-period
+cut is how dropouts drop the faster clock loop.
+
+**Rejected (2026-09-21), unknown Door B hold `kLongFit` instead
+of `kShortFit`, and skip refresh onto a same-lattice 4-beat.**
+Silent on offset-0 hashes. Identity vs `4341204575f0e1b2`.
+The 73 yank is a haveShort commit after the hold window; a
+longer counter does not move the hashed clock. Do not invent
+a gap tempo.
+
+**Rejected (2026-09-21), unknown `!haveShort` commit of the
+16-beat quadratic (g≥0.50) instead of the comb, and persist
+that endpoint through the kit gap.** Silent on offset-0 hashes.
+Identity vs curve-on-lattice (`fe5d97305650251b`). Those log
+rows are published hypotheses; replacing the fold there does
+not move the hashed clock. Do not invent a gap tempo, and do
+not treat a no-8-beat publish as a second measurement.
+
+**Rejected (2026-09-18), Door C target = 2×IOI − 4-beat.**
+Silent on offset-0 fisso/gradino hashes. Continuo
+**43.08/103.03 → 43.09/103.21**. The extra step past a still-late
+IOI is not free: family p95 moves the wrong way. Do not
+extrapolate Door C past the IOI.
+
+**Rejected (2026-09-18), skip comb pull only while comb≈8-beat
+(<3%).** Silent on offset-0 hashes. Continuo mean
+**43.08 → 43.27** even though p95 dipped 103.03→102.95. The
+unconditional skip on the door persist is the KEEP; restoring
+the pull on a far comb undoes more than the runaway 4-beat.
+
+**Rejected (2026-09-18), tighten live no-8-beat keep to
+`kCombFoldOrigin` when the comb agrees with the committed
+tempo.** Lights offset-0 fisso (`c09db6c53b628ed8`) and
+gradino (`5e0a70e4f72f3f1c`). Continuo mean **43.90 → 44.57**
+even though p95 dipped. The 0.18 keep is how a dropout
+recovers; false-peak yanks and true-beat recovery do not
+separate on comb agreement.
+
+**Rejected (2026-09-18), FISSO `kFixedMaxStep` walk on a clean
+quadratic with 4-beat still on the 8-beat.** Silent on
+offset-0 fisso. Lights gradino (`4b125a5194bfe90c`). Continuo
+mean **43.90 → 44.20**, p95 104.26→102.96, recovery 1,
+authority 27→64. A clean 4/8 agreement is not a step veto.
+
+**Rejected (2026-09-18), do not steer clock phase from decoder
+onsets while ioiLead persist has no 8-beat.** Silent on
+offset-0 fisso/gradino hashes. Continuo **43.90/104.26 →
+44.10/106.40**. Persist-gap decoder phase is how other live
+holes recover; it does not separate false-peak yanks from
+true-beat catch-up.
+
+**Rejected (2026-09-18), Door D at `kRateAcquiring` with
+4-beat residual 0.045.** Same silent band as KEEP Door D, but
+taking 153252 t=67.36 (r4=0.036, phase already 200 ms) and
+yanking 169090 at 0.70. Offset-0 hashes identical. Continuo
+**46.75/111.56 → 46.76/112.73**, p995 400.05 unchanged. Do not
+open a mixed-window 4-beat at the acquiring rate, and do not
+take a 4-beat residual that wide through an overshoot.
+
+**Rejected (2026-09-18), dump the unknown beat ring to the newest
+two times on the G1 frame.** Same silent band as G1 (offset-0
+fisso/gradino hashes identical; 119794's fold is still on the
+8-beat). There is no 2.5-period hole to split: false peaks fill
+the arrangement gap, so a wall-clock compact is a no-op. Dropping
+the stale 8-beat lattice instead of taking the IOI still skips
+the 73 yank. Continuo **46.71/111.51 → 48.53/117.76**, p995
+400→372. Max without p95, worse than taking the IOI. Do not drop
+the first post-gap 8-beat.
+
+**Rejected (2026-09-18), unknown IOI on the dirty post-gap
+frame (216604 t=51.1).** 4-beat residual 0.054, IOI and fold
+both left the 8-beat by >3.5%. Silent on offset-0 fisso/gradino.
+`kRateLive`: mean 46.85→46.78, p95 **111.97→112.30**, p995
+400→405. `kRateAcquiring`: mean 46.85→46.75, p95
+**111.97→112.17**, p995 400→384. Same p95 miss as skipping the
+t=50.2 yank. Do not take the median IOI on a dirty 4-beat that
+is still the stale lattice.
+
+**Rejected (2026-09-18), unknown IOI or hold on the one post-gap
+clean same-lattice frame.** `|IOI−short|` and `|fold−short|` both
+`> kUnknownIoiLead`, residual clean, `|i4−short| < 1.2%`. Silent
+on offset-0 fisso/gradino (24766's fold is still on the 8-beat).
+Only 216604 t=50.2. Taking the IOI at `kRateLive`: mean
+46.86→46.81, p95 **112.43→112.51**, p995 401→385. Holding BPM:
+mean 46.86→46.82, p95 **112.43→112.57**, p995 401→389. The yank
+to 73 fattens the max; skipping it fattens that seed's p95.
+Do not retarget the first post-gap 8-beat without a current
+4-beat on the pulse.
+
+**Rejected (2026-09-18), Door B window: freeze gap BPM and/or
+refuse an 8-beat that recedes from the comb.** Armed for 12
+periods of the 4-beat (covers t=50.2 and t=51.1, expires before
+later gaps). Not a stored 4-beat. Offset-0 fisso/gradino hashes
+identical. Freeze through `!haveShort` (skip the comb pull) plus
+recede-hold: continuo **46.88/112.49 → 50.50/122.56**, p995
+401→457. Recede-hold on haveShort only: **47.15/114.44**, p995
+401→398. Holding 70 while truth is 66 through the gap adds
+phase; refusing later 8-beats after Door B hurts other seeds'
+p95. Do not arm a post-Door-B window.
+
+**Rejected (2026-09-18), unknown `kRateLive` after `kLongFit` as
+the default commit rate.** Slows the t=50.2 yank, but offset-0
+fisso/gradino hashes both move (`8e3c8d2cdc5854f5` /
+`a6249731026d9f82` → `2bf414d240fbd665` / `86bdd7a7987d4d2d`).
+Continuo **46.88/112.49 → 49.46/122.31**. Fisso mean/p95
+numerically better (22.3/76.9 → 20.3/68.7) is still a FAIL
+against the identity hashes. Unknown stays on `kRateAcquiring`
+except Door B.
+
+**Rejected (2026-09-18), unknown IOI on a clean 8-beat that
+equals the 4-beat (same lattice).** Subset of the IOI-when-fold-
+left-it reject: residual < 0.045 and `|i4−short| < 1.2%`, then
+`target = IOI` at `kRateLive`. Offset-0 **fisso hash moved**
+(`8e3c8d2cdc5854f5` → `7b3deaf73848714c`); gradino held.
+Continuo mean 46.88→46.83, p95 **112.49→112.58**, p995 401→385
+— same p95 miss as the unrestricted IOI path. Do not take the
+median IOI when the 4-beat is the stale 8-beat.
+
+**Rejected (2026-09-18), live Door A without comb-sign after
+`kLongFit`, alone.** Silent on offset-0 fisso/gradino (12
+continuo frames: 137414, 192847 t=70.3/t=86.5, 224523). Continuo
+mean 46.880→46.875, **p95 identical** 112.4939. Those frames sit
+below the seed p95. Stacked with dirty unknown Door B at
+acquiring it is KEEP above.
+
+**Rejected (2026-09-18), comb ruler when IOI and fold have left
+a clean 8-beat.** Same two frames as the IOI-rate reject
+(216604 t=50.2/51.1). Silent on offset-0 fisso/gradino. The
+fold is still ~5 BPM late; re-gating onto it **46.88/112.49 →
+48.11/117.19**, p995 401→453. Do not use the comb as a peak
+ruler while it is the late pulse with a clean residual.
+
+**Rejected (2026-09-18), hold unknown BPM when the 8-beat recedes
+from the comb.** Same 0.035 IOI + comb-sign, but `target = bpm`
+instead of the IOI, then `pullTowardsComb`. Offset-0 **fisso
+hash moved** (`8e3c8d2cdc5854f5` → `87ddc99bfd1bb214`); the
+log's short-vs-bpm test is not the product's short+lead target.
+Continuo p95 112.49→112.63. Do not add an unknown recede hold.
+
+**Rejected (2026-09-18), latch unknown Door B through haveShort
+beats.** After t=43.5 the phase is 36 ms, then the kit gap pulls
+the stale comb at `kRateAcquiring` and the first post-gap 8-beat
+reads 73. Holding the 4-beat for eight fitted beats (and
+skipping comb pull in the gap) is silent on offset-0
+fisso/gradino. Continuo mean 46.88→51.34, p95 112.49→116.50;
+seed 216604 **81.3/235.2/401.4 → 152.7/299.3/381.1**. The t=43
+4-beat is itself soon late. Do not keep a 4-beat lead onto later
+fitted beats.
+
+**Rejected (2026-09-18), hold the Door B 4-beat only on unknown
+no-fit peaks, by beat count or by one short-fit window of time.**
+Same silent band. Beat-count: mean 46.88→49.68, p95→117.55,
+p995 401→366. Time window (8 periods): mean 46.88→48.57, p95
+still 117.55, p995 366. The gap max shortens; family mean and
+p95 do not. Do not retarget unknown-gap tempo from a previous
+4-beat.
+
+**Rejected (2026-09-18), unknown IOI at `kRateLive` when the fold
+has also left the 8-beat by 0.035.** After the gap the 4-beat
+equals the 8-beat (same stale lattice); fold and IOI agree
+against it. Silent on offset-0 fisso/gradino (24766's fold is
+still on the 8-beat). Continuo mean 46.88→46.83, p95
+112.49→112.58, p995 401→384: seed 216604 81.3/235.2/401.4 →
+80.5/236.5/384.1. Mean and max without p95. Do not take the
+median IOI after the gap without a current 4-beat on the pulse.
+
+**Rejected (2026-09-18), unknown Door B at `kRateAcquiring`.**
+Same 3.6% IOI/short gate, substituting the 4-beat into the
+unknown 0.70 commit. Offset-0 fisso/gradino hashes identical.
+Continuo mean 46.92→46.94, p95 113.16→112.64: seed 216604
+82.0/245.8/406.1 → 82.3/237.6/404.5. Opening at 1.2% also
+fires t=58.9 (already on the pulse) and raises the family mean
+46.92→47.64. Do not yank unknown at the acquiring rate, and do
+not open this door on a 1.2% IOI disagreement.
+
+**Rejected (2026-09-18), comb-fold snap without the salience
+floor.** `stalePulseCombRuler` already matches t=52 except
+sal 0.129 < 0.14. Dropping the floor on the snap only is
+silent on offset-0 fisso/gradino and fires that one frame.
+Continuo **46.92/113.16 → 47.19/113.27**. The 8-bin fold at
+salience 0.13 is not a usable origin. Do not snap unknown-gap
+phase from the fold below `kSalienceFloor`.
+
+**Rejected (2026-09-18), unknown no-fit IOI lead when the median
+is more extreme than the comb vs the committed BPM.** Silent on
+offset-0 fisso/gradino (hashes identical) and on the control log
+three frames of one seed, all closer to truth than the comb.
+Product continuo **48.51/117.31 → 49.82/121.14**, p995 355→437.
+Rate without a grid still lengthens that seed's tail. Do not
+retarget unknown-gap tempo from the 3-interval median.
+
 **Rejected (2026-09-18), snap that keeps beat history.** Same
 comb-fold origin, but every stored `beatTime[]` is shifted with
 `lastBeat`/`gridAnchorSec` instead of dumping the ring. Offset-0
@@ -1055,8 +2281,9 @@ audio smoke (2026-09-18, ONNX, not iPad):
   vote locks. Click mix: `/tmp/vp-real/flamingo-clickmix.wav`.
 
 No annotated beat-grid on the band recordings. Human listening of
-the click mixes (INFINITO, dip, Flamingo, Sally) is still required.
-Microfono iPad still waits. Sally click mix:
+the click mixes (INFINITO, dip, Flamingo, Sally) is the user's
+pass, not part of this decoder loop. iPad microphone is out of
+this objective. Sally click mix:
 `/tmp/vp-real/sally-clickmix.wav`.
 
 Grid-vs-music (`hist.py` / `prec.py` on `VPTrack --player` pulses),

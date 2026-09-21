@@ -299,9 +299,10 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                            h.shortFitResidual,
                                            h.motionBridgeAuthority,
                                            h.fastTempoEvidence,
-                                           h.motionFitImprovement);
+                                           h.motionFitImprovement,
+                                           h.ioiLead);
             clock.setTempoMotionHint (
-                cleanMotion, h.motionBridgeAuthority >= 0.999f);
+                cleanMotion, h.motionBridgeAuthority >= 0.999f || h.ioiLead);
             const auto diagnostics = decoder.diagnostics();
             const bool curveProof = h.regime == vp::TempoRegime::fixed
                                     && diagnostics.motionFitEvidence >= 3;
@@ -334,6 +335,7 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             }
             const float phaseTau = h.motionBridgeAuthority >= 0.999f
                                        ? vp::kGridTauProvenMotion
+                                       : h.ioiLead ? vp::kGridTauIoiLead
                                        : cleanMotion ? vp::kGridTauMotion
                                                      : vp::kGridTauHolding;
             clock.setGridPhase (
