@@ -1490,8 +1490,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             seenBarNudge = nudge;
         }
         // The button "L'1 è QUI" declares the one *here*, not a quarter ahead:
-        // the beat the clock is on becomes beat zero, and the bar locks. Each
-        // press is one re-anchor, whatever the auto currently believes.
+        // this instant becomes beat zero (a half-beat snap is allowed), and
+        // the bar locks. Each press is one re-anchor, whatever the auto
+        // currently believes.
         const int declare = cfg.barDeclare.load (std::memory_order_relaxed);
         if (declare != seenBarDeclare)
         {
@@ -1532,6 +1533,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     percussion.setCongaVolume (cfg.congaVolume.load (std::memory_order_relaxed));
     percussion.setClapVolume (cfg.clapVolume.load (std::memory_order_relaxed));
     percussion.setCembaloVolume (cfg.cembaloVolume.load (std::memory_order_relaxed));
+    percussion.setShakerSound (cfg.shakerSound.load (std::memory_order_relaxed));
+    percussion.setCongaSound (cfg.congaSound.load (std::memory_order_relaxed));
+    percussion.setCembaloSound (cfg.cembaloSound.load (std::memory_order_relaxed));
+    percussion.setClapSound (cfg.clapSound.load (std::memory_order_relaxed));
     percussion.setReverbAmount (cfg.reverbAmount.load (std::memory_order_relaxed));
     // The four voices switch independently. `setEnabled` is the master gate,
     // so it may only come off once all four are off - otherwise turning the
@@ -1620,14 +1625,19 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // A new file is a new input. Loading another track while START stayed on
     // left the level and rhythm history describing the song that is gone, and
     // the decoder defending its tempo: measured, a 60 BPM file loaded under a
-    // 120 BPM one reported the old tempo until STOP was pressed. Drop the
-    // history - it was measured on audio that is no longer arriving - and
-    // force a fresh epoch, which tells the worker to re-acquire. The clock
-    // itself is never restarted. See docs/TODO.md item 3.
+    // 120 BPM one reported the old tempo until STOP was pressed. STOP works
+    // because disarming clears `sounding`, and the on-grid keep will not
+    // defend a grid once the part is quiet. Drop the history - it was measured
+    // on audio that is no longer arriving - and force a fresh epoch. The
+    // queued samples are still the previous file; `dropQueuedInput` tells the
+    // worker to throw them away instead of re-certifying that tempo. The
+    // clock itself is never restarted. See docs/TODO.md item 3.
+    bool dropQueuedInput = false;
     if (inputRestartPending.exchange (false, std::memory_order_relaxed))
     {
         resetAnalysisLevelState();
         preserveCombOnEpoch = false;
+        dropQueuedInput = true;
         analysisEpoch.fetch_add (1, std::memory_order_relaxed);
     }
     // This is the last honest amplitude in the path. The make-up immediately
@@ -1699,7 +1709,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         lastHarmonicShare.store (harmony.tonalShare(), std::memory_order_relaxed);
     }
 
-    tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed), preserveCombOnEpoch);
+    // A rhythm entrance in this same block is the new file's own onset, not
+    // the previous song continuing. Keeping that comb would re-publish the
+    // tempo the restart just dropped.
+    if (dropQueuedInput)
+        preserveCombOnEpoch = false;
+    tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed),
+                           preserveCombOnEpoch, dropQueuedInput);
     const auto tr = tracker.process (mono.data(), numSamples);
 
     percussion.setBarTrusted (tr.barTrusted);
@@ -1802,6 +1818,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         hin.shakerEnabled = cfg.shakerEnabled.load (std::memory_order_relaxed);
         hin.shakerVolume = cfg.shakerVolume.load (std::memory_order_relaxed);
         hin.congaVolume = cfg.congaVolume.load (std::memory_order_relaxed);
+        hin.shakerSound = cfg.shakerSound.load (std::memory_order_relaxed);
+        hin.congaSound = cfg.congaSound.load (std::memory_order_relaxed);
         hin.sectionChanged = sectionJustChanged;
         hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
 #else

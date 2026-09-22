@@ -57,6 +57,8 @@ void vpRunEvidenceTrustTest (int& passed, int& failed);
 void vpRunStateTimingTest (int& passed, int& failed);
 void vpRunHarmonicEntryTest (int& passed, int& failed);
 void vpRunHarmonicAudioTest (int& passed, int& failed);
+/** Click-track heard-phase at 78/100/120/138/156 BPM. Also `VPTests --phase-lock`. */
+void vpRunOnnxPhaseLockTests (int& passed, int& failed);
 
 /** The own-output / analysis-epoch benches. Part of the full suite, and
     runnable on their own with `VPTests --makeup`: they drive the neural worker

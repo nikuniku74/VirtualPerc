@@ -117,6 +117,16 @@ bool HybridPercussionRenderer::aimStem (LoopPlayer& player, LoopStem stem, const
     const LoopBank* bank = player.bank();
     if (bank == nullptr)
         return false;
+    // Recorded stems are the shaker and the congas as written. A FEEL
+    // slot assigned to another family has to go through the stroke
+    // engine - there is no triangle loop, and a shaker take under a
+    // remapped conga is two percussionists.
+    if (stem == LoopStem::shaker
+        && in.shakerSound != static_cast<int> (KitSound::shaker))
+        return false;
+    if (stem == LoopStem::congas
+        && in.congaSound != static_cast<int> (KitSound::congas))
+        return false;
 
     LoopQuery q;
     q.style = in.style;

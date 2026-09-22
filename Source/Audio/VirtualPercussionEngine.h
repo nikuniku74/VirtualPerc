@@ -73,7 +73,8 @@ public:
         song is a description of audio that is no longer arriving, and the
         decoder has to drop the old song's grid and re-acquire instead of
         defending a tempo the new song never had. Forces a fresh analysis epoch
-        on the audio thread. The clock itself is never restarted - see
+        on the audio thread and discards analysis audio still queued from the
+        previous file. The clock itself is never restarted - see
         docs/TODO.md item 3. Call from the message thread on load, never on a
         seek within one file (that is notifyTrackSeek). */
     void notifyInputRestart() noexcept;

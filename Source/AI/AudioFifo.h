@@ -130,6 +130,22 @@ public:
         return static_cast<int> (wi - ri);
     }
 
+    /** Worker thread only. The read cursor belongs to the consumer; the
+        producer never moves it. Skips every sample already queued and counts
+        the skip in `droppedSamples()`, so a new file does not get analysed as
+        a continuation of the file that was replaced. Samples the producer
+        pushes after `w` is sampled stay queued. */
+    void discardPending() noexcept
+    {
+        const uint32_t wi = w.load (std::memory_order_acquire);
+        const uint32_t ri = r.load (std::memory_order_relaxed);
+        const uint32_t pending = wi - ri;
+        if (pending == 0)
+            return;
+        dropped.fetch_add (static_cast<uint64_t> (pending), std::memory_order_relaxed);
+        r.store (wi, std::memory_order_release);
+    }
+
     /** Samples the producer overwrote before the consumer read them, counted
         as the consumer reaches the hole. The consumer needs this to keep its
         own position in step with the producer's sample count; without it a

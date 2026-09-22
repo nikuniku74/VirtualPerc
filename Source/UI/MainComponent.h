@@ -5,6 +5,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <atomic>
 #include <functional>
 
 class MainComponent final : public juce::AudioAppComponent,
@@ -45,6 +46,13 @@ private:
         device was already open with none - because any other write to the channel
         fields makes the setup compare unequal and reopens the device for nothing. */
     void applyAudioSetup (bool claimInputChannels);
+    /** After the first open. AUTO must land on a full-band rate the route
+        already has — Bluetooth A2DP is often 48 kHz, not 44.1 — and the unit
+        has to be started the same way a clock button does. A kit-voice change
+        must not come through here. */
+    void finishInitialDeviceStart();
+    /** Nearest offered full-band rate, or 0 if `rate` is not one. */
+    double snapToOfferedRate (double rate) const;
     void ensureMicrophone();
     void applyInputProcessing();
 
@@ -59,8 +67,11 @@ private:
     /** What the listener asked the clock to be, and what the device should
         actually be opened at. They are not the same question: the request may
         be AUTO, and AUTO means the rate the hardware is already running at -
-        on this rig the mixer's own clock. 0 from either means "no opinion",
-        and nothing is written to the device. */
+        on this rig the mixer's own clock. `requestedSampleRate()` is 0 in
+        AUTO so the session is not told a number before it has one.
+        `deviceSampleRate()` is never left at 0 once a route exists: a 0 is
+        what JUCE turns into its constructed 44100, and that open does not
+        start the callback on a route that is not 44.1. */
     double requestedSampleRate() const;
     int    requestedBufferFrames() const;
     double deviceSampleRate() const;
@@ -109,8 +120,10 @@ private:
     void refreshThemeColours();
     void refreshBarButton();
     /** FEEL voice knobs: on/off is a tap, volume is a drag. Off is the same
-        knob, slightly faded. */
+        knob, slightly faded. A hold opens the sample-family picker. */
     void refreshVoiceKnobs();
+    void assignKitSound (int slot, vp::KitSound sound);
+    std::atomic<int>& kitSoundAtomic (int slot) noexcept;
 
     /** The margin every full-screen page starts from: what the design wants,
         widened per side to whatever the system says is unusable. On a phone
@@ -358,6 +371,26 @@ private:
 
     StyleSelect styleSelect { *this };
     StyleMenuOverlay styleMenu { *this };
+
+    /** Vertical stack of unused-instrument cells, anchored to the held
+        FEEL knob. Full-screen overlay, tap outside keeps the assignment.
+        Not a second picker engine. */
+    struct SoundMenuOverlay final : juce::Component
+    {
+        explicit SoundMenuOverlay (MainComponent& o);
+        void paint (juce::Graphics&) override;
+        void resized() override;
+        void mouseDown (const juce::MouseEvent& e) override;
+        void showFor (int slot);
+        void dismiss();
+        bool isOpen() const noexcept { return isVisible(); }
+        static constexpr int kCount = static_cast<int> (vp::KitSound::count);
+        MainComponent& owner;
+        int slot = 0;
+        juce::Component list;
+        juce::TextButton items[kCount];
+    };
+    SoundMenuOverlay soundMenu { *this };
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { "CASSA NO" };
     /** Measures this rig's round trip instead of taking the device's word for
@@ -372,18 +405,44 @@ private:
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
     /** Volume knob that also arms the voice: a tap (no drag) flips the
-        enable, a vertical drag is still the level. */
-    struct VoiceKnob final : juce::Slider
+        enable, a vertical drag is still the level, a 450 ms hold opens
+        the sample-family picker. */
+    struct VoiceKnob final : juce::Slider, private juce::Timer
     {
         std::function<void()> onTap;
+        std::function<void()> onHold;
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            held = false;
+            juce::Slider::mouseDown (e);
+            if (onHold != nullptr)
+                startTimer (450);
+        }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (held)
+                return;
+            if (e.getDistanceFromDragStart() > 6)
+                stopTimer();
+            juce::Slider::mouseDrag (e);
+        }
         void mouseUp (const juce::MouseEvent& e) override
         {
-            const bool tap = ! e.mouseWasDraggedSinceMouseDown()
+            stopTimer();
+            const bool tap = ! held && ! e.mouseWasDraggedSinceMouseDown()
                              && e.getNumberOfClicks() == 1;
             juce::Slider::mouseUp (e);
             if (tap && onTap != nullptr)
                 onTap();
         }
+        void timerCallback() override
+        {
+            stopTimer();
+            held = true;
+            if (onHold != nullptr)
+                onHold();
+        }
+        bool held = false;
     };
     VoiceKnob shakerVolSlider;
     juce::Label  shakerVolLabel { {}, "SHAKER" };
@@ -400,6 +459,14 @@ private:
     /** Input peak with a slow release, so the meter can be read against its
         target band instead of flickering. Updated on the UI timer. */
     float micHold = 0.0f;
+    /** Smoothed copy of the tempo halo. Starts amber and invisible so the
+        first lock eases in instead of flashing red from a zero. A drop in
+        accuracy is applied on the same tick; `tempoBloomHold` keeps that
+        worse colour up for a few frames at 15 Hz. UI timer only — the audio
+        thread never reads these. */
+    float tempoBloomAccuracy = 0.5f;
+    float tempoBloomAmount = 0.0f;
+    int   tempoBloomHold = 0;
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
@@ -449,8 +516,16 @@ private:
 
     /** 0 means AUTO for both: follow the interface rather than tell it what to
         do. That is the default because on a rig with a mixer the mixer holds
-        the clock, and the one thing the app must not do is take it off it. */
+        the clock, and the one thing the app must not do is take it off it.
+        Persisted as the listener left it; the first open resolves a concrete
+        rate without writing a second setting. */
     int  clockHz = 0;
+    /** Session rate read before the first JUCE open, while AUTO has not yet
+        substituted 44100. 0 once that open has been accepted or corrected. */
+    double startupHardwareRate = 0.0;
+    /** Concrete AUTO rate for the one corrective open. 0 the rest of the time,
+        so a later buffer change keeps the rate the device is already on. */
+    double overrideAutoRate = 0.0;
     int  bufferChoice = 0;
     bool inputProcessing = false;
     bool loopBankReady = false;

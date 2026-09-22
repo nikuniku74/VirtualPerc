@@ -60,6 +60,11 @@ public:
         /** Independent output level for each instrument, as `EngineSettings`. */
         float shakerVolume = 1.0f;
         float congaVolume = 1.0f;
+        /** Sample family each stem's FEEL slot is playing. A remapped shaker
+            or conga has no recorded stem of that instrument, so aimStem
+            refuses rather than layering a shaker loop under a triangle. */
+        int shakerSound = static_cast<int> (KitSound::shaker);
+        int congaSound = static_cast<int> (KitSound::congas);
         // CLAP and CEMBALO (item 10 in docs/TODO.md) have no recorded stems -
         // they exist only in `PercussionEngine`'s synthesised bank - so there
         // is nothing here for them to balance against, and they fade out with

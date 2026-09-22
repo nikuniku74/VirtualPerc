@@ -81,6 +81,35 @@ inline const char* toString (GrooveStyle s) noexcept
     return "?";
 }
 
+/** Which bundled instrument a FEEL knob plays. The four knobs are the four
+    parts (shaker / congas / cembalo / clap patterns); this is only the
+    sample family, so a hold on SHAKER can assign TRIANGOLO without rewriting
+    the groove tables. Identity is the default so an upgrade does not change
+    the sound. */
+enum class KitSound : int
+{
+    shaker = 0,
+    congas,
+    cembalo,
+    clap,
+    triangle,
+    count
+};
+
+inline const char* toString (KitSound s) noexcept
+{
+    switch (s)
+    {
+        case KitSound::shaker:   return "SHAKER";
+        case KitSound::congas:   return "CONGAS";
+        case KitSound::cembalo:  return "CEMBALO";
+        case KitSound::clap:     return "CLAP";
+        case KitSound::triangle: return "TRIANGOLO";
+        case KitSound::count:    break;
+    }
+    return "?";
+}
+
 enum class FollowSource : int
 {
     kitMic = 0,
@@ -419,6 +448,14 @@ struct EngineSettings
     // change to how the app already sounds on upgrade.
     std::atomic<bool>  cembaloEnabled  { false };
     std::atomic<bool>  clapEnabled     { false };
+    // Sample family each FEEL slot plays. The groove still writes the same
+    // strokes; PercussionEngine remaps them onto this bank. Audio thread
+    // reads the atomics; UI writes them from the hold popup. Persisted in
+    // the same PropertiesFile as the other FEEL choices.
+    std::atomic<int>   shakerSound     { static_cast<int> (KitSound::shaker) };
+    std::atomic<int>   congaSound      { static_cast<int> (KitSound::congas) };
+    std::atomic<int>   cembaloSound    { static_cast<int> (KitSound::cembalo) };
+    std::atomic<int>   clapSound       { static_cast<int> (KitSound::clap) };
     // Whether the part follows the band's dynamics: quieter and thinner when
     // the band comes down, silent in a passage that does not want it. On by
     // default - it is the difference between a part that is correct and a
@@ -435,9 +472,10 @@ struct EngineSettings
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to
     // be one tap however wrong the analysis currently is.
     std::atomic<int>   barNudge        { 0 };
-    // The button "L'1 è QUI" declares the one *here*: the beat the clock is on
-    // is beat zero, wherever the auto had put it. A one-shot counter rather than
-    // a nudge: each press re-anchors the count to the current beat, then locks.
+    // The button "L'1 è QUI" declares the one *here*: this instant is beat
+    // zero, even if the clock was sitting on the AND. A one-shot counter
+    // rather than a nudge: each press snaps the quarter, re-anchors the
+    // decoder origin, then locks.
     std::atomic<int>   barDeclare      { 0 };
     // And having said it, it stays said. The automatic alignment is a vote over
     // what the network calls a downbeat, and where the network is no better

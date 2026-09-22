@@ -41,6 +41,8 @@ constexpr double kDuration = 90.0;
 constexpr double kWarmup = 24.0;
 unsigned gTraceSeed = 0;
 FILE* gCurveLog = nullptr;
+FILE* gRecoverTrace = nullptr;
+bool gRecover = false;
 const char* gCurveFamily = "";
 
 enum class MotionKind { flat, smooth, step };
@@ -87,6 +89,61 @@ struct Scenario
     }
 };
 
+struct BeatSnap
+{
+    double t = 0.0;
+    double trueBpm = 0.0;
+    double pubBpm = 0.0;
+    double maxAbs = 0.0;
+    double firstAbs = -1.0;
+    double lastAbs = -1.0;
+    double signedLast = 0.0;
+    int frames = 0;
+    int inside = 0;
+    int regime = -1;
+    float shortBpm = 0.0f;
+    float longBpm = 0.0f;
+    float ioi = 0.0f;
+    float i4 = 0.0f;
+    float comb = 0.0f;
+    float sres = 1.0f;
+    int bir = 0;
+    int lead = 0;
+    float authority = 0.0f;
+};
+
+struct Episode
+{
+    unsigned seed = 0;
+    double startT = 0.0;
+    double refBpm = 0.0;
+    double startTrue = 0.0;
+    int beats = 0;
+    bool recovered = false;
+    std::vector<BeatSnap> trace;
+};
+
+// Read-only. Hashes stay on the clock path above; this never writes decoder
+// or clock state. A beat is inside when every published frame of that true
+// beat is within 40 ms. Recovery is the number of post-change true beats
+// observed when two consecutive inside beats have completed.
+struct RecoverStats
+{
+    double pubAbsSum = 0.0;
+    double pubSignedSum = 0.0;
+    int pubFrames = 0;
+    int framesInside40 = 0;
+    int bucketA = 0;
+    int tempoFrames = 0;
+    double bucketAAbs = 0.0;
+    double bucketASigned = 0.0;
+    double bucketAClock = 0.0;
+    int beatsStrict = 0;
+    int beatsEnds = 0;
+    int beatsComplete = 0;
+    std::vector<Episode> episodes;
+};
+
 struct Score
 {
     std::vector<double> phaseMs;
@@ -99,6 +156,7 @@ struct Score
     int recoveryViolations = 0;
     int authorityFrames = 0;
     uint64_t traceHash = 1469598103934665603ULL;
+    RecoverStats recover;
 };
 
 void hashWord (uint64_t& hash, uint32_t word) noexcept
@@ -274,6 +332,55 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
     std::mt19937 floorRng (seed * 2246822519u + 3266489917u);
     std::uniform_real_distribution<float> floor (0.012f, 0.032f);
     unsigned lastTraceSerial = 0;
+
+    std::vector<BeatSnap> snaps;
+    std::vector<Episode> episodes;
+    bool recOn = false;
+    bool gradinoStarted = false;
+    double recStart = 0.0;
+    double recRef = 0.0;
+    double recTrue = 0.0;
+    int recBeats = 0;
+    int recConsec = 0;
+    std::vector<BeatSnap> recTrace;
+    bool refValid = false;
+    double refBpm = 0.0;
+    size_t nextJudge = 0;
+
+    auto closeEpisode = [&] (bool ok)
+    {
+        Episode ep;
+        ep.seed = seed;
+        ep.startT = recStart;
+        ep.refBpm = recRef;
+        ep.startTrue = recTrue;
+        ep.beats = recBeats;
+        ep.recovered = ok;
+        ep.trace = recTrace;
+        episodes.push_back (std::move (ep));
+        recOn = false;
+        recBeats = 0;
+        recConsec = 0;
+        recTrace.clear();
+    };
+    auto consider = [&] (size_t idx)
+    {
+        if (! recOn || idx >= snaps.size())
+            return;
+        const BeatSnap& sn = snaps[idx];
+        if (sn.frames <= 0 || ! (sn.t > recStart))
+            return;
+        const bool good = sn.maxAbs <= 40.0 && sn.inside == sn.frames;
+        ++recBeats;
+        if (good)
+            ++recConsec;
+        else
+            recConsec = 0;
+        if (recTrace.size() < 64)
+            recTrace.push_back (sn);
+        if (recConsec >= 2)
+            closeEpisode (true);
+    };
 
     const int totalFrames = static_cast<int> (kDuration * kFps);
     for (int frame = 0; frame < totalFrames; ++frame)
@@ -474,8 +581,123 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                 ++score.recoveryViolations;
                 excursionFailed = true;
             }
+
+            // Diagnostic only. Decoder, clock, and the hash words above are
+            // already committed for this frame.
+            if (gRecover && truth + 1 < beats.size())
+            {
+                if (s.kind == MotionKind::step && ! gradinoStarted && now >= s.stepAt)
+                {
+                    gradinoStarted = true;
+                    recOn = true;
+                    recStart = s.stepAt;
+                    recRef = s.baseBpm;
+                    recTrue = s.bpmAt (now);
+                    recBeats = 0;
+                    recConsec = 0;
+                    recTrace.clear();
+                }
+
+                if (h.valid && h.bpm > 0.0f)
+                {
+                    const double span = beats[truth + 1] - beats[truth];
+                    const float truePhase = span > 1.0e-9
+                        ? static_cast<float> ((now - beats[truth]) / span)
+                        : 0.0f;
+                    const double trueBpm = s.bpmAt (now);
+                    const double pubSigned = static_cast<double> (vp::wrapCentered (
+                                                     h.beatPhase - truePhase))
+                                             * 60000.0 / trueBpm;
+                    const double pubAbs = std::fabs (pubSigned);
+                    const double clockAbs = std::fabs (static_cast<double> (vp::wrapCentered (
+                        clock.beatPhase() - truePhase))) * 60000.0 / trueBpm;
+                    score.recover.pubAbsSum += pubAbs;
+                    score.recover.pubSignedSum += pubSigned;
+                    ++score.recover.pubFrames;
+                    if (pubAbs <= 40.0)
+                        ++score.recover.framesInside40;
+                    ++score.recover.tempoFrames;
+                    const double log2ratio = std::log (static_cast<double> (h.bpm) / trueBpm)
+                                             / std::log (2.0);
+                    if (std::fabs (log2ratio) < 0.08)
+                    {
+                        ++score.recover.bucketA;
+                        score.recover.bucketAAbs += pubAbs;
+                        score.recover.bucketASigned += pubSigned;
+                        score.recover.bucketAClock += clockAbs;
+                    }
+
+                    if (snaps.size() <= truth)
+                        snaps.resize (truth + 1);
+                    BeatSnap& sn = snaps[truth];
+                    if (sn.frames == 0)
+                    {
+                        sn.t = beats[truth];
+                        sn.trueBpm = s.bpmAt (beats[truth]);
+                        sn.firstAbs = pubAbs;
+                    }
+                    ++sn.frames;
+                    if (pubAbs <= 40.0)
+                        ++sn.inside;
+                    sn.maxAbs = std::max (sn.maxAbs, pubAbs);
+                    sn.lastAbs = pubAbs;
+                    sn.signedLast = pubSigned;
+                    sn.pubBpm = h.bpm;
+                    const auto diag = decoder.diagnostics();
+                    sn.regime = static_cast<int> (h.regime);
+                    sn.shortBpm = diag.shortFit;
+                    sn.longBpm = diag.longFit;
+                    sn.ioi = diag.recentIoiBpm;
+                    sn.i4 = diag.ioiIndexedFit4;
+                    sn.comb = diag.combBpm;
+                    sn.sres = h.shortFitResidual;
+                    sn.bir = diag.beatsInRegime;
+                    sn.lead = h.ioiLead ? 1 : 0;
+                    sn.authority = h.motionBridgeAuthority;
+
+                    if (s.kind == MotionKind::smooth && ! recOn && refValid && pubAbs > 40.0
+                        && std::fabs (trueBpm - refBpm) / refBpm >= 0.04)
+                    {
+                        recOn = true;
+                        recStart = now;
+                        recRef = refBpm;
+                        recTrue = trueBpm;
+                        recBeats = 0;
+                        recConsec = 0;
+                        recTrace.clear();
+                    }
+                    if (pubAbs <= 40.0)
+                    {
+                        refBpm = trueBpm;
+                        refValid = true;
+                    }
+                }
+
+                while (nextJudge < truth)
+                {
+                    consider (nextJudge);
+                    ++nextJudge;
+                }
+            }
         }
         clock.advance (kSamplesPerFrame);
+    }
+    if (gRecover)
+    {
+        if (recOn)
+            closeEpisode (false);
+        for (size_t i = 0; i < truth && i < snaps.size(); ++i)
+        {
+            const BeatSnap& sn = snaps[i];
+            if (sn.frames <= 0 || sn.t < kWarmup)
+                continue;
+            ++score.recover.beatsComplete;
+            if (sn.maxAbs <= 40.0 && sn.inside == sn.frames)
+                ++score.recover.beatsStrict;
+            if (sn.firstAbs <= 40.0 && sn.lastAbs <= 40.0)
+                ++score.recover.beatsEnds;
+        }
+        score.recover.episodes = std::move (episodes);
     }
     return score;
 }
@@ -500,6 +722,10 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
                        bool verbose, bool csv)
 {
     Aggregate a;
+    std::vector<double> recoveredBeats;
+    int neverRecovered = 0;
+    int episodeCount = 0;
+    RecoverStats sanity;
     for (int i = 0; i < cases; ++i)
     {
         const unsigned seed = offset + 1009u + static_cast<unsigned> (i) * 7919u
@@ -538,6 +764,100 @@ Aggregate printFamily (MotionKind kind, const char* label, int cases, unsigned o
                          score.curveProofs, score.recoveryViolations,
                          score.authorityFrames);
         }
+        if (gRecover)
+        {
+            sanity.pubAbsSum += score.recover.pubAbsSum;
+            sanity.pubSignedSum += score.recover.pubSignedSum;
+            sanity.pubFrames += score.recover.pubFrames;
+            sanity.framesInside40 += score.recover.framesInside40;
+            sanity.bucketA += score.recover.bucketA;
+            sanity.tempoFrames += score.recover.tempoFrames;
+            sanity.bucketAAbs += score.recover.bucketAAbs;
+            sanity.bucketASigned += score.recover.bucketASigned;
+            sanity.bucketAClock += score.recover.bucketAClock;
+            sanity.beatsStrict += score.recover.beatsStrict;
+            sanity.beatsEnds += score.recover.beatsEnds;
+            sanity.beatsComplete += score.recover.beatsComplete;
+            for (const Episode& ep : score.recover.episodes)
+            {
+                ++episodeCount;
+                if (ep.recovered)
+                    recoveredBeats.push_back (static_cast<double> (ep.beats));
+                else
+                    ++neverRecovered;
+                std::fprintf (stderr,
+                              "EP %s seed=%u t0=%.3f ref=%.2f true0=%.2f beats=%d ok=%d"
+                              " stepAt=%.3f ratio=%.4f\n",
+                              label, ep.seed, ep.startT, ep.refBpm, ep.startTrue,
+                              ep.beats, ep.recovered ? 1 : 0,
+                              scenario.stepAt, scenario.stepRatio);
+                if (gRecoverTrace != nullptr)
+                {
+                    int beatNo = 0;
+                    for (const BeatSnap& sn : ep.trace)
+                    {
+                        ++beatNo;
+                        std::fprintf (gRecoverTrace,
+                                      "%s,%u,%.3f,%d,%.3f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,"
+                                      "%.2f,%.2f,%.2f,%d,%d,%d,%.3f,%d,%d\n",
+                                      label, ep.seed, ep.startT, beatNo, sn.t,
+                                      sn.maxAbs, sn.firstAbs, sn.lastAbs,
+                                      sn.trueBpm, sn.pubBpm, sn.shortBpm, sn.longBpm,
+                                      sn.ioi, sn.i4, sn.comb, sn.regime, sn.bir,
+                                      sn.lead, sn.authority, sn.inside, sn.frames);
+                    }
+                }
+            }
+        }
+    }
+
+    if (gRecover)
+    {
+        const double pf = std::max (1, sanity.pubFrames);
+        const double bf = std::max (1, sanity.beatsComplete);
+        const double tf = std::max (1, sanity.tempoFrames);
+        std::fprintf (stderr,
+                      "SANITY %s pubFrames=%d pubAbs=%.2f pubSigned=%+.2f inside40=%.1f%%"
+                      " bucketA=%.1f%% Aabs=%.2f Asigned=%+.2f Aclock=%.2f"
+                      " beats=%d strict=%.1f%% ends=%.1f%%\n",
+                      label, sanity.pubFrames, sanity.pubAbsSum / pf,
+                      sanity.pubSignedSum / pf,
+                      100.0 * sanity.framesInside40 / pf,
+                      100.0 * sanity.bucketA / tf,
+                      sanity.bucketA == 0 ? 0.0 : sanity.bucketAAbs / sanity.bucketA,
+                      sanity.bucketA == 0 ? 0.0 : sanity.bucketASigned / sanity.bucketA,
+                      sanity.bucketA == 0 ? 0.0 : sanity.bucketAClock / sanity.bucketA,
+                      sanity.beatsComplete,
+                      100.0 * sanity.beatsStrict / bf,
+                      100.0 * sanity.beatsEnds / bf);
+        std::vector<double> finite = recoveredBeats;
+        std::sort (finite.begin(), finite.end());
+        std::fprintf (stderr, "RECOVER %s finite:", label);
+        for (double b : finite)
+            std::fprintf (stderr, " %.0f", b);
+        const int episodes = std::max (1, episodeCount);
+        const double med = finite.empty()
+                               ? -1.0
+                               : (finite.size() % 2 == 1
+                                      ? finite[finite.size() / 2]
+                                      : 0.5 * (finite[finite.size() / 2 - 1]
+                                               + finite[finite.size() / 2]));
+        std::vector<double> inclusive = finite;
+        inclusive.insert (inclusive.end(), static_cast<size_t> (neverRecovered), 1.0e9);
+        const double incMed = inclusive.empty()
+                                  ? -1.0
+                                  : (inclusive.size() % 2 == 1
+                                         ? inclusive[inclusive.size() / 2]
+                                         : 0.5 * (inclusive[inclusive.size() / 2 - 1]
+                                                  + inclusive[inclusive.size() / 2]));
+        std::fprintf (stderr,
+                      "\nRECOVER %s episodes=%d never=%d (%.1f%%) median=%.2f p95=%.2f"
+                      " inclusive_median=%.2f inclusive_p95=%.2f\n",
+                      label, episodeCount, neverRecovered,
+                      100.0 * neverRecovered / episodes, med,
+                      finite.empty() ? -1.0 : percentile (finite, 0.95),
+                      incMed,
+                      inclusive.empty() ? -1.0 : percentile (inclusive, 0.95));
     }
 
     const double n = std::max (1, a.runs);
@@ -580,6 +900,15 @@ int main (int argc, char** argv)
             offset = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
         else if (std::strcmp (argv[i], "--trace-seed") == 0 && i + 1 < argc)
             gTraceSeed = static_cast<unsigned> (std::strtoul (argv[++i], nullptr, 10));
+        else if (std::strcmp (argv[i], "--recover") == 0)
+        {
+            gRecover = true;
+            gRecoverTrace = std::fopen ("/tmp/motion_recover_trace.csv", "w");
+            if (gRecoverTrace != nullptr)
+                std::fprintf (gRecoverTrace,
+                              "family,seed,start,beat,t,maxAbs,firstAbs,lastAbs,trueBpm,pubBpm,"
+                              "short,long,ioi,i4,comb,regime,bir,lead,auth,inside,frames\n");
+        }
         else if (std::strcmp (argv[i], "--curve-log") == 0)
         {
             gCurveLog = std::fopen ("/tmp/motion_curve_log.csv", "w");
@@ -613,6 +942,8 @@ int main (int argc, char** argv)
 
     if (gCurveLog != nullptr)
         std::fclose (gCurveLog);
+    if (gRecoverTrace != nullptr)
+        std::fclose (gRecoverTrace);
 
     if (csv)
         return 0;

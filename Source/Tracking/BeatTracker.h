@@ -119,11 +119,12 @@ public:
         phrase. */
     void nudgeBar (int beats) noexcept;
 
-    /** The listener has just said "the one is here": the beat the clock is on
-        is beat zero, wherever the automatic alignment had put it. Rotates the
-        count by whatever brings the current beat to zero, keeps the phase, and
-        holds the decision so the auto cannot move it back. This is the button's
-        one function - it is not a nudge and not a toggle. */
+    /** The listener has just said "the one is here": this instant is beat
+        zero. Snaps the clock onto that quarter (a half-beat correction is
+        allowed) even while a part is sounding, holds the bar so the auto
+        cannot rotate it back, and asks the decoder to re-anchor lastBeat.
+        Automatic hat crests still cannot steal the origin. Not a nudge and
+        not a toggle. */
     void declareBarHere() noexcept;
 
     /** Whether the count is the listener's to move and nobody else's.
@@ -206,7 +207,8 @@ public:
         seen the input change since the app was opened. Until it has, a tempo it
         has found may be the room's - measured, an empty room reaches FOLLOWING
         at 99 BPM with a confidence of 0.91 - and the percussion is held out. */
-    void setInputEpoch (uint32_t epoch, bool preserveComb = false) noexcept
+    void setInputEpoch (uint32_t epoch, bool preserveComb = false,
+                        bool dropQueued = false) noexcept
     {
         if (seenEpoch && epoch != lastInputEpoch)
         {
@@ -228,9 +230,30 @@ public:
                 neural.setUserOctave (0);
             }
         }
+        if (dropQueued)
+        {
+            // The hypothesis still in the slot describes the file that just
+            // ended. Leaving it there lets the clock keep steering at that
+            // tempo until the worker finishes the old queue - which is the
+            // same lock STOP appears to release, because disarming clears
+            // `sounding` and the on-grid keep stands down.
+            neural.invalidatePublicationsBeforeNow();
+            // Stay armed. Do not restart the clock: an in-song tempo change
+            // never comes through here. A new file does, and the part has to
+            // leave the old grid before the decoder is allowed to defend it.
+            // `needsResync` adopts the new tempo only once that grid is valid,
+            // so a hypothesis that still says the old BPM cannot satisfy it
+            // (`hyp.valid` is `established`, which the restart clears).
+            if (tempoFollow && ! tapEstablished)
+            {
+                waitForQuantize = true;
+                quantizeWaitSamples = 0;
+                needsResync = true;
+            }
+        }
         lastInputEpoch = epoch;
         seenEpoch = true;
-        neural.setInputEpoch (epoch, preserveComb);
+        neural.setInputEpoch (epoch, preserveComb, dropQueued);
     }
 
     /** The un-normalised analysis input is plainly music-level. This must be

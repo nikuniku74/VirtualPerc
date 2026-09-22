@@ -26,6 +26,12 @@ public:
     void setCongaVolume (float v) noexcept { congaVolume = clamp01 (v); }
     void setClapVolume (float v) noexcept { clapVolume = clamp01 (v); }
     void setCembaloVolume (float v) noexcept { cembaloVolume = clamp01 (v); }
+    /** Sample family each FEEL slot plays. Copied from EngineSettings
+        once per block, same as the volumes. */
+    void setShakerSound (int s) noexcept { shakerSound = s; groove.setShakerSound (s); }
+    void setCongaSound (int s) noexcept { congaSound = s; groove.setCongaSound (s); }
+    void setCembaloSound (int s) noexcept { cembaloSound = s; groove.setCembaloSound (s); }
+    void setClapSound (int s) noexcept { clapSound = s; groove.setClapSound (s); }
     void setReverbAmount (float amount) noexcept;
     /** Playback-rate ratio for the *recorded* drums (the congas and everything
         else that is not unpitched metal). `kDrumTune` by default. Exposed so a
@@ -88,9 +94,10 @@ public:
     /** Start one stroke directly, bypassing the groove. Diagnostic only: it is
         how the timing probe measures an articulation's own attack, which is
         otherwise buried under whatever the pattern happens to be playing. */
-    void triggerForTest (Stroke stroke, float velocity, int sampleOffset) noexcept
+    void triggerForTest (Stroke stroke, float velocity, int sampleOffset,
+                         KitSound part = KitSound::count) noexcept
     {
-        trigger (stroke, velocity, sampleOffset);
+        trigger (stroke, velocity, sampleOffset, part);
     }
 
     /** How far above their recorded pitch the drums are being played, as a
@@ -156,6 +163,9 @@ private:
         int   length = 0;
         const Sample* sample = nullptr;
         Stroke stroke = Stroke::shakerDown;
+        /** The FEEL knob that wrote this hit. Volume stays here; the
+            sample comes from the assigned instrument's own strokes. */
+        KitSound volumeFrom = KitSound::congas;
         float gainL = 0.0f;
         float gainR = 0.0f;
         bool  active = false;
@@ -173,14 +183,17 @@ private:
     void   layerFromRecording (Sample& dest, const std::vector<float>& src,
                                Stroke stroke, float force, std::uint32_t seed) noexcept;
     Voice& allocateVoice() noexcept;
-    void   trigger (Stroke stroke, float velocity, int sampleOffset) noexcept;
+    void   trigger (Stroke stroke, float velocity, int sampleOffset,
+                    KitSound part = KitSound::count) noexcept;
     void   releaseStroke (Stroke stroke) noexcept;
     void   discardPendingVoices() noexcept;
     void   applyPendingGrooveControls() noexcept;
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeCymbal (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
+    void   synthesizeTriangle (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeClap (Sample& s, int layer, std::uint32_t seed) noexcept;
+    void   chokeTriangles() noexcept;
     void   applyReverbParams() noexcept;
     const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
 
@@ -197,6 +210,10 @@ private:
     float congaVolume = 1.0f;
     float clapVolume = 1.0f;
     float cembaloVolume = 1.0f;
+    int   shakerSound = static_cast<int> (KitSound::shaker);
+    int   congaSound = static_cast<int> (KitSound::congas);
+    int   cembaloSound = static_cast<int> (KitSound::cembalo);
+    int   clapSound = static_cast<int> (KitSound::clap);
     float reverbAmount = 0.30f;
     /** Playback-rate ratio for the recorded drums. Defaults to `kDrumTune`
         (a perfect fourth above the samples' natural pitch) in the .cpp. */

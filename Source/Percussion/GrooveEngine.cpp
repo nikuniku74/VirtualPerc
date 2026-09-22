@@ -835,60 +835,134 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     const int beat = step / 4;
     const float accent = spec.accent[beat & 3];
 
+    auto kitOf = [] (int raw, KitSound identity) noexcept -> KitSound
+    {
+        if (raw >= 0 && raw < static_cast<int> (KitSound::count))
+            return static_cast<KitSound> (raw);
+        return identity;
+    };
+
+    // Four FEEL knobs, four slots. Groove is keyed by the assigned instrument,
+    // not by which knob it sits on: congas on knob 1 still play the conga
+    // tables, never the shaker weights remapped onto open/heel. The knob is
+    // enable, volume and colour.
+    struct Slot { bool on; KitSound id; KitSound sound; };
+    const Slot slots[4] = {
+        { shakerOn,  KitSound::shaker,  kitOf (shakerSound,  KitSound::shaker) },
+        { congasOn,  KitSound::congas,  kitOf (congaSound,   KitSound::congas) },
+        { cembaloOn, KitSound::cembalo, kitOf (cembaloSound, KitSound::cembalo) },
+        { clapOn,    KitSound::clap,    kitOf (clapSound,    KitSound::clap) },
+    };
+
+    // Triangle is its own 16th ostinato, not a remapped shaker/conga table.
+    // The clock already visits every sixteenth (BeatTracker keeps 4 pulses
+    // per beat); setSubdivision only thins shaker and cembalo. delayBeats
+    // stays 0. Four identical beats: stopped #1, stopped #2, open, rest.
+    //
+    //   0/4/8/12  stopped #1 on the battere. Never open, never #2.
+    //   1/5/9/13  stopped #2 (the "e").
+    //   2/6/10/14 open on the "&" - short tap plus wet tail.
+    //   3/7/11/15 rest, so the tail can speak through the "a".
+    auto emitTriangle = [&] (KitSound slot)
+    {
+        if (n >= maxOut)
+            return;
+        const int within = step & 3;
+        if (within == 3)
+            return;
+        Stroke st = Stroke::triangleOpen;
+        float vel = 0.90f;
+        if (within == 0)
+        {
+            st = Stroke::triangleClosed;
+            vel = 0.62f;
+        }
+        else if (within == 1)
+        {
+            st = Stroke::triangleClosed2;
+            vel = 0.62f;
+        }
+        out[n].stroke = st;
+        out[n].velocity = humanVelocity (vel * dynamicGain());
+        out[n].delayBeats = 0.0f;
+        out[n].part = slot;
+        ++n;
+    };
+
+    bool anyShaker = false, anyCembalo = false, anyConga = false;
+    for (const auto& sl : slots)
+    {
+        if (! sl.on)
+            continue;
+        switch (sl.sound)
+        {
+            case KitSound::triangle: emitTriangle (sl.id); break;
+            case KitSound::shaker:   anyShaker = true;     break;
+            case KitSound::cembalo:  anyCembalo = true;    break;
+            case KitSound::congas:   anyConga = true;      break;
+            case KitSound::clap:
+            case KitSound::count:    break;
+        }
+    }
+
     // One decision for both timbres: NATURALE is a property of the part, not
     // of the sample. Rolling twice would desync shaker and cembalo on the
     // same sixteenth. Skip the draw entirely when neither voice is on, so a
     // conga-only part does not spend RNG on ornaments nobody will hear.
-    const float shakerV = (shakerOn || cembaloOn)
+    const float shakerV = (anyShaker || anyCembalo)
                               ? soundingShaker (step, subdivisionAllowsStep, spec.shaker)
                               : 0.0f;
 
-    if (shakerOn && n < maxOut && shakerV > 0.0f)
+    if (shakerV > 0.0f)
     {
-        // Down on the pulse, up on the return. They are different strokes
-        // on a real shaker, not the same one twice, and playing them as the
-        // same one is what makes a shaker part sound like a click track
-        // with noise on it.
-        out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
-        out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
-        out[n].delayBeats = humanDelay (step);
-        ++n;
-    }
-
-    if (cembaloOn && n < maxOut && shakerV > 0.0f)
-    {
-        // Same table as the shaker, same thinning (and the same NATURALE
-        // exceptions), same accent, same down/up split - the only difference
-        // is the sample the two events end up pointing at. Independently
-        // switched, so shaker and cembalo can both be on (two timbres on the
-        // same part), just one, or neither.
-        out[n].stroke = (step % 4) == 0 ? Stroke::cembaloDown : Stroke::cembaloUp;
-        out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
-        out[n].delayBeats = humanDelay (step);
-        ++n;
+        for (const auto& sl : slots)
+        {
+            if (! sl.on || n >= maxOut)
+                continue;
+            if (sl.sound == KitSound::shaker)
+            {
+                // Down on the pulse, up on the return. They are different
+                // strokes on a real shaker, not the same one twice, and
+                // playing them as the same one is what makes a shaker part
+                // sound like a click track with noise on it.
+                out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
+                out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
+                out[n].delayBeats = humanDelay (step);
+                out[n].part = sl.id;
+                ++n;
+            }
+            else if (sl.sound == KitSound::cembalo)
+            {
+                // Same table as the shaker, same thinning (and the same
+                // NATURALE exceptions), same accent, same down/up split -
+                // the only difference is the sample. Independently switched.
+                out[n].stroke = (step % 4) == 0 ? Stroke::cembaloDown : Stroke::cembaloUp;
+                out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
+                out[n].delayBeats = humanDelay (step);
+                out[n].part = sl.id;
+                ++n;
+            }
+        }
     }
 
     // The clap: only the backbeat, and only once the bar it lands on is
-    // trustworthy.
-    //
-    // It does not read a style table - "2 and 4" is the whole pattern, not a
-    // figure that varies by style - and it does not follow the shaker's steps.
-    // `step` is already the app's *believed* bar position (see
-    // `PercussionEngine::render`, which folds a rotated `beatInBar` into this
-    // same grid), so a clap here already rotates with a corrected "one" for
-    // free. What it must not do is sound confidently on a "2 and 4" that turns
-    // out to be the song's actual 1 and 3 - hence the trust gate, which stays
-    // false until the listener has locked the bar or enough time has passed
-    // since the last automatic correction. See docs/TODO.md items 2 and 10.
-    if (clapOn && barTrustedFlag && n < maxOut && (step == 4 || step == 12))
+    // trustworthy. It does not read a style table and it does not follow
+    // the shaker's steps. `step` is already the app's believed bar position.
+    if (barTrustedFlag && (step == 4 || step == 12))
     {
         constexpr float kClapVelocity = 0.85f;
         if (v_survives (kClapVelocity))
         {
-            out[n].stroke = Stroke::clap;
-            out[n].velocity = humanVelocity (kClapVelocity * accent * dynamicGain());
-            out[n].delayBeats = humanDelay (step);
-            ++n;
+            for (const auto& sl : slots)
+            {
+                if (! sl.on || sl.sound != KitSound::clap || n >= maxOut)
+                    continue;
+                out[n].stroke = Stroke::clap;
+                out[n].velocity = humanVelocity (kClapVelocity * accent * dynamicGain());
+                out[n].delayBeats = humanDelay (step);
+                out[n].part = sl.id;
+                ++n;
+            }
         }
     }
 
@@ -903,28 +977,18 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     // late, and the one itself is left to the band.
     //
     // Every table below has been written that way, and this is the guard that
-    // keeps it true: it costs one comparison per pulse and it means a pattern
-    // edited later cannot quietly put a stroke back on the downbeat. The shaker
-    // is not covered by it - a shaker on the pulse is the pulse, and it is what
-    // the listener follows.
-    // Coarse grids suppress conga output, not the deterministic player state.
-    // Before congas shared this gate, an odd-step table hit or ghost consumed
-    // its velocity/timing draws and therefore fixed every later allowed hit.
-    // Generate into a bounded discard buffer on filtered steps so that stream
-    // remains bit-identical, while leaving the shaker's pre-existing
-    // skip-before-RNG behavior unchanged.
-    GrooveEvent discardedCongas[kMaxEvents];
-    GrooveEvent* congaOut = subdivisionAllowsStep ? out : discardedCongas;
-    const int congaMaxOut = subdivisionAllowsStep ? maxOut
-                                                  : std::min (maxOut, kMaxEvents);
-    int congaN = subdivisionAllowsStep ? n : 0;
-
-    if (congasOn && step != 0)
+    // keeps it true. The shaker is not covered by it - a shaker on the pulse
+    // is the pulse, and it is what the listener follows.
+    //
+    // Misure does not thin this figure. The clock already visits every
+    // sixteenth; setSubdivision only gates shaker and cembalo. Generate the
+    // native tables once (same RNG as a single conga slot) and copy them onto
+    // every knob assigned KitSound::congas, so knob 1 vs 2 vs 3 vs 4 cannot
+    // rewrite the marcha into another instrument's grid.
+    GrooveEvent native[kMaxEvents];
+    int nativeN = 0;
+    if (anyConga && step != 0)
     {
-        // An eight-bar sentence: A B A C  D B A, then the fill. The first four
-        // bars are still the original phrase - state it, answer it, state it,
-        // go somewhere - and D is the extra riff that stops the second half
-        // from being the first half again.
         const bool fill = isFillBar (barIndex);
         const int inPhrase = wrapBar (barIndex, 8);
         const Hit* bar = spec.barA;
@@ -950,18 +1014,17 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
             count = spec.nD;
         }
 
-        for (int i = 0; i < count && congaN < congaMaxOut; ++i)
+        for (int i = 0; i < count && nativeN < kMaxEvents; ++i)
         {
             if (bar[i].step != step)
                 continue;
-            // The quiet half of the figure goes first as the band comes down.
             if (! v_survives (bar[i].velocity))
                 continue;
-            congaOut[congaN].stroke = bar[i].stroke;
-            congaOut[congaN].velocity = humanVelocity (
+            native[nativeN].stroke = bar[i].stroke;
+            native[nativeN].velocity = humanVelocity (
                 bar[i].velocity * accent * dynamicGain());
-            congaOut[congaN].delayBeats = humanDelay (step);
-            ++congaN;
+            native[nativeN].delayBeats = humanDelay (step);
+            ++nativeN;
         }
 
         // Ghost notes: the barely-there fingertip strokes on the sixteenths a
@@ -970,26 +1033,34 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
         // have to stay quiet enough that you notice them only when they stop.
         // How many there are is part of the style: a pop record wants almost
         // none, a marcha is built out of them.
-        if (congaN < congaMaxOut && ! fill && (step % 2) == 1)
+        if (nativeN < kMaxEvents && ! fill && (step % 2) == 1)
         {
-            // Ghosts are the first thing to go: they are the part of the
-            // playing that exists only because there was room for it.
             const float chance = spec.ghostChance * intensity * (0.4f + 0.6f * humanize)
                                  * dynamics * dynamics;
             if (rng.nextFloat() < chance)
             {
-                congaOut[congaN].stroke =
+                native[nativeN].stroke =
                     rng.nextFloat() < 0.5f ? Stroke::toe : Stroke::heel;
-                congaOut[congaN].velocity =
+                native[nativeN].velocity =
                     humanVelocity (0.16f * accent * dynamicGain());
-                congaOut[congaN].delayBeats = humanDelay (step);
-                ++congaN;
+                native[nativeN].delayBeats = humanDelay (step);
+                ++nativeN;
             }
         }
     }
 
-    if (subdivisionAllowsStep)
-        n = congaN;
+    for (const auto& sl : slots)
+    {
+        if (! sl.on || sl.sound != KitSound::congas)
+            continue;
+        for (int i = 0; i < nativeN && n < maxOut; ++i)
+        {
+            out[n] = native[i];
+            out[n].part = sl.id;
+            ++n;
+        }
+    }
+
     return n;
 }
 

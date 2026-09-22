@@ -36,9 +36,15 @@ public:
         the metrical level turns on; the probabilities cannot. It defaults to
         zero for the callers that feed activations directly (tests, probes):
         with no band energy the level test simply never fires, which is the
-        behaviour those callers had before it existed. */
+        behaviour those callers had before it existed.
+
+        `highBand` is the mean of the top 16 log-mag bands of that same frame
+        (LogSpectFeatures::highBandEnergy, index 120..135). Same contract:
+        default 0, and the hats-only eighth fold stays shut when it is 0.
+        Probes do not pass it. */
     BeatHypothesis observe (float pBeat, float pDownbeat, float pNone,
-                            float lowBand = 0.0f) noexcept;
+                            float lowBand = 0.0f,
+                            float highBand = 0.0f) noexcept;
 
     /** The audio feeding this decoder has a hole in it: the FIFO overran and the
         worker never saw `lostSeconds` of input. Every interval measured across
@@ -187,6 +193,16 @@ public:
         (FEEL hats-then-Q); mute when lowBand is 0. */
     void setSounding (bool on) noexcept { sounding = on; }
 
+    /** The listener pressed "L'1 è QUI" on a quarter. `checkGridPhase` is
+        held while sounding, so an automatic fold cannot unflip a half that
+        was already wrong when the part came in. This is the one command
+        that may: NOW is a beat. Hats after a hole still cannot steal
+        lastBeat (`offLast` ~0.5 fails the 0.40 reopen). Does not bump
+        `gridSerial`: the clock has already snapped, and a rebuild-regrab
+        would stop the part. Clears `longFitPeriodHeld` with the fits:
+        lastBeat is now, so fast motion would keep the pre-button period. */
+    void declarePulseHere() noexcept;
+
     void setUserOctave (int octaves) noexcept;
     int  userOctave() const noexcept { return octaveShift; }
 
@@ -196,7 +212,12 @@ private:
         naming, and leaves it alone when the state space has nothing to say. */
     float foldToAnchor (float bpmValue) const noexcept;
     void  registerBeat (double beatTimeSec, float strength,
-                        float lowBand = 0.0f) noexcept;
+                        float lowBand = 0.0f,
+                        float highBand = 0.0f) noexcept;
+    /** True once a kick-body beat has been accepted and a later crest
+        arrives more than one beat after it with the body still gone.
+        Hats between kicks (one beat) stay on the ordinary path. */
+    bool  kitBodyHolding (double nowSec) const noexcept;
     /** Use repeated downbeat spacing to distinguish a 50 BPM quarter from its
         100 BPM hi-hat eighths: three true downbeats contain two complete
         intervals, each eight accepted fast-grid beats long instead of four.
@@ -227,7 +248,8 @@ private:
         than the fit being late. So the history gets them and the counter does
         not. */
     void  storeBeatForFit (double beatTimeSec, float strength,
-                           float lowBand = 0.0f) noexcept;
+                           float lowBand = 0.0f,
+                           float highBand = 0.0f) noexcept;
     /** The abrupt-change detector, fed every peak that clears the refractory
         and minimum-spacing checks - including the ones the on-grid gate is
         about to throw away, which on a large step is all of them.
@@ -350,6 +372,11 @@ private:
         cadence. Zero on the click bank. The sounding hat-to-kick half
         steal reads this and must stay mute when it is zero. */
     float  lastAcceptedLowBand = 0.0f;
+    /** A beat whose low band cleared the kick-body mute. Zero on the
+        click bank and the motion matrix, which never pass lowBand, so
+        the drum-pause hold below cannot arm there. */
+    bool   kitBodyHeard = false;
+    double kitBodyLastSec = -1.0;
     /** A time at which a beat of the committed grid falls, taken from the
         fit rather than from the last peak. The phase is read off this. */
     double gridAnchorSec = -1.0;
@@ -368,6 +395,10 @@ private:
         between frames as often as on one. */
     float  prevLowBand = 0.0f;
     float  prevPrevLowBand = 0.0f;
+    /** Same three-frame window for the top-octave bands. Default 0, so a
+        caller that never passes `highBand` cannot open the hats-only fold. */
+    float  prevHighBand = 0.0f;
+    float  prevPrevHighBand = 0.0f;
     float  prevDownbeat = 0.0f;
     float  prevPrevDownbeat = 0.0f;
     float  lastDownbeatStrength = 0.0f;
@@ -395,6 +426,11 @@ private:
         omits `observe`'s fourth argument. Kick-vs-hat acquire fold
         reads this and must stay mute when it is zero. */
     float  beatLowBand[kBeatHistory] {};
+    /** Top-octave energy at the accepted peak, same three-frame max as
+        `beatLowBand`. Zero on the click bank and every probe: `observe`'s
+        fifth argument defaults to 0 and `storeBeatForFit` defaults to 0.
+        The hats-only eighth fold reads this and stays mute at 0. */
+    float  beatHighBand[kBeatHistory] {};
     int    beatWrite = 0;
     int    beatFilled = 0;
     uint32_t beatSerial = 0;
@@ -521,6 +557,13 @@ private:
     float motionBridgeAnchorBpm = 0.0f;
     bool  ioiClockLead = false;
     int   ioiClockLeadBeats = 0;
+    /** Set only when the four-term long-fit phase gate opens. Cleared
+        when fast motion is no longer current, including a beat train that
+        `resetMotionShadow` has already dropped `ioiClockLead` from, and
+        on `declarePulseHere` (that command sets lastBeat to now, so fast
+        motion would otherwise keep the pre-button period). Does not arm
+        `ioiLead` or the 0.01 s tau. */
+    bool  longFitPeriodHeld = false;
     // Sounding stale-grid reopen: a leftover lattice after a pause can
     // look like a causal step (100→150) while the comb still names the
     // held tempo. Remember the reopen so that confirmation can refuse a
@@ -546,6 +589,9 @@ private:
         to release a direct feed one vote early on a weak linear ramp without
         walking the published BPM. */
     int   fixedWalkRun = 0;
+    /** Previous beat's IOI-indexed 4-beat, when it already sat on a
+        step the 8-beat had not taken. Zero unless that beat passed. */
+    float stepFourHoldBpm = 0.0f;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;
     /** Beats of catch-up still owed after leaving FISSO. The number held

@@ -110,10 +110,36 @@ namespace
 
     // FEEL voice knobs. Each part has its own fill so the four tiles read
     // apart without opening the label.
-    juce::Colour voiceShakerOn()  { return juce::Colour (0xffaab0b8); } // grigetto
-    juce::Colour voiceCongasOn()  { return juce::Colour (0xffd3925c); } // marroncino
-    juce::Colour voiceCembaloOn() { return juce::Colour (0xffe6c43c); } // dorato
-    juce::Colour voiceClapOn()    { return juce::Colour (0xff62b8e4); } // azzurrino
+    juce::Colour voiceShakerOn()   { return juce::Colour (0xffaab0b8); } // grigetto
+    juce::Colour voiceCongasOn()   { return juce::Colour (0xffd3925c); } // marroncino
+    juce::Colour voiceCembaloOn()  { return juce::Colour (0xffe6c43c); } // dorato
+    juce::Colour voiceClapOn()     { return juce::Colour (0xff62b8e4); } // azzurrino
+    juce::Colour voiceTriangleOn() { return juce::Colour (0xff2ee8d0); } // turchese
+    juce::Colour colourForKitSound (vp::KitSound s) noexcept
+    {
+        switch (s)
+        {
+            case vp::KitSound::shaker:   return voiceShakerOn();
+            case vp::KitSound::congas:   return voiceCongasOn();
+            case vp::KitSound::cembalo:  return voiceCembaloOn();
+            case vp::KitSound::clap:     return voiceClapOn();
+            case vp::KitSound::triangle: return voiceTriangleOn();
+            case vp::KitSound::count:    break;
+        }
+        return voiceShakerOn();
+    }
+    // Inner disc of a FEEL knob: the accent pulled toward charcoal so it
+    // reads as a pastel, not a saturated chip. Picker cells use this same
+    // mix so a cell and its knob are one colour.
+    juce::Colour knobInterior (juce::Colour accent) noexcept
+    {
+        return accent.interpolatedWith (juce::Colour (0xff0a0a0c),
+                                        gDarkMode ? 0.52f : 0.36f);
+    }
+    juce::Colour knobInteriorForKitSound (vp::KitSound s) noexcept
+    {
+        return knobInterior (colourForKitSound (s));
+    }
     juce::Font fontDisplay (float h)
     {
         return juce::Font (juce::FontOptions().withName ("Futura").withStyle ("Bold")
@@ -198,18 +224,167 @@ namespace
         g.fillEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f);
     }
 
+    float unitRamp (float x, float from, float to) noexcept
+    {
+        if (to <= from)
+            return x >= to ? 1.0f : 0.0f;
+        return juce::jlimit (0.0f, 1.0f, (x - from) / (to - from));
+    }
+
+    /** Where a hit sits against the pulse, as a colour. Display only.
+
+        A frame of the analysis is 20 ms of jitter (`TempoFollower`), and a
+        lean inside that — a little past it, still — is not something a
+        listener hears as the part fighting the song. The halo stays green
+        through 30 ms. Past that pocket, `accuracy` falls from 1 to 0 by
+        85 ms and the paint uses it as how much red to show: a mild flam is
+        a quieter red, a hit that sits on the wrong part of the beat is a
+        full one. The 8 ms phase-lock bench is a tighter bar than this halo.
+
+        The clock's rate bend is not scored: that bend is how a small error
+        gets closed. `amount` is whether the halo is drawn at all. An empty
+        stage stays dark rather than sitting on red before anyone has played. */
+    struct TempoBloom
+    {
+        float accuracy = 0.5f;
+        float amount = 0.0f;
+    };
+
+    TempoBloom tempoBloomFor (const vp::EngineSnapshot& s) noexcept
+    {
+        using B = vp::FollowBar;
+        const bool haveTempo = s.bpm > 40.0f;
+        const bool hot = stateIsHot (s.followBar);
+        const bool weak = s.followBar == B::weakFollow;
+        const bool searching = weak
+                            || s.followBar == B::listening
+                            || s.followBar == B::calibrating
+                            || s.followBar == B::recalin
+                            || s.followBar == B::waitBeat
+                            || s.followBar == B::waitStart;
+        const float heard = juce::jmax (s.inputPeak, s.analysisPeak);
+        const bool silent = heard < kInputSilentPeak;
+
+        TempoBloom out;
+        if (! haveTempo && ! hot && ! searching)
+            return out;
+
+        if (silent && ! hot && s.confidence < 0.25f)
+        {
+            out.accuracy = 1.0f;
+            out.amount = 0.08f;
+            return out;
+        }
+
+        const float bpm = juce::jmax (40.0f, s.clockBpm > 40.0f ? s.clockBpm : s.bpm);
+        float errMs = std::abs (s.phaseErrorBeats) * 60000.0f / bpm;
+        // A recorded loop can sit ahead of the clock while the onset residual
+        // is still ~0. The listener hears the loop.
+        if (s.loopPlaying)
+            errMs = juce::jmax (errMs, std::abs (s.loopPhaseMs));
+
+        // 0 inside the pocket, 1 once the hit is far enough to fight the beat.
+        float bad = unitRamp (errMs, 30.0f, 85.0f);
+
+        // Not locked is its own problem, independent of a small residual.
+        if (weak)
+            bad = juce::jmax (bad, 0.80f);
+        else if (searching && ! hot)
+            bad = juce::jmax (bad, 0.55f);
+        else if (! hot)
+            bad = juce::jmax (bad, 1.0f - unitRamp (s.confidence, 0.22f, 0.60f));
+
+        // FISSO: the phase loop stands down, so a held error of 0 is not
+        // a verdict. A few percent against the lock is still the pocket;
+        // further than that is the same red ramp. Fold a half or a double —
+        // an octave choice is not a miss.
+        if (! s.tempoFollow && haveTempo)
+        {
+            const float analysis = s.combBpm > 40.0f ? s.combBpm
+                                  : (s.neuralBpm > 40.0f ? s.neuralBpm : 0.0f);
+            if (analysis > 40.0f)
+            {
+                float ratio = analysis / s.bpm;
+                while (ratio > 1.41421356f)
+                    ratio *= 0.5f;
+                while (ratio < 0.70710678f)
+                    ratio *= 2.0f;
+                bad = juce::jmax (bad, unitRamp (std::abs (ratio - 1.0f), 0.03f, 0.08f));
+                if (! s.hypValid)
+                    bad = juce::jmax (bad, 0.35f);
+            }
+            else if (! hot)
+                bad = juce::jmax (bad, 0.45f);
+        }
+
+        out.accuracy = 1.0f - juce::jlimit (0.0f, 1.0f, bad);
+
+        if (hot)
+            out.amount = 1.0f;
+        else if (haveTempo && (s.hypValid || s.confidence > 0.30f))
+            out.amount = 0.82f;
+        else if (searching || haveTempo)
+            out.amount = 0.62f;
+        else
+            out.amount = 0.20f;
+
+        if (silent && ! hot)
+            out.amount *= 0.35f;
+
+        return out;
+    }
+
+    /** Green in the pocket. Outside it the hue is already red — mixing green
+        into red in RGB goes olive — and the brightness is how much red the
+        problem is worth. */
+    juce::Colour tempoBloomColour (float accuracy) noexcept
+    {
+        const float bad = 1.0f - juce::jlimit (0.0f, 1.0f, accuracy);
+        if (bad <= 0.001f)
+            return juce::Colour (0xff3cde7c);
+        const float bri = 0.42f + 0.58f * std::pow (bad, 0.80f);
+        return juce::Colour::fromHSV (0.0f, 0.90f, bri, 1.0f);
+    }
+
+    /** Soft elliptical halo. A circle wide enough to cover the BPM and the
+        quarters spills onto START; scaling Y around the centre keeps the
+        wash on that band. The gradient is already clear at the rim, so the
+        ellipse is not a box the way the MIC glow was when it was clipped
+        to the slider rectangle. Light keeps more of the alpha than the
+        brand glow does — a third of this wash disappears on white. */
+    void paintEllipticalBloom (juce::Graphics& g, juce::Point<float> centre,
+                               float rx, float ry, juce::Colour col, float alpha)
+    {
+        if (rx < 2.0f || ry < 2.0f || alpha <= 0.004f)
+            return;
+        if (! gDarkMode)
+            alpha *= 0.58f;
+
+        g.saveState();
+        g.addTransform (juce::AffineTransform::scale (1.0f, ry / rx, centre.x, centre.y));
+        juce::ColourGradient grad (col.withAlpha (alpha), centre.x, centre.y,
+                                   col.withAlpha (0.0f), centre.x + rx, centre.y, true);
+        g.setGradientFill (grad);
+        g.fillEllipse (centre.x - rx, centre.y - rx, rx * 2.0f, rx * 2.0f);
+        g.restoreState();
+    }
+
     void drawFlatButton (juce::Graphics& g, juce::Button& button, juce::Colour fill,
                          bool down)
     {
         auto bounds = button.getLocalBounds().toFloat();
         const bool voiceOn = button.getToggleState()
                              && (bool) button.getProperties().getWithDefault ("voiceOnFill", false);
+        const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
         // Voice tiles keep their own fill even when saturated; hotFill is
         // the START/lock language and would otherwise paint them fuchsia.
-        const bool hotFill = ! voiceOn && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
+        // chipFill is a kit-sound identity (not a hot START state).
+        const bool hotFill = ! voiceOn && ! chipFill
+                             && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
         const bool active = button.getToggleState() || down || hotFill;
 
-        g.setColour (hotFill || down ? fuchsia() : (voiceOn ? fill : ink()));
+        g.setColour ((hotFill || (down && ! chipFill)) ? fuchsia()
+                                                     : (voiceOn || chipFill ? fill : ink()));
         g.fillRect (bounds);
 
         // MISURE is a row of squares: without an edge they read as
@@ -247,14 +422,22 @@ void MainComponent::AppLookAndFeel::refreshColours()
 juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
 {
     const float dim = juce::jmin ((float) buttonHeight, (float) juce::jmax (1, button.getWidth()));
+    const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
+    // Kit-sound chips: a step up from the 9 px Misure floor, not a title.
+    if (chipFill)
+        return fontUi (juce::jmax (12.0f, dim * 0.38f));
     return fontUi (juce::jmax (9.0f, dim * 0.28f));
 }
 
 void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
                                                     bool, bool)
 {
+    const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
     const bool compact = button.getWidth() <= button.getHeight() + 8;
-    auto area = button.getLocalBounds().reduced (compact ? 2 : 6, compact ? 2 : 4);
+    // chipFill cells hug their label; keep the 6 px Misure side inset even
+    // when the chip is narrower than a square.
+    const bool tight = compact && ! chipFill;
+    auto area = button.getLocalBounds().reduced (tight ? 2 : 6, tight ? 2 : 4);
     if (area.isEmpty())
         return;
 
@@ -266,11 +449,13 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
 
     g.setFont (f);
-    const float alpha = button.isEnabled() ? (compact && ! button.getToggleState() ? 0.55f : 1.0f) : 0.5f;
+    const float alpha = button.isEnabled()
+                            ? (tight && ! button.getToggleState() ? 0.55f : 1.0f)
+                            : 0.5f;
     g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
                                                             : juce::TextButton::textColourOffId)
                      .withMultipliedAlpha (alpha));
-    if (compact)
+    if (tight)
         g.drawFittedText (label, area, juce::Justification::centred, 2);
     else
         g.drawText (label, area, juce::Justification::centred, false);
@@ -476,11 +661,14 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
                                                        juce::PathStrokeType::rounded));
         }
 
-        paintRadial (g, centre, innerR * 1.7f, accent, 0.14f * alpha);
-        g.setColour (juce::Colour (0xff0a0a0c).withMultipliedAlpha (alpha));
+        paintRadial (g, centre, innerR * 1.7f, accent, (voiceKnob ? 0.28f : 0.14f) * alpha);
+        const auto disc = voiceKnob ? knobInterior (accent) : juce::Colour (0xff0a0a0c);
+        g.setColour (disc.withMultipliedAlpha (alpha));
         g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
-        g.setColour (juce::Colour (0xff2a2a30).withMultipliedAlpha (alpha));
-        g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f, 1.2f);
+        g.setColour ((voiceKnob ? accent : juce::Colour (0xff2a2a30))
+                         .withMultipliedAlpha (alpha));
+        g.drawEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f,
+                       voiceKnob ? 2.0f : 1.2f);
     }
 
     const juce::Colour needle = micMeter && micLook.amount > 0.08f ? micLook.colour : accent;
@@ -565,6 +753,7 @@ MainComponent::MainComponent()
 
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
+    addChildComponent (soundMenu);
 
     // Pressing the level you are already on is the way back to AUTO: the same
     // idiom the bar button used to use, and the only way out that does not need
@@ -591,8 +780,9 @@ MainComponent::MainComponent()
     // hands the count back without rotating: the old five-tap unlock read as a
     // button stuck on. A TAP that declares the one still locks via the tracker.
     // See docs/TODO.md item 13. The button has one function, not two: it
-    // declares the one *here* - the beat the clock is on becomes beat zero -
-    // and locks the bar. It is not a nudge and not a toggle.
+    // The button "L'1 è QUI": this instant is the one. Snaps the clock onto
+    // that quarter (a half-beat correction is allowed) and locks the bar.
+    // It is not a nudge and not a toggle.
     barButton.onClick = [this]
     {
         engine.settings().barDeclare.fetch_add (1);
@@ -762,6 +952,9 @@ MainComponent::MainComponent()
                 [this] (float v) { engine.settings().clapVolume.store (v); });
     auto tapVoice = [this] (std::atomic<bool>& flag)
     {
+        // Arming a voice, triangle included, is a flag. The bank is already
+        // at the device rate. Opening another client here is what drops a
+        // Bluetooth route.
         flag.store (! flag.load());
         refreshVoiceKnobs();
         savePrefs();
@@ -770,6 +963,15 @@ MainComponent::MainComponent()
     congaVolSlider.onTap   = [this, tapVoice] { tapVoice (engine.settings().congasEnabled); };
     cembaloVolSlider.onTap = [this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); };
     clapVolSlider.onTap    = [this, tapVoice] { tapVoice (engine.settings().clapEnabled); };
+    auto holdVoice = [this] (int slot)
+    {
+        styleMenu.dismiss();
+        soundMenu.showFor (slot);
+    };
+    shakerVolSlider.onHold  = [this, holdVoice] { holdVoice (0); };
+    congaVolSlider.onHold   = [this, holdVoice] { holdVoice (1); };
+    cembaloVolSlider.onHold = [this, holdVoice] { holdVoice (2); };
+    clapVolSlider.onHold    = [this, holdVoice] { holdVoice (3); };
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 4.0, 1.00, 1.0,
                 [this] (float v) { engine.settings().inputGain.store (v); },
@@ -1116,18 +1318,71 @@ void MainComponent::refreshThemeColours()
     refreshVoiceKnobs();
 }
 
+std::atomic<int>& MainComponent::kitSoundAtomic (int slot) noexcept
+{
+    switch (slot)
+    {
+        case 0:  return engine.settings().shakerSound;
+        case 1:  return engine.settings().congaSound;
+        case 2:  return engine.settings().cembaloSound;
+        default: return engine.settings().clapSound;
+    }
+}
+
+void MainComponent::assignKitSound (int slot, vp::KitSound sound)
+{
+    const int want = static_cast<int> (sound);
+    if (want < 0 || want >= static_cast<int> (vp::KitSound::count))
+        return;
+    // A sample family, including triangle, is only which strokes the groove
+    // emits. It must not reopen the device or write a hardware rate: on
+    // Bluetooth that renegotiates the route (often onto 16 kHz SCO) and the
+    // session stops. Takes that are not at the device rate are resampled in
+    // PercussionEngine::loadNamedWav when the bank is built.
+    // One instrument on one knob. The picker already omits ids sitting on
+    // the other three; refuse here so a stale click or a prefs reload
+    // cannot put the same KitSound on two slots.
+    for (int s = 0; s < 4; ++s)
+    {
+        if (s == slot)
+            continue;
+        if (kitSoundAtomic (s).load() == want)
+            return;
+    }
+    kitSoundAtomic (slot).store (want);
+    refreshVoiceKnobs();
+    savePrefs();
+}
+
 void MainComponent::refreshVoiceKnobs()
 {
-    auto paint = [] (juce::Slider& s, juce::Label& name, bool on)
+    auto assigned = [] (const std::atomic<int>& a, vp::KitSound identity)
+    {
+        const int v = a.load();
+        if (v >= 0 && v < static_cast<int> (vp::KitSound::count))
+            return static_cast<vp::KitSound> (v);
+        return identity;
+    };
+    auto paint = [] (juce::Slider& s, juce::Label& name, bool on, vp::KitSound sound)
     {
         s.getProperties().set ("voiceEnabled", on);
+        s.getProperties().set ("voiceOnFill", true);
+        const auto fill = colourForKitSound (sound);
+        s.setColour (juce::Slider::rotarySliderFillColourId, fill);
+        name.setColour (juce::Label::textColourId, fill);
+        name.setText (vp::toString (sound), juce::dontSendNotification);
         name.setAlpha (on ? 1.0f : 0.42f);
         s.repaint();
     };
-    paint (shakerVolSlider,  shakerVolLabel,  engine.settings().shakerEnabled.load());
-    paint (congaVolSlider,   congaVolLabel,   engine.settings().congasEnabled.load());
-    paint (cembaloVolSlider, cembaloVolLabel, engine.settings().cembaloEnabled.load());
-    paint (clapVolSlider,    clapVolLabel,    engine.settings().clapEnabled.load());
+    auto& cfg = engine.settings();
+    paint (shakerVolSlider,  shakerVolLabel,  cfg.shakerEnabled.load(),
+           assigned (cfg.shakerSound, vp::KitSound::shaker));
+    paint (congaVolSlider,   congaVolLabel,   cfg.congasEnabled.load(),
+           assigned (cfg.congaSound, vp::KitSound::congas));
+    paint (cembaloVolSlider, cembaloVolLabel, cfg.cembaloEnabled.load(),
+           assigned (cfg.cembaloSound, vp::KitSound::cembalo));
+    paint (clapVolSlider,    clapVolLabel,    cfg.clapEnabled.load(),
+           assigned (cfg.clapSound, vp::KitSound::clap));
 }
 
 void MainComponent::startPressed()
@@ -1244,17 +1499,89 @@ int MainComponent::requestedBufferFrames() const
     return bufferChoice > 0 ? bufferChoice : 0;
 }
 
+double MainComponent::snapToOfferedRate (double rate) const
+{
+    if (rate < 22050.0 || rate > 192000.0)
+        return 0.0;
+
+    auto* dev = deviceManager.getCurrentAudioDevice();
+    if (dev == nullptr)
+        return rate;
+
+    const auto rates = dev->getAvailableSampleRates();
+    if (rates.isEmpty())
+        return rate;
+
+    double best = 0.0;
+    double bestDist = 1.0e12;
+    for (double r : rates)
+    {
+        if (r < 22050.0 || r > 192000.0)
+            continue;
+        const double d = std::abs (r - rate);
+        if (d < bestDist)
+        {
+            bestDist = d;
+            best = r;
+        }
+    }
+    if (best >= 22050.0 && bestDist < 1.0)
+        return best;
+
+    // 48 kHz before 44.1. A Bluetooth A2DP route is often already at 48 kHz
+    // and will not keep 44.1; 44.1 is what a requested rate of 0 used to
+    // become, because the iOS device object is constructed at 44100 and that
+    // value is in the explicit list.
+    static constexpr double kPrefer[] = { 48000.0, 44100.0, 96000.0, 88200.0 };
+    for (double p : kPrefer)
+        for (double r : rates)
+            if (std::abs (r - p) < 1.0)
+                return r;
+
+    for (double r : rates)
+        if (r >= 44100.0 && r <= 192000.0)
+            return r;
+
+    return best >= 22050.0 ? best : 0.0;
+}
+
 double MainComponent::deviceSampleRate() const
 {
     if (clockHz > 0)
         return static_cast<double> (clockHz);
 
-    // AUTO. Not a fallback to 48 k: the number the session reports is the one
-    // the interface is clocked at, and handing JUCE exactly that number is what
-    // makes opening the device cost nothing. Off-device it is 0, and 0 travels
-    // all the way out as "do not write a rate anywhere".
+    if (overrideAutoRate >= 22050.0)
+        return overrideAutoRate;
+
+    // A unit that is already calling us keeps its clock. AUTO after a manual
+    // 44.1 or 48 choice inherits that live rate and does not open again.
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+    {
+        const double cur = dev->getCurrentSampleRate();
+        if (dev->isPlaying() && cur >= 22050.0 && cur <= 192000.0)
+        {
+            const double snapped = snapToOfferedRate (cur);
+            return snapped >= 22050.0 ? snapped : cur;
+        }
+    }
+
+    if (startupHardwareRate >= 22050.0)
+    {
+        const double snapped = snapToOfferedRate (startupHardwareRate);
+        if (snapped >= 22050.0)
+            return snapped;
+    }
+
     const double hw = vp::sessionSampleRate();
-    return hw > 8000.0 && hw <= 192000.0 ? hw : 0.0;
+    if (hw >= 22050.0 && hw <= 192000.0)
+    {
+        const double snapped = snapToOfferedRate (hw);
+        if (snapped >= 22050.0)
+            return snapped;
+    }
+
+    const double fallback = snapToOfferedRate (48000.0);
+    return fallback >= 22050.0 ? fallback : 48000.0;
 }
 
 int MainComponent::deviceBufferFrames() const
@@ -1288,13 +1615,22 @@ void MainComponent::openAudioDevice (bool granted)
         // Session first, device second. It used to be the other way round -
         // open at whatever came out, then set the category, then ask for 48 kHz
         // and a 256-frame buffer whatever the interface was on, then close and
-        // reopen - and every one of those steps re-clocks an interface the whole
-        // room is listening through. With the hardware already settled, the open
-        // below lands on it and applyAudioSetup has nothing left to change.
+        // reopen. AUTO still writes no rate here: the number the hardware is
+        // already on has to be read before JUCE's open. The iOS device is
+        // constructed at 44100, a requested 0 becomes that 44100, and
+        // setPreferredSampleRate(44100) on a 48 kHz Bluetooth route drops the
+        // callback. finishInitialDeviceStart opens once more only when that
+        // first open did not land on the rate just read.
         vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
                                    inputProcessing });
+        if (clockHz == 0)
+        {
+            const double hw = vp::sessionSampleRate();
+            if (hw >= 22050.0 && hw <= 192000.0)
+                startupHardwareRate = hw;
+        }
         setAudioChannels (ins, 2);
-        applyAudioSetup (false);
+        finishInitialDeviceStart();
         return;
     }
 
@@ -1306,7 +1642,14 @@ void MainComponent::openAudioDevice (bool granted)
 
 void MainComponent::applyAudioSetup (bool claimInputChannels)
 {
-    vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
+    // AUTO with a live device passes 0: the session is already on its clock
+    // and a redundant setPreferredSampleRate is a route change. An explicit
+    // clock, and the one corrective first open, pass the rate they are about
+    // to open at so the session and the unit agree.
+    const double sessionRate = (clockHz > 0 || overrideAutoRate >= 22050.0)
+                                   ? deviceSampleRate()
+                                   : requestedSampleRate();
+    vp::prepareAudioSession ({ sessionRate, requestedBufferFrames(),
                                inputProcessing });
 
     auto setup = deviceManager.getAudioDeviceSetup();
@@ -1338,6 +1681,69 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
     const auto err = deviceManager.setAudioDeviceSetup (setup, true);
     juce::ignoreUnused (err);
     applyInputProcessing();
+}
+
+void MainComponent::finishInitialDeviceStart()
+{
+    auto* dev = deviceManager.getCurrentAudioDevice();
+    const double live = dev != nullptr ? dev->getCurrentSampleRate() : 0.0;
+    const bool playing = dev != nullptr && dev->isPlaying();
+
+    double want = 0.0;
+    if (clockHz > 0)
+        want = static_cast<double> (clockHz);
+    else if (startupHardwareRate >= 22050.0)
+        want = startupHardwareRate;
+    else
+    {
+        const double hw = vp::sessionSampleRate();
+        if (hw >= 22050.0 && hw <= 192000.0)
+            want = hw;
+        else if (live >= 22050.0 && live <= 192000.0)
+            want = live;
+        else
+            want = 48000.0;
+    }
+
+    // The iOS device object is constructed at 44100, so a requested 0 becomes
+    // 44100 even when the route is already at something else. If the unit is
+    // actually running at a different full-band rate, that is the rate the
+    // route accepted — keep it. The failure this exists to correct is the
+    // other way round: hardware was read at 48 kHz and the open came out at
+    // the constructed 44100.
+    if (clockHz == 0 && playing && audioReady
+        && live >= 22050.0 && live <= 192000.0
+        && std::abs (live - want) >= 1.0
+        && std::abs (live - 44100.0) >= 1.0
+        && std::abs (want - 44100.0) < 1.0)
+        want = live;
+
+    const double snapped = snapToOfferedRate (want);
+    if (snapped >= 22050.0)
+        want = snapped;
+
+    // Same test the clock buttons pass: the open rate has to be one the
+    // device lists, the unit has to be running, and prepareToPlay has to
+    // have run. A first open that came out at 44100 while the route was
+    // already at 48 kHz looks open and is silent until someone presses
+    // 44.1 or 48 — that press is this call.
+    const bool healthy = playing && audioReady && live >= 22050.0
+                         && std::abs (live - want) < 1.0;
+    if (! healthy)
+    {
+        overrideAutoRate = want;
+        // setAudioDeviceSetup returns without touching the unit when the
+        // setup compares equal. The rate-0 open can already be sitting on
+        // 44100 and still never have delivered audioDeviceAboutToStart.
+        if (dev != nullptr)
+            deviceManager.closeAudioDevice();
+        applyAudioSetup (false);
+        overrideAutoRate = 0.0;
+    }
+    else
+        applyInputProcessing();
+
+    startupHardwareRate = 0.0;
 }
 
 void MainComponent::rebuildAudioDevice (const char* why)
@@ -1802,6 +2208,7 @@ void MainComponent::setSettingsOpen (bool open)
     if (open)
     {
         styleMenu.dismiss();
+        soundMenu.dismiss();
         settingsOverlay.toFront (false);
         settingsOverlay.setBounds (getLocalBounds());
         relayoutSettings();
@@ -1903,6 +2310,46 @@ void MainComponent::loadPrefs()
         prefs->getBoolValue ("cembaloEnabled", engine.settings().cembaloEnabled.load()));
     engine.settings().clapEnabled.store (
         prefs->getBoolValue ("clapEnabled", engine.settings().clapEnabled.load()));
+    auto loadKit = [this] (const char* key, std::atomic<int>& dest, vp::KitSound identity)
+    {
+        const int v = prefs->getIntValue (key, static_cast<int> (identity));
+        if (v >= 0 && v < static_cast<int> (vp::KitSound::count))
+            dest.store (v);
+    };
+    loadKit ("shakerSound",  engine.settings().shakerSound,  vp::KitSound::shaker);
+    loadKit ("congaSound",   engine.settings().congaSound,   vp::KitSound::congas);
+    loadKit ("cembaloSound", engine.settings().cembaloSound, vp::KitSound::cembalo);
+    loadKit ("clapSound",    engine.settings().clapSound,    vp::KitSound::clap);
+    {
+        // Older prefs could store the same family on two knobs. Keep the
+        // first occupant and give later slots a still-free instrument so
+        // the four-map stays unique after reload.
+        const vp::KitSound identity[4] = {
+            vp::KitSound::shaker, vp::KitSound::congas,
+            vp::KitSound::cembalo, vp::KitSound::clap
+        };
+        const int nFam = static_cast<int> (vp::KitSound::count);
+        bool used[static_cast<int> (vp::KitSound::count)] = {};
+        for (int s = 0; s < 4; ++s)
+        {
+            int v = kitSoundAtomic (s).load();
+            if (v < 0 || v >= nFam || used[v])
+            {
+                v = -1;
+                const int id = static_cast<int> (identity[s]);
+                if (! used[id])
+                    v = id;
+                else
+                    for (int k = 0; k < nFam && v < 0; ++k)
+                        if (! used[k])
+                            v = k;
+                if (v < 0)
+                    v = id;
+            }
+            used[v] = true;
+            kitSoundAtomic (s).store (v);
+        }
+    }
     engine.settings().shakerNatural.store (
         prefs->getBoolValue ("shakerNatural", engine.settings().shakerNatural.load()));
 
@@ -1965,6 +2412,7 @@ void MainComponent::loadPrefs()
         engine.setFixedBpm (storedBpm);
 
     refreshLoopModeButton();
+    refreshVoiceKnobs();
 }
 
 bool MainComponent::loadBundledLoopBank()
@@ -2038,6 +2486,10 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());
     prefs->setValue ("cembaloEnabled", engine.settings().cembaloEnabled.load());
     prefs->setValue ("clapEnabled", engine.settings().clapEnabled.load());
+    prefs->setValue ("shakerSound", engine.settings().shakerSound.load());
+    prefs->setValue ("congaSound", engine.settings().congaSound.load());
+    prefs->setValue ("cembaloSound", engine.settings().cembaloSound.load());
+    prefs->setValue ("clapSound", engine.settings().clapSound.load());
     prefs->setValue ("shakerNatural", engine.settings().shakerNatural.load());
     prefs->setValue ("recordedLoops", engine.recordedLoopsEnabled());
     prefs->setValue ("shakerVolume",
@@ -2352,6 +2804,23 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+
+    // Worse lands on this frame: a hit that has come off the pulse has to
+    // read orange before the next one. Better eases back, and a short hold
+    // keeps a single early stroke on screen for a beat instead of blinking.
+    {
+        const auto bloom = tempoBloomFor (snap);
+        if (bloom.accuracy + 0.015f < tempoBloomAccuracy)
+        {
+            tempoBloomAccuracy = bloom.accuracy;
+            tempoBloomHold = 5;
+        }
+        else if (tempoBloomHold > 0)
+            --tempoBloomHold;
+        else
+            tempoBloomAccuracy += (bloom.accuracy - tempoBloomAccuracy) * 0.22f;
+        tempoBloomAmount += (bloom.amount - tempoBloomAmount) * 0.35f;
+    }
 
     // iOS hands over the safe area after the first resized() has already run,
     // and it changes again on rotation and on a Split View drag. Nothing calls
@@ -3141,6 +3610,8 @@ void MainComponent::resized()
     settingsButton.toFront (false);
     if (styleMenu.isOpen())
         styleMenu.setBounds (getLocalBounds());
+    if (soundMenu.isOpen())
+        soundMenu.setBounds (getLocalBounds());
 }
 
 void MainComponent::layoutFull()
@@ -3249,8 +3720,6 @@ void MainComponent::paintCardList (juce::Graphics& g, const juce::Array<Card>& l
 void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
 {
     const auto rows = stageRows (area);
-    const float energy = juce::jlimit (0.0f, 1.0f,
-                                       std::sqrt (juce::jmax (0.0f, snap.inputPeak)) * 3.2f);
 
     // Title, with the brand mark and the rule under it.
     if (! rows.title.isEmpty())
@@ -3299,13 +3768,34 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
+    // Halo behind the BPM and the four quarters. Green through the pocket.
+    // Outside it the wash is red, and how strong that red is is how far the
+    // hit has left the pocket. Two ellipses, clear at the rim.
+    if (! rows.bpm.isEmpty() && ! rows.beats.isEmpty() && tempoBloomAmount > 0.02f)
+    {
+        const auto cluster = juce::Rectangle<float> (
+            static_cast<float> (area.getX()),
+            static_cast<float> (rows.bpm.getY()),
+            static_cast<float> (area.getWidth()),
+            static_cast<float> (rows.beats.getBottom() - rows.bpm.getY()));
+        const float bad = 1.0f - juce::jlimit (0.0f, 1.0f, tempoBloomAccuracy);
+        const auto col = tempoBloomColour (tempoBloomAccuracy);
+        const auto centre = cluster.getCentre();
+        const float vis = bad <= 0.001f ? 1.0f : (0.28f + 0.72f * bad);
+        const float amt = tempoBloomAmount * vis;
+        paintEllipticalBloom (g, centre,
+                              cluster.getWidth() * 0.62f,
+                              cluster.getHeight() * 0.78f,
+                              col, 0.46f * amt);
+        paintEllipticalBloom (g, centre,
+                              cluster.getWidth() * 0.40f,
+                              cluster.getHeight() * 0.52f,
+                              col, 0.28f * amt);
+    }
+
     // The tempo, sized to the room it has rather than to a constant, so it is
     // the biggest thing on the screen in portrait and still the biggest thing
     // when the iPad is turned.
-    paintRadial (g, rows.bpmNumber.getCentre().toFloat(),
-                 static_cast<float> (rows.bpm.getHeight()) * 1.6f, fuchsia(),
-                 0.10f + 0.18f * energy);
-
     const bool haveBpm = snap.bpm > 40.0f;
     if (haveBpm)
     {
@@ -4026,7 +4516,10 @@ void MainComponent::StyleSelect::mouseUp (const juce::MouseEvent& e)
     if (owner.styleMenu.isOpen())
         owner.styleMenu.dismiss();
     else
+    {
+        owner.soundMenu.dismiss();
         owner.styleMenu.showBelow (getBounds());
+    }
 }
 
 void MainComponent::StyleSelect::refresh()
@@ -4119,6 +4612,153 @@ void MainComponent::StyleMenuOverlay::resized()
                             on || hinted ? fuchsia() : text());
         items[i].setColour (juce::TextButton::textColourOnId,
                             on || hinted ? fuchsia() : text());
+    }
+}
+
+MainComponent::SoundMenuOverlay::SoundMenuOverlay (MainComponent& o)
+    : owner (o)
+{
+    setVisible (false);
+    setOpaque (false);
+    setInterceptsMouseClicks (true, true);
+    addAndMakeVisible (list);
+    list.setOpaque (false);
+    for (int i = 0; i < kCount; ++i)
+    {
+        list.addAndMakeVisible (items[i]);
+        items[i].setButtonText (vp::toString (static_cast<vp::KitSound> (i)));
+        items[i].onClick = [this, i]
+        {
+            owner.assignKitSound (slot, static_cast<vp::KitSound> (i));
+            dismiss();
+        };
+    }
+}
+
+void MainComponent::SoundMenuOverlay::showFor (int s)
+{
+    slot = s;
+    setBounds (owner.getLocalBounds());
+    setVisible (true);
+    toFront (false);
+    resized();
+}
+
+void MainComponent::SoundMenuOverlay::dismiss()
+{
+    setVisible (false);
+}
+
+void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
+{
+    // Settings is an opaque page (fillAll(bg)), not a blur of the editor.
+    // A live Gaussian would snapshot the parent every frame on iPad. This
+    // picker is a hold menu, so the editor stays; veil it enough that the
+    // Misure cells do not merge with the knobs underneath.
+    auto full = getLocalBounds().toFloat();
+    g.setColour ((gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6))
+                     .withAlpha (gDarkMode ? 0.78f : 0.70f));
+    g.fillRect (full);
+    g.setColour (juce::Colours::white.withAlpha (gDarkMode ? 0.07f : 0.20f));
+    g.fillRect (full);
+
+    auto card = list.getBounds().toFloat().expanded (4.0f, 4.0f);
+    g.setColour (panel());
+    g.fillRect (card);
+    g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
+    g.drawRect (card, 1.0f);
+}
+
+void MainComponent::SoundMenuOverlay::mouseDown (const juce::MouseEvent& e)
+{
+    if (! list.getBounds().expanded (4).contains (e.getPosition()))
+        dismiss();
+}
+
+void MainComponent::SoundMenuOverlay::resized()
+{
+    if (! isVisible())
+        return;
+
+    juce::Slider* knobs[] = {
+        &owner.shakerVolSlider, &owner.congaVolSlider,
+        &owner.cembaloVolSlider, &owner.clapVolSlider
+    };
+    const int idx = juce::jlimit (0, 3, slot);
+    auto anchor = getLocalArea (knobs[idx], knobs[idx]->getLocalBounds());
+
+    // Only ids not already in the four-map. This knob's current family is
+    // omitted too: tap outside keeps the assignment. No selected cell.
+    bool taken[kCount] = {};
+    for (int s = 0; s < 4; ++s)
+    {
+        const int v = owner.kitSoundAtomic (s).load();
+        if (v >= 0 && v < kCount)
+            taken[v] = true;
+    }
+    int vis[kCount];
+    int n = 0;
+    for (int i = 0; i < kCount; ++i)
+        if (! taken[i])
+            vis[n++] = i;
+    for (int i = 0; i < kCount; ++i)
+        items[i].setVisible (false);
+
+    // Vertical stack on the held knob. Twice the previous hug width
+    // (label + 6 px each side). Font 12, a step up from the 9 px Misure
+    // floor. Height still a Misure chip. Gap 5 matches layoutMisure.
+    const int btnGap = 5;
+    const int sidePad = 6;
+    const int cellH = juce::jlimit (22, 36, 32);
+    const float chipFontH = juce::jmax (12.0f, (float) cellH * 0.38f);
+    const auto measureFont = fontUi (chipFontH, true);
+    int labelW = 0;
+    for (int k = 0; k < n; ++k)
+    {
+        const auto name = juce::String (vp::toString (static_cast<vp::KitSound> (vis[k])));
+        labelW = juce::jmax (labelW, juce::GlyphArrangement::getStringWidthInt (measureFont, name));
+    }
+    const int cellW = juce::jmax (1, 2 * (labelW + sidePad * 2));
+    const int listW = cellW;
+    const int listH = n * cellH + btnGap * juce::jmax (0, n - 1);
+
+    const int margin = 8;
+    const int yAbove = anchor.getY() - listH - margin;
+    const int yBelow = anchor.getBottom() + margin;
+    const bool aboveFits = yAbove >= margin;
+    const bool belowFits = yBelow + listH <= getHeight() - margin;
+    int y;
+    if (aboveFits)
+        y = yAbove;
+    else if (belowFits)
+        y = yBelow;
+    else if (anchor.getY() >= getHeight() - anchor.getBottom())
+        y = juce::jmax (margin, yAbove);
+    else
+        y = juce::jmin (getHeight() - listH - margin, yBelow);
+
+    int x = anchor.getCentreX() - listW / 2;
+    if (x + listW > getWidth() - margin)
+        x = getWidth() - listW - margin;
+    if (x < margin)
+        x = margin;
+    list.setBounds (x, y, listW, listH);
+
+    auto row = list.getLocalBounds();
+    for (int k = 0; k < n; ++k)
+    {
+        const int i = vis[k];
+        auto cell = row.removeFromTop (cellH);
+        if (k + 1 < n)
+            row.removeFromTop (btnGap);
+        items[i].setVisible (true);
+        items[i].setBounds (cell);
+        const auto fill = knobInteriorForKitSound (static_cast<vp::KitSound> (i));
+        items[i].setToggleState (false, juce::dontSendNotification);
+        items[i].getProperties().set ("chipFill", true);
+        items[i].setColour (juce::TextButton::buttonColourId, fill);
+        items[i].setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+        items[i].setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     }
 }
 

@@ -56,16 +56,37 @@ public:
     {
         wantedSounding.store (on, std::memory_order_relaxed);
     }
+
+    /** The listener pressed "L'1 è QUI". Counter, not a flag: the decoder
+        belongs to the worker, and a press that comes and goes between two
+        of its passes must not be missed. */
+    void declarePulseHere() noexcept
+    {
+        wantedDeclarePulse.fetch_add (1, std::memory_order_relaxed);
+    }
     /** The analysis input has changed character - see
         BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
         flag, from the audio thread, so an event that comes and goes between two
-        of the worker's passes cannot be missed. */
-    void setInputEpoch (uint32_t epoch, bool preserveComb = false) noexcept
+        of the worker's passes cannot be missed.
+
+        `dropQueued` is a new file, not a quiet-to-loud entrance and not a
+        seek. The FIFO still holds the previous file; analysing it after the
+        epoch re-certifies that file's tempo. The request sticks on this epoch
+        until the epoch changes, so a later block cannot clear it before the
+        worker has seen it. */
+    void setInputEpoch (uint32_t epoch, bool preserveComb = false,
+                        bool dropQueued = false) noexcept
     {
         // Publish event and kind together: the worker must not pair one epoch
-        // with the following epoch's kind. The low bit denotes continuous
-        // music, for which recurrent state and comb history both survive.
-        inputEpoch.store ((static_cast<uint64_t> (epoch) << 1) | (preserveComb ? 1u : 0u), std::memory_order_relaxed);
+        // with the following epoch's kind. Bit 0 is continuous music, for
+        // which recurrent state and comb history both survive. Bit 1 drops
+        // audio queued from the previous source.
+        const uint64_t prev = inputEpoch.load (std::memory_order_relaxed);
+        uint64_t word = (static_cast<uint64_t> (epoch) << 2)
+                        | (preserveComb ? 1ull : 0ull);
+        if (dropQueued || (((prev >> 2) == epoch) && ((prev & 2ull) != 0ull)))
+            word |= 2ull;
+        inputEpoch.store (word, std::memory_order_relaxed);
     }
 
     /** Reject publications describing audio older than the input position at
@@ -134,10 +155,12 @@ private:
     std::atomic<int> wantedOctave { 0 };
     std::atomic<bool> wantedLineFeed { false };
     std::atomic<bool> wantedSounding { false };
+    std::atomic<uint32_t> wantedDeclarePulse { 0 };
     std::atomic<uint64_t> inputEpoch { 0 };
     static_assert (std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<int64_t> minimumAnalysisSample { 0 };
     uint64_t seenInputEpoch = 0;
+    uint32_t seenDeclarePulse = 0;
     uint64_t seenDropped = 0;
     /** Model samples of extra priming the feature extractor has needed across
         all discontinuities. After a reset it buffers a whole frame before

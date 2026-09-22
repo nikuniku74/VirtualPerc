@@ -45,6 +45,8 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     modelRefill = 0;
     inputEpoch.store (0, std::memory_order_relaxed);
     seenInputEpoch = 0;
+    wantedDeclarePulse.store (0, std::memory_order_relaxed);
+    seenDeclarePulse = 0;
     minimumAnalysisSample.store (0, std::memory_order_relaxed);
 
     popBuf.assign (4096, 0.0f);
@@ -147,16 +149,45 @@ void NeuralBeatTracker::workerLoop()
         // Apply the event before processing more audio. A new source discards
         // its predecessor's evidence; an arrangement entrance keeps the
         // continuous analysis but invalidates the grid fitted to the intro.
+        // A new file also drops whatever is still queued: that audio is the
+        // previous file, and feeding it after the restart is what re-locks
+        // the tempo STOP then appears to release.
         const uint64_t epoch = inputEpoch.load (std::memory_order_relaxed);
         if (epoch != seenInputEpoch)
         {
+            const bool preserveComb = (epoch & 1u) != 0;
+            const bool dropQueued = (epoch & 2u) != 0;
             seenInputEpoch = epoch;
-            decoder.notifyInputRestart ((epoch & 1u) != 0);
+
+            if (dropQueued)
+            {
+                const uint64_t before = fifo.droppedSamples();
+                fifo.discardPending();
+                const uint64_t after = fifo.droppedSamples();
+                seenDropped = after;
+                const uint64_t discarded = after - before;
+                resampler.reset();
+                features.reset();
+                // Same compensation as a dropout: after a reset the extractor
+                // buffers a whole frame before emitting again.
+                modelRefill += kBeatModelFrame - kBeatModelHop;
+                const double lostSec = static_cast<double> (discarded) / deviceSr;
+                // Before the restart, so the restart's tenure clear is what
+                // stands. The discontinuity only stops the splice reading as
+                // an onset; it deliberately keeps a tempo, which is the wrong
+                // answer for a file that has been replaced.
+                decoder.notifyDiscontinuity (lostSec);
+                if (discarded > 0)
+                    completedTotal.fetch_add (static_cast<int64_t> (discarded),
+                                              std::memory_order_release);
+            }
+
+            decoder.notifyInputRestart (preserveComb);
             // Preserve the model together with the comb on continuous music.
             // Preserving only the comb on BLUE SKY worsened the first held
             // lock to 57.0 s; preserving both reached 41.3 s. A room/new source
             // still needs a cold model as before.
-            if (model != nullptr && (epoch & 1u) == 0)
+            if (model != nullptr && ! preserveComb)
                 model->reset();
         }
 
@@ -201,7 +232,8 @@ void NeuralBeatTracker::workerLoop()
                 // from a hi-hat, and the metrical level turns on exactly that.
                 // See docs/HANDOFF_OCTAVE_50BPM.md.
                 auto h = decoder.observe (act[0], act[1], act[2],
-                                          LogSpectFeatures::lowBandEnergy (frame));
+                                          LogSpectFeatures::lowBandEnergy (frame),
+                                          LogSpectFeatures::highBandEnergy (frame));
                 h.analysisSample = analysisSampleFor (h.frameIndex);
                 slot.publish (h);
             }
@@ -215,6 +247,20 @@ void NeuralBeatTracker::workerLoop()
             completedTotal.fetch_add (static_cast<int64_t> (n)
                                       + static_cast<int64_t> (droppedThisPass),
                                       std::memory_order_release);
+        }
+
+        // After this wakeup's audio, so timeSec is as current as the worker
+        // is. A press in the same block as process() already snapped the
+        // clock; publishing the new origin here is what stops setGridPhase
+        // pulling it back onto the levare once tapHold ends.
+        const uint32_t declarePulse = wantedDeclarePulse.load (std::memory_order_relaxed);
+        if (declarePulse != seenDeclarePulse)
+        {
+            seenDeclarePulse = declarePulse;
+            decoder.declarePulseHere();
+            auto h = decoder.current();
+            h.analysisSample = analysisSampleFor (h.frameIndex);
+            slot.publish (h);
         }
 
         // Wait for about as much new audio as it takes to make one more frame.

@@ -34,8 +34,39 @@ enum class Stroke : int
     // dictionary - see Assets/Percussion/ATTRIBUTION.md.
     cembaloDown,      // the struck hit - same job as the shaker, another sound:
     cembaloUp,        // the shake on the return. Same table, own switch.
+    // Triangle is not a fifth groove voice. It is a sample family a FEEL
+    // knob can be assigned. Each beat is `. . _` : stopped #1 on the
+    // battere, stopped #2 on the e, open (short tap plus wet tail) on the
+    // &, rest on the a.
+    triangleOpen,     // short tap, then ambience - not a held ring; on the &
+    triangleClosed,   // stopped #1 - battere only
+    triangleClosed2,  // stopped #2 - the e of each beat
     count
 };
+
+/** Family of a written stroke. Volume falls back to this when a groove
+    event did not name the FEEL slot that produced it. */
+inline bool isTriangleStroke (Stroke s) noexcept
+{
+    return s == Stroke::triangleOpen || s == Stroke::triangleClosed
+        || s == Stroke::triangleClosed2;
+}
+
+inline KitSound kitSoundForStroke (Stroke s) noexcept
+{
+    switch (s)
+    {
+        case Stroke::shakerDown:
+        case Stroke::shakerUp:       return KitSound::shaker;
+        case Stroke::cembaloDown:
+        case Stroke::cembaloUp:      return KitSound::cembalo;
+        case Stroke::clap:           return KitSound::clap;
+        case Stroke::triangleOpen:
+        case Stroke::triangleClosed:
+        case Stroke::triangleClosed2: return KitSound::triangle;
+        default:                      return KitSound::congas;
+    }
+}
 
 /** One scheduled stroke. `delayBeats` is always >= 0: the clock hands out grid
     positions and a voice can be scheduled later than one, never earlier, so
@@ -45,6 +76,10 @@ struct GrooveEvent
     Stroke stroke = Stroke::shakerDown;
     float  velocity = 0.8f;
     float  delayBeats = 0.0f;
+    /** FEEL slot this hit belongs to (which knob). Groove content comes
+        from the assigned `KitSound`, not from this index. `count` means
+        infer volume from `stroke`. */
+    KitSound part = KitSound::count;
 };
 
 /**
@@ -75,10 +110,9 @@ class GrooveEngine
 {
 public:
     static constexpr int kStepsPerBar = 16;
-    // One slot each for shaker, cembalo, clap and a conga table hit, plus one
-    // for a conga ghost note - the most that can land on a single sixteenth -
-    // with one spare.
-    static constexpr int kMaxEvents = 6;
+    // Four slots can each write a conga hit plus a ghost on one sixteenth
+    // when several knobs are assigned the same family. Eight is four pairs.
+    static constexpr int kMaxEvents = 8;
 
     void prepare (std::uint32_t seed) noexcept;
     void reset() noexcept;
@@ -124,6 +158,10 @@ public:
     /** The backbeat only. Also needs `setBarTrusted (true)` to actually sound -
         see that setter. */
     void setClapEnabled (bool on) noexcept { clapOn = on; }
+    void setShakerSound (int s) noexcept { shakerSound = s; }
+    void setCongaSound (int s) noexcept { congaSound = s; }
+    void setCembaloSound (int s) noexcept { cembaloSound = s; }
+    void setClapSound (int s) noexcept { clapSound = s; }
     /** Whether the app's "one" is currently trustworthy enough to put the clap
         on it: the listener has locked the bar, or enough time has passed since
         the last automatic rotation that a wrong guess would have been
@@ -134,10 +172,11 @@ public:
         2 lands. */
     void setBarTrusted (bool trusted) noexcept { barTrustedFlag = trusted; }
 
-    /** How dense the synthesized shaker and conga parts are. `autoDetect`
-        means eighths. The setting only thins authored events; it never adds
-        or moves them. `setShakerNatural` is the exception, and only for the
-        shaker (and cembalo, which is the same part): see that setter. */
+    /** How dense the synthesized shaker and cembalo parts are. `autoDetect`
+        means eighths. The setting only thins those tables; it never adds or
+        moves them, and it does not rewrite congas or triangle. Congas keep
+        their authored 16-step figure at the clock BPM. `setShakerNatural`
+        is the exception for shaker/cembalo only: see that setter. */
     void setSubdivision (Subdivision s) noexcept;
 
     /** Occasional extra shaker strokes on the grid the subdivision has
@@ -188,6 +227,10 @@ private:
     bool  barTrustedFlag = false;
     bool  naturalOn = false;
     Subdivision subdivisionGrid = Subdivision::eighth;
+    int   shakerSound = static_cast<int> (KitSound::shaker);
+    int   congaSound = static_cast<int> (KitSound::congas);
+    int   cembaloSound = static_cast<int> (KitSound::cembalo);
+    int   clapSound = static_cast<int> (KitSound::clap);
 };
 
 } // namespace vp

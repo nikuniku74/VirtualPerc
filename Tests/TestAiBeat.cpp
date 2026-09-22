@@ -39,6 +39,7 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <utility>
 
 namespace
 {
@@ -1840,6 +1841,368 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
             "procedural low open and stopped-slap are distinct instruments, not one oscillator");
     expect (lowAttack < 20.0f && openAttack < 20.0f && slapAttack < 20.0f,
             "procedural conga attacks stay inside the clock's measured lead window");
+
+    auto snapshot = [] (int slot, vp::KitSound sound, vp::Subdivision sub)
+    {
+        vp::GrooveEngine g;
+        g.prepare (0xC0A11u);
+        g.setStyle (vp::GrooveStyle::marcha);
+        g.setSubdivision (sub);
+        g.setHumanize (0.0f);
+        g.setSwing (0.0f);
+        g.setIntensity (0.0f);
+        g.setDynamics (1.0f);
+        g.setShakerEnabled (slot == 0);
+        g.setCongasEnabled (slot == 1);
+        g.setCembaloEnabled (slot == 2);
+        g.setClapEnabled (slot == 3);
+        g.setBarTrusted (true);
+        if (slot == 0) g.setShakerSound (static_cast<int> (sound));
+        if (slot == 1) g.setCongaSound (static_cast<int> (sound));
+        if (slot == 2) g.setCembaloSound (static_cast<int> (sound));
+        if (slot == 3) g.setClapSound (static_cast<int> (sound));
+        std::vector<std::pair<int, vp::Stroke>> hits;
+        std::vector<vp::KitSound> parts;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+            const int n = g.eventsAt (0, step, events, vp::GrooveEngine::kMaxEvents);
+            for (int i = 0; i < n; ++i)
+            {
+                hits.push_back ({ step, events[i].stroke });
+                parts.push_back (events[i].part);
+            }
+        }
+        return std::make_pair (hits, parts);
+    };
+    const auto congaHome8 = snapshot (1, vp::KitSound::congas, vp::Subdivision::eighth);
+    const auto congaHome16 = snapshot (1, vp::KitSound::congas, vp::Subdivision::sixteenth);
+    const auto congaHomeQ = snapshot (1, vp::KitSound::congas, vp::Subdivision::quarter);
+    const auto congaKnob0 = snapshot (0, vp::KitSound::congas, vp::Subdivision::eighth);
+    const auto congaKnob2 = snapshot (2, vp::KitSound::congas, vp::Subdivision::eighth);
+    const auto congaKnob3 = snapshot (3, vp::KitSound::congas, vp::Subdivision::eighth);
+    const auto triOnConga = snapshot (1, vp::KitSound::triangle, vp::Subdivision::eighth);
+    const auto triOnShaker = snapshot (0, vp::KitSound::triangle, vp::Subdivision::eighth);
+    expect (congaHome8.first == congaHome16.first
+                && congaHome8.first == congaHomeQ.first
+                && ! congaHome8.first.empty(),
+            "congas keep their authored 16-step figure on every Misure grid");
+    expect (congaKnob0.first == congaHome8.first
+                && congaKnob2.first == congaHome8.first
+                && congaKnob3.first == congaHome8.first,
+            "congas play the same tables on knob 1, 2, 3 or 4");
+    bool heelOnE = false, shakerOnCongaKnob = false, congaOnStep0 = false;
+    for (const auto& h : congaKnob0.first)
+    {
+        if (h.first == 1 && h.second == vp::Stroke::heel)
+            heelOnE = true;
+        if (h.second == vp::Stroke::shakerDown || h.second == vp::Stroke::shakerUp)
+            shakerOnCongaKnob = true;
+        if (h.first == 0)
+            congaOnStep0 = true;
+    }
+    expect (heelOnE && ! shakerOnCongaKnob && ! congaOnStep0,
+            "congas on the shaker knob are still the marcha, not remapped shaker ticks");
+    auto isTriangleOnly = [] (const std::vector<std::pair<int, vp::Stroke>>& hits)
+    {
+        if (hits.empty())
+            return false;
+        for (const auto& h : hits)
+        {
+            if (h.second != vp::Stroke::triangleOpen
+                && h.second != vp::Stroke::triangleClosed
+                && h.second != vp::Stroke::triangleClosed2)
+                return false;
+        }
+        return true;
+    };
+    expect (isTriangleOnly (triOnConga.first) && isTriangleOnly (triOnShaker.first)
+                && triOnConga.first != congaHome8.first,
+            "triangle and congas do not steal each other's tables");
+    expect (! congaKnob0.second.empty() && congaKnob0.second[0] == vp::KitSound::shaker
+                && ! congaHome8.second.empty() && congaHome8.second[0] == vp::KitSound::congas,
+            "volume stays on the knob; groove stays on the instrument");
+
+    {
+        vp::PercussionEngine perc;
+        perc.setUseRecordedSamples (false);
+        perc.prepare (48000.0);
+        perc.setReverbAmount (0.0f);
+        perc.setHumanization (0.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (0.0f);
+        perc.setCembaloVolume (0.0f);
+        perc.setClapVolume (0.0f);
+
+        auto renderHit = [&perc] (vp::Stroke stroke, int n)
+        {
+            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+            vp::ClockTick idle;
+            perc.clearVoices();
+            perc.triggerForTest (stroke, 0.90f, 0, vp::KitSound::shaker);
+            perc.render (l.data(), r.data(), n, idle, true);
+            return l;
+        };
+        auto energyRange = [] (const std::vector<float>& x, int from, int to)
+        {
+            const int nX = static_cast<int> (x.size());
+            from = std::max (0, from);
+            to = std::min (nX, to);
+            double e = 0.0;
+            for (int i = from; i < to; ++i)
+                e += static_cast<double> (x[static_cast<size_t> (i)]) * x[static_cast<size_t> (i)];
+            return e;
+        };
+        const int n = 24000;
+        const int dryTo = 3120;   // 65 ms at 48 kHz
+        const int wetFrom = 3840; // 80 ms
+        const int wetTo = 9600;   // 200 ms
+        const int lateFrom = 19200; // 400 ms - dry tap plus wet must be gone
+        const auto openHit = renderHit (vp::Stroke::triangleOpen, n);
+        const auto closedHit = renderHit (vp::Stroke::triangleClosed, n);
+        const double openDry = energyRange (openHit, 0, dryTo);
+        const double openWet = energyRange (openHit, wetFrom, wetTo);
+        const double openLate = energyRange (openHit, lateFrom, n);
+        const double closedWet = energyRange (closedHit, wetFrom, wetTo);
+        const double closedLate = energyRange (closedHit, 5760, n);
+        const double openClosedCorr = std::fabs (correlation (openHit, closedHit));
+        std::printf ("perc-assign  triangle dry/wet/late=%.3f/%.3f/%.5f closedWet=%.5f corr=%.3f\n",
+                     openDry, openWet, openLate, closedWet, openClosedCorr);
+        expect (openDry > 1.0 && openWet > closedWet * 4.0
+                    && closedLate < 1.0e-3 && openLate < openDry * 0.05
+                    && openClosedCorr < 0.95,
+                "triangle open is a short tap plus wet tail; closed stays dry");
+
+        perc.clearVoices();
+        perc.triggerForTest (vp::Stroke::triangleOpen, 0.90f, 0, vp::KitSound::shaker);
+        std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+        vp::ClockTick idle;
+        perc.render (l.data(), r.data(), 512, idle, true);
+        perc.triggerForTest (vp::Stroke::triangleClosed, 0.90f, 0, vp::KitSound::shaker);
+        perc.render (l.data(), r.data(), n - 512, idle, true);
+        const double chokedTail = energyRange (l, wetFrom, n);
+        std::printf ("perc-assign  triangle choke tail=%.5f\n", chokedTail);
+        expect (chokedTail < openWet * 0.15,
+                "a stopped triangle chokes the ringing open");
+
+        perc.setShakerVolume (0.0f);
+        const auto muted = renderHit (vp::Stroke::triangleOpen, 8000);
+        expect (energyRange (muted, 0, 8000) < 1.0e-8,
+                "triangle on a FEEL knob still follows that knob's volume");
+    }
+
+    {
+        vp::GrooveEngine groove;
+        groove.prepare (0x71A4u);
+        groove.setStyle (vp::GrooveStyle::funk);
+        groove.setSubdivision (vp::Subdivision::eighth);
+        groove.setSwing (1.0f);
+        groove.setHumanize (1.0f);
+        groove.setIntensity (1.0f);
+        groove.setDynamics (1.0f);
+        groove.setShakerEnabled (true);
+        groove.setCongasEnabled (false);
+        groove.setCembaloEnabled (false);
+        groove.setClapEnabled (false);
+        groove.setShakerSound (static_cast<int> (vp::KitSound::triangle));
+
+        int opens = 0, closed1 = 0, closed2 = 0, other = 0;
+        bool openWrong = false;
+        bool closed1OffBeat = false;
+        bool closed2Wrong = false;
+        bool hitOnA = false;
+        bool battereLayered = false;
+        for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+        {
+            vp::GrooveEvent events[vp::GrooveEngine::kMaxEvents];
+            const int n = groove.eventsAt (0, step, events, vp::GrooveEngine::kMaxEvents);
+            const int within = step & 3;
+            if (within == 0 && n != 1)
+                battereLayered = true;
+            if (within == 3 && n != 0)
+                hitOnA = true;
+            for (int i = 0; i < n; ++i)
+            {
+                if (events[i].stroke == vp::Stroke::triangleOpen)
+                {
+                    ++opens;
+                    if (within != 2 || events[i].delayBeats != 0.0f)
+                        openWrong = true;
+                }
+                else if (events[i].stroke == vp::Stroke::triangleClosed)
+                {
+                    ++closed1;
+                    if (within != 0)
+                        closed1OffBeat = true;
+                }
+                else if (events[i].stroke == vp::Stroke::triangleClosed2)
+                {
+                    ++closed2;
+                    if (within != 1)
+                        closed2Wrong = true;
+                }
+                else
+                    ++other;
+            }
+        }
+        std::printf ("perc-assign  triangle 16ths open=%d c1=%d c2=%d other=%d openW=%d c1off=%d c2w=%d a=%d layer=%d\n",
+                     opens, closed1, closed2, other, (int) openWrong, (int) closed1OffBeat,
+                     (int) closed2Wrong, (int) hitOnA, (int) battereLayered);
+        expect (closed1 == 4 && ! closed1OffBeat && ! battereLayered && other == 0,
+                "each battere is stopped #1 only, not open and not a layer");
+        expect (closed2 == 4 && ! closed2Wrong,
+                "stopped #2 is the e of each beat, never the battere");
+        expect (opens == 4 && ! openWrong && ! hitOnA,
+                "open is the & of each beat; the a stays empty for the tail");
+    }
+
+    {
+        vp::PercussionEngine perc;
+        perc.setUseRecordedSamples (false);
+        perc.prepare (48000.0);
+        std::printf ("perc-assign  attack lead=%.2f ms  triangle=%.2f ms  shaker=%.2f ms\n",
+                     static_cast<double> (perc.attackLeadMs()),
+                     static_cast<double> (perc.attackMsFor (vp::Stroke::triangleOpen)),
+                     static_cast<double> (perc.attackMsFor (vp::Stroke::shakerDown)));
+        expect (perc.attackLeadMs() < 20.0f,
+                "triangle does not raise the kit attack lead toward the 25 ms ceiling");
+        expect (perc.attackMsFor (vp::Stroke::triangleOpen) < 8.0f,
+                "triangle beater is a sharp strike so hold can sit the open on the quarter");
+    }
+}
+
+
+void vpRunDeclareBarHereClockTest (int& passed, int& failed);
+
+static void runHeardPhaseLockBench()
+{
+    for (float trackBpm : { 78.0f, 100.0f, 120.0f, 138.0f, 156.0f })
+    {
+        const double sr = 48000.0;
+        const int block = 128;
+        // Long enough to contain the acquisition and still leave two
+        // comparable halves after it. Settling the metrical level takes
+        // the best part of ten seconds on a bare click at a slow tempo,
+        // deliberately: the alternative measured on real material was
+        // locking in two seconds to the wrong octave.
+        const int n = static_cast<int> (sr * 38.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderClickTrack (song, trackBpm, sr);
+
+        vp::VirtualPercussionEngine eng;
+        eng.prepare (sr, block, 1);
+        eng.start();
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+
+        const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
+        const int hop = static_cast<int> (std::ceil (
+            vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
+        float worstLate = 0.0f;
+        float earlyHalf = 0.0f, lateHalf = 0.0f;
+        int   earlyN = 0, lateN = 0;
+        int pos = 0, blocks = 0, samplesInHop = 0;
+        bool workerDrained = true;
+        vp::EngineSnapshot last;
+        while (pos < n)
+        {
+            const int numThisBlock = std::min ({ block, n - pos,
+                                                hop - samplesInHop });
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, numThisBlock);
+            last = eng.snapshot();
+            if (last.state == vp::TrackingState::following && last.bpm > 40.0f)
+            {
+                const double truePhase = static_cast<double> (pos) * beatsPerSample;
+                const float err = vp::wrapCentered (
+                    last.beatPhase - static_cast<float> (truePhase - std::floor (truePhase)));
+                const double t = static_cast<double> (pos) / sr;
+                if (t > 14.0)
+                {
+                    worstLate = std::max (worstLate, std::fabs (err));
+                    if (t < 26.0) { earlyHalf += err; ++earlyN; }
+                    else          { lateHalf += err; ++lateN; }
+                }
+            }
+            if (std::getenv ("VP_TRACE") != nullptr && (blocks % 800) == 0)
+                std::printf ("   t=%5.2f bpm=%7.2f nn=%7.2f tgt=%7.2f regime=%d state=%s\n",
+                             static_cast<double> (pos) / sr,
+                             static_cast<double> (last.bpm),
+                             static_cast<double> (last.neuralBpm),
+                             static_cast<double> (last.targetBpm),
+                             last.tempoRegime, vp::toString (last.state));
+            pos += numThisBlock;
+            samplesInHop += numThisBlock;
+            ++blocks;
+            const bool boundary = samplesInHop == hop;
+            const auto until = std::chrono::steady_clock::now()
+                               + std::chrono::milliseconds (400);
+            if (boundary)
+            {
+                while (eng.analysisCompletedSamples() < pos
+                       && std::chrono::steady_clock::now() < until)
+                    std::this_thread::yield();
+                if (eng.analysisCompletedSamples() < pos)
+                    workerDrained = false;
+                samplesInHop = 0;
+            }
+        }
+        const float meanEarly = earlyN > 0 ? earlyHalf / static_cast<float> (earlyN) : 0.0f;
+        const float meanLate = lateN > 0 ? lateHalf / static_cast<float> (lateN) : 0.0f;
+        const float beatMs = 60000.0f / trackBpm;
+        const float lead = last.attackLeadMs;
+        const float earlyErrMs = meanEarly * beatMs - lead;
+        const float lateErrMs = meanLate * beatMs - lead;
+        std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms attack=%5.1fms"
+                     "  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
+                     "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d\n",
+                     static_cast<double> (trackBpm), static_cast<double> (last.bpm),
+                     static_cast<double> (last.leadMs),
+                     static_cast<double> (lead),
+                     static_cast<double> (meanEarly), static_cast<double> (meanLate),
+                     static_cast<double> (meanEarly * beatMs),
+                     static_cast<double> (meanLate * beatMs),
+                     static_cast<double> (earlyErrMs),
+                     static_cast<double> (lateErrMs),
+                     static_cast<double> (worstLate), last.tempoRegime);
+
+        expect (workerDrained,
+                "ONNX analysis worker kept up with real-time playback");
+        // The clock is deliberately early now, by the slowest attack in
+        // the percussion bank: a shaker started exactly on the pulse is
+        // *heard* after it, so the pulse is placed before. What has to sit
+        // on the beat is the sound. Tight on purpose: 8 ms is about where
+        // a listener stops hearing a percussionist as "with" the track.
+        expect (std::fabs (earlyErrMs) < 8.0f
+                    && std::fabs (lateErrMs) < 8.0f,
+                "what is heard sits on the song pulse, not beside it");
+        expect (std::fabs (meanLate - meanEarly) < 0.02f,
+                "phase alignment holds over time instead of walking off");
+    }
+}
+
+void vpRunOnnxPhaseLockTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nheard phase-lock (click track)\n");
+#if defined(VP_USE_ONNX) && VP_USE_ONNX
+    {
+        vp::OnnxBeatModel model;
+        if (! vp::loadDefaultBeatModel (model))
+        {
+            expect (true, "ONNX lock skipped (no beatnet.onnx)");
+        }
+        else
+        {
+            std::printf ("onnx  loaded\n");
+            runHeardPhaseLockBench();
+        }
+    }
+#else
+    expect (true, "ONNX lock skipped (no VP_USE_ONNX)");
+#endif
 }
 
 void vpRunAiBeatTests (int& passed, int& failed)
@@ -1851,6 +2214,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
     vpRunBarReentryTests (passed, failed);
     vpRunNewInputTests (passed, failed);
     vpRunRhythmSeenTests (passed, failed);
+    vpRunDeclareBarHereClockTest (passed, failed);
 
     {
         const vp::EngineSnapshot snap;
@@ -1912,9 +2276,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && ! defaults.grooveAuto.load()
                     && ! defaults.shakerNatural.load()
                     && defaults.grooveStyle.load() == static_cast<int> (vp::GrooveStyle::marcha)
-                    && defaultShakers == 8 && defaultCongas > 0 && defaultOdd == 0
+                    && defaultShakers == 8 && defaultCongas > 0 && defaultOdd > 0
                     && ! congaOnOne && openOnFour && openOnAndFour,
-                "the default is an eighth-note marcha with both instruments, an open one and the closing open-tone pair");
+                "the default is an eighth-note shaker with the full marcha, including its sixteenths");
 
         vp::BeatHypothesis known;
         known.valid = true;
@@ -3442,6 +3806,105 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
+        // Half-beat unflip via the same call "L'1 è QUI" makes, while sounding.
+        // Hats after a hole must still HOLD (sounding does not flip onto them).
+        constexpr double fps = 50.0;
+        constexpr float bpm = 100.0f;
+        const double period = 60.0 / static_cast<double> (bpm);
+        const int framesPerBeat = static_cast<int> (std::lround (fps * period));
+        auto pulseAt = [period] (double t, double offsetBeats) -> float
+        {
+            const double ph = std::fmod (t / period - offsetBeats + 8.0, 1.0);
+            return (ph < 0.03 || ph > 0.97) ? 0.90f : 0.02f;
+        };
+        auto onQuarter = [] (float phase)
+        {
+            return phase < 0.08f || phase > 0.92f;
+        };
+
+        {
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLineFeed (true);
+            vp::BeatHypothesis h;
+            int frame = 0;
+            auto feed = [&] (int n, double offsetBeats, float low)
+            {
+                for (int i = 0; i < n; ++i, ++frame)
+                {
+                    const double t = static_cast<double> (frame) / fps;
+                    const float on = pulseAt (t, offsetBeats);
+                    h = dec.observe (on, on > 0.5f ? 0.55f : 0.02f, 1.0f - on, low);
+                }
+            };
+            feed (framesPerBeat * 40, 0.0, 0.80f);
+            expect (h.valid && std::fabs (h.bpm - bpm) < 4.0f,
+                    "half-beat fixture locks 100 BPM quarters");
+            dec.setSounding (true);
+            // Advance onto the AND without a peak, so lastBeat stays on the
+            // quarter and NOW sits ~0.5 off it — the listening report.
+            const int toAnd = framesPerBeat / 2;
+            for (int i = 0; i < toAnd; ++i, ++frame)
+                h = dec.observe (0.02f, 0.02f, 0.90f, 0.04f);
+            const float flipped = dec.current().beatPhase;
+            dec.declarePulseHere();
+            const float afterDeclare = dec.current().beatPhase;
+            std::printf ("declare-pulse-here  flipped=%.3f  after=%.3f  bpm=%.2f\n",
+                         static_cast<double> (flipped),
+                         static_cast<double> (afterDeclare),
+                         static_cast<double> (dec.current().bpm));
+            expect (flipped > 0.40f && flipped < 0.60f
+                        && onQuarter (afterDeclare),
+                    "L'1 e' QUI re-anchors lastBeat onto the tapped quarter while sounding");
+            const uint32_t serialAtDeclare = dec.current().beatSerial;
+            feed (framesPerBeat * 16, 0.0, 0.04f);
+            const uint32_t hatsAccepted = dec.current().beatSerial - serialAtDeclare;
+            std::printf ("declare-hats-hold  accepted=%u  phase=%.3f\n",
+                         hatsAccepted, static_cast<double> (dec.current().beatPhase));
+            expect (hatsAccepted == 0,
+                    "after the snap, sounding keep still refuses old-quarter hats");
+        }
+
+        {
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLineFeed (true);
+            vp::BeatHypothesis h;
+            int frame = 0;
+            auto feed = [&] (int n, double offsetBeats, float low)
+            {
+                for (int i = 0; i < n; ++i, ++frame)
+                {
+                    const double t = static_cast<double> (frame) / fps;
+                    const float on = pulseAt (t, offsetBeats);
+                    h = dec.observe (on, on > 0.5f ? 0.55f : 0.02f, 1.0f - on, low);
+                }
+            };
+            feed (framesPerBeat * 40, 0.0, 0.80f);
+            expect (h.valid && std::fabs (h.bpm - bpm) < 4.0f,
+                    "hats-hole fixture locks 100 BPM quarters");
+            dec.setSounding (true);
+            const uint32_t serialBeforeHole = h.beatSerial;
+            for (int i = 0, n = static_cast<int> (2.0 * fps); i < n; ++i, ++frame)
+                h = dec.observe (0.02f, 0.02f, 0.90f, 0.04f);
+            feed (framesPerBeat * 16, 0.5, 0.04f);
+            const uint32_t afterHoleHats = h.beatSerial - serialBeforeHole;
+            while ((frame % framesPerBeat) != 0)
+            {
+                h = dec.observe (0.02f, 0.02f, 0.90f, 0.04f);
+                ++frame;
+            }
+            std::printf ("hats-hole-hold  afterHoleHats=%u  phase=%.3f  bpm=%.2f\n",
+                         afterHoleHats,
+                         static_cast<double> (h.beatPhase),
+                         static_cast<double> (h.bpm));
+            expect (afterHoleHats == 0 && onQuarter (h.beatPhase)
+                        && std::fabs (h.bpm - bpm) < 4.0f,
+                    "sounding=1 does not flip lastBeat onto hats after a hole");
+        }
+    }
+
+    {
         vp::BeatDecoder dec;
         dec.prepare (50.0);
         vp::BeatHypothesis last;
@@ -3786,9 +4249,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
-        // The user's grid thins every synthesized instrument at the one event
-        // boundary. It removes authored and probabilistic events; it never
-        // moves a stroke, invents one, or lets dynamics make the test vacuous.
+        // Misure thins shaker and cembalo only. Congas keep the authored
+        // 16-step figure on every grid; the tests below lock that, and still
+        // prove shaker thinning is unchanged.
         auto congaSteps = [] (vp::GrooveStyle style, int bar, vp::Subdivision subdivision)
         {
             vp::GrooveEngine groove;
@@ -3824,17 +4287,17 @@ void vpRunAiBeatTests (int& passed, int& failed)
                                         vp::Subdivision::eighth);
         expect (exactSteps (dance16, std::vector<int> { 2, 6, 10, 11, 14 }),
                 "sixteenth subdivision preserves the exact authored dance A congas");
-        expect (exactSteps (dance8, std::vector<int> { 2, 6, 10, 14 }),
-                "eighth subdivision keeps dance A eighths and removes its e/a congas");
+        expect (exactSteps (dance8, dance16),
+                "eighth Misure does not rewrite dance A congas");
 
         const auto fill16 = congaSteps (vp::GrooveStyle::dance, 7,
                                         vp::Subdivision::sixteenth);
         const auto fill8 = congaSteps (vp::GrooveStyle::dance, 7,
                                        vp::Subdivision::eighth);
-        expect (exactSteps (fill16, std::vector<int> { 8, 10, 11, 13, 14, 15 }),
+        expect (exactSteps (fill16, std::vector<int> { 2, 6, 10, 13, 14 }),
                 "sixteenth subdivision preserves the exact authored dance fill");
-        expect (exactSteps (fill8, std::vector<int> { 8, 10, 14 }),
-                "eighth subdivision applies the same thinning to dance fill congas");
+        expect (exactSteps (fill8, fill16),
+                "eighth Misure does not rewrite dance fill congas");
 
         std::set<int> quarterSteps;
         int quarterCongas = 0;
@@ -3846,9 +4309,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 quarterCongas += static_cast<int> (steps.size());
                 quarterSteps.insert (steps.begin(), steps.end());
             }
-        expect (quarterCongas > 0
-                    && quarterSteps == std::set<int> ({ 4, 8, 12 }),
-                "quarter subdivision keeps congas only on 4/8/12 and still forbids step 0");
+        expect (quarterCongas > 0 && quarterSteps.count (0) == 0
+                    && quarterSteps.size() > 3,
+                "quarter Misure still forbids conga on step 0 and still plays the rest of the figure");
 
         // AUTO is not merely similar to eighths: with the same seed and call
         // order it must produce the identical event stream, including RNG
@@ -3929,8 +4392,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const auto funk8 = funkOddCounts (vp::Subdivision::eighth);
         expect (funk16.first > 0 && funk16.second > 0,
                 "sixteenth subdivision retains deterministic funk conga ghosts");
-        expect (funk8.first == 0,
-                "eighth subdivision suppresses all odd-step authored and ghost congas");
+        expect (funk8.first == funk16.first && funk8.second == funk16.second,
+                "eighth Misure does not drop funk odd-step congas or ghosts");
 
         auto shakerCounts = [] (vp::Subdivision subdivision)
         {
@@ -4193,12 +4656,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     const int na = full.eventsAt (bar, step, a, capacity);
                     const int nb = thinned.eventsAt (bar, step, b, capacity);
                     if ((step % 2) != 0)
-                    {
                         filteredOddCongas += na;
-                        if (nb != 0)
-                            evenCongaStreamMatches = false;
-                        continue;
-                    }
                     comparedEvenCongas += na;
                     if (na != nb)
                         evenCongaStreamMatches = false;
@@ -4211,7 +4669,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
         expect (evenCongaStreamMatches && comparedEvenCongas > 0
                     && filteredOddCongas > 0,
-                "eighth conga thinning preserves the full-grid RNG stream on every later allowed hit");
+                "eighth and sixteenth congas are the same figure, including odd steps");
 
         bool quarterStreamMatches = true;
         int quarterOrdinary = 0;
@@ -4256,21 +4714,13 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         continue;
                     }
                     if ((step % 4) != 0)
-                    {
                         quarterFilteredEvents += na;
-                        if (nb != 0)
-                            quarterStreamMatches = false;
-                        // Marcha A has no authored hit on step 7. With this
-                        // seed the capacity-4 full-grid engine generates one
-                        // ghost there, while quarter must discard it.
-                        if (capacity == vp::GrooveEngine::kMaxEvents
-                            && bar == 0 && step == 7)
-                            quarterGhostPresentAndFiltered =
-                                na == 1 && nb == 0
-                                && (a[0].stroke == vp::Stroke::heel
-                                    || a[0].stroke == vp::Stroke::toe);
-                        continue;
-                    }
+                    if (capacity == vp::GrooveEngine::kMaxEvents
+                        && bar == 0 && step == 7)
+                        quarterGhostPresentAndFiltered =
+                            na == nb && na == 1
+                            && (a[0].stroke == vp::Stroke::heel
+                                || a[0].stroke == vp::Stroke::toe);
 
                     bool payloadMatches = na == nb;
                     for (int i = 0; i < std::min (na, nb); ++i)
@@ -4299,7 +4749,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && quarterAtReducedDynamics > 0 && quarterFilteredEvents > 0
                     && quarterGhostPresentAndFiltered
                     && quarterPayloadAfterGhostMatches,
-                "quarter conga thinning preserves full-grid RNG through ordinary fill ghost and dynamics paths");
+                "quarter and sixteenth congas are the same figure, including ghosts");
 
         // Captured from the pre-feature engine, not recomputed from the
         // predicate under test. Hex float literals preserve the exact bits.
@@ -5001,10 +5451,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
                      perc.recordedStrokeCount(), static_cast<int> (vp::Stroke::count));
        #if defined (VP_HAS_PERC_SAMPLES) && VP_HAS_PERC_SAMPLES
         // shakerDown, shakerUp, tumba, open, slap are recorded; heel, toe and
-        // muff are derived from the open tone, which counts too. A silent
-        // fallback to synthesis is the failure this catches.
-        expect (perc.recordedStrokeCount() == static_cast<int> (vp::Stroke::count),
-                "every articulation sounds from the recorded library, not the synthesis fallback");
+        // muff are derived from the open tone, which counts too. Clap is
+        // synthesised on purpose. Triangle open/closed wait on
+        // Assets/Percussion/triangle_open.wav and triangle_closed.wav.
+        expect (perc.recordedStrokeCount() >= 10
+                    && perc.recordedStrokeCount() <= static_cast<int> (vp::Stroke::count),
+                "drum/shaker/cembalo library is loaded; clap and triangle may be synthesised");
        #endif
         expect (energy > 1.0e-6 && rel > 0.05,
                 "two strokes of the same kind are different takes, not the same buffer twice");
@@ -7937,121 +8389,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // How closely does the clock sit on the song's pulse, and does it
             // stay there? Everything else in this file measures the reported
             // tempo, which can be right while the percussion plays late.
-            for (float trackBpm : { 78.0f, 100.0f, 120.0f, 138.0f, 156.0f })
-            {
-                const double sr = 48000.0;
-                const int block = 128;
-                // Long enough to contain the acquisition and still leave two
-                // comparable halves after it. Settling the metrical level takes
-                // the best part of ten seconds on a bare click at a slow tempo,
-                // deliberately: the alternative measured on real material was
-                // locking in two seconds to the wrong octave.
-                const int n = static_cast<int> (sr * 38.0);
-                std::vector<float> song (static_cast<size_t> (n), 0.0f);
-                renderClickTrack (song, trackBpm, sr);
-
-                vp::VirtualPercussionEngine eng;
-                eng.prepare (sr, block, 1);
-                eng.start();
-                std::vector<float> oL (static_cast<size_t> (block), 0.0f);
-                std::vector<float> oR (static_cast<size_t> (block), 0.0f);
-                float* outs[2] = { oL.data(), oR.data() };
-
-                const double beatsPerSample = static_cast<double> (trackBpm) / 60.0 / sr;
-                const int hop = static_cast<int> (std::ceil (
-                    vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
-                float worstLate = 0.0f;
-                float earlyHalf = 0.0f, lateHalf = 0.0f;
-                int   earlyN = 0, lateN = 0;
-                int pos = 0, blocks = 0, samplesInHop = 0;
-                bool workerDrained = true;
-                vp::EngineSnapshot last;
-                while (pos < n)
-                {
-                    const int numThisBlock = std::min ({ block, n - pos,
-                                                        hop - samplesInHop });
-                    const float* ins[1] = { song.data() + pos };
-                    eng.process (ins, 1, outs, 2, numThisBlock);
-                    last = eng.snapshot();
-                    if (last.state == vp::TrackingState::following && last.bpm > 40.0f)
-                    {
-                        const double truePhase = static_cast<double> (pos) * beatsPerSample;
-                        const float err = vp::wrapCentered (
-                            last.beatPhase - static_cast<float> (truePhase - std::floor (truePhase)));
-                        const double t = static_cast<double> (pos) / sr;
-                        if (t > 14.0)
-                        {
-                            worstLate = std::max (worstLate, std::fabs (err));
-                            // Split the run in two: a constant offset is a
-                            // calibration question, a growing one is a wrong
-                            // rate that will walk off the beat.
-                            if (t < 26.0) { earlyHalf += err; ++earlyN; }
-                            else          { lateHalf += err; ++lateN; }
-                        }
-                    }
-                    if (std::getenv ("VP_TRACE") != nullptr && (blocks % 800) == 0)
-                        std::printf ("   t=%5.2f bpm=%7.2f nn=%7.2f tgt=%7.2f regime=%d state=%s\n",
-                                     static_cast<double> (pos) / sr,
-                                     static_cast<double> (last.bpm),
-                                     static_cast<double> (last.neuralBpm),
-                                     static_cast<double> (last.targetBpm),
-                                     last.tempoRegime, vp::toString (last.state));
-                    pos += numThisBlock;
-                    samplesInHop += numThisBlock;
-                    ++blocks;
-                    const bool boundary = samplesInHop == hop;
-                    const auto until = std::chrono::steady_clock::now()
-                                       + std::chrono::milliseconds (400);
-                    if (boundary)
-                    {
-                        while (eng.analysisCompletedSamples() < pos
-                               && std::chrono::steady_clock::now() < until)
-                            std::this_thread::yield();
-                        if (eng.analysisCompletedSamples() < pos)
-                            workerDrained = false;
-                        samplesInHop = 0;
-                    }
-                }
-                const float meanEarly = earlyN > 0 ? earlyHalf / static_cast<float> (earlyN) : 0.0f;
-                const float meanLate = lateN > 0 ? lateHalf / static_cast<float> (lateN) : 0.0f;
-                const float beatMs = 60000.0f / trackBpm;
-                const float lead = last.attackLeadMs;
-                const float earlyErrMs = meanEarly * beatMs - lead;
-                const float lateErrMs = meanLate * beatMs - lead;
-                std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms attack=%5.1fms"
-                             "  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
-                             "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d\n",
-                             static_cast<double> (trackBpm), static_cast<double> (last.bpm),
-                             static_cast<double> (last.leadMs),
-                             static_cast<double> (lead),
-                             static_cast<double> (meanEarly), static_cast<double> (meanLate),
-                             static_cast<double> (meanEarly * beatMs),
-                             static_cast<double> (meanLate * beatMs),
-                             static_cast<double> (earlyErrMs),
-                             static_cast<double> (lateErrMs),
-                             static_cast<double> (worstLate), last.tempoRegime);
-
-                expect (workerDrained,
-                        "ONNX analysis worker kept up with real-time playback");
-
-                // The clock is deliberately early now, by the slowest attack in
-                // the percussion bank: a shaker started exactly on the pulse is
-                // *heard* thirteen milliseconds after it, so the pulse is placed
-                // thirteen milliseconds before. What has to sit on the beat is
-                // the sound, so that is what this checks - the clock's own lead
-                // is subtracted first, and a test that asserted otherwise would
-                // now be asserting that the shaker is late.
-                //
-                // Tight on purpose. The old bound of 0.05 beat is 25 ms at 120
-                // BPM, which passes a clock an audible distance off the beat.
-                // 8 ms is about where a listener stops hearing a percussionist
-                // as "with" the track.
-                expect (std::fabs (earlyErrMs) < 8.0f
-                            && std::fabs (lateErrMs) < 8.0f,
-                        "what is heard sits on the song pulse, not beside it");
-                expect (std::fabs (meanLate - meanEarly) < 0.02f,
-                        "phase alignment holds over time instead of walking off");
-            }
+            runHeardPhaseLockBench();
 
             // The same chain at 138 BPM, but asking what the *leak canceller*
             // does to it. Nothing here leaks: the input is the click track and
@@ -9438,6 +9776,30 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool declareBarHereUnflipsHalfBeat()
+    {
+        BeatTracker t;
+        t.prepare (48000.0);
+        t.follower.forceTempo (100.0f);
+        t.follower.snapPhase (0.5f);
+        t.sounding = true;
+        const float before = t.follower.beatPhase();
+        t.declareBarHere();
+        const float after = t.follower.beatPhase();
+        const int bar = t.follower.beatInBarIndex();
+        t.suspendAnalysis();
+        const bool ok = before > 0.40f && before < 0.60f
+                        && (after < 0.05f || after > 0.95f)
+                        && bar == 0
+                        && t.barLocked
+                        && t.tapHold;
+        std::printf ("declare-bar-here  before=%.3f  after=%.3f  beatInBar=%d  locked=%d  tapHold=%d %s\n",
+                     static_cast<double> (before), static_cast<double> (after),
+                     bar, t.barLocked ? 1 : 0, t.tapHold ? 1 : 0,
+                     ok ? "PASS" : "FAIL");
+        return ok;
+    }
+
     static bool harmonicOctaveReference (float bpm)
     {
         constexpr double sr=48000;
@@ -9747,6 +10109,14 @@ struct BeatTrackerTimingProbe
         return samples / 48000.0;
     }
 };
+}
+
+void vpRunDeclareBarHereClockTest (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    expect (vp::BeatTrackerTimingProbe::declareBarHereUnflipsHalfBeat(),
+            "L'1 e' QUI snaps a half-beat even while sounding");
 }
 
 void vpRunStateTimingTest (int& passed, int& failed)

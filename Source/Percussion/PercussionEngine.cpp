@@ -68,6 +68,92 @@ namespace
         }
     };
 
+    // Open triangle: short dry tap, then a prepare-time wet tail. Not a
+    // held partial. Closed stays dry. Numbers are milliseconds at any sr.
+    constexpr float kTriangleOpenDryMs = 65.0f;
+    constexpr float kTriangleOpenWetMs = 195.0f;
+    constexpr float kTriangleOpenRt60Ms = 220.0f;
+    constexpr float kTriangleClosedMs = 90.0f;
+
+    void bakeOpenTriangleAmbience (std::vector<float>& L, std::vector<float>& R,
+                                   double sampleRate) noexcept
+    {
+        const int nIn = static_cast<int> (std::min (L.size(), R.size()));
+        if (nIn < 8)
+            return;
+        const int dryN = std::min (nIn, std::max (16,
+            static_cast<int> (sampleRate * kTriangleOpenDryMs * 0.001)));
+        const int totN = std::max (dryN + 8,
+            static_cast<int> (sampleRate * (kTriangleOpenDryMs + kTriangleOpenWetMs) * 0.001));
+        const int fade = std::min (dryN / 3,
+            std::max (1, static_cast<int> (sampleRate * 0.006)));
+        std::vector<float> dryL (static_cast<size_t> (dryN), 0.0f);
+        std::vector<float> dryR (static_cast<size_t> (dryN), 0.0f);
+        for (int i = 0; i < dryN; ++i)
+        {
+            float g = 1.0f;
+            if (i >= dryN - fade)
+            {
+                const float t = static_cast<float> (i - (dryN - fade))
+                                / static_cast<float> (fade);
+                g = 0.5f * (1.0f + std::cos (kPi * t));
+            }
+            dryL[static_cast<size_t> (i)] = L[static_cast<size_t> (i)] * g;
+            dryR[static_cast<size_t> (i)] = R[static_cast<size_t> (i)] * g;
+        }
+
+        const int pre = std::max (1, static_cast<int> (sampleRate * 0.008));
+        const float delaysMs[4] = { 17.3f, 22.1f, 25.9f, 28.7f };
+        struct Comb { std::vector<float> z; int i = 0; float fb = 0.0f; float store = 0.0f; };
+        Comb combL[4], combR[4];
+        constexpr float kDamp = 0.72f;
+        for (int c = 0; c < 4; ++c)
+        {
+            const int d = std::max (2, static_cast<int> (sampleRate * delaysMs[c] * 0.001f));
+            const float delaySec = static_cast<float> (d) / static_cast<float> (sampleRate);
+            const float fb = std::pow (10.0f, -3.0f * delaySec / (kTriangleOpenRt60Ms * 0.001f));
+            combL[c].z.assign (static_cast<size_t> (d), 0.0f);
+            combR[c].z.assign (static_cast<size_t> (d), 0.0f);
+            combL[c].fb = fb;
+            combR[c].fb = fb;
+        }
+        auto combTick = [kDamp] (Comb& c, float x) noexcept
+        {
+            float y = c.z[static_cast<size_t> (c.i)];
+            c.store = y * (1.0f - kDamp) + c.store * kDamp;
+            c.z[static_cast<size_t> (c.i)] = x + c.store * c.fb;
+            if (++c.i >= static_cast<int> (c.z.size()))
+                c.i = 0;
+            return y;
+        };
+
+        L.assign (static_cast<size_t> (totN), 0.0f);
+        R.assign (static_cast<size_t> (totN), 0.0f);
+        constexpr float kWet = 0.48f;
+        for (int n = 0; n < totN; ++n)
+        {
+            float inL = 0.0f, inR = 0.0f;
+            const int src = n - pre;
+            if (src >= 0 && src < dryN)
+            {
+                inL = dryL[static_cast<size_t> (src)];
+                inR = dryR[static_cast<size_t> (src)];
+            }
+            float wetL = 0.0f, wetR = 0.0f;
+            for (int c = 0; c < 4; ++c)
+            {
+                wetL += combTick (combL[c], inL);
+                wetR += combTick (combR[c], inR);
+            }
+            wetL *= 0.25f;
+            wetR *= 0.25f;
+            const float dryNowL = n < dryN ? dryL[static_cast<size_t> (n)] : 0.0f;
+            const float dryNowR = n < dryN ? dryR[static_cast<size_t> (n)] : 0.0f;
+            L[static_cast<size_t> (n)] = dryNowL + wetL * kWet;
+            R[static_cast<size_t> (n)] = dryNowR + wetR * kWet;
+        }
+    }
+
     void fadeTail (std::vector<float>& L, std::vector<float>& R, double sampleRate) noexcept
     {
         const int n = static_cast<int> (std::min (L.size(), R.size()));
@@ -315,6 +401,70 @@ void PercussionEngine::synthesizeCymbal (Sample& s, Stroke stroke, int layer, st
     fadeTail (s.left, s.right, sampleRate);
 }
 
+void PercussionEngine::synthesizeTriangle (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept
+{
+    // Stand-in until Assets/Percussion/triangle_open.wav and
+    // triangle_closed.wav ship. Open is a short tap plus a wet tail, not a
+    // held ring; closed is the same strike with the hand left on the steel.
+    //
+    // The beater transient is at sample 0 on purpose. Random modal phase
+    // used to cancel the first milliseconds and push measureAttack ~15-25 ms
+    // into the ring; that number then became bankAttackLead and the whole
+    // kit ran early by the same amount (the 25 ms ceiling minus the old
+    // shaker 10-13 ms). Keep this strike sharp so triangle's own hold can
+    // sit it on the quarter without raising the kit lead.
+    const bool open = stroke == Stroke::triangleOpen;
+    const bool closed2 = stroke == Stroke::triangleClosed2;
+    const float force = 0.55f + 0.45f * (static_cast<float> (layer) / static_cast<float> (kLayers - 1));
+    const double seconds = (open ? kTriangleOpenDryMs
+                                 : (closed2 ? 78.0f : kTriangleClosedMs)) * 0.001;
+    const int length = std::max (256, static_cast<int> (sampleRate * seconds));
+    const float sr = static_cast<float> (sampleRate);
+
+    s.left.assign (static_cast<size_t> (length), 0.0f);
+    s.right.assign (static_cast<size_t> (length), 0.0f);
+    DeterministicRng local (seed);
+
+    // Small concert triangle, an octave above the 2.6 kHz stand-in that
+    // read as a low clang. Absolute hertz - not kDrumTune.
+    const float modes[5]   = { 5294.0f, 7458.0f, 8942.0f, 10528.0f, 12480.0f };
+    const float weights[5] = { 0.70f,   0.85f,   1.00f,   0.72f,    0.48f };
+    // Open dry dies as a tap (about 65 ms), not as a singing bar.
+    const float decay = (open ? 42.0f : (closed2 ? 68.0f : 55.0f)) * (1.05f - 0.12f * force);
+    const float snap  = 2400.0f * (0.7f + 0.6f * force);
+    float phase[5] = { 0.5f * kPi, 0.15f * kPi, 0.08f * kPi, 0.04f * kPi, 0.0f };
+    for (int i = 1; i < 5; ++i)
+        phase[i] += local.nextFloat() * 0.04f * kPi;
+
+    Svf tickL, tickR;
+    for (int n = 0; n < length; ++n)
+    {
+        const float t = static_cast<float> (n) / sr;
+        const float env = std::exp (-t * decay) * (1.0f - std::exp (-t * snap));
+        float acc = 0.0f;
+        for (int i = 0; i < 5; ++i)
+        {
+            phase[i] += 2.0f * kPi * modes[i] / sr;
+            if (phase[i] > 2.0f * kPi)
+                phase[i] -= 2.0f * kPi;
+            acc += std::sin (phase[i]) * weights[i];
+        }
+        const float nL = local.nextSigned();
+        const float nR = local.nextSigned();
+        const float fTick = 9800.0f / sr;
+        const float beaterL = tickL.bandpass (nL, fTick, 0.18f);
+        const float beaterR = tickR.bandpass (nR, fTick, 0.18f);
+        const float beaterAmt = (n < static_cast<int> (0.003 * sampleRate)) ? 0.35f * force : 0.03f;
+        s.left[static_cast<size_t> (n)]  = (acc * 0.55f + beaterL * beaterAmt) * env;
+        s.right[static_cast<size_t> (n)] = (acc * 0.55f + beaterR * beaterAmt) * env;
+    }
+
+    normalise (s.left, s.right, 0.88f);
+    if (open)
+        bakeOpenTriangleAmbience (s.left, s.right, sampleRate);
+    fadeTail (s.left, s.right, sampleRate);
+}
+
 void PercussionEngine::synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept
 {
     const DrumSpec spec = specFor (stroke);
@@ -532,14 +682,26 @@ bool PercussionEngine::loadNamedWav (const char* name, std::vector<float>& mono)
     if (reader == nullptr || reader->lengthInSamples <= 0)
         return false;
 
-    const int n = static_cast<int> (reader->lengthInSamples);
+    // The file's rate stays in this function. Triangle takes (and every other
+    // stem) are often 44.1 kHz while Bluetooth A2DP is already at 48 kHz;
+    // opening the device at the file rate, or at all, renegotiates that route.
+    // Resample here, into the bank the device is already running.
+    const double srcRate = reader->sampleRate;
+    if (srcRate < 8000.0 || srcRate > 192000.0 || sampleRate < 8000.0)
+        return false;
+    const double ratio = sampleRate / srcRate;
+    if (! std::isfinite (ratio) || ratio < 0.05 || ratio > 8.0)
+        return false;
+
+    // A hit, not a concert recording. A multi-second file decoded on the
+    // device-start thread stalls the callback long enough for Bluetooth to
+    // drop the route. Four seconds covers every bundled take.
+    const int cap = std::max (16, static_cast<int> (srcRate * 4.0));
+    const int n = std::min (static_cast<int> (reader->lengthInSamples), cap);
     juce::AudioBuffer<float> buf (static_cast<int> (reader->numChannels), n);
     reader->read (&buf, 0, n, 0, true, true);
 
-    // Resample to the device rate. These are short percussive hits, so linear
-    // interpolation sits far below the transient.
-    const double ratio = sampleRate / reader->sampleRate;
-    const int outLen = std::max (16, static_cast<int> (n * ratio));
+    const int outLen = std::max (16, static_cast<int> (std::lround (static_cast<double> (n) * ratio)));
     mono.resize (static_cast<size_t> (outLen));
     for (int i = 0; i < outLen; ++i)
     {
@@ -587,6 +749,7 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     // `synthesizeCymbal` is written in absolute hertz - so leaving the take
     // alone is what actually keeps the two halves of the bank agreeing.
     const bool jingles = stroke == Stroke::cembaloDown || stroke == Stroke::cembaloUp;
+    const bool triangle = isTriangleStroke (stroke);
     const bool untunedMetal = shaker || jingles;
 
     // heel, toe and muff are the open tone with the hand left on the head: most
@@ -602,6 +765,8 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
         // stopped by the hand that struck it is over in fifty milliseconds.
         case Stroke::slapClosed: extraDecay = 78.0f; break;
         case Stroke::tapado:     extraDecay = 62.0f; break;
+        case Stroke::triangleClosed: extraDecay = 80.0f; break;
+        case Stroke::triangleClosed2: extraDecay = 88.0f; break;
         default: break;
     }
 
@@ -609,7 +774,11 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     const float sr = static_cast<float> (sampleRate);
     // Same interval as the synthetic bank. Reading the take faster raises the
     // membrane and shortens the ring, which is what a smaller drum does.
-    const float pitch = untunedMetal ? 1.0f : drumTune;
+    // Triangle is a small high bar, not unpitched noise. An octave up is
+    // what makes a take read as a concert triangle rather than a clang;
+    // attack is measured after this resample so compensation stays honest.
+    constexpr float kTriangleTune = 2.0f;
+    const float pitch = triangle ? kTriangleTune : (untunedMetal ? 1.0f : drumTune);
     const int n = std::max (16, static_cast<int> (static_cast<float> (nSrc) / pitch));
     // A conga in a groove does not ring half a second: the open tone reaches
     // -30 dB at 304 ms and the tumba at 472 ms, and at natural pitch that tail
@@ -620,7 +789,11 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     // Capping the ring here - rather than re-pitching the drums - keeps the
     // natural tuning and a full open tone while the part stays defined.
     const int maxRing = static_cast<int> (sampleRate * 0.30f);
-    const int nKeep = extraDecay > 0.0f ? n : std::min (n, maxRing);
+    // Open triangle dry is a short tap; the wet tail is baked on afterwards.
+    // Keeping the whole wav would be the long tone the listener rejected.
+    const int nKeep = stroke == Stroke::triangleOpen
+                          ? std::min (n, std::max (16, static_cast<int> (sr * kTriangleOpenDryMs * 0.001f)))
+                          : (extraDecay > 0.0f ? n : std::min (n, maxRing));
     dest.left.assign (static_cast<size_t> (nKeep), 0.0f);
     dest.right.assign (static_cast<size_t> (nKeep), 0.0f);
 
@@ -643,8 +816,9 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
     const float colour = variation.nextSigned();
     const float sustain = variation.nextSigned();
     const float cutoffJitter = 1.0f + colour * (shaker ? 0.085f : 0.045f);
-    const float cutoff = ((untunedMetal ? 3000.0f : 1600.0f)
-                          + (untunedMetal ? 9000.0f : 5200.0f) * force)
+    const float cutoff = (triangle ? (9000.0f + 4000.0f * force)
+                          : ((untunedMetal ? 3000.0f : 1600.0f)
+                             + (untunedMetal ? 9000.0f : 5200.0f) * force))
                          * cutoffJitter;
     const float a = 1.0f - std::exp (-2.0f * kPi * cutoff / sr);
     const float softening = 0.55f + 0.45f * force;
@@ -768,7 +942,9 @@ void PercussionEngine::buildBank() noexcept
                    && static_cast<int> (Stroke::muff) == 7
                    && static_cast<int> (Stroke::tapado) == 9
                    && static_cast<int> (Stroke::cembaloUp) == 12
-                   && kStrokes == 13);
+                   && static_cast<int> (Stroke::triangleClosed) == 14
+                   && static_cast<int> (Stroke::triangleClosed2) == 15
+                   && kStrokes == 16);
     // Which articulations have a recording of their own. The rest are derived
     // from one of those - see `fromOpen` and `fromSlap` below.
     static const char* kStem[kStrokes] = {
@@ -779,7 +955,11 @@ void PercussionEngine::buildBank() noexcept
         // wrong instrument: a dance clap is a flam of hands and a tail, and it
         // has to follow the dynamics and the round-robin rather than replay one
         // afternoon. `Assets/Percussion/clap*.wav` are no longer read.
-        nullptr, "cembalo_down", "cembalo_up"
+        nullptr, "cembalo_down", "cembalo_up",
+        // Triangle is a FEEL assignment, not a fifth groove voice. Open plus
+        // two stopped takes: closed is #1, closed_b is #2. Missing assets
+        // take synthesizeTriangle.
+        "triangle_open", "triangle_closed", "triangle_closed_b"
     };
 
     for (int st = 0; st < kStrokes; ++st)
@@ -846,6 +1026,8 @@ void PercussionEngine::buildBank() noexcept
         // route.
         const bool jingles = stroke == Stroke::cembaloDown
                              || stroke == Stroke::cembaloUp;
+        const bool triangle = isTriangleStroke (stroke);
+        const bool metal = jingles || triangle;
         recorded[st] = haveSource;
 
         for (int layer = 0; layer < kLayers; ++layer)
@@ -865,6 +1047,8 @@ void PercussionEngine::buildBank() noexcept
                         // The same rule as the recorded bank above: one sound
                         // per stroke, so the two halves of the bank agree.
                         synthesizeCymbal (s, stroke, kLayers - 1, seed);
+                    else if (triangle)
+                        synthesizeTriangle (s, stroke, kLayers - 1, seed);
                     else if (stroke == Stroke::clap)
                         synthesizeClap (s, layer, seed);
                     else
@@ -873,11 +1057,11 @@ void PercussionEngine::buildBank() noexcept
                 }
 
                 const std::vector<float>* src = &hard;
-                float force = jingles
+                float force = metal
                                   ? 1.0f
                                   : static_cast<float> (layer) / static_cast<float> (kLayers - 1);
 
-                if (jingles)
+                if (metal)
                 {
                     // Nothing to choose: `hard` at full force, every slot.
                 }
@@ -943,7 +1127,14 @@ void PercussionEngine::measureBankAttacks() noexcept
         for (int ly = 0; ly < kLayers; ++ly)
             for (int rr = 0; rr < kRoundRobin; ++rr)
                 bank[st][ly][rr].attack = mean;
-        slowest = std::max (slowest, mean);
+        // Triangle is held back against this lead like every other stroke,
+        // but it does not vote. Its synthesised ring used to peak 15-25 ms
+        // in (kMaxAttackLeadSec), which raised the clock by that much and
+        // put the whole kit slightly in anticipo. Shaker 10-13 ms stays
+        // the slowest the tracker is told about.
+        const Stroke kind = static_cast<Stroke> (st);
+        if (! isTriangleStroke (kind))
+            slowest = std::max (slowest, mean);
     }
 
     // Bounded. A compensation of tens of milliseconds would be the clock
@@ -1019,6 +1210,19 @@ void PercussionEngine::releaseStroke (Stroke stroke) noexcept
             v.fadeStep = step;
 }
 
+void PercussionEngine::chokeTriangles() noexcept
+{
+    // A stopped triangle is the hand staying on the steel. The ringing
+    // open has to go with it, not wait out its own envelope - otherwise
+    // every damped hit is an open with a click on top.
+    const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
+    for (auto& v : voices)
+        if (v.active
+            && isTriangleStroke (v.stroke)
+            && v.fadeStep <= 0.0f && v.pos >= 0)
+            v.fadeStep = step;
+}
+
 void PercussionEngine::discardPendingVoices() noexcept
 {
     for (auto& v : voices)
@@ -1074,10 +1278,19 @@ const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float vel
     return bank[st][layer][rr];
 }
 
-void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset) noexcept
+void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
+                                KitSound part) noexcept
 {
     stroke = stoppedConga (stroke);
-    releaseStroke (stroke);
+    if (part == KitSound::count)
+        part = kitSoundForStroke (stroke);
+    // Play the stroke the groove wrote. Assignment already chose which
+    // instrument's table to emit; remapping it again onto another knob's
+    // family would turn congas into open/heel ticks of the shaker grid.
+    if (isTriangleStroke (stroke))
+        chokeTriangles();
+    else
+        releaseStroke (stroke);
 
     float gain = 1.0f;
     const Sample& s = pick (stroke, velocity, gain);
@@ -1095,6 +1308,7 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset)
 
     auto& v = allocateVoice();
     v.stroke = stroke;
+    v.volumeFrom = part;
     v.sample = &s;
     v.pos = -(sampleOffset + hold);
     v.length = static_cast<int> (s.left.size());
@@ -1191,7 +1405,8 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             {
                 const int delay = static_cast<int> (std::lround (events[e].delayBeats
                                                                   * beatSamples));
-                trigger (events[e].stroke, events[e].velocity, offset + delay);
+                trigger (events[e].stroke, events[e].velocity, offset + delay,
+                         events[e].part);
             }
             if (n > 0)
                 samplesSinceHit = -offset;
@@ -1219,7 +1434,11 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                 if (i == j)
                     continue;
                 auto& o = voices[j];
-                if (! o.active || o.stroke != v.stroke || o.fadeStep > 0.0f)
+                const bool triangleFamily =
+                    isTriangleStroke (v.stroke) && isTriangleStroke (o.stroke);
+                if (! o.active || o.fadeStep > 0.0f)
+                    continue;
+                if (o.stroke != v.stroke && ! triangleFamily)
                     continue;
                 const bool earlier = o.pos >= 0
                                   || (o.pos < 0 && -o.pos < startAt);
@@ -1238,12 +1457,17 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         ++active;
         if (v.fadeStep > 0.0f)
             ++releasing;
-        const bool shaker = v.stroke == Stroke::shakerDown || v.stroke == Stroke::shakerUp;
-        const bool cembalo = v.stroke == Stroke::cembaloDown || v.stroke == Stroke::cembaloUp;
-        const float g = shaker ? shakerVolume
-                       : cembalo ? cembaloVolume
-                       : v.stroke == Stroke::clap ? clapVolume
-                       : congaVolume;
+        // Volume follows the FEEL knob (`part`), not the instrument id.
+        float g = congaVolume;
+        switch (v.volumeFrom)
+        {
+            case KitSound::shaker:   g = shakerVolume;  break;
+            case KitSound::cembalo:  g = cembaloVolume; break;
+            case KitSound::clap:     g = clapVolume;    break;
+            case KitSound::congas:
+            case KitSound::triangle:
+            case KitSound::count:    break;
+        }
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));

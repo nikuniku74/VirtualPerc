@@ -491,7 +491,7 @@ namespace
         struct Expected { int step; vp::Stroke stroke; };
         const Expected barA[] = {
             { 2, vp::Stroke::tapado }, { 6, vp::Stroke::open },
-            { 10, vp::Stroke::tapado }, { 11, vp::Stroke::slapClosed },
+            { 10, vp::Stroke::tapado }, { 11, vp::Stroke::slap },
             { 14, vp::Stroke::open },
         };
 
@@ -526,7 +526,8 @@ namespace
         groove.setSubdivision (vp::Subdivision::eighth);
         const Expected eighthA[] = {
             { 2, vp::Stroke::tapado }, { 6, vp::Stroke::open },
-            { 10, vp::Stroke::tapado }, { 14, vp::Stroke::open },
+            { 10, vp::Stroke::tapado }, { 11, vp::Stroke::slap },
+            { 14, vp::Stroke::open },
         };
         found = 0;
         bool exactEighthA = true;
@@ -546,7 +547,7 @@ namespace
         exactEighthA = exactEighthA
                        && found == static_cast<int> (std::size (eighthA));
         expect (exactEighthA,
-                "pop-dance keeps its four off-eighth conga answers on the default grid");
+                "pop-dance keeps its authored conga figure on the default eighth Misure");
 
         bool cleanPhrase = true;
         for (int bar = 0; bar < 7; ++bar) // the eighth bar is deliberately a fill
@@ -557,8 +558,7 @@ namespace
                                                vp::GrooveEngine::kMaxEvents);
                 for (int i = 0; i < n; ++i)
                     cleanPhrase = cleanPhrase && step % 4 != 0
-                                  && ev[i].stroke != vp::Stroke::tumba
-                                  && ev[i].stroke != vp::Stroke::slap;
+                                  && ev[i].stroke != vp::Stroke::tumba;
             }
         expect (cleanPhrase,
                 "pop-dance regular bars leave the kick posts clear and use no ringing low tumba");
@@ -1191,6 +1191,12 @@ int main (int argc, char** argv)
     {
         vpRunStateTimingTest (gPassed, gFailed);
         return gFailed ? 1 : 0;
+    }
+    if (argc > 1 && std::string (argv[1]) == "--phase-lock")
+    {
+        vpRunOnnxPhaseLockTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
     }
     if (argc > 1 && std::string (argv[1]) == "--tempo-slow")
     {

@@ -48,6 +48,9 @@ most of what makes a pattern read as a marcha rather than as a list of hits.
 | `clap` | the backbeat - hands only, no drum. See section 7. |
 | `cembaloDown` | tambourine, struck hit - the shaker's job, another sound |
 | `cembaloUp` | tambourine shake - the jingles on the return, mirroring `shakerUp` |
+| `triangleOpen` | ringing triangle - not a fifth groove voice; a FEEL knob assignment |
+| `triangleClosed` | stopped triangle #1 - battere / first of a muted pair |
+| `triangleClosed2` | stopped triangle #2 - off-beat 16th / second of the pair |
 
 `slapClosed` and `tapado` are the *stopped* strokes. Before they existed every
 loud articulation rang, and a part built only out of ringing strokes sits *over*
@@ -203,6 +206,58 @@ else → `congaVolume`.
 `GrooveEngine::kMaxEvents` is 6, not 4: a single sixteenth can now carry
 shaker + cembalo + clap + a conga table hit + a conga ghost, with one spare.
 
+### FEEL sound assignment
+
+The four knobs are slots (enable, volume, colour). Groove is keyed by
+the assigned `KitSound`, not by knob index: congas on any knob play the
+conga tables, triangle never inherits a shaker/conga figure. Volume stays
+on the knob (`Voice.volumeFrom` / `GrooveEvent.part`). The four ints
+`shakerSound` / `congaSound` / `cembaloSound` / `clapSound` are persisted
+in the existing PropertiesFile.
+
+The long-press picker is a **unique set**. Walk the four-slot map; any
+instrument id already sitting on a knob — including this one — is
+omitted. The list is only unused families. There is no selected cell;
+tap outside keeps the assignment. `assignKitSound` refuses a duplicate.
+Reload uniquifies older prefs (first occupant keeps the family, later
+slots take a still-free id). There is no empty/unassigned `KitSound`.
+
+The menu is a **vertical stack on the held knob**, not a bar across the
+screen: above the disc if that fits with an 8 px gap, otherwise below.
+Cell width is **twice** (longest unused label + 6 px each side). Type is
+12 px Avenir Next Bold, white on that instrument's knob-interior pastel.
+Height stays a Misure chip (22–36).
+
+Triangle is picker-only, and it does **not** inherit the assigned part's
+table, swing or subdivision thinning. `GrooveEngine::eventsAt` writes a
+16th ostinato for every slot assigned `KitSound::triangle`, even when
+Misure is 1/8 or 1/4: the clock already visits every sixteenth
+(`BeatTracker` keeps 4 pulses per beat; `setSubdivision` only thins the
+other voices).
+
+Every 4/4 bar is four identical beats, each `. . _` (two stopped
+sixteenths then the long one). The 16-step row (`delayBeats` 0):
+
+```
+step  0 1 2 3   4 5 6 7   8 9 10 11   12 13 14 15
+      1 2 O .   1 2 O .   1 2 O  .    1  2  O  .
+```
+
+`1` = `triangleClosed` (stopped #1) — **battere only** `0, 4, 8, 12`.
+`2` = `triangleClosed2` (stopped #2) on the "e". `O` = `triangleOpen`
+(short tap + wet tail, dry 65 ms / wet ~195 ms / RT60 220 ms) on the
+`"&"` (step 2 of each quarter). `.` = rest on the "a" so the tail can
+speak. Do **not** put open on the battere and do **not** layer O+1
+there. Closed #1 ~90 ms dry; closed #2 is the second mute
+(`triangle_closed_b` when present). A later mute still chokes the ring
+(`chokeTriangles`).
+
+Required recordings, when they land: `Assets/Percussion/triangle_open.wav`,
+`triangle_closed.wav` (stopped #1) and `triangle_closed_b.wav` (stopped #2).
+Playback is an octave up (`kTriangleTune = 2`). Until then
+`synthesizeTriangle` is the fallback (modes 5.3-12.5 kHz, beater at sample
+0). UI chip/knob fill is turchese `0xff2ee8d0`.
+
 ## 8. Feel: swing, humanize, ghosts
 
 **Swing** (`humanDelay`) is a **warp**, not a late off-eighth - and what it warps
@@ -357,11 +412,19 @@ were playing.
   ahead by `attackLeadSamples()` (the slowest in the bank), and every stroke is
   then **held back** by `bankAttackLead - s.attack` so they all land together.
   Never hard-code these numbers: they are a property of the recordings.
+  **Triangle does not vote for that slowest.** The first synthesised open
+  peaked 15-25 ms in (`kMaxAttackLeadSec = 0.025`), which raised
+  `attackLeadMs()` from the shaker's 10-13 ms toward the ceiling and put
+  the whole kit slightly *in anticipo* of the band. Triangle still gets a
+  measured `.attack` and the same hold against the kit lead, with a sharp
+  beater at sample 0 so the audible open sits on the quarter. Do not fix
+  early drums by moving the clock.
 - **Voices**: `kVoices = 16`. A stolen voice is faded out over a few
   milliseconds, never switched off - cutting a sounding grain is a step, and a
   step is a click. `hardSteals()` counts thefts from still-sounding voices and
   the tests assert it is zero; non-zero means the pool is too small for the grid
-  being played.
+  being played. Triangle open and closed share that steal path so a damped hit
+  actually stops the ring.
 - **Style changes commit on the next quarter**, so one beat can never contain
   two different parts.
 - A style change does not own or restart the clock. `VPOps --style-change`

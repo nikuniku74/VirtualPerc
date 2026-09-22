@@ -671,8 +671,18 @@ void BeatTracker::nudgeBar (int beats) noexcept
 
 void BeatTracker::declareBarHere() noexcept
 {
-    follower.rotateBarIndex (-follower.beatInBarIndex());
+    // Used to only rotate the bar index. If the clock sat on the AND,
+    // relabelling that pulse as beat zero still played on the levare.
+    // TAP's first tap already means NOW is the one; this is the same
+    // snap, even while sounding. tapHold stops setGridPhase pulling
+    // the clock back onto a flipped decoder before the worker applies
+    // declarePulseHere. Automatic hats never take this path.
+    follower.snapBeat (0, 0.0f);
     holdBarDecision();
+    barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
+    tapHold = true;
+    tapHoldSamples = 0;
+    neural.declarePulseHere();
 }
 
 void BeatTracker::notifyBarReentry() noexcept
@@ -1775,7 +1785,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                       && (currentState == TrackingState::following
                           || currentState == TrackingState::lowConfidence
                           || currentState == TrackingState::recovering);
-    if (waitForQuantize && canPlay)
+    // `needsResync` is a new file (or STOP/START) whose decoder grid is not
+    // valid yet. The clock underneath is still the old one, and coming in on
+    // its next quarter would set `sounding` again before the new tempo exists.
+    // That is the keep that holds the previous BPM until STOP.
+    if (waitForQuantize && canPlay && ! needsResync)
     {
         quantizeWaitSamples += numSamples;
         const float bpmForWait = std::max (50.0f, heldBpm > 40.0f ? heldBpm : 120.0f);

@@ -30,6 +30,16 @@ public:
         built on: see observeMetricalCadence. */
     static float lowBandEnergy (const float* frame) noexcept;
 
+    /** How many of the top bands count as "hi-hat, not kick". Index 120..135
+        of the 136-band bank: the top of the 30 Hz–17 kHz, 24/oct filterbank,
+        about the top two-thirds of an octave (~10.7–17 kHz). A hi-hat has
+        energy there; a kick does not. */
+    static constexpr int kHighBands = 16;
+
+    /** Mean of those bands in a frame from `popFrame`, magnitude half only,
+        same contract as `lowBandEnergy`. */
+    static float highBandEnergy (const float* frame) noexcept;
+
     void prepare (double sampleRate, int hopLength);
     void reset() noexcept;
     void process (const float* mono, int numSamples) noexcept;

@@ -223,6 +223,20 @@ float LogSpectFeatures::lowBandEnergy (const float* frame) noexcept
     return acc / static_cast<float> (kLowBands);
 }
 
+float LogSpectFeatures::highBandEnergy (const float* frame) noexcept
+{
+    if (frame == nullptr)
+        return 0.0f;
+    // Magnitude half only, same reason as lowBandEnergy: the second half
+    // is a positive first difference and answers a different question.
+    // Bands 120..135 sit at the top of the 30 Hz–17 kHz, 24/oct bank.
+    float acc = 0.0f;
+    constexpr int start = kBands - kHighBands;
+    for (int b = start; b < kBands; ++b)
+        acc += frame[b];
+    return acc / static_cast<float> (kHighBands);
+}
+
 void LinearResampler::prepare (double srcRate, double dstRate)
 {
     const double src = srcRate > 1.0 ? srcRate : 48000.0;

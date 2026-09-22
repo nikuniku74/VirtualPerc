@@ -78,3 +78,17 @@ heel, toe and muff have no recording of their own: `PercussionEngine` derives
 them from the open tone by damping it, which is physically what those strokes
 are. The quietest dynamic layer of each articulation is derived the same way
 when a `_soft` take is not present.
+
+Triangle is a FEEL assignment, not a VCSL take in this folder yet. Drop these
+in and they will be picked up by the existing `*.wav` glob:
+
+| File | What it must be |
+|---|---|
+| `triangle_open.wav` | short ringing strike (dry tap; wet tail is baked in the engine) |
+| `triangle_closed.wav` | stopped #1 - first mute, the beat side of a pair |
+| `triangle_closed_b.wav` | stopped #2 - second mute, off the battere |
+
+Optional `_med` / `_soft` takes follow the other stems. `triangle_closed_b`
+is its own articulation (`Stroke::triangleClosed2`), not a round-robin of
+#1. Until those files exist, `PercussionEngine::synthesizeTriangle` is the
+fallback.
