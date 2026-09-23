@@ -702,6 +702,7 @@ namespace
     constexpr double kGridStepSigmaFloor = 0.005;    // same floor as line jitter
     constexpr double kGridStepEvidence = 16.0;       // (4 sigma)^2 step over offset
     constexpr double kGridStepCurvature = 0.30;      // ramp guard, share of the step
+    constexpr double kGridStepPostCurvature = 0.26;  // causal ramp guard after pivot
     constexpr int    kGridStepMaxBeats = 4;
 }
 
@@ -2593,10 +2594,16 @@ bool BeatDecoder::observeGridStep() noexcept
         bool sameWay = true;
         double sseStep = 0;
         previous = beatTime[pivot];
+        double firstNewInterval = 0.0;
+        double lastNewInterval = 0.0;
         for (int k = 1; k <= m; ++k)
         {
             const double t = beatTime[(pivot + k) % kBeatHistory];
-            sameWay &= (t - previous - period) * step > 0.0;
+            const double newInterval = t - previous;
+            if (k == 1)
+                firstNewInterval = newInterval;
+            lastNewInterval = newInterval;
+            sameWay &= (newInterval - period) * step > 0.0;
             previous = t;
             sseStep += (r[k] - step * k) * (r[k] - step * k);
         }
@@ -2617,11 +2624,25 @@ bool BeatDecoder::observeGridStep() noexcept
         }
 
         // Explained by a step through the pivot, not by an offset or an
-        // outlier, and not a ramp.
+        // outlier, and not a ramp. Looking only behind the pivot is not
+        // sufficient: a clean ramp which begins there has a perfectly flat
+        // pre-history. A real step makes the new intervals stationary; a
+        // ramp keeps bending them. Measured on the clean 118 -> 126 / 4 s
+        // alignment case, the old test falsely published rapid on interval
+        // three and pulled the clock 53 ms behind the song.
+        const double postCurvature = std::fabs (lastNewInterval - firstNewInterval);
+        // On a genuinely clean line the residual is at its 0.5%-period floor,
+        // so a slightly tighter causal check is meaningful. With measured
+        // onset scatter retain the wider guard: noise can bend two intervals
+        // without turning a real step into a ramp.
+        const double postCurvatureShare =
+            sigma <= 1.25 * kGridStepSigmaFloor * period
+                ? kGridStepPostCurvature : kGridStepCurvature;
         if (! sameWay
             || sseStep > (m + 2) * variance
             || sseOffset - sseStep < kGridStepEvidence * variance
-            || std::fabs (p4 - p4b) > kGridStepCurvature * std::fabs (step))
+            || std::fabs (p4 - p4b) > kGridStepCurvature * std::fabs (step)
+            || postCurvature > postCurvatureShare * std::fabs (step))
             continue;
 
         const float newBpm = static_cast<float> (60.0 / (period + step));

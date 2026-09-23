@@ -1230,6 +1230,9 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
     float lastMotionImprovement = 0.0f;
     int lastMotionEvidence = 0;
     int lastMotionDirection = 0;
+    int lastTransitionState = 0;
+    int lastTransitionReason = 0;
+    int lastTransitionIntervals = 0;
     vp::TempoRegime lastRegime = vp::TempoRegime::unknown;
     bool haveHypPhase = false;
     int lastPrinted = -1;
@@ -1281,6 +1284,9 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             lastMotionImprovement = dg.motionFitImprovement;
             lastMotionEvidence = dg.motionFitEvidence;
             lastMotionDirection = dg.motionFitDirection;
+            lastTransitionState = static_cast<int> (hy.transitionState);
+            lastTransitionReason = static_cast<int> (hy.transitionReason);
+            lastTransitionIntervals = hy.transitionIntervals;
             lastRegime = hy.regime;
             haveHypPhase = true;
             const float gridErr = vp::wrapCentered (clock.beatPhase() - hy.beatPhase);
@@ -1338,7 +1344,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             {
                 lastPrinted = sec;
                 std::printf ("   t=%-4d vero=%-7.2f dec=%-7.2f corto=%-7.2f lungo=%-7.2f "
-                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% auth=%.2f/%d clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
+                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% auth=%.2f/%d trans=%d/%d/%d clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
                              "(decoder %+7.1f)\n",
                              sec, bpmAt (t), static_cast<double> (lastHypBpm),
                              static_cast<double> (lastShortBpm),
@@ -1356,6 +1362,8 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                              static_cast<double> (hy.fastIntervalDeviation * 100.0f),
                              static_cast<double> (hy.motionBridgeAuthority),
                              hy.motionShapeQuadraticWins,
+                             lastTransitionState, lastTransitionReason,
+                             lastTransitionIntervals,
                              static_cast<double> (clock.currentTempo()),
                              static_cast<double> (clock.tempoTrimBpm()), ms, decMs);
             }
@@ -1623,6 +1631,28 @@ int main (int argc, char** argv)
                      "decoder=%.1f/%+.1f ms\n",
                      r.meanMs, r.worstMs, r.tailMs, r.afterMs,
                      r.decMeanMs, r.decTailMs);
+        return 0;
+    }
+
+    if ((argc == 5 || argc == 6) && std::strcmp (argv[1], "--trace-change") == 0)
+    {
+        const float from = std::strtof (argv[2], nullptr);
+        const float to = std::strtof (argv[3], nullptr);
+        const double ramp = std::strtod (argv[4], nullptr);
+        const unsigned seed = argc == 6
+                                  ? static_cast<unsigned> (std::strtoul (argv[5], nullptr, 10))
+                                  : 101u;
+        std::printf ("Cambio %.1f -> %.1f in %.1f s, seme %u\n",
+                     static_cast<double> (from), static_cast<double> (to), ramp, seed);
+        const auto r = tempoChange (from, to, 20.0, ramp,
+                                    20.0 + std::max (ramp, 0.0) + 10.0,
+                                    seed, 2, true);
+        std::printf ("entro 1 BPM=%.2f s fase=%.1f ms transizioni=%d "
+                     "impulsi=%d indietro=%d err=%.2f/%.3f%%\n",
+                     r.secondsToOneBpm, r.phaseMsAfterEvidence,
+                     r.rapidTransitions, r.pulseViolations,
+                     r.clockMovedBackwards ? 1 : 0,
+                     r.worstErrPct, r.settledErrPct);
         return 0;
     }
 

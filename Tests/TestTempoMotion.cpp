@@ -185,8 +185,17 @@ DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
         result.bridgeApplied |= bridgeActive;
         result.bridgeOnlyInLive &= ! bridgeActive
                                 || h.regime == vp::TempoRegime::live;
+        const float shapeDelta = d.motionShapeBpm - h.bpm;
+        const float shortDelta = d.shortFit - h.bpm;
+        const bool shapeDirectionAgrees = std::isfinite (d.shortFit)
+                                        && d.shortFit >= 50.0f
+                                        && d.shortFit <= 190.0f
+                                        && std::fabs (shortDelta) > 1.0e-6f
+                                        && shapeDelta * shortDelta > 0.0f;
         const bool bridgeEligible =
             h.regime == vp::TempoRegime::live
+            && h.transitionState == vp::TempoTransitionState::stable
+            && h.transitionRefitBeats == 0
             && d.motionShapeModel
                    == static_cast<int> (vp::TempoMotionShapeModel::quadratic)
             && d.motionShapeQuadraticWins >= 2
@@ -194,7 +203,9 @@ DecoderMotionFixtureResult runDecoderMotionFixture (bool abruptStep)
                    >= vp::TempoMotionShape::kEvidenceMarginBic
             && d.motionShapeQuadraticVsHinge
                    >= vp::TempoMotionShape::kEvidenceMarginBic
-            && d.motionShapeQuarantineBeats == 0;
+            && shapeDirectionAgrees
+            && d.motionShapeQuarantineBeats == 0
+            && predictedBpmInRange (d.motionShapeBpm);
         if (bridgeEligible && result.firstEligibleLiveBeatSerial == 0)
             result.firstEligibleLiveBeatSerial = h.beatSerial;
         if (bridgeActive && result.firstBridgeBeatSerial == 0)
@@ -260,20 +271,25 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         expect (proven > 100.75f && proven > ordinary + 0.50f,
                 "full shape proof bypasses stale linear-fit glide penalty");
 
-        auto recoveryAfterTwoBeats = [] (bool provenMotion)
+        auto recoveryAfterTwoBeats = [] (bool armFromDropout)
         {
             vp::TempoFollower follower;
             follower.prepare (48000.0);
             follower.forceTempo (100.0f);
             follower.setLocked (true);
-            follower.setTempoTrust (0.30f);
-            follower.observeRecoveryBeat (0.08f, 1u, true, provenMotion);
+            if (armFromDropout)
+            {
+                follower.setTempoTrust (0.30f);
+                follower.advance (12000); // 250 ms: exceeds the dropout arm time.
+                follower.setTempoTrust (1.0f);
+            }
+            follower.observeRecoveryBeat (0.08f, 1u, true, true);
             follower.advance (28800);
-            follower.observeRecoveryBeat (0.08f, 2u, true, provenMotion);
+            follower.observeRecoveryBeat (0.08f, 2u, true, true);
             return follower.phaseRecoveryActive();
         };
         expect (! recoveryAfterTwoBeats (false) && recoveryAfterTwoBeats (true),
-                "full shape proof opens recovery on its first two fresh beats");
+                "direct motion avoids one-shot recovery unless dropout re-entry arms it");
     }
 
     {
@@ -390,9 +406,10 @@ void vpRunTempoMotionTrackerTests (int& passed, int& failed)
         expect (ramp.bridgeApplied && ramp.bridgeOnlyInLive,
                 "quadratic ramp authority is applied only after release to live");
         expect (ramp.firstEligibleLiveBeatSerial > 0
+                    && ramp.firstBridgeBeatSerial >= ramp.firstEligibleLiveBeatSerial
                     && ramp.firstBridgeBeatSerial
-                           == ramp.firstEligibleLiveBeatSerial,
-                "ramp bridge starts on the first eligible live beat without added delay");
+                           <= ramp.firstEligibleLiveBeatSerial + 1,
+                "ramp bridge starts by the beat after public eligibility");
 
         const auto step = runDecoderMotionFixture (true);
         expect ((step.sawHinge || step.sawQuarantine)

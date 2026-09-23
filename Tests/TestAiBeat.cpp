@@ -9776,6 +9776,81 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool liveAcquisitionPublishesImmediately()
+    {
+        constexpr double fps = 50.0;
+        bool firstBar = true;
+
+        for (float bpm : { 76.0f, 100.0f, 140.0f, 168.0f })
+        for (bool lineFeed : { true, false })
+        {
+            BeatDecoder decoder;
+            decoder.prepare (fps);
+            decoder.setLevelAnchor (true);
+            decoder.setLineFeed (lineFeed);
+
+            const double beatSec = 60.0 / static_cast<double> (bpm);
+            const double framesPerBeat = beatSec * fps;
+            const double firstBeatSec = 0.35 * beatSec;
+            double validSec = -1.0;
+            BeatHypothesis hyp;
+            for (int frame = 0; frame < static_cast<int> (fps * 5.0); ++frame)
+            {
+                const double beats = static_cast<double> (frame) / framesPerBeat - 0.35;
+                const double toBeat = std::fabs (beats - std::round (beats)) * framesPerBeat;
+                const float pulse = 0.03f + 0.92f * static_cast<float> (
+                    std::exp (-0.5 * (toBeat / 1.5) * (toBeat / 1.5)));
+                hyp = decoder.observe (pulse, 0.03f, 0.0f);
+                if (hyp.valid)
+                {
+                    validSec = static_cast<double> (frame) / fps;
+                    break;
+                }
+            }
+
+            BeatTracker live;
+            live.sampleRate = 48000.0;
+            live.currentState = TrackingState::listening;
+            live.armed = true;
+            live.sawInputStart = true;
+            live.inputPeakEnv = 0.02f;
+            live.listeningSamples = 48000;
+            live.heldBpm = hyp.bpm;
+            live.beatCount = lineFeed ? 3 : 4;
+            live.samplesSinceBeat = 0;
+            live.updateState (hyp.confidence, true, true, hyp.valid, 256);
+
+            // Playback joins on the next quarter. The first beat starts this
+            // measured 4/4 bar, so its fifth beat is the hard deadline.
+            const double quarters = std::ceil ((validSec - firstBeatSec) / beatSec
+                                                - 1.0e-9);
+            const double entrySec = firstBeatSec + std::max (0.0, quarters) * beatSec;
+            const double deadlineSec = firstBeatSec + 4.0 * beatSec;
+            const bool ok = validSec >= 0.0
+                         && live.currentState == TrackingState::following
+                         && entrySec <= deadlineSec + 1.0e-9;
+            firstBar &= ok;
+            std::printf ("first-bar-lock %3.0f %s valid=%.2fs entry<=%.2fs bar=%.2fs %s\n",
+                         static_cast<double> (bpm), lineFeed ? "line" : "room",
+                         validSec, entrySec, deadlineSec, ok ? "PASS" : "FAIL");
+        }
+
+        BeatTracker room;
+        room.sampleRate = 48000.0;
+        room.currentState = TrackingState::listening;
+        room.inputPeakEnv = 0.02f;
+        room.listeningSamples = 48000;
+        room.heldBpm = 76.0f;
+        room.beatCount = 4;
+        room.samplesSinceBeat = 0;
+        room.updateState (0.80f, true, true, true, 256);
+
+        const bool ok = firstBar && room.currentState == TrackingState::locking;
+        std::printf ("first-bar-background state=%d %s\n",
+                     static_cast<int> (room.currentState), ok ? "PASS" : "FAIL");
+        return ok;
+    }
+
     static bool declareBarHereUnflipsHalfBeat()
     {
         BeatTracker t;
@@ -10121,6 +10196,8 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    (vp::BeatTrackerTimingProbe::liveAcquisitionPublishesImmediately()
+         ? passed : failed)++;
     for (int block : {64, 256, 1024})
     {
         const double seconds = vp::BeatTrackerTimingProbe::lowAfter (block);
@@ -10200,6 +10277,18 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
     }
     expect (steps, "jittered line step confirms within three quarters");
     expect (displacements, "a constant onset displacement is never confirmed as a step");
+
+    const auto ramp4 = runDecoderStep (118.0f, 126.0f, true,
+                                       StepAnomaly::none, 4.0);
+    const auto ramp12 = runDecoderStep (118.0f, 126.0f, true,
+                                        StepAnomaly::none, 12.0);
+    std::printf ("tempo-step ramps 4s=%d@%.2f/%d/%d 12s=%d@%.2f/%d/%d\n",
+                 ramp4.rapidCount, ramp4.rapidAtSec,
+                 static_cast<int> (ramp4.reasonAtConfirm), ramp4.intervalsAtConfirm,
+                 ramp12.rapidCount, ramp12.rapidAtSec,
+                 static_cast<int> (ramp12.reasonAtConfirm), ramp12.intervalsAtConfirm);
+    expect (ramp4.rapidCount == 0 && ramp12.rapidCount == 0,
+            "four- and twelve-second ramps never publish rapid transitions");
 }
 
 void vpRunHarmonicEntryTest (int& passed, int& failed)

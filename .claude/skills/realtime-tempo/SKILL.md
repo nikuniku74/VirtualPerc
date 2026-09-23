@@ -2577,6 +2577,37 @@ their hashes. Do not hold from the fit residual: five of
 those cost half a bar on an accelerando, and a band speeding
 up with the drummer playing still has the body.
 
+**Kept (2026-09-22), post-pivot curvature veto in
+`observeGridStep`.** The detector already required the eight
+beats before a candidate pivot to be straight, but that does
+not distinguish a genuine step from a clean ramp which starts
+at the pivot. In `VPAlign`, 118 -> 126 over 4 s was therefore
+published as one rapid transition on the third new interval;
+the clock was 53 ms behind at that publication. Compare the
+first and last accepted intervals after the pivot as well: a
+step makes them stationary, while a ramp keeps bending them.
+Reject clean line evidence above a 0.26 share of the candidate
+step; retain the existing 0.30 share once measured scatter is
+above its floor, so onset noise does not slow a real change. The
+four ramp seeds now publish 0 rapid
+transitions, while all six protected tempo-step fixtures still
+publish exactly one transition on time, the jittered 120 ->
+132/110 bank remains 12/12, and the displacement control stays
+0/6. The focused step gate also runs 4 s and 12 s ramps through
+the decoder's exact 20 ms peak path; both remain at 0 rapid.
+`VPAlign` passes all tempo-change and ramp-phase rows.
+The quick motion matrix is fisso **22.256/76.932** hash
+`8e3c8d2cdc5854f5`, continuo **36.551/91.156** hash
+`ca2588bfe0ce70c5`, gradino **33.962/162.108** hash
+`4dd43630dc0ebc83`, recovery violations 0 and bridge-authority
+frames 0/27/0. Its `curve` selector now counts rising episodes
+of production `motionBridgeAuthority`: the retired
+`motionFitEvidence` diagnostic legitimately stays zero, while a
+strict shape proof may be quarantined on a step before authority.
+Use `VPAlign --trace-change FROM TO RAMP [SEED]` to inspect the
+causal beat path; `--trace-ramp` prints the transition fields
+on the continuous MIXER path too.
+
 **Phase floor (2026-09-22). Stop. Already sub-hop.**
 The continuo mean sits on the fisso floor. `--quick` 16
 continuo, post-warmup, control
@@ -4182,6 +4213,26 @@ Returning to the foreground reopens the device, whose `prepareToPlay()` starts a
 fresh analysis session. While an armed performance continues in the background,
 the 15 Hz timer remains only for the device watchdog and skips UI repainting.
 
+**First-bar entry (measured 2026-09-22).** Once START is armed and the input is
+known to be live (`sawInputStart` or `heardMusic`), a valid periodic decoder grid
+goes directly from LISTENING to FOLLOWING. Do not add a second time-based
+LOCKING proof there: `BeatDecoder` has already required three causal peaks on a
+line feed or four through a room, and the extra 160 ms consumes the margin before
+the next-quarter entry. Background listening still uses LOCKING, including its
+empty-room rejection window. `VPTests --state-timing` measures the whole causal
+deadline from the first beat through the next possible quarter:
+
+| BPM | line valid / entry / bar | room valid / entry / bar |
+|---:|---:|---:|
+| 76 | 1.88 / 2.64 / 3.43 s | 2.66 / 3.43 / 3.43 s |
+| 100 | 1.44 / 2.01 / 2.61 s | 2.04 / 2.61 / 2.61 s |
+| 140 | 1.02 / 1.44 / 1.86 s | 1.46 / 1.86 / 1.86 s |
+| 168 | 0.86 / 1.20 / 1.55 s | 1.22 / 1.55 / 1.55 s |
+
+All eight paths enter no later than the first 4/4 boundary; the unarmed
+background control remains in LOCKING. This changes only the state gate. It does
+not reduce the decoder evidence, snap the clock, or restart it.
+
 ## 7. What we refuse to do
 
 - Restart the loop or clock on a BPM change.
@@ -4210,6 +4261,7 @@ cmake --build build-host --target <target>
 | `VPTests` | `Tests/` | the TAP suite; `StubBeatModel` when no ONNX assets |
 | `VPTests --bar` | `Tests/TestAiBeat.cpp` | two-quarter cut / seek re-entry of the one (item 2) |
 | `VPTests --phase-lock` | `Tests/TestAiBeat.cpp` | click-track heard phase at 78/100/120/138/156 BPM vs 8 ms after subtracting `attackLeadMs` |
+| `VPTests --state-timing` | `Tests/TestAiBeat.cpp` | armed live input exposes an already-valid grid immediately and can enter by the first 4/4 boundary; background listening retains LOCKING; state holds are invariant across buffer sizes |
 | `VPTests --tempo-step` | `Tests/TestAiBeat.cpp` | wide non-octave line steps confirm once in three intervals and hold against the stale fold |
 | `VPTests --swing` | `Tests/TestMain.cpp` | the swing warp's geometry alone: straight where written, swung on 0/⅓/⅔/⅚, never early (item 7) |
 | `VPTests --leak` | `Tests/TestMain.cpp` | the canceller alone in twenty seconds: 54 style x subdivision x path rows, the no-leak feed at three buffer sizes, the output A/B, the restart, three rooms |

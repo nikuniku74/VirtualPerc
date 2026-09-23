@@ -411,8 +411,12 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
             clock.setTempoMotionHint (
                 cleanMotion, h.motionBridgeAuthority >= 0.999f || h.ioiLead);
             const auto diagnostics = decoder.diagnostics();
-            const bool curveProof = h.regime == vp::TempoRegime::fixed
-                                    && diagnostics.motionFitEvidence >= 3;
+            // Count episodes which reach the production bridge, not the old
+            // 16-beat diagnostic curve counter. `motionFitEvidence` can now
+            // remain zero throughout a clean ramp, while strict shape proof
+            // may deliberately be quarantined on a step before it earns any
+            // authority. The bridge is the selector the clock actually uses.
+            const bool curveProof = h.motionBridgeAuthority > 0.0f;
             if (curveProof && ! curveProofActive)
             {
                 ++score.curveProofs;
