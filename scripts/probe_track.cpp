@@ -110,7 +110,8 @@ int main (int argc, char** argv)
                  path.c_str(), n / sr, sr, gainDb);
     if (trace)
         std::printf ("#  t     pubbl   rete   pettine  corto  lungo  conf  resL resS  reg stato suona  "
-                     "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?  curva rate resC gain ev\n");
+                     "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?  curva rate resC gain ev"
+                     "  clock target trim phase trust recover fast interval votes dir bridge shape hinge transition\n");
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     if (pulseFile != nullptr)
@@ -158,7 +159,7 @@ int main (int argc, char** argv)
             lastTrace = t;
             vp::BeatHypothesis hyp {};
             const bool haveHyp = eng.tryLoadNeuralHypothesis (hyp);
-            std::printf ("%6.1f %7.2f %7.2f %8.2f %7.2f %7.2f  %.2f  %5.3f %5.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s  %7.2f %+6.2f %.3f %.2f %d\n",
+            std::printf ("%6.1f %7.2f %7.2f %8.2f %7.2f %7.2f  %.2f  %5.3f %5.3f   %d    %d     %s  %5d  %7.2f  %.3f  %.3f  %.3f  %d  %.2f  %s  %7.2f %+6.2f %.3f %.2f %d  %7.2f %7.2f %+6.2f %+6.3f %.2f %u %+6.3f %+6.3f %2d %+2d %.2f %d %.2f %d\n",
                          t, (double) s.bpm, (double) s.neuralBpm, (double) s.combBpm,
                          (double) s.shortFitBpm, (double) s.longFitBpm,
                          (double) s.confidence, (double) s.fitResidual,
@@ -172,7 +173,16 @@ int main (int argc, char** argv)
                          haveHyp ? (double) hyp.motionFitRate : 0.0,
                          haveHyp ? (double) hyp.motionFitResidual : 1.0,
                          haveHyp ? (double) hyp.motionFitImprovement : 0.0,
-                         haveHyp ? hyp.motionFitEvidence : 0);
+                         haveHyp ? hyp.motionFitEvidence : 0,
+                         (double) s.clockBpm, (double) s.targetBpm,
+                         (double) s.tempoTrimBpm, (double) s.phaseErrorBeats,
+                         (double) s.evidenceTrust, s.phaseRecoveryEvents,
+                         (double) s.fastTempoDeviation,
+                         (double) s.fastIntervalDeviation,
+                         s.fastTempoEvidence, s.fastTempoDirection,
+                         (double) s.motionBridgeAuthority, s.motionShapeModel,
+                         (double) s.motionShapeVsHinge,
+                         (int) s.tempoTransitionState);
         }
 
         pos += take;

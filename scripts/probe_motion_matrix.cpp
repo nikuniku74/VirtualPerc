@@ -18,7 +18,11 @@
 // Run the default 192 cases, or 48 while developing:
 //   /tmp/probe_motion_matrix
 //   /tmp/probe_motion_matrix --quick
+//   /tmp/probe_motion_matrix --quick --product-direct
 //   /tmp/probe_motion_matrix --quick --trace-seed 129495
+// The optional product-direct lane approximates the file/mixer phase-trust and
+// live-servo path (without the full engine). It is a separate A/B lane, not
+// the offset-0 control hash.
 
 #include "AI/BeatDecoder.h"
 #include "Tracking/PhaseTrust.h"
@@ -40,6 +44,7 @@ constexpr int kSamplesPerFrame = static_cast<int> (kSampleRate / kFps);
 constexpr double kDuration = 90.0;
 constexpr double kWarmup = 24.0;
 unsigned gTraceSeed = 0;
+bool gProductDirect = false;
 FILE* gCurveLog = nullptr;
 FILE* gRecoverTrace = nullptr;
 bool gRecover = false;
@@ -317,6 +322,7 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
     clock.setFollowStrength (vp::FollowStrength::high);
     clock.setLocked (true);
     clock.setTempoTrimEnabled (true);
+    vp::EvidenceTrust trust;
 
     Score score;
     size_t eventLo = 0, truth = 0;
@@ -398,6 +404,17 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
 
         const vp::BeatHypothesis h = decoder.observe (
             activation, 0.025f, 1.0f - activation);
+        const bool productLive = gProductDirect && h.valid
+            && h.regime == vp::TempoRegime::live
+            && h.transitionState == vp::TempoTransitionState::stable
+            && h.transitionRefitBeats == 0;
+        if (gProductDirect && h.valid)
+        {
+            trust.observe (h.fitResidual, h.fitCoverage, 1.0 / kFps,
+                           h.shortFitResidual);
+            clock.setTempoTrust (trust.trust());
+            clock.setDirectLivePhaseFollow (productLive);
+        }
         if (h.valid)
         {
             const bool cleanMotion =
@@ -450,7 +467,11 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                                        : cleanMotion ? vp::kGridTauMotion
                                                      : vp::kGridTauHolding;
             clock.setGridPhase (
-                h.beatPhase, vp::gridPhaseTau (phaseTau, true, 1.0f));
+                h.beatPhase,
+                productLive
+                    ? vp::kGridTauMotion
+                    : vp::gridPhaseTau (phaseTau, true,
+                                        gProductDirect ? trust.trust() : 1.0f));
 
             if (previousRegime == vp::TempoRegime::fixed
                 && h.regime == vp::TempoRegime::live)
@@ -896,6 +917,8 @@ int main (int argc, char** argv)
     {
         if (std::strcmp (argv[i], "--quick") == 0)
             quick = true;
+        else if (std::strcmp (argv[i], "--product-direct") == 0)
+            gProductDirect = true;
         else if (std::strcmp (argv[i], "--verbose") == 0)
             verbose = true;
         else if (std::strcmp (argv[i], "--csv") == 0)

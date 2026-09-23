@@ -4311,6 +4311,40 @@ audio phase checks. The exact same 4/6 result and phase numbers reproduce on
 an isolated `HEAD` build without these changes, so this is a pre-existing
 phase limitation, not a bar-trust regression; do not treat it as a green gate.
 
+**Bridge/fill diagnosis (2026-09-23; no engine change retained).** A listener
+reports a false rise from about 123 to 127 BPM on a late drum figure and a
+slow return. The full loaded-file path (`VPTrack --player`, original recording
+converted to WAV) reproduces it at approximately t=141–160 s, without a new
+analysis epoch. Activation replay isolates the first FISSO→VIVO release at
+t=142.72 s (2 s prelude in that dump): `curveOnLatticeRelease=1`, two fast
+votes, 8-beat residual 0.037, 24-beat residual 0.048, long-fit trend 0.007
+against spread 0.007. `moving=0`; the comb still names 123. If the curve door
+is withheld, a third vote plus weak `windowAgrees` releases one beat later.
+During the figure `EvidenceTrust` is 0.30 but product direct-live mode gives
+the phase servo full trust anyway; the clock briefly runs faster than the
+published BPM (about 137 vs 127 in the full trace). On return, trim reaches
+about −1.3 BPM, phase error reverses sign, and it takes several seconds for
+both to settle. The BPM display alone misses the audible excursion.
+
+Do not repair this with a threshold from that song. Requiring an 8-beat residual
+under 0.030 on the curve door delayed the false release by one beat, then the
+three-vote path still released; the current known-grid quick bank and
+`VPAlign --ramps` were unchanged, so there was no reason to retain it.
+Also gating the three-vote and long-window paths on that residual held the
+example but worsened the known-grid quick bank: fisso
+22.256/76.932→22.830/77.455 ms, continuo 36.551/91.156→36.926/92.104,
+gradino 33.962/162.108→34.866/173.629;
+`VPAlign --ramps` MIXER failed 4 rows. A 0.55 comb-salience alternative
+passed `VPAlign --ramps` but still worsened continuo to 36.704/91.519 and
+gradino to 34.490/165.654. Removing the product direct-live phase-trust
+override made the optional product-direct quick bank worse on continuo
+34.211/89.944→36.349/96.762 and gradino 33.502/160.108→33.924/163.707.
+All three candidates were reverted. The safe next step is an independent
+rhythmic cue/beat-grid and a diverse fill/bridge control bank, not weaker
+release or slower global phase following. `VPTrack --trace` now exposes clock,
+target, trim, phase error, trust and recovery count; the known-grid matrix has
+an optional `--product-direct` A/B lane. Its default hashes remain the control.
+
 `scripts/probe_tempo.cpp` has no CMake target of its own; build any probe source
 ad hoc with `VP_STYLE_SRC=scripts/probe_tempo.cpp VP_PROBE_DIR=scripts` and the
 `VPStyle` target (`CMakeLists.txt:690`).
