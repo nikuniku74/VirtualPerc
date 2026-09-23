@@ -1319,6 +1319,8 @@ Clean Door B stays at 0.035.
 
 **Kept (2026-09-23), the FISSO 4-beat hold survives the fixed→live boundary and the release beat confirms it.** The second beat of 329252 is the release itself (t=43.86 i4=78.4 still fixed, gap 5.8%; t=44.62 already live and the gap has fallen to 4.5%, so the 8% live pair never starts). Offset-0 fisso and continuo hashes identical (`8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`). Gradino **33.537/157.311 → 33.452/155.272**, hash `a22d3c04d2ac06d0`, recovery 0, authority 0. Only seed 329252 moved: phase 36.3/212.5/336.6 → 35.0/179.9/308.9. A confirmed transition that already rewrote the tempo clears the hold. `VPAlign --ramps` MIXER identical to the checkpoint: flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0, all PASS.
 
+**Kept (2026-09-23), the carried second vote takes the tempo.** Walking that vote at `kRateLive` left 329252 at 83.3 on the release beat against a truth of 78.4. The vote is the same second 4-beat the fixed door would have taken, so it now publishes the same way: tempo taken, grid on that 4-beat, one rapid transition. Fisso `8e3c8d2cdc5854f5` and continuo `ca2588bfe0ce70c5` unchanged. Gradino 33.270/153.677 → 32.651/152.146, hash `019cb69fc2aa5963`. Only 329252 moved: 35.0/179.9/308.9 → 25.1/155.4/306.1, bpm error 0.86% → 0.55%. The ordinary live pair still walks at `kRateLive`. `VPAlign --ramps` MIXER is the same checkpoint and `--steps` still passes, worst phase 24.5 ms.
+
 **Rejected (2026-09-23), one-beat phase spend after a clean FISSO leave.** The decoder grid is already on the beat while the clock is still late (218386 t=47.08: grid 19 ms, clock 157 ms; 257981: grid 1 ms, clock 121 ms). Spending that debt on the existing 25% rail, only when the clock was already 0.18 beats off a clean 4-beat, moved gradino 33.537/157.311 → 33.169/149.095 (218386 p95 97.6→58.2, 265900 142.7→99.1, 329252 212.5→164.0) but fisso hash changed and the family got worse: 22.256/76.932 → 22.354/77.187, seed 64361 phase p995 101.7→159.0. Continuo 36.551→36.600, seed 153252 35.0→35.8. Reverted. Requiring the published anchor to already match that 4-beat within 0.06 beats produced the same numbers and was reverted too. Do not reopen this rail on the first live beats.
 
 **Rejected (2026-09-23), one beat of the 25% phase rail on a live 4-beat confirm only.** Fisso and continuo hashes stayed identical. Gradino family 33.452/155.272 → 33.417/155.044, but seed 257981 phase p95 128.4 → 156.2 against `/tmp/motion_curve_live4.csv` (that seed is unchanged by the carried hold). 234224 moved 179.0 → 178.3. 297576 did not move. Reverted. Do not spend that rail on the confirm beat either: the published grid is not yet the beat the clock should land on.
@@ -1334,6 +1336,18 @@ Clean Door B stays at 0.035.
 **Kept (2026-09-23), hold the counted rate through a sounding rest.** Once a part is playing, `hyp.beatGap` tells the clock to spend no phase steer in two cases: no beat accepted for 1.5 periods, or the kick body has been gone for more than 1.05 periods while hats and voice still crest (`kitBodyHolding`). The direct-live rail is 7.5% at high: a fifth of a beat of phase debt is spent as 129 BPM against a 120 clock (`/tmp/probe_gap_hold`, open 129.00, held 120.00). A kick train at low-band 0.80 never arms the flag; the same grid continued as hats at 0.02 arms it for 102 frames and the published tempo stays 120.00. A confirmed rapid window still spends. The bank passes lowBand 0, so the body is never heard there, and the quick hashes stay `8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`, `a22d3c04d2ac06d0`. A crest that still has kick-body energy refreshes the body and is not this rest.
 
 **Kept (2026-09-23), the beats after that rest use the holding rail.** Zeroing steer only while the rest lasts leaves the debt intact, and the next beats spend it at 7.5%: the same 0.20-beat debt reads 129.00 the moment the hold ends. For eight beats after the rest the steer is clamped to 3.5%, the rail the clock already uses when it is holding its ground. `/tmp/probe_gap_return`: open 129.00/129.00, held 120.00 during the rest and 124.20 once the beats return. A confirmed rapid window is not clamped: the same debt inside `beginTempoTransition` still reaches 150.00. The guard arms only from `beatGapHold`. Rebuilt quick bank: fisso `8e3c8d2cdc5854f5` 22.256/76.932, continuo `ca2588bfe0ce70c5` 36.551/91.156, gradino `99f863e93be8d563` 33.360/154.375, recovery 0.
+
+**Kept (2026-09-23), the two live 4-beats may sit 4% apart.** The hold was 2%. On 234224 the first clean 4-beat is 137 and the next is 142 (truth 142, 3.3% apart), so the second vote never fired and the clock walked up from the 8-beat. Nothing else in the quick bank has two passing 4-beats between 2% and 4%. Fisso `8e3c8d2cdc5854f5` 22.256/76.932 and continuo `ca2588bfe0ce70c5` 36.551/91.156 unchanged. Gradino 33.360/154.375 → 33.270/153.677, hash `2e763c2ddde7d225`. Only 234224 moved: 71.7/158.2/190.2 → 70.3/147.1/180.0. Rate stays `kRateLive`. The fixed-regime hold is unchanged. `VPAlign --ramps` MIXER is the same checkpoint (flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0) and `--steps` still passes, worst phase after evidence 24.5 ms.
+
+**Kept (2026-09-23), the live pair may be 7.5% off the 8-beat and the interval 2.5% off the 4-beat.** 289657's two beats were 2.1% and then 7.7% outside the old pair, and both 4-beats name the new tempo (88 against a truth of 89). No other quick-bank pair appears. The carried vote keeps the 2% interval test. Fisso and continuo hashes unchanged. Gradino 32.651/152.146 → 32.488/150.903, hash `bcf2c1d9141d2abb`. Only 289657 moved: 42.8/276.3/330.2 → 40.2/256.4/328.0. Rate stays `kRateLive`. `VPAlign --ramps` MIXER is the same checkpoint and `--steps` still passes, worst phase 24.5 ms.
+
+**Rejected (2026-09-23), take the ordinary live pair the way the carried vote does.** The current log has three live confirms and all three name the truth (234224, 289657, 297576); none on fisso or continuo. Publishing tempo, anchor and rapid anyway: fisso `8e3c8d2cdc5854f5` and continuo `ca2588bfe0ce70c5` unchanged, gradino mean 32.488 → 31.262, but 234224's phase went the wrong way, 70.3/147.1/180.0 → 66.9/156.1/202.6. 297576's wrong lattice did improve (p95 246.1 → 228.2, bpmErr 11.50% → 1.21%). The right number taken all at once can still open the phase. The live pair keeps walking at `kRateLive`.
+
+**Rejected (2026-09-23), do not let `checkGridPhase` shift the anchor when the intervals have already left.** A step lands late on the old grid and three late beats look like a flipped beat; the shift then wipes the history (210467 is blind, ioi 0, from t=48.72). Skipping the shift whenever the recent interval is 5% off the committed tempo: fisso 22.256/76.932 → 24.190/78.968 hash `6237abef47b69208`, continuo 36.551/91.156 → 43.774/107.854 hash `27a80e46bd178413`, gradino unchanged in the p95 and slightly worse. Narrowing it to a clean 4-beat (residual under 0.03, within 2% of the interval, more than 8% off the committed tempo, log2 under 0.45) left continuo and gradino hashes identical and moved only fisso, the wrong way: 22.256/76.932 → 23.735/77.838 hash `45d0b576211b3db5`. The half-beat correction is doing real work on flat tempos. Do not gate it on the intervals.
+
+**Rejected (2026-09-23), take the comb in full when the live 8-beat has gone blind.** On a step the quarters leave the committed grid, `haveShort` fails, and the comb pull is 0.70. At the beat the comb has arrived, 210467 goes 64.0→56.9 against a truth of 54; taking the comb at 1.0 when the gap is over 8% and log2 is under 0.45 (a step, not a 3:2 or a double) would have landed on 53.9. Fisso hash identical. Gradino 33.360/154.375 → 32.446/145.279, hash `882e0032fd2ef254`, almost entirely 210467 p95 493.9→339.4; 273819 p95 170.1→179.0. Continuo 36.551/91.156 → 37.693/92.230, hash `4a09b869c16a036d`. The one continuo frame is 145333 at t=36.78, where the 0.70 pull is already bringing a 196 spike back toward the ramp. Reverted. Do not spend the blind-fit comb at 1.0.
+
+**Rejected (2026-09-23), loosen the grid-step evidence so a noisy step confirms sooner.** On 210467 the truth steps 63→54 at t=46 and the committed number stays near 64 until the comb pull at t=53.88. `observeGridStep` never sees that step: it returns until ten beats of history exist, and the intervals around the change are not consecutive (missed quarters, gaps at t=52–54). The candidates in that tempo band that do reach the test fail `kGridStepEvidence` (the step does not beat a plain offset by 16 σ²) with a relative step of only 3–7%, which is the late stroke the guard was measured on (a +44 ms drop). Do not lower that evidence.
 
 **Rejected (2026-09-23), the matrix clock adopts `beginTempoTransition` the way the product does.** Fisso hash identical. Gradino 33.360/154.375 → 32.912/152.192, hash `dda9879139c03970`: 305495 p95 100.1→86.5, 321333 42.8→33.8, 257981 14.7→7.6, 281738 134.8→128.7. Continuo 36.551/91.156 → 36.569/91.409, hash `d0a46c99bf34529a`, because 224523 mean 26.5→28.1 and p95 76.1→80.3. One ramp pays for the steps. Reverted in the probe. Do not put that adopt on the official matrix lane.
 
@@ -3616,15 +3630,18 @@ item 13.
 
 **A two-quarter cut is not a new song.** The epoch watcher needs ~4 s of quiet
 before it will restart the decoder, so a mute of two quarters never fired, and
-must not: the clock kept time, only the *count* is now on the three. A separate
-gap detector (`VirtualPercussionEngine::maybeDetectBarReentry`) looks at the
-block peak against the recent loud level - a mute clears it in one callback, a
-fill never does - and opens a four-bar coming-in window
-(`BeatTracker::notifyBarReentry`). Same window on seek (`notifyTrackSeek`),
-without bumping `analysisEpoch`. One rotation per return, two bars of evidence
-instead of 32, `rotateBarIndex` only. The clap reads `barTrusted` from the
-tracker (histogram names beat zero, or the listener's lock), not a time-since-
-rotation proxy. Verify with `VPTests --bar`.
+must not: the clock kept time. A seek can move the one by any quarter, and
+still uses the cheap coming-in window. A pause is different. The clock kept
+counting, so a bar that was already trusted is not renumbered by whichever
+quarter wins the next eight beats: that is how a correct one becomes the
+three, or the battere and the levare trade places. `maybeDetectBarReentry`
+still opens the window, but the rotation is accepted only when it is half a
+bar and the winner clears the playing margin (0.20). While the part is
+already playing on a trusted one, the network may not move the bar by one
+quarter; a half-bar correction still needs the long count and that margin.
+The harmony fallback is not held to that rule. The button remains the way
+to place the one on the other quarter. A seek
+(`notifyTrackSeek`) is unchanged. Verify with `VPTests --bar`.
 
 **Loading another file is a new input, not a cut.** A seek keeps the tempo and
 only moves the one; a *different file* is a different source, and the decoder

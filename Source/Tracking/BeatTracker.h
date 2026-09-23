@@ -149,11 +149,16 @@ public:
     /** The band came back after a hole (two quarters muted, a seek in the
         loaded track). Opens a short coming-in window so the one can be
         rotated onto the new downbeats without waiting eight bars of playing
-        evidence, and without restarting the tempo decoder: the clock kept
-        time through the hole, only the count is two quarters off.
+        evidence, and without restarting the tempo decoder.
+
+        `fromPause` is the level detector, not a seek. The clock kept the
+        count through the rest, so a bar that was already trusted may only
+        move by half a bar, and only on the same margin used while playing.
+        A one-quarter move is the battere/levare swap. A seek can still
+        land on any quarter.
 
         Audio thread. No alloc. A lock set by the listener still forbids it. */
-    void notifyBarReentry() noexcept;
+    void notifyBarReentry (bool fromPause = false) noexcept;
 
 
     void setReportedLatencyMs (float ms) noexcept { reportedLatencyMs = ms; }
@@ -573,6 +578,9 @@ private:
     int   barRotations = 0;
     /** Samples remaining in the post-cut coming-in window. Zero is closed. */
     int   barReentrySamples = 0;
+    /** Set when a pause re-opens the window on a bar that was already
+        trusted. Only a half-bar rotation is then accepted. */
+    bool  barReentryHalfOnly = false;
 
     /** The bar as the harmony votes on it, one vote per chord change, decayed
         the same way the network's is. Kept apart from the network's histogram

@@ -243,6 +243,7 @@ void BeatTracker::reset() noexcept
     barTrustEstablished = false;
     barRotations = 0;
     barReentrySamples = 0;
+    barReentryHalfOnly = false;
     quantizeWaitSamples = 0;
     lastTapSec = -1.0;
     barDeclaredSamples = 0;
@@ -702,11 +703,17 @@ void BeatTracker::declareBarHere() noexcept
     neural.declarePulseHere();
 }
 
-void BeatTracker::notifyBarReentry() noexcept
+void BeatTracker::notifyBarReentry (bool fromPause) noexcept
 {
     // The listener has placed the one. A cut does not overrule that.
     if (barLocked)
         return;
+
+    // A pause does not renumber the bar: the clock kept counting. The
+    // cheap window used to take whichever quarter won the next eight
+    // beats, and on a real mix that winner is as often the three or the
+    // levare as the one. A seek still may land anywhere.
+    barReentryHalfOnly = fromPause && barTrustEstablished;
 
     // Pre-cut votes are about a numbering the hole has just made wrong.
     // Leaving them would take eight bars of playing decay before the new
@@ -862,6 +869,17 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // rather than a share of a total.
     if (bestVotes < runnerUp + kBarWinMargin + extraMargin)
         return false;
+    // A pause under a bar that was already the one. Half a bar is the
+    // 1-vs-3 the hole was built for; one quarter is the battere and the
+    // levare trading places. The playing margin is what a clear relocation
+    // clears and a split vote does not.
+    if (comingIn && barReentryHalfOnly)
+    {
+        if (best != 2)
+            return false;
+        if (bestVotes < runnerUp + kBarWinMarginPlaying + extraMargin)
+            return false;
+    }
     if (! comingIn)
     {
         // Stricter once the part is playing, because a bar the listener can
@@ -873,6 +891,14 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         // corrected with one tap; one that keeps moving cannot.
         if (bestVotes < runnerUp + kBarWinMarginPlaying + extraMargin
             || downbeatHoldSamples > 0)
+            return false;
+        // Once the one is trusted, a one-quarter move from the network swaps
+        // the battere and the levare under a part that was already on the
+        // beat. Half a bar is still allowed: that is the 1-vs-3, and it
+        // still has to clear this margin over the long count. The harmony
+        // is a different source and is not held to this; the button places
+        // the one when the network is simply on the wrong quarter.
+        if (barTrustEstablished && best != 2 && votes == downbeatVotes)
             return false;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
@@ -1273,7 +1299,11 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (downbeatHoldSamples > 0)
         downbeatHoldSamples -= numSamples;
     if (barReentrySamples > 0)
+    {
         barReentrySamples = std::max (0, barReentrySamples - numSamples);
+        if (barReentrySamples == 0)
+            barReentryHalfOnly = false;
+    }
     // The bar has to be alignable *while* waiting to come in - that is the one
     // moment it matters most. It used to be excluded here, so through the whole
     // wait the bar was never corrected and "the first quarter" meant whichever

@@ -1364,7 +1364,7 @@ void VirtualPercussionEngine::maybeDetectBarReentry (int numSamples, float rawPe
     }
 
     if (loudBlock && musicGapArmed)
-        tracker.notifyBarReentry();
+        tracker.notifyBarReentry (true);
 
     musicGapSamples = 0;
     musicGapArmed = false;

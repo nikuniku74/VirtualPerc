@@ -5154,13 +5154,20 @@ void BeatDecoder::updateTempo() noexcept
             // cap is exactly what stops it dragging a true change back.
             // Live, the 8-beat can still name the tempo that was left
             // while two IOI-indexed 4-beats already agree on the new
-            // one: more than 8% off the 8-beat, the newest interval
-            // within 2% and on the same side, residual under 0.03, the
-            // two 4-beats within 2% of each other. Offset-0: no fisso
-            // confirm and no continuo confirm, both hashes identical.
-            // Gradino 33.96/162.11 → 33.54/157.31 on 234224, 257981
-            // and 297576. A 3–4% gap is a ramp overshoot and stays on
-            // the 8-beat. Not an octave. Rate stays kRateLive.
+            // one: more than 7.5% off the 8-beat, the newest interval
+            // within 2.5% and on the same side, residual under 0.03, the
+            // two 4-beats within 4% of each other. The 2% hold missed
+            // 234224 (137 then 142, 3.3% apart, truth 142). Widening
+            // only that agreement: fisso and continuo hashes identical,
+            // gradino 33.360/154.375 → 33.270/153.677, and the only
+            // seed that moved is 234224, 71.7/158.2 → 70.3/147.1.
+            // 289657 then sat just outside both the 8% gap (7.7%) and
+            // the 2% interval (2.1%). Opening those two to 7.5% and
+            // 2.5% adds only that pair: 42.8/276.3 → 40.2/256.4, and
+            // fisso and continuo stay put. The carried vote still
+            // uses the 2% interval test. A 3–4% gap to the 8-beat is
+            // a ramp overshoot and stays on the 8-beat. Not an octave.
+            // Rate stays kRateLive.
             // Door D's 0.45 on this aim: fisso hash changed, continuo
             // 36.551/91.156 → 52.481/128.505 with 2 recovery
             // violations, gradino 33.537/157.311 → 38.979/159.143.
@@ -5179,28 +5186,76 @@ void BeatDecoder::updateTempo() noexcept
                     const float ioiBpm = 60.0f / recent;
                     const bool octave = std::fabs (std::log2 (fourBpm / shortBpm))
                                         > kOctaveThreshold;
-                    const bool leftShort = std::fabs (fourBpm - shortFitBpm) > 0.08f * shortBpm;
+                    const bool leftShort = std::fabs (fourBpm - shortFitBpm) > 0.075f * shortBpm;
                     const bool ioiAgrees = std::fabs (ioiBpm - fourBpm)
                                            < 0.02f * std::max (kMinBpm, fourBpm);
+                    // 289657's two beats sit just outside the old pair:
+                    // the interval is 2.1% off the 4-beat, then the 4-beat
+                    // is 7.7% off the 8-beat. Both name the new tempo.
+                    // The carried vote keeps the 2% interval test. No other
+                    // quick-bank pair appears when the live gap is 7.5%
+                    // and the live interval test is 2.5%.
+                    const bool ioiAgreesLive = std::fabs (ioiBpm - fourBpm)
+                                               < 0.025f * std::max (kMinBpm, fourBpm);
                     const bool sameSide = (fourBpm - shortFitBpm) * (ioiBpm - shortFitBpm) > 0.0f;
-                    const bool pass = ! octave && leftShort && ioiAgrees && sameSide;
+                    const bool pass = ! octave && leftShort && ioiAgreesLive && sameSide;
+                    // Two clean 4-beats 3.3% apart are the same step still
+                    // settling (234224 t=40.64 at 137, t=41.06 at 142). The
+                    // 2% hold missed that pair. Nothing else in the quick
+                    // bank sits between 2% and 4%.
                     const bool confirmed = pass && liveFourHoldBpm > kMinBpm
                         && std::fabs (fourBpm - liveFourHoldBpm)
-                               <= 0.02f * fourBpm;
+                               <= 0.04f * fourBpm;
                     // A FISSO beat already passed the 5.5% door and stored
                     // its 4-beat. This is the beat that left, so the gap to
                     // the 8-beat may now be under 8% and the live pair never
                     // starts. Agreeing with that stored beat is the second
-                    // vote. Rate stays kRateLive. Offset-0: fisso and
-                    // continuo hashes unchanged; gradino 33.537/157.311 →
-                    // 33.452/155.272, only seed 329252.
+                    // vote, and it publishes the way the fixed door does:
+                    // the tempo is taken, not walked at kRateLive. Walking
+                    // left 329252 at 83.3 against a truth of 78.4. Taking
+                    // it: fisso and continuo hashes unchanged, gradino
+                    // 33.270/153.677 → 32.651/152.146, only that seed
+                    // 35.0/179.9 → 25.1/155.4.
                     const bool carried = ! octave && ioiAgrees
                         && stepFourHoldBpm > kMinBpm
                         && std::fabs (fourBpm - stepFourHoldBpm)
                                <= 0.02f * fourBpm;
                     stepFourHoldBpm = 0.0f;
                     liveFourHoldBpm = pass ? fourBpm : 0.0f;
-                    if (confirmed || carried)
+                    // The carried vote is the second beat of a fixed-regime
+                    // 4-beat that already passed the stricter door.
+                    // Taking the ordinary live pair the same way (234224,
+                    // 289657, 297576 all named the truth) left fisso and
+                    // continuo hashes identical and improved 297576, but
+                    // 234224's phase got worse: 70.3/147.1 → 66.9/156.1.
+                    // The live pair keeps walking at kRateLive.
+                    if (carried && a4 >= 0.0)
+                    {
+                        bpm = std::clamp (fourBpm, kMinBpm, kMaxBpm);
+                        gridAnchorSec = a4;
+                        beatFilled = 4;
+                        longFilled = longWrite = 0;
+                        fixedSamples = 0;
+                        fixedWalkRun = 0;
+                        stepFourHoldBpm = 0.0f;
+                        liveFourHoldBpm = 0.0f;
+                        transitionState = TempoTransitionState::rapid;
+                        transitionReason = TempoTransitionReason::confirmed;
+                        transitionPeriodSec = 60.0f / bpm;
+                        transitionIntervals = 3;
+                        transitionConfidence = 1.0f;
+                        transitionRapidBeats = 0;
+                        transitionRapidDeadlineSec =
+                            timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
+                                          * static_cast<double> (transitionPeriodSec);
+                        transitionRefitBeats =
+                            kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
+                        transitionLastSec = gridAnchorSec;
+                        ++transitionSerial;
+                        resetMotionShadow (false, TempoMotionVeto::transition);
+                        return;
+                    }
+                    if (confirmed)
                     {
                         target = fourBpm;
                         liveFourAim = true;
