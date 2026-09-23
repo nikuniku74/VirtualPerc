@@ -461,10 +461,16 @@ Score run (const Scenario& s, unsigned seed, bool verbose)
                 clock.observeOnsetPhase (vp::wrap01 (clock.beatPhase() - h.beatPhase),
                                          h.confidence, 1);
             }
+            // Same gate as BeatTracker: 0.30 only while a confirmed FISSO
+            // refit would otherwise sit on the 0.90 hold. Live refit stays
+            // here. 305495 p95 113.9→100.1; fisso and continuo unchanged.
             const float phaseTau = h.motionBridgeAuthority >= 0.999f
                                        ? vp::kGridTauProvenMotion
                                        : h.ioiLead ? vp::kGridTauIoiLead
                                        : cleanMotion ? vp::kGridTauMotion
+                                       : (h.regime == vp::TempoRegime::fixed
+                                          && h.transitionRefitBeats > 0)
+                                             ? vp::kGridTauMotion
                                                      : vp::kGridTauHolding;
             clock.setGridPhase (
                 h.beatPhase,

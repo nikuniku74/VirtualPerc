@@ -788,6 +788,8 @@ void BeatDecoder::reset() noexcept
     fixedSamples = 0;
     fixedWalkRun = 0;
     stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
+    barTempoHoldBeats = 0;
     beatsInRegime = 0;
     fixedErrorBeats = 0;
     leftFixedBeats = 0;
@@ -1106,7 +1108,14 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
     fixedAnchorBpm = r == TempoRegime::fixed ? bpm : 0.0f;
     fixedSamples = 0;
     fixedWalkRun = 0;
-    stepFourHoldBpm = 0.0f;
+    // The FISSO 4-beat hold is one beat old. Clearing it on the way into
+    // VIVO drops the pair whose second beat is the release itself
+    // (329252: t=43.86 i4=78.4 still fixed, t=44.62 already live and the
+    // gap to the 8-beat has fallen under 8%). The live beat either
+    // confirms that hold or clears it. Every other boundary still drops it.
+    if (! (previous == TempoRegime::fixed && r == TempoRegime::live))
+        stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
     // A residual curve is meaningful only inside one uninterrupted fixed
     // tenure. Seed it from the accepted entry beat while leaving the scalar
     // interval tracker unanchored; carrying an interval across this boundary
@@ -1282,6 +1291,8 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     clearTempoTransition (TempoTransitionReason::reset);
     resetMotionShadow (false, TempoMotionVeto::discontinuity);
     stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
+    barTempoHoldBeats = 0;
 }
 
 void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
@@ -1317,6 +1328,8 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     kitBodyHeard = false;
     kitBodyLastSec = -1.0;
     stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
+    barTempoHoldBeats = 0;
     postHoleReopenSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
@@ -1925,6 +1938,12 @@ void BeatDecoder::declarePulseHere() noexcept
     // in the same place. A later long fit has to open the four-term gate
     // again. Ordinary motion never comes through here.
     longFitPeriodHeld = false;
+    // Where the one is, not what the tempo is. The wipe above is what
+    // stops the old lattice pulling the bar back; it also empties the
+    // fits, and the next short window plus the comb would publish a
+    // new number. Keep the one already counted for one short window.
+    if (established)
+        barTempoHoldBeats = kShortFit;
     const float newPeriod = 60.0f / bpm;
     hyp.beatPhase = gridPhaseNow (newPeriod);
     hyp.barPhase = wrap01 ((static_cast<float> (beatsInBar) + hyp.beatPhase) * 0.25f);
@@ -2376,6 +2395,9 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
             fastDriftLargeBeats = 0;
             fastDriftSign = 0;
             enterRegime (TempoRegime::live);
+            // This publication already rewrote the tempo. The one-beat FISSO
+            // hold is only for the release that did not.
+            stepFourHoldBpm = 0.0f;
 
             transitionState = TempoTransitionState::rapid;
             transitionReason = TempoTransitionReason::confirmed;
@@ -2684,6 +2706,7 @@ bool BeatDecoder::observeGridStep() noexcept
         fastDriftLargeBeats = 0;
         fastDriftSign = 0;
         enterRegime (TempoRegime::live);
+        stepFourHoldBpm = 0.0f;
 
         transitionState = TempoTransitionState::rapid;
         transitionReason = TempoTransitionReason::confirmed;
@@ -3124,6 +3147,26 @@ float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
 
 void BeatDecoder::updateTempo() noexcept
 {
+    // "L'1 è QUI" re-anchors the grid and wipes the fits. Until a new
+    // short window exists, restore the tempo (and the fixed anchor the
+    // next beat would chase) so that command cannot change the number.
+    struct PinDeclaredTempo
+    {
+        BeatDecoder& self;
+        const float heldBpm;
+        const float heldAnchor;
+        const bool on;
+        ~PinDeclaredTempo() noexcept
+        {
+            if (! on)
+                return;
+            self.bpm = heldBpm;
+            self.fixedAnchorBpm = heldAnchor;
+            if (self.barTempoHoldBeats > 0)
+                --self.barTempoHoldBeats;
+        }
+    } declaredPin { *this, bpm, fixedAnchorBpm, barTempoHoldBeats > 0 };
+
     // Keep the proven tau for one short window after a door so the
     // PLL does not drop back to 0.90 s between the retarget and the
     // peak. Unknown persists too, but not onto a post-gap 8-beat that
@@ -3690,6 +3733,7 @@ void BeatDecoder::updateTempo() noexcept
             kitBodyHeard = false;
             kitBodyLastSec = -1.0;
             stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
             postHoleReopenSec = -1.0;
             gridAnchorSec = -1.0;
             foldPhaseBeats = 0;
@@ -4509,6 +4553,7 @@ void BeatDecoder::updateTempo() noexcept
                     ++transitionSerial;
                     resetMotionShadow (false, TempoMotionVeto::transition);
                     stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
                     return;
                 }
             }
@@ -4559,6 +4604,7 @@ void BeatDecoder::updateTempo() noexcept
                         fixedSamples = 0;
                         fixedWalkRun = 0;
                         stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
                         transitionState = TempoTransitionState::rapid;
                         transitionReason = TempoTransitionReason::confirmed;
                         transitionPeriodSec = 60.0f / bpm;
@@ -4579,9 +4625,11 @@ void BeatDecoder::updateTempo() noexcept
                 }
                 else
                     stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
             }
             else
                 stepFourHoldBpm = 0.0f;
+    liveFourHoldBpm = 0.0f;
 
             // Refinement, not tracking. The anchor is the running mean of the
             // long fit since the tempo was called fixed, so it converges as
@@ -5104,6 +5152,73 @@ void BeatDecoder::updateTempo() noexcept
             // given more authority here. After a real step the fold names the
             // tempo that has been left for seconds, and `pullTowardsComb`'s 35%
             // cap is exactly what stops it dragging a true change back.
+            // Live, the 8-beat can still name the tempo that was left
+            // while two IOI-indexed 4-beats already agree on the new
+            // one: more than 8% off the 8-beat, the newest interval
+            // within 2% and on the same side, residual under 0.03, the
+            // two 4-beats within 2% of each other. Offset-0: no fisso
+            // confirm and no continuo confirm, both hashes identical.
+            // Gradino 33.96/162.11 → 33.54/157.31 on 234224, 257981
+            // and 297576. A 3–4% gap is a ramp overshoot and stays on
+            // the 8-beat. Not an octave. Rate stays kRateLive.
+            // Door D's 0.45 on this aim: fisso hash changed, continuo
+            // 36.551/91.156 → 52.481/128.505 with 2 recovery
+            // violations, gradino 33.537/157.311 → 38.979/159.143.
+            // Reverted.
+            bool liveFourAim = false;
+            if (lineFeed && haveShort && recent > 0.0f && shortFitBpm > kMinBpm)
+            {
+                float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
+                double a4 = -1.0;
+                const float shortBpm = std::max (kMinBpm, shortFitBpm);
+                if (fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                     static_cast<double> (recent))
+                    && r4 < 0.03f && p4 > 0.0f)
+                {
+                    const float fourBpm = 60.0f / p4;
+                    const float ioiBpm = 60.0f / recent;
+                    const bool octave = std::fabs (std::log2 (fourBpm / shortBpm))
+                                        > kOctaveThreshold;
+                    const bool leftShort = std::fabs (fourBpm - shortFitBpm) > 0.08f * shortBpm;
+                    const bool ioiAgrees = std::fabs (ioiBpm - fourBpm)
+                                           < 0.02f * std::max (kMinBpm, fourBpm);
+                    const bool sameSide = (fourBpm - shortFitBpm) * (ioiBpm - shortFitBpm) > 0.0f;
+                    const bool pass = ! octave && leftShort && ioiAgrees && sameSide;
+                    const bool confirmed = pass && liveFourHoldBpm > kMinBpm
+                        && std::fabs (fourBpm - liveFourHoldBpm)
+                               <= 0.02f * fourBpm;
+                    // A FISSO beat already passed the 5.5% door and stored
+                    // its 4-beat. This is the beat that left, so the gap to
+                    // the 8-beat may now be under 8% and the live pair never
+                    // starts. Agreeing with that stored beat is the second
+                    // vote. Rate stays kRateLive. Offset-0: fisso and
+                    // continuo hashes unchanged; gradino 33.537/157.311 →
+                    // 33.452/155.272, only seed 329252.
+                    const bool carried = ! octave && ioiAgrees
+                        && stepFourHoldBpm > kMinBpm
+                        && std::fabs (fourBpm - stepFourHoldBpm)
+                               <= 0.02f * fourBpm;
+                    stepFourHoldBpm = 0.0f;
+                    liveFourHoldBpm = pass ? fourBpm : 0.0f;
+                    if (confirmed || carried)
+                    {
+                        target = fourBpm;
+                        liveFourAim = true;
+                        ioiClockLead = true;
+                    }
+                }
+                else
+                {
+                    liveFourHoldBpm = 0.0f;
+                    stepFourHoldBpm = 0.0f;
+                }
+            }
+            else
+            {
+                liveFourHoldBpm = 0.0f;
+                stepFourHoldBpm = 0.0f;
+            }
+
             const bool stale = leftFixedBeats > 0 || transitionRefitBeats > 0;
             // The comb spans seconds of audio and therefore still names the
             // tempo that was left while the short fit is rebuilding from a
@@ -5143,8 +5258,9 @@ void BeatDecoder::updateTempo() noexcept
             commit (motionTarget,
                     shapeLeads ? 1.0f
                                : (doorATake ? 1.0f
-                                  : (far || slowIoiLeads ? kRateAcquiring
-                                     : (doorHoldRate ? kRateDoorHold : kRateLive))));
+                                  : (liveFourAim ? kRateLive
+                                     : (far || slowIoiLeads ? kRateAcquiring
+                                        : (doorHoldRate ? kRateDoorHold : kRateLive)))));
             break;
         }
 
@@ -6005,6 +6121,16 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
     hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
     hyp.ioiLead = fastMotionCurrent && ioiClockLead;
+    // One and a half periods with no accepted beat, or the kick body has
+    // been gone long enough that the crests still arriving are hats and
+    // voice. Either way the part is already playing and the pulse is the
+    // one counted: the direct-live rail would spend a phase debt at 7.5%
+    // (about 8 BPM near 107) through a rest that has not changed tempo.
+    // A hat one beat after a kick does not arm this — the body hold
+    // itself waits 1.05 periods. The bank passes lowBand 0, so the body
+    // is never heard there.
+    hyp.beatGap = sounding && established && lastBeatSec >= 0.0
+                  && (! fastMotionCurrent || kitBodyHolding (timeSec));
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

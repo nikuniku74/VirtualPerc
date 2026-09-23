@@ -799,8 +799,11 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
             clock.setGridPhase (hy.beatPhase,
                                 clock.tempoTransitionActive()
                                     ? vp::kGridTauRapid
-                                    : vp::gridPhaseTau (
-                                          vp::kGridTauHolding, true, 1.0f));
+                                    : (hy.regime == vp::TempoRegime::fixed
+                                       && hy.transitionRefitBeats > 0)
+                                        ? vp::kGridTauMotion
+                                        : vp::gridPhaseTau (
+                                              vp::kGridTauHolding, true, 1.0f));
         }
 
         const double positionBefore =
@@ -1298,7 +1301,10 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                                            ? vp::kGridTauProvenMotion
                                            : hy.ioiLead ? vp::kGridTauIoiLead
                                            : cleanTempoMotion ? vp::kGridTauMotion
-                                                              : vp::kGridTauHolding;
+                                           : (hy.regime == vp::TempoRegime::fixed
+                                              && hy.transitionRefitBeats > 0)
+                                                 ? vp::kGridTauMotion
+                                                 : vp::kGridTauHolding;
                 clock.setGridPhase (
                     hy.beatPhase, vp::gridPhaseTau (phaseTau, true, 1.0f));
             }
@@ -1605,6 +1611,11 @@ int main (int argc, char** argv)
     if (argc == 2 && std::strcmp (argv[1], "--ramps") == 0)
     {
         return measureRampPhase() ? 0 : 1;
+    }
+
+    if (argc == 2 && std::strcmp (argv[1], "--steps") == 0)
+    {
+        return measureTempoChange() ? 0 : 1;
     }
 
     if (argc == 2 && std::strcmp (argv[1], "--holes") == 0)

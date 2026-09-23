@@ -592,6 +592,16 @@ private:
     /** Previous beat's IOI-indexed 4-beat, when it already sat on a
         step the 8-beat had not taken. Zero unless that beat passed. */
     float stepFourHoldBpm = 0.0f;
+    /** Previous live beat's IOI-indexed 4-beat, when it had already
+        left the 8-beat by more than 8% and the newest interval agreed.
+        Zero unless that beat passed. Confirmed on the next beat. */
+    float liveFourHoldBpm = 0.0f;
+    /** Beats left in which "L'1 è QUI" may move the grid and must
+        not publish a new tempo. The history wipe that keeps the old
+        lattice from pulling the bar back also empties the fits; the
+        next short window and the comb would otherwise replace the
+        number the listener already had. */
+    int   barTempoHoldBeats = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;
     /** Beats of catch-up still owed after leaving FISSO. The number held

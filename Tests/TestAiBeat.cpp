@@ -3863,6 +3863,13 @@ void vpRunAiBeatTests (int& passed, int& failed)
                          hatsAccepted, static_cast<double> (dec.current().beatPhase));
             expect (hatsAccepted == 0,
                     "after the snap, sounding keep still refuses old-quarter hats");
+            const float bpmAtDeclare = dec.current().bpm;
+            feed (framesPerBeat * 16, 0.5, 0.80f);
+            std::printf ("declare-tempo-hold  before=%.2f  after=%.2f\n",
+                         static_cast<double> (bpmAtDeclare),
+                         static_cast<double> (dec.current().bpm));
+            expect (std::fabs (dec.current().bpm - bpmAtDeclare) < 0.5f,
+                    "L'1 e' QUI does not move the tempo");
         }
 
         {

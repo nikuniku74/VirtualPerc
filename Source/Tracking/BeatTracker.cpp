@@ -1154,6 +1154,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setDirectLivePhaseFollow (
         directLivePhaseFollow && ! tempoOwned && tempoFollow
         && ! harmonicSourceActive && periodic && ! tapHold);
+    follower.setBeatGapHold (haveHyp && hyp.valid && hyp.beatGap);
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();
     else if (!harmonicSourceActive && hadBeat
@@ -1600,10 +1601,16 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // is what a passage without a drummer looks like from inside the
             // fit. See Tracking/PhaseTrust.h - including the shorter constant
             // for a line feed that was tried there and measured as noise.
+            // FISSO refit only. The same 0.30 while a live refit was still
+            // on the holding tau moved 169090 p95 167.8→169.9. Fixed-only
+            // leaves fisso and continuo hashes identical; 305495 p95
+            // 113.9→100.1.
             const float phaseTau =
                 follower.tempoTransitionActive()
                     ? kGridTauRapid
                     : directLivePhaseFollow ? kGridTauMotion
+                    : (haveHyp && hyp.regime == TempoRegime::fixed
+                       && hyp.transitionRefitBeats > 0) ? kGridTauMotion
                     : gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
                                          ? kGridTauProvenMotion
                                          : hyp.ioiLead ? kGridTauIoiLead

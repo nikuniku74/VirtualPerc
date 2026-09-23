@@ -110,6 +110,11 @@ struct BeatHypothesis
     /** True when Door B/C/D (not Door A) retargeted this publication.
         The clock may use the existing motion tau; it does not choose a tempo. */
     bool     ioiLead = false;
+    /** The last accepted beat is more than one and a half periods old and a
+        part is already sounding. The pulse is the one already counted: the
+        clock must not spend a phase debt by bending its rate through the
+        rest. Cleared on the next accepted beat. */
+    bool     beatGap = false;
 
     TempoRegime regime   = TempoRegime::unknown;
 

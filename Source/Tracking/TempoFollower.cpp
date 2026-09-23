@@ -11,6 +11,14 @@ namespace
     /** How little the clock may be asked to believe the tempo it is handed. */
     constexpr float kMinTempoTrust = 0.30f;
     constexpr float kRecoveryToleranceSeconds = 0.0075f;
+    // After a sounding rest the direct-live rail is still 7.5%. A phase
+    // debt of about 0.20 beats saturates it, and the displayed tempo jumps
+    // by about 8 BPM for the beats the drums come back on. The holding
+    // rail is 3.5%. Eight beats at that rate close 0.28 beats, so the
+    // debt from the rest is gone before the live rail is allowed back.
+    // A confirmed transition still uses its own window.
+    constexpr float kPostGapSteer = 0.035f;
+    constexpr int kPostGapBeats = 8;
 
     // The loop's own noise floor, and why it is capped in *time*.
     //
@@ -173,6 +181,8 @@ void TempoFollower::reset() noexcept
     tempoTrimEnabled = false;
     directTempoDirectionGuard = false;
     directLivePhaseFollow = false;
+    beatGapHold = false;
+    gapSteerGuardBeats = 0;
     tempoMotionHint = false;
     tempoMotionProven = false;
     tempoTrust = 1.0f;
@@ -186,6 +196,8 @@ void TempoFollower::resetClock() noexcept
 {
     cancelPhaseRecovery();
     directLivePhaseFollow = false;
+    beatGapHold = false;
+    gapSteerGuardBeats = 0;
     phase = 0.0;
     beatInBar = 0;
     phaseErrEma = 0.0f;
@@ -1052,12 +1064,19 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
             rawGridPhaseError);
     }
 
-    // Phase this block will *not* advance because of the steer. The trim
-    // controller subtracts it from the drift it measures, so that the loop's own
-    // correction is not read back as the song having moved; and the error
-    // estimate is worked down by it, so the loop stops pulling once it has
-    // leaned far enough rather than overshooting on an estimate that is only
-    // refreshed once a beat.
+    // A rest while the part is already sounding. The direct-live rail is
+    // 7.5% at high, which is about 8 BPM near 107: that is the surge
+    // through a pause whose pulse has not changed. Hold the counted
+    // rate through the rest, then the holding rail for the beats the
+    // part comes back on. A confirmed transition still spends its own
+    // window.
+    if (beatGapHold)
+        gapSteerGuardBeats = kPostGapBeats;
+    if (beatGapHold && ! rapidTransition)
+        steer = 0.0f;
+    else if (gapSteerGuardBeats > 0 && ! rapidTransition)
+        steer = std::clamp (steer, -kPostGapSteer, kPostGapSteer);
+
     const float applied = steer * nominalBeats;
     recoveryCorrection += applied;
     phaseCorrectionSinceObservation += applied;
@@ -1080,6 +1099,8 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         beatInBar = (beatInBar + crossed) & 3;
         if (beatInBar == 0)
             tick.wrappedBar = true;
+        if (! beatGapHold && gapSteerGuardBeats > 0)
+            gapSteerGuardBeats = std::max (0, gapSteerGuardBeats - crossed);
     }
 
     const double ppb = static_cast<double> (pulsesPerBeat);

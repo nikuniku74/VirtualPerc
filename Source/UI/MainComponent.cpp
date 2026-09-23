@@ -2027,8 +2027,18 @@ void MainComponent::loadInternalTrack (juce::URL url)
         return;
     }
 
+    const bool differentTrack = trackUrl != url;
     trackTransport.stop();
     trackTransport.setSource (nullptr);
+    // A manual octave is a judgement about the previous recording, not an
+    // instruction to halve every subsequently loaded song. Clear it only once
+    // the old file has stopped, so the old part cannot change level mid-note.
+    if (differentTrack && ! engine.settings().tempoOctaveAuto.load())
+    {
+        engine.settings().tempoOctave.store (0);
+        engine.settings().tempoOctaveAuto.store (true);
+        refreshOctaveButtons();
+    }
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
                               reader->sampleRate, 2);
@@ -2283,8 +2293,8 @@ void MainComponent::loadPrefs()
         engine.settings().subdivision.store (sub);
 
     // The level the player last chose, and whether they chose one at all. Both
-    // are saved: a chosen level is a statement about the material, and the
-    // material is usually still the same one next time.
+    // are saved for the current material; loading a different file clears a
+    // manual choice before that file starts (see loadInternalTrack).
     const int oct = prefs->getIntValue ("tempoOctave",
                                         engine.settings().tempoOctave.load());
     engine.settings().tempoOctave.store (juce::jlimit (-1, 1, oct));
@@ -3861,7 +3871,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0
                                                                   ? "  \xc2\xb7  a met\xc3\xa0"
                                                                   : "  \xc2\xb7  doppio"))
-                          + " (auto)";
+                          + (snap.tempoOctaveAuto ? " (auto)" : " (manuale)");
         }
         g.drawFittedText (tempoLine, rows.tempoLine, juce::Justification::centred, 1);
     }

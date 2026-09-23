@@ -60,6 +60,11 @@ public:
     {
         directLivePhaseFollow = on;
     }
+    /** A rest while a part is already sounding. The counted tempo stays;
+        phase debt is not spent as a rate bend until the next beat, and the
+        beats just after the rest use the holding rail rather than the
+        direct-live one. */
+    void setBeatGapHold (bool on) noexcept { beatGapHold = on; }
     /** The decoder has a clean short fit moving away from a held direct-feed
         tempo. This does not select a tempo; it only lets phase drift build the
         existing rate trim faster. `proven` means the residual-shape path has
@@ -195,6 +200,8 @@ private:
     bool tempoTrimEnabled = false;
     bool directTempoDirectionGuard = false;
     bool directLivePhaseFollow = false;
+    bool beatGapHold = false;
+    int gapSteerGuardBeats = 0;
     bool tempoMotionHint = false;
     bool tempoMotionProven = false;
     /** See setTempoTrust. 1 is the clock as it has always been. */

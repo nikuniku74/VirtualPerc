@@ -1315,6 +1315,34 @@ Clean Door B stays at 0.035.
 
 **Kept (2026-09-22), FISSO publishes the IOI-indexed 4-beat after two beats when that fit has left the 8-beat by more than 5.5%, the 8-beat is still within 3% of the held BPM, the recent interval agrees within 2% and on the same side, and the 4-beat residual is under 0.03.** `fitPeriod(4)` stays on the committed grid and the under-3 BPM refinement never sees these steps. Offset-0 fisso and continuo hashes identical (`8e3c8d2cdc5854f5`, `55ccc5c84d49749d`, continuo 35.48/87.22). Gradino **35.96/174.89 → 33.96/162.11**, p995 548.70 unchanged, recovery 0, authority 0, hash `4dd43630dc0ebc83`. One isolated 4-beat (250062, next beat 186) does not confirm. The runs that drop beats outside the 0.18 keep are not this gate.
 
+**Kept (2026-09-23), VIVO aims the commit at the IOI-indexed 4-beat after two beats when that fit has left the 8-beat by more than 8%, the newest interval agrees within 2% and on the same side, the 4-beat residual is under 0.03, and the two 4-beats agree within 2%.** The rate stays `kRateLive` (0.30); the comb is not pulled in. A 3–4% gap is a ramp overshoot and is not this door. Offset-0 fisso and continuo hashes identical to the current tree (`8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`, continuo 36.551/91.156). Gradino **33.962/162.108 → 33.537/157.311**, p995 548.70 unchanged, recovery 0, authority 0, hash `f9bf323ff9351137`. Confirms on 234224, 257981 and 297576 only. Walking that aim at Door D's 0.45 instead of `kRateLive` was reverted: fisso hash changed, continuo 36.551/91.156 → 52.481/128.505 with 2 recovery violations and 363 authority frames, gradino 33.537/157.311 → 38.979/159.143. `VPAlign --ramps` MIXER stays on the checkpoint: flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0, all PASS. Seed 257981 mean phase 38.2→22.8 ms; 297576 56.1→59.8 because the tempo arrives before the phase. Do not lower the 8% gap to 6%: offset-0 fisso 88118 confirms.
+
+**Kept (2026-09-23), the FISSO 4-beat hold survives the fixed→live boundary and the release beat confirms it.** The second beat of 329252 is the release itself (t=43.86 i4=78.4 still fixed, gap 5.8%; t=44.62 already live and the gap has fallen to 4.5%, so the 8% live pair never starts). Offset-0 fisso and continuo hashes identical (`8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`). Gradino **33.537/157.311 → 33.452/155.272**, hash `a22d3c04d2ac06d0`, recovery 0, authority 0. Only seed 329252 moved: phase 36.3/212.5/336.6 → 35.0/179.9/308.9. A confirmed transition that already rewrote the tempo clears the hold. `VPAlign --ramps` MIXER identical to the checkpoint: flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0, all PASS.
+
+**Rejected (2026-09-23), one-beat phase spend after a clean FISSO leave.** The decoder grid is already on the beat while the clock is still late (218386 t=47.08: grid 19 ms, clock 157 ms; 257981: grid 1 ms, clock 121 ms). Spending that debt on the existing 25% rail, only when the clock was already 0.18 beats off a clean 4-beat, moved gradino 33.537/157.311 → 33.169/149.095 (218386 p95 97.6→58.2, 265900 142.7→99.1, 329252 212.5→164.0) but fisso hash changed and the family got worse: 22.256/76.932 → 22.354/77.187, seed 64361 phase p995 101.7→159.0. Continuo 36.551→36.600, seed 153252 35.0→35.8. Reverted. Requiring the published anchor to already match that 4-beat within 0.06 beats produced the same numbers and was reverted too. Do not reopen this rail on the first live beats.
+
+**Rejected (2026-09-23), one beat of the 25% phase rail on a live 4-beat confirm only.** Fisso and continuo hashes stayed identical. Gradino family 33.452/155.272 → 33.417/155.044, but seed 257981 phase p95 128.4 → 156.2 against `/tmp/motion_curve_live4.csv` (that seed is unchanged by the carried hold). 234224 moved 179.0 → 178.3. 297576 did not move. Reverted. Do not spend that rail on the confirm beat either: the published grid is not yet the beat the clock should land on.
+
+**Rejected (2026-09-23), two beats for the confirmed rapid window.** On 305495 the FISSO 4-beat confirm at t=51.98 already has the grid 10 ms from the beat and the clock 250 ms off; the existing one-beat 25% rail is what the product spends, and the matrix (which does not call `beginTempoTransition`) then takes until ~t=56 to get under 20 ms because the regime stays fixed. A probe that does adopt the transition, compared with the window at one beat (`/tmp/motion_1beat_wired.csv`: fisso hash unchanged, gradino 32.926/152.192, continuo 36.569/91.409) against two beats: spreading the spend made gradino 33.119/153.172 and continuo mean 36.583. Keeping the first-beat denominator at one beat and only continuing into a second beat made gradino 33.014/152.598 and continuo mean 36.570. Fisso hash stayed `8e3c8d2cdc5854f5` both times. On 305495 itself both two-beat clocks do land: 250 ms at t=51.98, then 33 ms by t=53.12, while the one-beat clock is still at 64 ms there. The run-level score barely moves (mean 15.1→14.7, p95 86.5 unchanged) because that spike is above p95. The family cost is one seed, gradino 281738: p95 128.7→136.3. At t=39.90 its tempo is already right (70.4 vs 69.5) and the one-beat clock is on the beat (2.5 ms); the extra beat pulls it to 68 ms, chasing a published phase that is not the beat. Reverted. Do not lengthen that window, and do not keep steering once the clock has already landed. The one-beat rail already closes the quarter; the beats after it are the fixed-regime tau, and a faster tau on that path is the stopped 0.30-vs-0.01 measurement.
+
+**Rejected (2026-09-23), the same hold only after four beats, and only while the long residual is under 0.020 and the short residual is at least 0.030.** Fisso and gradino hashes stayed identical. Continuo 36.551/91.156 → 36.581/91.189, hash `b83baf3b06b80408`, recovery still 0. Reverted. Waiting four beats does not separate the fill from the ramp.
+
+**Rejected (2026-09-23), phase tau 0.30 through every `transitionRefitBeats` window.** Fisso hash identical. Gradino 33.452/155.272 → 33.201/153.207, and the late steps did move: 305495 p95 113.9→100.1, 321333 42.8→32.2, 257981 14.7→8.0, 281738 134.8→133.4. Continuo mean 36.551→36.531 but p95 91.156→91.283, hash `eebb80c251bd7318`, because 169090 p95 167.8→169.9. That seed's phase error is the decoder grid, and a shorter average follows it. Reverted.
+
+**Kept (2026-09-23), the same 0.30 tau only while the regime is still fixed.** Live refit stays on the holding tau. Fisso and continuo hashes identical (`8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`, 36.551/91.156). Gradino 33.452/155.272 → 33.360/154.375, hash `99f863e93be8d563`. Only two seeds moved, both down: 305495 p95 113.9→100.1 and 242143 46.4→45.8. The product uses it after the one-beat rapid window, because a FISSO confirm does not turn on direct-live. `VPAlign --ramps` MIXER is the checkpoint: flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0, all PASS.
+
+**Kept (2026-09-23), hold the counted rate through a sounding rest.** Once a part is playing, `hyp.beatGap` tells the clock to spend no phase steer in two cases: no beat accepted for 1.5 periods, or the kick body has been gone for more than 1.05 periods while hats and voice still crest (`kitBodyHolding`). The direct-live rail is 7.5% at high: a fifth of a beat of phase debt is spent as 129 BPM against a 120 clock (`/tmp/probe_gap_hold`, open 129.00, held 120.00). A kick train at low-band 0.80 never arms the flag; the same grid continued as hats at 0.02 arms it for 102 frames and the published tempo stays 120.00. A confirmed rapid window still spends. The bank passes lowBand 0, so the body is never heard there, and the quick hashes stay `8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`, `a22d3c04d2ac06d0`. A crest that still has kick-body energy refreshes the body and is not this rest.
+
+**Kept (2026-09-23), the beats after that rest use the holding rail.** Zeroing steer only while the rest lasts leaves the debt intact, and the next beats spend it at 7.5%: the same 0.20-beat debt reads 129.00 the moment the hold ends. For eight beats after the rest the steer is clamped to 3.5%, the rail the clock already uses when it is holding its ground. `/tmp/probe_gap_return`: open 129.00/129.00, held 120.00 during the rest and 124.20 once the beats return. A confirmed rapid window is not clamped: the same debt inside `beginTempoTransition` still reaches 150.00. The guard arms only from `beatGapHold`. Rebuilt quick bank: fisso `8e3c8d2cdc5854f5` 22.256/76.932, continuo `ca2588bfe0ce70c5` 36.551/91.156, gradino `99f863e93be8d563` 33.360/154.375, recovery 0.
+
+**Rejected (2026-09-23), the matrix clock adopts `beginTempoTransition` the way the product does.** Fisso hash identical. Gradino 33.360/154.375 → 32.912/152.192, hash `dda9879139c03970`: 305495 p95 100.1→86.5, 321333 42.8→33.8, 257981 14.7→7.6, 281738 134.8→128.7. Continuo 36.551/91.156 → 36.569/91.409, hash `d0a46c99bf34529a`, because 224523 mean 26.5→28.1 and p95 76.1→80.3. One ramp pays for the steps. Reverted in the probe. Do not put that adopt on the official matrix lane.
+
+**Rejected (2026-09-23), the same adopt but with the one-beat phase rail suppressed when the new tempo is within 4% of the clock.** The gradino numbers did not move: same hash `dda9879139c03970`, 32.912/152.192. Continuo p95 still rose, 91.156→91.416, hash `06ede18bd828c948`, and 224523 p95 76.1→80.4. The ramp's rapid publication was already more than 4% from the clock, so the gate never saw it. Reverted the follower and the probe.
+
+**Rejected (2026-09-23), snap a crest after a rest of two beats back onto the counted grid.** A crest 70 ms early after two beats still passes the 0.18 keep, and folded into one beat that is about 8% fast. Snapping every such gap: fisso 22.256/76.932 → 28.989/64.701 hash `dd0e1ac7033c5bcd`, continuo 36.551/91.156 → 63.087/181.333, gradino 33.452/155.272 → 54.126/201.011. The missed beats in the bank are real timing. Restricting the snap to `sounding` (the bank never sets it) left the three hashes identical, but a 120 BPM rest with the re-entry 75 ms early produced the same clock span either way: 115.9–126.7 at the crest and 120.1–125.4 over the next eight beats. Reverted. The about-8 BPM a player sees is the size of the direct-live phase-steer rail, 7.5% at high (around 107 BPM that is 8 BPM), not this one interval.
+
+**Rejected (2026-09-23), hold the counted tempo while the long fit is still on it and the short fit has left by 2–8%.** That is the EVERYTIME shape (short walks, long stays, kick still in the beats, so the kit-body hold never arms). Freezing the live target on the published bpm and skipping the comb pull and the motion bridge: fisso 22.256/76.932 → 22.722/76.728 hash `7563352468067861`, continuo recovery 0 → 1 (36.551/91.156 → 36.622/91.225), gradino 33.452/155.272 → 33.123/154.376. Also putting the grid anchor back was worse on fisso (22.786/76.728, hash `6096cf006cfff6ac`) with the same continuo recovery. Reverted both. A short fit a few percent off a still long fit is ordinary jitter on a flat tempo and the start of a ramp. Do not freeze that band. The 8% 4-beat door stays the step path.
+
 **Kept (2026-09-21), two-vote FISSO leave without the 24-beat
 window when the quadratic is already at `kMotionCurveImprovement`
 (0.50), `|mot−held| > kLeaveFixedError`, and the 4-beat is
@@ -2422,7 +2450,12 @@ restart), `holdBarDecision`, a 0.70 s `tapHold` so
 decoder hyp in the same block, and `NeuralBeatTracker`
 hands `BeatDecoder::declarePulseHere` to the worker
 (lastBeat/gridAnchor = analysis now, history wiped, no
-`gridSerial` bump). Hats KEEP is unchanged.
+`gridSerial` bump). The wipe must not re-estimate the
+tempo: `barTempoHoldBeats = kShortFit` restores `bpm` and
+`fixedAnchorBpm` at the end of each of the next eight
+`updateTempo` calls. Hats KEEP is unchanged. The clock's
+`tempoTrim` is left alone; clearing it would itself move
+the sounding rate.
 
 The matrix never sends `barDeclare` and never sets
 `sounding`: identity vs `/tmp/motion_kept_bpm90_i4pulse.csv`
@@ -4339,7 +4372,61 @@ passed `VPAlign --ramps` but still worsened continuo to 36.704/91.519 and
 gradino to 34.490/165.654. Removing the product direct-live phase-trust
 override made the optional product-direct quick bank worse on continuo
 34.211/89.944→36.349/96.762 and gradino 33.502/160.108→33.924/163.707.
-All three candidates were reverted. The safe next step is an independent
+All three candidates were reverted. Requiring `moving` on every dirty
+three-vote release and on the dirty curve door, with no lattice test, was
+also reverted: offset-0 fisso 22.256/76.932→22.733/77.239, continuo
+35.482/87.221→36.722/91.718, gradino 33.962/162.108→34.888/167.619.
+The delayed leaves already had the 4-beat off the 8-beat (218386, 265900,
+289657, 329252, continuo 129495). Restricting the hold to the fill shape
+(4-beat still within 1.5% of the 8-beat, 4-beat residual under 0.045,
+8-beat residual at least 0.030, `moving` false) changed only fisso seed
+88118, a flat 165. That leave at t=18.18 ran 164.7→168.6 while the comb
+stayed at 165.7; holding it raised that seed's mean phase by 2.4 ms and
+the later leave published 170.6. Continuo and gradino traces were
+identical, and the candidate was reverted. The fill's geometry is not
+unique: the same 4-on-8 dirty unmoved lattice is a flat-track correction
+the phase score wants to take. Aiming the live target at the long fit
+whenever `moving` is false and the 8-beat residual is at least 0.030
+raised continuo to 40.86/106.09 and gradino to 39.29/179.74. Restricting
+that to a clean long line (`lastFitResidual` under 0.015) left fisso
+identical but continuo 36.551/91.156→36.643/90.773 and gradino
+33.962/162.108→33.995/162.797. Both reverted. On the current loaded-file
+path the same figure is already in VIVO (half-tempo lattice about 61):
+published tempo 61.4→64.4 and the clock to 67.5 while the long fit stays
+near 61.6. A per-beat log of that climb shows `moving` already true and
+the IOI-indexed 4-beat on the short fit, not on the long one
+(t=148.8: short 62.9, long 61.6, i4 63.0, r4 0.026, moving 1;
+t=151.5: short 63.4, i4 63.8, moving 1). The two beats where `moving`
+falls false (t=152.5–153.5) still have the 4-beat on the fast side
+(i4 64.7/64.3). A hold that waits for `moving` false, or for the 4-beat
+to stay on the long fit, does not see this climb. It is the same
+geometry as a ramp the control bank wants followed. Aiming the live
+commit at a long fit that has stayed inside 0.8% for 4 s while the
+short fit has left it by 1.5–8% was counted on
+`/tmp/motion_curve_live4.csv` and not shipped: with the short residual
+at least 0.030, the long fit is closer to the truth on 22 frames and
+the short fit on 64. Continuo is 1 against 55 (the short fit is the
+ramp). An 8 s window is 12 against 31, and continuo is still 1 against
+23. The same count with the gap tightened to 2–6% makes continuo 0
+against 36. A fill whose long line sits still is not separable from
+the start of a ramp the bank has to follow. Aiming at a high-salience
+comb that has stayed inside 1.2% for 3 s while the short fit is more
+than 3% away is the same trap from the other side: on
+`/tmp/motion_curve_live4.csv` it would help fisso and continuo, and
+it would pull finished steps back (257981 t=43–45, short 116 and
+truth 117, comb still 131). The activation dump of the same recording
+(`act_everytime_full.txt`) has low-band energy at beat peaks of about
+0.81 through 139–154 s, the same as 60–80 s and 120–135 s, and no
+peak in that window is under `kLowBandMute` (0.05). The body-hold
+never sees this climb: the kick is still in the beats. Requiring the
+fast-drift vote's interval to sit within 2% of a 4-beat whose residual
+is under 0.03 held the flat 165 glitch (88118 t=83.20, interval +17%,
+8-beat only +1.5%, 4-beat residual 0.068) and was reverted: the 16-case
+bank moved fisso 22.256/76.932→22.583/76.248, continuo
+36.551/91.156→36.713/91.724, gradino 33.537/157.311→34.226/163.254.
+A real exit such as 218386 already has that clean 4-beat, but 313414
+releases on three dirty 4-beats and the family follows them. The safe next step
+is an independent
 rhythmic cue/beat-grid and a diverse fill/bridge control bank, not weaker
 release or slower global phase following. `VPTrack --trace` now exposes clock,
 target, trim, phase error, trust and recovery count; the known-grid matrix has
@@ -4363,6 +4450,53 @@ continuo 34.211/89.944 → 35.004/93.229 ms and gradino
 33.502/160.108 → 33.933/164.659. The engine was restored. Do not use this
 recording to set a spectral-support threshold; obtain diverse fixed/moving
 audio with externally known grids before admitting a new band-cue authority.
+
+**Three-file direct-feed control (2026-09-23; observation only).** `VPTrack
+--player --trace --step 1` on the complete BLUE SKY, FEEL and SPLENDIDA
+GIORNATA files supplied by the listener was deterministic on a repeat of
+FEEL's first 60 s. BLUE SKY's ambiguous intro published about 52–63 BPM until
+the arrangement epoch at ~40 s, then about 87 BPM over the main body (the
+documented approximate tempo). FEEL published 130–134 BPM from ~9–40 s and
+did not reach the documented ~104 BPM until ~46–48 s; throughout 14–40 s the
+activation comb was already about 102–103 BPM. A causal 6 s Fourier check of
+the raw BeatNet beat activation and high-band positive flux supports ~103–104
+BPM at 20–40 s (e.g. at 20 s: normalized 104-BPM support 0.56 and 0.35,
+respectively, versus high-band support 0.02 at 130). Thus the initial wrong
+non-octave accepted lattice is distinct from EVERYTIME's late fill, where the
+band cues become ambiguous. SPLENDIDA stays near 108 BPM across the file;
+previous human taps named ~107.8 BPM over 10.8–75.4 s, but the tap timestamps
+are not presently available for a fresh phase score. The high-band cue is not
+globally authoritative by itself: at BLUE SKY 20 s its best six-second rate
+is ~128 BPM, and at SPLENDIDA 30 s it is ~86 BPM, despite the respective
+~87/~108 music tempi. Do not turn this into a song-name or band threshold.
+If testing a new initial-lattice correction, require independent agreement,
+check the other files and a true tempo-change grid, and keep the engine
+unchanged until the global gates pass.
+
+`VPReplay --anchor --line --sound-at 400 --trace` on FEEL's activation dump is
+diagnostic only, not the product path: it initially fits ~150–154 BPM rather
+than the full engine's ~130–134, while the comb reads ~102–103 with salience
+often 1.00. Its non-octave mismatch counter rises to 5 and repeatedly returns
+to 0 before a snap, with a first correction at ~47 s. The sounding post-hole
+guard at `BeatDecoder.cpp` near `refusePostHoleComb` is a plausible cause of
+that repeated refusal; the trace does not expose its stamp, so do not call it
+proved for the product. Removing or merely time-limiting the guard is not a
+safe fix: the documented 100→150 leftover-lattice fixture requires a persistent
+veto. A candidate must distinguish a false initial lattice from a genuine
+post-hole leftover and pass both fixtures before changing production.
+
+**FEEL listener report after the three-file probe (2026-09-23).** The app showed
+~50 BPM and the listener confirmed that the `÷2` button was lit. That is a
+*manual octave* carried in preferences (`tempoOctave=-1`,
+`tempoOctaveAuto=false`), not evidence that the direct-feed decoder independently
+chose 50: its probe had reached ~103–104. `MainComponent::loadInternalTrack`
+now returns to AUTO when a *different* file is chosen, preserving manual choice
+when the same file is reloaded. The UI previously appended `(auto)` even to a
+manual octave; that label now follows the actual flag. Do not "fix" the decoder
+to force this file upward on account of the listener's 50-BPM reading. The
+separate early wrong-grid (~130–134) issue remains open. Tapping an active
+`÷2` during playback turns AUTO on but retains that level until safe to change
+(the tracker avoids a mid-part octave snap); `×2` once requests the next level.
 
 Probes wait on `BeatTracker::analysisBacklog()` to make a run repeatable -
 otherwise the host scheduler decides how far behind the worker is and the same
