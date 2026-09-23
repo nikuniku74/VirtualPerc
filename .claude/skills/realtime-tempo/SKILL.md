@@ -4349,6 +4349,21 @@ an optional `--product-direct` A/B lane. Its default hashes remain the control.
 ad hoc with `VP_STYLE_SRC=scripts/probe_tempo.cpp VP_PROBE_DIR=scripts` and the
 `VPStyle` target (`CMakeLists.txt:690`).
 
+**Independent band-cue check (2026-09-23; no engine change).** The file-feed
+activation dump already carries low-/high-band magnitudes at 50 fps. A causal
+6 s positive-flux Fourier check over 112–140 BPM does not give an independent,
+unambiguous pulse through the bridge: the low band names 122.5 BPM at 140 s,
+129 at 144 s, 126 at 148 s, and 134.5 at 152 s; its normalized peak support
+is only 0.07–0.09 through 140–148 s. The high band names 117, 129.5, and
+117 BPM at 140, 144, and 148 s. These bands can explain *loss of evidence* but
+cannot safely supply an alternate beat grid or veto a real ramp. A smooth
+direct-live phase-steer rail scaled by trust (0.65 at the trust floor, 1.0 at
+full trust) was also rejected: the product-direct quick known-phase bank moved
+continuo 34.211/89.944 → 35.004/93.229 ms and gradino
+33.502/160.108 → 33.933/164.659. The engine was restored. Do not use this
+recording to set a spectral-support threshold; obtain diverse fixed/moving
+audio with externally known grids before admitting a new band-cue authority.
+
 Probes wait on `BeatTracker::analysisBacklog()` to make a run repeatable -
 otherwise the host scheduler decides how far behind the worker is and the same
 build measures differently run to run.
