@@ -4279,6 +4279,38 @@ cmake --build build-host --target <target>
 Tuning loop for decoder work: dump once with `VPActivations`, then iterate with
 `VPReplay`. The activations do not change when the decoder does.
 
+For a file that starts after silence, the epoch kind is part of the input.
+`VPLive` uses `setInputEpoch(1)` with `preserveComb=false`: the worker resets
+BeatNet's recurrent state and the decoder's comb evidence, while retaining
+the resampler and feature history. `VPActivations --silence-prelude` now emits
+that cold restart by default, and `VPReplay` reads the restart marker.
+`--preserve-model-on-restart` selects an arrangement entrance instead. A dump
+made with the opposite epoch kind can give a different metrical level despite
+the same WAV; compare the `ACT` frames from `VPLive --trace-activations` before
+attributing that difference to decoder or clock code.
+The tracker must retain its AUTO octave on a preserved arrangement epoch too:
+resetting that shift while preserving the model and comb changes the sounding
+part's pulse density without a new musical source. A cold source epoch still
+clears the shift.
+
+For a loaded recording, use `VPTrack --player`, not only `VPLive`: the latter
+feeds the tracker directly and omits the engine's make-up gain and input
+epochs. On a 189 s real recording the full-engine probe had one analysis epoch
+at 8.7 s, reached 123 BPM after about 10 s, and `barTrusted` was false for 72
+of 179 one-second samples after 10 s despite continuous percussion playback. The
+clap reads that flag and went silent mid-song and near the end. Bar trust is
+now latched after a reliable one is established, while a new input epoch,
+STOP, or explicit bar re-entry clears it; weak downbeat votes alone do not
+revoke an otherwise unchanged count. With the latch, all 154/154 one-second
+samples after the first trusted bar stayed trusted, versus 107/154 before;
+the initial 25 samples still wait for reliable bar evidence. The BPM trace
+was byte-for-byte unchanged. The `--bar`
+cut/seek/lock smoke gate still passes.
+`VPTests --octave focused` currently reports 4 pass / 6 fail on the slow-kit
+audio phase checks. The exact same 4/6 result and phase numbers reproduce on
+an isolated `HEAD` build without these changes, so this is a pre-existing
+phase limitation, not a bar-trust regression; do not treat it as a green gate.
+
 `scripts/probe_tempo.cpp` has no CMake target of its own; build any probe source
 ad hoc with `VP_STYLE_SRC=scripts/probe_tempo.cpp VP_PROBE_DIR=scripts` and the
 `VPStyle` target (`CMakeLists.txt:690`).

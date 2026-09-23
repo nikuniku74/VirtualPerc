@@ -240,6 +240,7 @@ void BeatTracker::reset() noexcept
     barLocked = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
+    barTrustEstablished = false;
     barRotations = 0;
     barReentrySamples = 0;
     quantizeWaitSamples = 0;
@@ -321,6 +322,9 @@ void BeatTracker::stop() noexcept
         needsResync = true;
     hadPlayed = false;
     waitForSongBeat = false;
+    barTrustEstablished = false;
+    std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+    voteBeats = 0.0f;
 }
 
 void BeatTracker::tap (double timeSeconds) noexcept
@@ -587,6 +591,7 @@ void BeatTracker::holdBarDecision() noexcept
     downbeatVotes[0] = kBeatsToMoveTheBar;
     voteBeats = kBeatsToMoveTheBar;
     barLocked = true;
+    barTrustEstablished = true;
 }
 
 void BeatTracker::setTempoOctave (int octaves) noexcept
@@ -708,6 +713,7 @@ void BeatTracker::notifyBarReentry() noexcept
     // 1 could win, which is the wait this window exists not to make.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
+    barTrustEstablished = false;
     std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
     harmonyVoteCount = 0.0f;
     downbeatHoldSamples = 0;
@@ -721,7 +727,7 @@ void BeatTracker::notifyBarReentry() noexcept
     barReentrySamples = static_cast<int> (sampleRate * barSec * kBarReentryBars);
 }
 
-bool BeatTracker::barIsTrustedNow() const noexcept
+bool BeatTracker::barIsTrustedNow() noexcept
 {
     if (barLocked)
         return true;
@@ -732,7 +738,7 @@ bool BeatTracker::barIsTrustedNow() const noexcept
     for (int i = 0; i < 4; ++i)
         total += downbeatVotes[i];
     if (total <= 1.0e-6f || voteBeats < kBeatsToTrustReentry)
-        return false;
+        return barTrustEstablished;
 
     int best = 0;
     float bestVotes = 0.0f, runnerUp = 0.0f;
@@ -750,7 +756,16 @@ bool BeatTracker::barIsTrustedNow() const noexcept
             runnerUp = s;
         }
     }
-    return best == 0 && bestVotes >= runnerUp + kBarWinMargin;
+    // A trusted count is a property of the current song, not a continuously
+    // sampled confidence meter. The old return value went false whenever a
+    // passing fill made another quarter narrowly win the decayed vote, even
+    // though alignBarFromVotes correctly kept the bar in place. On the real
+    // file probe this silenced the clap for 72 of 179 sampled seconds while
+    // the clock stayed near 123 BPM. Keep playing that established count;
+    // only an explicit new source/seek/STOP asks it to earn the one again.
+    if (best == 0 && bestVotes >= runnerUp + kBarWinMargin)
+        barTrustEstablished = true;
+    return barTrustEstablished;
 }
 
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
@@ -1861,7 +1876,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.hypValid = haveHyp && hyp.valid;
     out.harmonicTempoSource = harmonicSourceActive;
     out.neuralBpm = nnBpm;
+    out.analysisFrameIndex = haveHyp ? hyp.frameIndex : 0;
+    out.analysisSample = haveHyp ? hyp.analysisSample : 0;
     out.pBeat = haveHyp ? hyp.pBeat : 0.0f;
+    out.pDownbeat = haveHyp ? hyp.pDownbeat : 0.0f;
     out.leadMs = lastLeadMs;
     out.regime = haveHyp ? hyp.regime : TempoRegime::unknown;
     out.combBpm = haveHyp ? hyp.combBpm : 0.0f;

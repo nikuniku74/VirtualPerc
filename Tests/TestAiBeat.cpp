@@ -9776,6 +9776,46 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool barTrustSurvivesWeakVotesButNotReentry()
+    {
+        BeatTracker t;
+        t.setInputEpoch (0);
+        t.voteBeats = 12.0f;
+        t.downbeatVotes[0] = 8.0f;
+        t.downbeatVotes[1] = 1.0f;
+        const bool established = t.barIsTrustedNow();
+
+        // A brief ambiguous fill must not turn off an already placed clap.
+        t.downbeatVotes[0] = 2.0f;
+        t.downbeatVotes[1] = 2.1f;
+        const bool held = t.barIsTrustedNow();
+
+        t.setInputEpoch (1, true);
+        const bool newEpochWaits = ! t.barIsTrustedNow();
+        t.voteBeats = 12.0f;
+        t.downbeatVotes[0] = 8.0f;
+        const bool reestablished = t.barIsTrustedNow();
+        t.notifyBarReentry();
+        const bool seekWaits = ! t.barIsTrustedNow();
+        t.stop();
+        const bool stopClears = ! t.barTrustEstablished && t.voteBeats == 0.0f;
+        return established && held && newEpochWaits && reestablished
+               && seekWaits && stopClears;
+    }
+
+    static bool preservedEpochKeepsAutoOctave()
+    {
+        BeatTracker t;
+        t.setInputEpoch (0);
+        t.autoOctave = 1;
+        t.autoWant = 1;
+        t.setInputEpoch (1, true);
+        const bool continuous = t.autoOctave == 1 && t.autoWant == 1;
+        t.setInputEpoch (2, false);
+        const bool newSource = t.autoOctave == 0 && t.autoWant == 0;
+        return continuous && newSource;
+    }
+
     static bool liveAcquisitionPublishesImmediately()
     {
         constexpr double fps = 50.0;
@@ -10196,6 +10236,14 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    const bool barContinuity = vp::BeatTrackerTimingProbe::barTrustSurvivesWeakVotesButNotReentry();
+    std::printf ("state-timing bar trust holds weak votes, clears on epoch/seek/STOP %s\n",
+                 barContinuity ? "PASS" : "FAIL");
+    (barContinuity ? passed : failed)++;
+    const bool octaveContinuous = vp::BeatTrackerTimingProbe::preservedEpochKeepsAutoOctave();
+    std::printf ("state-timing preserved epoch keeps AUTO octave %s\n",
+                 octaveContinuous ? "PASS" : "FAIL");
+    (octaveContinuous ? passed : failed)++;
     (vp::BeatTrackerTimingProbe::liveAcquisitionPublishesImmediately()
          ? passed : failed)++;
     for (int block : {64, 256, 1024})

@@ -26,7 +26,9 @@ struct Dump
 {
     std::string name;
     float bpm = 0.0f;
-    std::vector<float> pBeat, pDown;
+    int restartFrame = -1;
+    bool preserveOnRestart = false;
+    std::vector<float> pBeat, pDown, lowBand, highBand;
 };
 
 bool loadDump (const char* path, Dump& d)
@@ -51,14 +53,32 @@ bool loadDump (const char* path, Dump& d)
             double bpm = 0.0;
             if (std::sscanf (line, "# bpm %lf", &bpm) == 1)
                 d.bpm = static_cast<float> (bpm);
+            int restartFrame = -1;
+            int preserve = 0;
+            if (std::sscanf (line, "# restartFrame %d preserve %d",
+                             &restartFrame, &preserve) == 2)
+            {
+                d.restartFrame = restartFrame;
+                d.preserveOnRestart = preserve != 0;
+            }
+            else if (std::sscanf (line, "# preserveRestartFrame %d", &restartFrame) == 1)
+            {
+                // Old dumps explicitly preserved the model/comb at this mark.
+                d.restartFrame = restartFrame;
+                d.preserveOnRestart = true;
+            }
             continue;
         }
         int idx = 0;
-        double b = 0.0, dn = 0.0;
-        if (std::sscanf (line, "%d %lf %lf", &idx, &b, &dn) == 3)
+        double b = 0.0, dn = 0.0, low = 0.0, high = 0.0;
+        const int fields = std::sscanf (line, "%d %lf %lf %lf %lf",
+                                       &idx, &b, &dn, &low, &high);
+        if (fields >= 3)
         {
             d.pBeat.push_back (static_cast<float> (b));
             d.pDown.push_back (static_cast<float> (dn));
+            d.lowBand.push_back (fields >= 4 ? static_cast<float> (low) : 0.0f);
+            d.highBand.push_back (fields >= 5 ? static_cast<float> (high) : 0.0f);
         }
     }
     std::fclose (f);
@@ -84,12 +104,13 @@ struct Stats
     double fixedFraction = 0.0;
 };
 
-Stats replay (const Dump& d, bool trace, bool anchor)
+Stats replay (const Dump& d, bool trace, bool anchor, bool lineFeed, int soundAt)
 {
     constexpr double fps = 50.0;
     vp::BeatDecoder dec;
     dec.prepare (fps);
     dec.setLevelAnchor (anchor);
+    dec.setLineFeed (lineFeed);
     if (anchor && gAnchorCentre > 0.0f)
         dec.setAnchorPrior (gAnchorCentre, gAnchorWidth);
 
@@ -103,7 +124,13 @@ Stats replay (const Dump& d, bool trace, bool anchor)
 
     for (size_t i = 0; i < d.pBeat.size(); ++i)
     {
-        const auto h = dec.observe (d.pBeat[i], d.pDown[i], 0.0f);
+        if (static_cast<int> (i) == d.restartFrame)
+            dec.notifyInputRestart (d.preserveOnRestart);
+        if (soundAt >= 0 && static_cast<int> (i) == soundAt)
+            dec.setSounding (true);
+        const auto h = dec.observe (d.pBeat[i], d.pDown[i],
+                                    std::max (0.0f, 1.0f - d.pBeat[i] - d.pDown[i]),
+                                    d.lowBand[i], d.highBand[i]);
         const double t = static_cast<double> (i) / fps;
 
         if (s.tValid < 0.0 && h.valid)
@@ -144,14 +171,15 @@ Stats replay (const Dump& d, bool trace, bool anchor)
         {
             const auto g = dec.diagnostics();
             std::printf ("   t=%5.1f bpm=%7.2f %-4s conf=%.2f | comb=%7.2f sal=%.2f set=%d"
-                         " long=%7.2f short=%7.2f res=%.3f cov=%.2f mism=%d\n", t,
+                         " long=%7.2f short=%7.2f res=%.3f cov=%.2f mism=%d down=%u hint=%d/%d\n", t,
                          static_cast<double> (h.bpm), regimeName (h.regime),
                          static_cast<double> (h.confidence),
                          static_cast<double> (g.combBpm), static_cast<double> (g.combSalience),
                          g.levelSettled ? 1 : 0,
                          static_cast<double> (g.longFit), static_cast<double> (g.shortFit),
                          static_cast<double> (g.residual), static_cast<double> (g.coverage),
-                         g.octaveMismatch);
+                         g.octaveMismatch, h.downbeatSerial,
+                         h.metricalOctaveHintValid ? 1 : 0, h.metricalOctaveHint);
         }
         s.bpmEnd = h.bpm;
     }
@@ -271,6 +299,8 @@ int main (int argc, char** argv)
     int beatWidth = 0;
     bool sweep = false;
     bool anchor = false;
+    bool lineFeed = false;
+    int soundAt = -1;
     std::vector<const char*> files;
     for (int i = 1; i < argc; ++i)
     {
@@ -282,6 +312,9 @@ int main (int argc, char** argv)
         else if (std::strcmp (argv[i], "--width") == 0 && i + 1 < argc) beatWidth = std::atoi (argv[++i]);
         else if (std::strcmp (argv[i], "--sweep") == 0) sweep = true;
         else if (std::strcmp (argv[i], "--anchor") == 0) anchor = true;
+        else if (std::strcmp (argv[i], "--line") == 0) lineFeed = true;
+        else if (std::strcmp (argv[i], "--sound-at") == 0 && i + 1 < argc)
+            soundAt = std::atoi (argv[++i]);
         else if (std::strcmp (argv[i], "--centre") == 0 && i + 1 < argc) gAnchorCentre = static_cast<float> (std::atof (argv[++i]));
         else if (std::strcmp (argv[i], "--pw") == 0 && i + 1 < argc) gAnchorWidth = static_cast<float> (std::atof (argv[++i]));
         else files.push_back (argv[i]);
@@ -359,7 +392,7 @@ int main (int argc, char** argv)
             levelTrace (d);
             continue;
         }
-        const Stats s = replay (d, trace, anchor);
+        const Stats s = replay (d, trace, anchor, lineFeed, soundAt);
         const bool octaveBad = s.bpmEnd > 1.0f
                                && std::fabs (std::log2 (s.bpmEnd / d.bpm)) > 0.20f;
         const bool isUnstable = s.span > 1.0f;

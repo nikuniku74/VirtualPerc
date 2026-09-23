@@ -1,6 +1,7 @@
-// Dumps the raw BeatNet activation curve for one rendered track, so the tempo
+// Dumps the raw BeatNet activation curve and metrical energy side-channels for
+// one rendered track, so the tempo
 // logic can be designed against the signal the network actually produces rather
-// than against a guess at it. Writes "frame pBeat pDownbeat" to stdout.
+// than against a guess at it. Writes "frame pBeat pDownbeat lowBand highBand".
 //
 // `--wav file.wav --sweep` instead measures how the *level* of the input moves
 // the network, which is the failure the live recording exposed: at about -12 dB
@@ -116,6 +117,8 @@ int main (int argc, char** argv)
     std::string wavPath;
     bool sweep = false;
     double seconds = 12.0;
+    double silencePreludeSeconds = 0.0;
+    bool preserveModelOnRestart = false;
     std::vector<float> gainsDb { 0.0f, -6.0f, -12.0f, -18.0f };
     std::vector<std::string> positional;
 
@@ -125,6 +128,10 @@ int main (int argc, char** argv)
         if (a == "--wav" && i + 1 < argc)        wavPath = argv[++i];
         else if (a == "--sweep")                 sweep = true;
         else if (a == "--secs" && i + 1 < argc)  seconds = std::atof (argv[++i]);
+        else if (a == "--silence-prelude" && i + 1 < argc)
+            silencePreludeSeconds = std::max (0.0, std::atof (argv[++i]));
+        else if (a == "--preserve-model-on-restart")
+            preserveModelOnRestart = true;
         else if (a == "--gains" && i + 1 < argc)
         {
             gainsDb.clear();
@@ -221,11 +228,46 @@ int main (int argc, char** argv)
     float frame[vp::LogSpectFeatures::kDim];
     float act[3] {};
     int frameIdx = 0;
+    std::printf ("# bpm %.2f  framesPerBeat %.3f  silencePrelude %.2f\n",
+                 static_cast<double> (o.bpm),
+                 60.0 / static_cast<double> (o.bpm) * 50.0,
+                 silencePreludeSeconds);
+
+    // Match the worker's epoch boundary, not just its audio samples. A new
+    // file/line source resets the recurrent model and decoder evidence; an
+    // arrangement entrance with preserveComb retains the model and comb.
+    // Neither event resets the resampler or feature history unless queued
+    // audio is explicitly dropped. The former is the default here because
+    // VPLive's silence-to-file epoch uses preserveComb=false.
+    if (silencePreludeSeconds > 0.0)
+    {
+        constexpr int silenceChunk = 512;
+        std::vector<float> silence (silenceChunk, 0.0f);
+        const int silenceSamples = static_cast<int> (sr * silencePreludeSeconds);
+        for (int pos = 0; pos < silenceSamples; pos += silenceChunk)
+        {
+            const int count = std::min (silenceChunk, silenceSamples - pos);
+            const int nr = rs.process (silence.data(), count, resampled.data(),
+                                       static_cast<int> (resampled.size()));
+            feats.process (resampled.data(), nr);
+            while (feats.popFrame (frame))
+            {
+                if (! model.infer (frame, vp::LogSpectFeatures::kDim, act))
+                    continue;
+                std::printf ("%d %.4f %.4f %.6f %.6f\n", frameIdx++,
+                             static_cast<double> (act[0]), static_cast<double> (act[1]),
+                             static_cast<double> (vp::LogSpectFeatures::lowBandEnergy (frame)),
+                             static_cast<double> (vp::LogSpectFeatures::highBandEnergy (frame)));
+            }
+        }
+        std::printf ("# restartFrame %d preserve %d\n", frameIdx,
+                     preserveModelOnRestart ? 1 : 0);
+        if (! preserveModelOnRestart)
+            model.reset();
+    }
 
     const int n = static_cast<int> (song.size());
-    const int chunk = 2048;
-    std::printf ("# bpm %.2f  framesPerBeat %.3f\n", static_cast<double> (o.bpm),
-                 60.0 / static_cast<double> (o.bpm) * 50.0);
+    const int chunk = 512;
     for (int pos = 0; pos + chunk <= n; pos += chunk)
     {
         const int nr = rs.process (song.data() + pos, chunk, resampled.data(),
@@ -235,8 +277,10 @@ int main (int argc, char** argv)
         {
             if (! model.infer (frame, vp::LogSpectFeatures::kDim, act))
                 continue;
-            std::printf ("%d %.4f %.4f\n", frameIdx, static_cast<double> (act[0]),
-                         static_cast<double> (act[1]));
+            std::printf ("%d %.4f %.4f %.6f %.6f\n", frameIdx,
+                         static_cast<double> (act[0]), static_cast<double> (act[1]),
+                         static_cast<double> (vp::LogSpectFeatures::lowBandEnergy (frame)),
+                         static_cast<double> (vp::LogSpectFeatures::highBandEnergy (frame)));
             ++frameIdx;
         }
     }

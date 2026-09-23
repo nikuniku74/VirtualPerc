@@ -190,6 +190,7 @@ int main (int argc, char** argv)
     bool speaker = false;
     bool autoMode = false;
     bool trace = false;
+    bool traceActivations = false;
     double gainDb = 0.0;
 
     for (int i = 1; i < argc; ++i)
@@ -202,6 +203,7 @@ int main (int argc, char** argv)
         else if (a == "--speaker") speaker = true;
         else if (a == "--auto")    autoMode = true;
         else if (a == "--trace")   trace = true;
+        else if (a == "--trace-activations") traceActivations = true;
         else if (a == "--gain")    gainDb = std::atof (next().c_str());
         else
         {
@@ -213,7 +215,8 @@ int main (int argc, char** argv)
                          "            questo caso conta la *deriva*, non lo scarto assoluto\n"
                          "  --speaker seguendo l'altoparlante dell'iPad invece del mixer\n"
                          "  --gain    dB applicati al mix prima dell'analisi, per provare\n"
-                         "            lo stesso brano a livelli diversi (0 = invariato)\n");
+                         "            lo stesso brano a livelli diversi (0 = invariato)\n"
+                         "  --trace-activations stampa i frame pubblicati dal worker\n");
             return 1;
         }
     }
@@ -327,6 +330,7 @@ int main (int argc, char** argv)
     int bpmN = 0;
     size_t onsetCursor = 0;
     double lastTrace = -10.0;
+    uint64_t lastActivationFrame = 0;
     std::vector<std::pair<double,double>> errAt;
     double settledAt = -1.0;
     bool everPlayed = false;
@@ -378,6 +382,23 @@ int main (int argc, char** argv)
     {
         const auto out = tracker.process (mix.data() + pos, kBlock);
         onnx = onnx || out.aiOnnx;
+        if (traceActivations && out.analysisFrameIndex != 0
+            && out.analysisFrameIndex != lastActivationFrame)
+        {
+            if (lastActivationFrame != 0 && out.analysisFrameIndex != lastActivationFrame + 1)
+                // A slot publication can be overwritten before this probe
+                // samples it; this is not necessarily an audio FIFO gap.
+                std::printf ("ACT_SKIP %llu %llu\n",
+                             static_cast<unsigned long long> (lastActivationFrame),
+                             static_cast<unsigned long long> (out.analysisFrameIndex));
+            lastActivationFrame = out.analysisFrameIndex;
+            std::printf ("ACT %llu %lld %.6f %.6f %.3f %d\n",
+                         static_cast<unsigned long long> (out.analysisFrameIndex),
+                         static_cast<long long> (out.analysisSample),
+                         static_cast<double> (out.pBeat),
+                         static_cast<double> (out.pDownbeat),
+                         static_cast<double> (out.neuralBpm), out.tempoOctave);
+        }
 
         // The analysis runs on its own thread. Draining it every block is what
         // makes the run repeatable - see the same spin in Tests/TestAiBeat.cpp.
@@ -395,7 +416,9 @@ int main (int argc, char** argv)
         // least-squares fits over different baselines say, what the comb's fold
         // says, and which regime the decoder has committed to. A settling time
         // has to be attributable to one of them.
-        if (trace && t >= lastTrace + 2.0 && t < 70.0)
+        if (trace && t < 125.0
+            && (t >= lastTrace + 2.0
+                || (t >= 65.0 && t <= 75.0 && t >= lastTrace + 0.25)))
         {
             lastTrace = t;
             std::printf ("  t=%-5.0f orologio=%-7.2f decoder=%-7.2f rete=%-7.2f pettine=%-7.2f "
@@ -407,8 +430,18 @@ int main (int argc, char** argv)
                          static_cast<double> (out.confidence),
                          static_cast<double> (out.fitResidual),
                          vp::regimeLabel (static_cast<int> (out.regime)));
-            std::printf ("        stato=%s  suona=%s\n",
-                         vp::toString (out.state), out.percussionShouldPlay ? "SI" : "no");
+            std::printf ("        stato=%s suona=%s hyp=%d trans=%d/%d %.1f@%.2f x%d "
+                         "trim=%+.2f phase=%+.3f lead=%.0fms\n",
+                         vp::toString (out.state), out.percussionShouldPlay ? "SI" : "no",
+                         out.hypValid ? 1 : 0,
+                         static_cast<int> (out.tempoTransitionState),
+                         static_cast<int> (out.tempoTransitionReason),
+                         static_cast<double> (out.tempoTransitionBpm),
+                         static_cast<double> (out.tempoTransitionConfidence),
+                         out.tempoTransitionIntervals,
+                         static_cast<double> (out.tempoTrimBpm),
+                         static_cast<double> (out.observedPhaseErrorBeats),
+                         static_cast<double> (out.leadMs));
             if (out.percussionShouldPlay && ! everPlayed)
             {
                 everPlayed = true;

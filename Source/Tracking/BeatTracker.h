@@ -138,7 +138,12 @@ public:
         re-places its phase over a beat boundary the count still goes with it -
         that is what keeps a locked bar on the beat of the song it was locked
         to, instead of drifting a quarter away from it. */
-    void setBarLocked (bool on) noexcept { barLocked = on; }
+    void setBarLocked (bool on) noexcept
+    {
+        barLocked = on;
+        if (on)
+            barTrustEstablished = true;
+    }
     bool barIsLocked() const noexcept { return barLocked; }
 
     /** The band came back after a hole (two quarters muted, a seek in the
@@ -203,10 +208,10 @@ public:
         playing. Counted rather than flagged; see
         BeatDecoder::notifyInputRestart.
 
-        The tracker keeps one bit of its own from this: whether it has *ever*
-        seen the input change since the app was opened. Until it has, a tempo it
-        has found may be the room's - measured, an empty room reaches FOLLOWING
-        at 99 BPM with a confidence of 0.91 - and the percussion is held out. */
+        The tracker remembers whether it has *ever* seen the input change since
+        the app was opened. Until it has, a tempo it found may be the room's -
+        measured, an empty room reaches FOLLOWING at 99 BPM with 0.91 confidence.
+        A new epoch also makes the bar vote earn its one again. */
     void setInputEpoch (uint32_t epoch, bool preserveComb = false,
                         bool dropQueued = false) noexcept
     {
@@ -218,11 +223,18 @@ public:
             noNetworkTempoSamples = 0;
             follower.cancelPhaseRecovery();
             sawInputStart = true;
-            // A new input must earn its own metrical level. In particular, a
-            // 50 BPM file may have taught AUTO to divide the hat pulse by two;
-            // carrying that choice into an unrelated 100 BPM file would turn
-            // the fix into the same sticky-octave bug in the other direction.
-            if (octaveAuto && autoOctave != 0)
+            // Keep the tempo model across an arrangement entrance, but ask
+            // the newly audible rhythm section to establish its own one.
+            barTrustEstablished = false;
+            std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+            voteBeats = 0.0f;
+            std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
+            harmonyVoteCount = 0.0f;
+            // A new source must earn its own metrical level. A preserved epoch
+            // is an arrangement entrance in the same song: resetting AUTO
+            // there would change the pulse density under a playing part even
+            // though the worker deliberately retains its comb and model.
+            if (! preserveComb && octaveAuto && autoOctave != 0)
             {
                 autoOctave = 0;
                 autoWant = 0;
@@ -288,7 +300,12 @@ public:
         bool          hypValid = false;
         bool          harmonicTempoSource = false;
         float         neuralBpm = 0.0f;
+        /** Probe diagnostics for matching a worker publication to an offline
+            activation dump. Scalars only; no work is added to the callback. */
+        uint64_t      analysisFrameIndex = 0;
+        int64_t       analysisSample = 0;
         float         pBeat = 0.0f;
+        float         pDownbeat = 0.0f;
         /** Measured analysis-plus-output delay the clock is running ahead by. */
         float         leadMs = 0.0f;
         TempoRegime   regime = TempoRegime::unknown;
@@ -418,10 +435,9 @@ public:
             held still, and therefore the moment worth asking what else that
             hold is stopping. */
         int           barRotations = 0;
-        /** True when the one can be believed for voices that sit on a
-            specific quarter (the clap on 2 and 4). Locked is trusted
-            outright; otherwise the histogram has to name beat zero with a
-            coming-in margin, and a re-entry window has to have closed. */
+        /** True when the one has been established for quarter-specific voices
+            (the clap on 2 and 4). A weak later vote does not revoke the
+            established bar; a new source or a bar re-entry does. */
         bool          barTrusted = false;
         /** True while the post-cut coming-in window is open. Diagnostic. */
         bool          barReentry = false;
@@ -458,7 +474,7 @@ private:
         it moved the count, so the caller can stop asking. */
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
-    bool barIsTrustedNow() const noexcept;
+    bool barIsTrustedNow() noexcept;
     void updateAutoOctave (float bpm, bool periodic, int numSamples,
                            bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
@@ -553,6 +569,7 @@ private:
         quantities - a network that is loud about every beat has said nothing. */
     float downbeatVotes[4] {};
     float voteBeats = 0.0f;
+    bool  barTrustEstablished = false;
     int   barRotations = 0;
     /** Samples remaining in the post-cut coming-in window. Zero is closed. */
     int   barReentrySamples = 0;
