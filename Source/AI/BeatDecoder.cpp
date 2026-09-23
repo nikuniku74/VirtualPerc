@@ -5994,8 +5994,29 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         // beat of hats between kicks still updates. The crest is stored
         // on the held grid so the pause is not a hole the next kick
         // reads as a new tempo.
-        const bool holdPulse = beatLowBandNow < kLowBandMute
-                               && kitBodyHolding (eventTimeSec);
+        const double heldPeriodSec = 60.0 / static_cast<double> (std::max (kMinBpm, bpm));
+        const double gapBeats = lastBeatSec >= 0.0
+                                    ? (eventTimeSec - lastBeatSec) / heldPeriodSec
+                                    : 0.0;
+        const double origin = gridAnchorSec >= 0.0 ? gridAnchorSec : lastBeatSec;
+        double onGrid = eventTimeSec;
+        if (origin >= 0.0)
+        {
+            const double n = std::round ((eventTimeSec - origin) / heldPeriodSec);
+            onGrid = origin + n * heldPeriodSec;
+        }
+        // A small pause is shorter than the 1.5-period hole, so the
+        // crest comes back early and the fit reads it as a faster
+        // tempo. One beat of hats (gap under 1.20) still updates.
+        // A late return is a ritardando and is not this path. The
+        // bank never sets sounding.
+        const bool earlyAfterSmallPause = sounding && established && ! provisional
+                                           && kitBodyHeard
+                                           && gapBeats > 1.20 && gapBeats < kGridStaleBeats
+                                           && eventTimeSec + 0.06 * heldPeriodSec < onGrid;
+        const bool holdPulse = earlyAfterSmallPause
+                               || (beatLowBandNow < kLowBandMute
+                                   && kitBodyHolding (eventTimeSec));
         if (beatLowBandNow >= kLowBandMute)
         {
             kitBodyHeard = true;
@@ -6005,14 +6026,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         {
             if (transitionState != TempoTransitionState::stable)
                 dropTransitionCandidate (TempoTransitionReason::expired);
-            const double periodSec = 60.0 / static_cast<double> (std::max (kMinBpm, bpm));
-            const double origin = gridAnchorSec >= 0.0 ? gridAnchorSec : lastBeatSec;
-            double snapped = eventTimeSec;
-            if (origin >= 0.0)
-            {
-                const double n = std::round ((eventTimeSec - origin) / periodSec);
-                snapped = origin + n * periodSec;
-            }
+            const double snapped = onGrid;
             registerBeat (snapped, prevPulse, beatLowBandNow, beatHighBandNow);
             lastBeatSec = snapped;
             lastAcceptedLowBand = beatLowBandNow;
@@ -6095,7 +6109,13 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     // While the kick body is gone the long fit must not keep a faster
     // period in the published phase: the clock closes phase by bending
     // its rate, so a short period here is the rush through the pause.
-    if (kitBodyHolding (timeSec))
+    // A small pause never reaches the 1.5-period hole. 1.20 is past one
+    // beat of hats and short of treating a merely late beat as a rest.
+    // Sounding, so the bank's missed quarters are not this.
+    const bool smallPauseOpen = sounding && established && lastBeatSec >= 0.0
+                                 && timeSec - lastBeatSec
+                                        > 1.20 * static_cast<double> (newPeriod);
+    if (kitBodyHolding (timeSec) || smallPauseOpen)
         longFitPeriodHeld = false;
     const bool longFitPeriodGate = fastMotionCurrent && ioiClockLead
                                     && intervalAcquired && longFitBpm >= kMinBpm;
@@ -6176,16 +6196,14 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
     hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
     hyp.ioiLead = fastMotionCurrent && ioiClockLead;
-    // One and a half periods with no accepted beat, or the kick body has
-    // been gone long enough that the crests still arriving are hats and
-    // voice. Either way the part is already playing and the pulse is the
-    // one counted: the direct-live rail would spend a phase debt at 7.5%
-    // (about 8 BPM near 107) through a rest that has not changed tempo.
-    // A hat one beat after a kick does not arm this — the body hold
-    // itself waits 1.05 periods. The bank passes lowBand 0, so the body
-    // is never heard there.
+    // A rest while the part is already playing. 1.5 periods with no
+    // beat is a hole; a small pause is the stretch past 1.20, before
+    // that hole, where an early crest would otherwise be spent at the
+    // 7.5% rail (about 8 BPM near 107). A hat one beat after a kick
+    // stays under 1.20 and does not arm this. The bank never sets
+    // sounding.
     hyp.beatGap = sounding && established && lastBeatSec >= 0.0
-                  && (! fastMotionCurrent || kitBodyHolding (timeSec));
+                  && (smallPauseOpen || ! fastMotionCurrent || kitBodyHolding (timeSec));
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

@@ -459,14 +459,12 @@ private:
     /** Input peak with a slow release, so the meter can be read against its
         target band instead of flickering. Updated on the UI timer. */
     float micHold = 0.0f;
-    /** Smoothed copy of the tempo halo. Starts amber and invisible so the
-        first lock eases in instead of flashing red from a zero. A drop in
-        accuracy is applied on the same tick; `tempoBloomHold` keeps that
-        worse colour up for a few frames at 15 Hz. UI timer only — the audio
-        thread never reads these. */
+    /** Smoothed copy of the tempo band. Starts mid-level and invisible so
+        the first lock eases in instead of flashing red from a zero. A drop
+        glides down; it is not copied onto the frame. UI timer only — the
+        audio thread never reads these. */
     float tempoBloomAccuracy = 0.5f;
     float tempoBloomAmount = 0.0f;
-    int   tempoBloomHold = 0;
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

@@ -235,14 +235,13 @@ namespace
 
         A frame of the analysis is 20 ms of jitter (`TempoFollower`), and a
         lean inside that — a little past it, still — is not something a
-        listener hears as the part fighting the song. The halo stays green
-        through 30 ms. Past that pocket, `accuracy` falls from 1 to 0 by
-        85 ms and the paint uses it as how much red to show: a mild flam is
-        a quieter red, a hit that sits on the wrong part of the beat is a
-        full one. The 8 ms phase-lock bench is a tighter bar than this halo.
+        listener hears as the part fighting the song. The band starts to
+        leave the green at 10 ms and is down in the red by 58 ms, so a small
+        drift moves it instead of sitting full until it falls off a cliff.
+        The 8 ms phase-lock bench is a tighter bar than this band.
 
         The clock's rate bend is not scored: that bend is how a small error
-        gets closed. `amount` is whether the halo is drawn at all. An empty
+        gets closed. `amount` is whether the band is drawn at all. An empty
         stage stays dark rather than sitting on red before anyone has played. */
     struct TempoBloom
     {
@@ -283,8 +282,10 @@ namespace
         if (s.loopPlaying)
             errMs = juce::jmax (errMs, std::abs (s.loopPhaseMs));
 
-        // 0 inside the pocket, 1 once the hit is far enough to fight the beat.
-        float bad = unitRamp (errMs, 30.0f, 85.0f);
+        // 0 inside a small pocket, 1 once the hit is far enough to fight
+        // the beat. The old 30–85 ms ramp stayed full green and then the
+        // display jumped; this one moves on a smaller error.
+        float bad = unitRamp (errMs, 10.0f, 58.0f);
 
         // Not locked is its own problem, independent of a small residual.
         if (weak)
@@ -334,39 +335,79 @@ namespace
         return out;
     }
 
-    /** Green in the pocket. Outside it the hue is already red — mixing green
-        into red in RGB goes olive — and the brightness is how much red the
-        problem is worth. */
-    juce::Colour tempoBloomColour (float accuracy) noexcept
+    /** One wide neon band behind the tempo, filled from the bottom. Red
+        sits at the bottom and green at the top. The colour is mapped on the
+        full height and the light dies out above the fill, so a short bar is
+        red and its top edge glows instead of being cut with a clip. One
+        slab: the equalizer's columns would read as several meters. */
+    void paintTempoBand (juce::Graphics& g, juce::Rectangle<float> band,
+                         float level, float alpha)
     {
-        const float bad = 1.0f - juce::jlimit (0.0f, 1.0f, accuracy);
-        if (bad <= 0.001f)
-            return juce::Colour (0xff3cde7c);
-        const float bri = 0.42f + 0.58f * std::pow (bad, 0.80f);
-        return juce::Colour::fromHSV (0.0f, 0.90f, bri, 1.0f);
-    }
-
-    /** Soft elliptical halo. A circle wide enough to cover the BPM and the
-        quarters spills onto START; scaling Y around the centre keeps the
-        wash on that band. The gradient is already clear at the rim, so the
-        ellipse is not a box the way the MIC glow was when it was clipped
-        to the slider rectangle. Light keeps more of the alpha than the
-        brand glow does — a third of this wash disappears on white. */
-    void paintEllipticalBloom (juce::Graphics& g, juce::Point<float> centre,
-                               float rx, float ry, juce::Colour col, float alpha)
-    {
-        if (rx < 2.0f || ry < 2.0f || alpha <= 0.004f)
+        if (band.getWidth() < 4.0f || band.getHeight() < 4.0f || alpha <= 0.004f)
             return;
         if (! gDarkMode)
-            alpha *= 0.58f;
+            alpha *= 0.62f;
 
-        g.saveState();
-        g.addTransform (juce::AffineTransform::scale (1.0f, ry / rx, centre.x, centre.y));
-        juce::ColourGradient grad (col.withAlpha (alpha), centre.x, centre.y,
-                                   col.withAlpha (0.0f), centre.x + rx, centre.y, true);
-        g.setGradientFill (grad);
-        g.fillEllipse (centre.x - rx, centre.y - rx, rx * 2.0f, rx * 2.0f);
-        g.restoreState();
+        level = juce::jlimit (0.0f, 1.0f, level);
+        const float fill = 0.08f + 0.92f * level;
+        const float h = band.getHeight();
+        const float fillH = h * fill;
+        const float yTop = band.getBottom() - fillH;
+        const auto red   = juce::Colour (0xffff2a4a);
+        const auto amber = juce::Colour (0xffffb01a);
+        const auto green = juce::Colour (0xff3dffc2);
+
+        auto tone = [&] (float y01) noexcept
+        {
+            y01 = juce::jlimit (0.0f, 1.0f, y01);
+            if (y01 < 0.40f)
+                return red.interpolatedWith (amber, y01 / 0.40f);
+            if (y01 < 0.72f)
+                return amber.interpolatedWith (green, (y01 - 0.40f) / 0.32f);
+            return green;
+        };
+
+        auto paintLayer = [&] (float a, float soft, float xBleed)
+        {
+            const float yFeather = yTop - soft;
+            const float span = band.getBottom() - yFeather;
+            if (span < 2.0f || a <= 0.004f)
+                return;
+            const auto lip = tone (fill);
+            juce::ColourGradient grad (red.withAlpha (a),
+                                       band.getCentreX(), band.getBottom(),
+                                       lip.withAlpha (0.0f),
+                                       band.getCentreX(), yFeather, false);
+            const float amberPos = (0.40f * h) / span;
+            const float greenPos = (0.72f * h) / span;
+            const float lipPos = fillH / span;
+            if (0.40f < fill && amberPos > 0.02f && amberPos < lipPos - 0.02f)
+                grad.addColour (amberPos, amber.withAlpha (a));
+            if (0.72f < fill && greenPos > 0.02f && greenPos < lipPos - 0.02f)
+                grad.addColour (greenPos, green.withAlpha (a));
+            if (lipPos > 0.04f && lipPos < 0.98f)
+                grad.addColour (lipPos, lip.withAlpha (a));
+            g.setGradientFill (grad);
+            g.fillRect (band.getX() - xBleed, yFeather,
+                        band.getWidth() + xBleed * 2.0f,
+                        band.getBottom() - yFeather);
+        };
+
+        const float feather = juce::jmax (16.0f, h * 0.22f);
+        paintLayer (alpha * 0.34f, feather * 1.45f, juce::jmin (18.0f, h * 0.08f));
+        paintLayer (alpha * 0.82f, feather * 0.72f, 0.0f);
+
+        const auto lip = tone (fill);
+        const float lipAbove = feather * 0.55f;
+        const float lipBelow = feather * 0.40f;
+        juce::ColourGradient lipGlow (lip.withAlpha (0.0f),
+                                      band.getCentreX(), yTop - lipAbove,
+                                      lip.withAlpha (0.0f),
+                                      band.getCentreX(), yTop + lipBelow, false);
+        lipGlow.addColour (lipAbove / (lipAbove + lipBelow),
+                           lip.brighter (0.45f).withAlpha (alpha));
+        g.setGradientFill (lipGlow);
+        g.fillRect (band.getX(), yTop - lipAbove, band.getWidth(), lipAbove + lipBelow);
     }
 
     void drawFlatButton (juce::Graphics& g, juce::Button& button, juce::Colour fill,
@@ -2815,20 +2856,15 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
 
-    // Worse lands on this frame: a hit that has come off the pulse has to
-    // read orange before the next one. Better eases back, and a short hold
-    // keeps a single early stroke on screen for a beat instead of blinking.
+    // Both directions ease. A drop used to be copied onto this frame and
+    // then held, which is the bar slamming into the red. Falling is the
+    // fast one (most of the way in about a fifth of a second at 15 Hz);
+    // rising is slower so a single close beat does not flicker the green.
     {
         const auto bloom = tempoBloomFor (snap);
-        if (bloom.accuracy + 0.015f < tempoBloomAccuracy)
-        {
-            tempoBloomAccuracy = bloom.accuracy;
-            tempoBloomHold = 5;
-        }
-        else if (tempoBloomHold > 0)
-            --tempoBloomHold;
-        else
-            tempoBloomAccuracy += (bloom.accuracy - tempoBloomAccuracy) * 0.22f;
+        const float toward = bloom.accuracy - tempoBloomAccuracy;
+        const float glide = toward < 0.0f ? 0.55f : 0.28f;
+        tempoBloomAccuracy += toward * glide;
         tempoBloomAmount += (bloom.amount - tempoBloomAmount) * 0.35f;
     }
 
@@ -3778,9 +3814,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
-    // Halo behind the BPM and the four quarters. Green through the pocket.
-    // Outside it the wash is red, and how strong that red is is how far the
-    // hit has left the pocket. Two ellipses, clear at the rim.
+    // One band behind the BPM and the four quarters, filled from the
+    // bottom. In the pocket it reaches the green; the further off, the
+    // lower it sits and the more of it is red.
     if (! rows.bpm.isEmpty() && ! rows.beats.isEmpty() && tempoBloomAmount > 0.02f)
     {
         const auto cluster = juce::Rectangle<float> (
@@ -3788,19 +3824,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             static_cast<float> (rows.bpm.getY()),
             static_cast<float> (area.getWidth()),
             static_cast<float> (rows.beats.getBottom() - rows.bpm.getY()));
-        const float bad = 1.0f - juce::jlimit (0.0f, 1.0f, tempoBloomAccuracy);
-        const auto col = tempoBloomColour (tempoBloomAccuracy);
-        const auto centre = cluster.getCentre();
-        const float vis = bad <= 0.001f ? 1.0f : (0.28f + 0.72f * bad);
-        const float amt = tempoBloomAmount * vis;
-        paintEllipticalBloom (g, centre,
-                              cluster.getWidth() * 0.62f,
-                              cluster.getHeight() * 0.78f,
-                              col, 0.46f * amt);
-        paintEllipticalBloom (g, centre,
-                              cluster.getWidth() * 0.40f,
-                              cluster.getHeight() * 0.52f,
-                              col, 0.28f * amt);
+        paintTempoBand (g, cluster, tempoBloomAccuracy, 0.55f * tempoBloomAmount);
     }
 
     // The tempo, sized to the room it has rather than to a constant, so it is
