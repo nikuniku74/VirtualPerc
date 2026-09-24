@@ -238,6 +238,8 @@ void TempoFollower::reset() noexcept
     directLivePhaseFollow = false;
     directLiveSteer = 0.0f;
     tempoGlideFast = false;
+    smallFlexSamples = 0;
+    smallFlexSign = 0;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     tempoMotionHint = false;
@@ -255,6 +257,8 @@ void TempoFollower::resetClock() noexcept
     directLivePhaseFollow = false;
     directLiveSteer = 0.0f;
     tempoGlideFast = false;
+    smallFlexSamples = 0;
+    smallFlexSign = 0;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     phase = 0.0;
@@ -842,9 +846,34 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         tempoGlideFast = true;
     else if (absErr < 0.5f)
         tempoGlideFast = false;
-    const float glide = ! locked ? (absErr <= 1.2f ? 0.045f : 0.18f)
-                                 : ((rapidTransition || tempoMotionProven || tempoGlideFast)
-                                        ? 0.28f : 1.60f);
+    float glide = ! locked ? (absErr <= 1.2f ? 0.045f : 0.18f)
+                           : ((rapidTransition || tempoMotionProven || tempoGlideFast)
+                                  ? 0.28f : 1.60f);
+    // A bend the band holds, still under 2 BPM, used to sit on the 1.60 s
+    // wobble average for its whole life: that is the lazy re-lock. Direct
+    // live only, and only after the error has kept its sign for 0.40 s, so a
+    // wobble that reverses never leaves 1.60. The known-phase matrix does
+    // not set this follow.
+    if (locked && directLivePhaseFollow && ! tempoGlideFast && ! rapidTransition
+        && absErr >= 0.5f && absErr <= 2.0f)
+    {
+        const int sign = err > 0.0f ? 1 : -1;
+        if (sign == smallFlexSign)
+            smallFlexSamples = std::min (smallFlexSamples + numSamples,
+                                         static_cast<int> (sampleRate * 2.0));
+        else
+        {
+            smallFlexSign = sign;
+            smallFlexSamples = numSamples;
+        }
+        if (smallFlexSamples > static_cast<int> (sampleRate * 0.40f))
+            glide = 0.45f;
+    }
+    else
+    {
+        smallFlexSamples = 0;
+        smallFlexSign = 0;
+    }
 
     // Floored while the beats the tempo was fitted through are worse placed
     // than this song's own - which is what a passage with the drummer out looks

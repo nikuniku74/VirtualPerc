@@ -3712,7 +3712,12 @@ and braking. The old 0.22 s branch adopted that wobble faster than a real
 move. The slow path still adopts — it is not a freeze. A move past 2 BPM
 keeps the 0.28 s glide until it is within half a BPM, so the tail of a real
 step is not reclassified as wobble. A proved curve and a confirmed transition
-do too. Tempo is clamped 40..220 BPM and *settles*
+do too. On a direct live feed, a bend that stays under 2 BPM but keeps its
+sign for 0.40 s leaves the 1.60 s average for a 0.45 s glide. A wobble that
+reverses never does. The known-phase matrix does not set that follow.
+Standalone clock, 120 BPM, a held +1.5 BPM: the ordinary path is inside
+0.3 BPM at 2.58 s; direct live at 1.60 s. A held −1.2 BPM is 2.22 s against
+1.50 s. Tempo is clamped 40..220 BPM and *settles*
 (snaps) within 0.02 BPM so `currentTempo()` reads as a round number.
 
 **Phase steering** by `FollowStrength` (`TempoFollower.cpp:524`, inside the

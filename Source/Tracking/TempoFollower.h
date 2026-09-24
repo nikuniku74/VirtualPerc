@@ -205,6 +205,8 @@ private:
         error is back under half a BPM. The tail of a real step is not wobble.
         A wander that never crosses 2 BPM keeps the slow glide. */
     bool tempoGlideFast = false;
+    int smallFlexSamples = 0;
+    int smallFlexSign = 0;
     bool beatGapHold = false;
     int gapSteerGuardBeats = 0;
     bool tempoMotionHint = false;
