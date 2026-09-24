@@ -272,5 +272,58 @@ int main (int argc, char** argv)
                      baseBpm,scenario,active,sq/std::max(1e-30,baseSq),ok?"PASS":"FAIL");
         failures += !ok;
     }
+    // Direct-live light offset. 20 ms at 120 used to take 0.70 s to get
+    // inside 8 ms because the 0.30 s average and the 2%/beat rail slew both
+    // applied to a command that only ever wanted about 4%. The hold path
+    // (no direct-live follow) must stay on that slower slope.
+    {
+        auto close = [] (bool direct, float offsetMs, float& seconds, float& peakLean)
+        {
+            vp::TempoFollower c;
+            c.prepare (48000);
+            c.forceTempo (120.0f);
+            c.setLocked (true);
+            c.setFollowStrength (vp::FollowStrength::high);
+            c.setDirectLivePhaseFollow (direct);
+            c.setTempoTrust (1.0f);
+            const double period = 0.5;
+            const int buffer = 256;
+            const double dt = buffer / 48000.0;
+            double time = 0, song = 0;
+            seconds = -1;
+            peakLean = 0;
+            for (int i = 0; i < 48000 / buffer; ++i)
+            {
+                c.setGridPhase (vp::wrap01 (static_cast<float> (song)), direct ? 0.30f : 0.90f);
+                c.advance (buffer);
+                time += dt;
+                song += dt / period;
+            }
+            const double t0 = time;
+            song += (offsetMs / 1000.0) / period;
+            while (time - t0 < 3.0)
+            {
+                c.setGridPhase (vp::wrap01 (static_cast<float> (song)), direct ? 0.30f : 0.90f);
+                auto tick = c.advance (buffer);
+                peakLean = std::max (peakLean, std::fabs (tick.soundingTempoBpm - 120.0f));
+                const float ms = std::fabs (vp::wrapCentered (c.beatPhase() - vp::wrap01 (static_cast<float> (song))))
+                                 * static_cast<float> (period) * 1000.0f;
+                if (seconds < 0 && ms < 8.0f)
+                    seconds = time - t0;
+                time += dt;
+                song += dt / period;
+            }
+        };
+        float directS = 0, directLean = 0, holdS = 0, holdLean = 0, wideLean = 0, wideS = 0;
+        close (true, 20.0f, directS, directLean);
+        close (false, 20.0f, holdS, holdLean);
+        close (true, 50.0f, wideS, wideLean);
+        const bool ok = directS >= 0 && directS <= 0.55f && directLean <= 3.5f
+                        && holdS >= 1.2f
+                        && wideLean <= 8.0f;
+        std::printf ("light-offset direct20=%.3fs lean=%.2f hold20=%.3fs wide50lean=%.2f %s\n",
+                     directS, directLean, holdS, wideLean, ok ? "PASS" : "FAIL");
+        failures += !ok;
+    }
     return failures ? 1 : 0;
 }

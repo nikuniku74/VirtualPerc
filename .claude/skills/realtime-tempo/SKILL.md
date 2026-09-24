@@ -4623,6 +4623,8 @@ Probes wait on `BeatTracker::analysisBacklog()` to make a run repeatable -
 otherwise the host scheduler decides how far behind the worker is and the same
 build measures differently run to run.
 
+**Kept (2026-09-24), faster rientro of a light direct-live offset.** A stable direct feed at high follow closed a constant 20 ms offset at 120 BPM in 0.70 s, and the first tenth of a second of that was still under 0.3 BPM of lean. The 0.30 s phase average and the 2%/beat slew toward the 7.5% rail were both applied to a command that only wants about 4%. While the raw error is inside 0.05 beat and the part is not in a rest, the average is now 0.15 s. The slew inside ±4% may arrive in half a beat; past that edge the old 2%/beat slope toward the rail is unchanged, and a rest still zeroes the lean in the same buffer. Standalone clock, high follow, 256 samples: 20 ms at 120 is inside 8 ms in 0.44 s with a 2.60 BPM peak lean (was 0.70 s / 2.28 BPM); 30 ms is 0.76 s / 3.83 BPM (was 1.01 s / 3.64); a 50 ms debt, which starts outside the light band, is 1.02 s / 6.24 BPM (was 1.42 s / 5.56). The same 20 ms on the hold path stays at 1.59 s. A ±0.015-beat 6 Hz wobble stays inside the phase floor (peak lean 0). `probe_recovery` is 0 failures and now gates the 20 ms direct case at ≤ 0.55 s and ≤ 3.5 BPM, the hold case at ≥ 1.2 s, and the 50 ms lean at ≤ 8 BPM. The known-phase matrix does not set this follow.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

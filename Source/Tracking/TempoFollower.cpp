@@ -57,6 +57,56 @@ namespace
         return std::min (kPhaseFloorBeats,
                          kPhaseFloorSeconds / std::max (0.05f, periodSec));
     }
+
+    // A light direct-live offset, about 25 ms at 120 BPM. Above this the
+    // ordinary 0.30 s average and the 2%/beat slew toward the 7.5% rail stay
+    // as they were: a fill must not spend that rail inside one beat.
+    constexpr float kDirectLightPhaseBeats = 0.050f;
+    constexpr float kDirectLightPhaseTau = 0.15f;
+    constexpr float kDirectLightSteer = 0.040f;
+    constexpr float kDirectLightSlewPerBeat = 0.080f;
+    constexpr float kDirectRailSlewPerBeat = 0.020f;
+
+    /** Two-slope slew. Inside ±kDirectLightSteer the command may arrive in
+        half a beat; outside it, the old 2% per beat still applies. A block
+        that crosses the boundary spends each slope on its own segment. */
+    inline float slewDirectLive (float from, float to, float beats) noexcept
+    {
+        if (! (beats > 0.0f) || from == to)
+            return to;
+        const float dir = to > from ? 1.0f : -1.0f;
+        float pos = from;
+        float left = beats;
+        for (int segment = 0; segment < 2 && left > 0.0f && (to - pos) * dir > 0.0f; ++segment)
+        {
+            const float edge = dir > 0.0f ? kDirectLightSteer : -kDirectLightSteer;
+            const bool bothInside = std::fabs (pos) <= kDirectLightSteer
+                                    && std::fabs (to) <= kDirectLightSteer;
+            const bool leaving = std::fabs (pos) < kDirectLightSteer
+                                 && std::fabs (to) > kDirectLightSteer;
+            const bool entering = std::fabs (pos) > kDirectLightSteer
+                                  && (to - pos) * pos < 0.0f;
+            const float rate = (bothInside || leaving) ? kDirectLightSlewPerBeat
+                                                       : kDirectRailSlewPerBeat;
+            const float limit = bothInside ? to
+                              : leaving ? edge
+                              : entering ? std::copysign (kDirectLightSteer, pos)
+                                         : to;
+            const float room = rate * left;
+            const float step = limit - pos;
+            if (std::fabs (step) <= room)
+            {
+                left -= std::fabs (step) / rate;
+                pos = limit;
+            }
+            else
+            {
+                pos += std::copysign (room, dir);
+                left = 0.0f;
+            }
+        }
+        return pos;
+    }
     constexpr float kRecoverySteerRail = 0.20f;
 
     /** And what "not believing it" costs, in seconds: at no trust at all the
@@ -856,6 +906,15 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         }
 
         float tau = phaseTargetTau;
+        // A light offset on a stable direct feed was still averaged for 0.30 s
+        // and then slewed at 2% per beat, so 20 ms at 120 took 0.70 s to get
+        // inside 8 ms. Two publications (0.15 s) are enough when the raw error
+        // is itself inside a twentieth of a beat; a larger debt keeps the tau
+        // the caller asked for.
+        if (directLivePhaseFollow && ! beatGapHold
+            && std::fabs (phaseTarget) <= kDirectLightPhaseBeats
+            && phaseTargetTau > kDirectLightPhaseTau)
+            tau = kDirectLightPhaseTau;
         // Shorten a slow average when the same phase error has held for a
         // quarter of a second. The floor is 0.10 s. An ioi-lead follow is
         // already 0.01 s (`kGridTauIoiLead`), and `std::clamp` aborts on the
@@ -1123,23 +1182,24 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // A saturated direct-live rail is 7.5% at high, which at 123 BPM is
     // the whole of a 123→132 reading in one buffer. The phase still has
     // to close, but a percussionist leans over a beat, not inside one
-    // callback. Two percent of the tempo per beat. A confirmed rapid
-    // window keeps its own rail. A rest zeroes the lean in the same
-    // buffer: slewing that zero brought the pause surge back. The
-    // matrix lane does not set this follow, so the known-phase hashes
-    // do not see it.
+    // callback. The way up to that rail stays at 2% per beat. A light
+    // lean (inside 4%) may arrive in half a beat: that is the command a
+    // 20 ms offset actually asks for, and holding it to the rail's slew
+    // left the rientro waiting on a slope it was never going to climb.
+    // A confirmed rapid window keeps its own rail. A rest zeroes the
+    // lean in the same buffer: slewing that zero brought the pause surge
+    // back. The matrix lane does not set this follow, so the known-phase
+    // hashes do not see it.
     if (directLivePhaseFollow && ! rapidTransition && ! beatGapHold
         && tempo > 40.0f && numSamples > 0)
     {
         const float beatsInBlock = tempo / 60.0f
                                  * static_cast<float> (numSamples)
                                  / static_cast<float> (sampleRate);
-        const float maxStep = 0.02f * beatsInBlock;
-        const float delta = steer - directLiveSteer;
-        if (delta > maxStep)
-            steer = directLiveSteer + maxStep;
-        else if (delta < -maxStep)
-            steer = directLiveSteer - maxStep;
+        // The 7.5% rail still cannot appear inside one beat. Only the light
+        // band (±4%, the lean a ~20 ms offset at 120 actually asks for) may
+        // arrive in half a beat.
+        steer = slewDirectLive (directLiveSteer, steer, beatsInBlock);
     }
     directLiveSteer = steer;
 
