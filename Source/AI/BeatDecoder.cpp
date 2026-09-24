@@ -5474,7 +5474,8 @@ void BeatDecoder::updateTempo() noexcept
             const bool provisionalSourcesAgree = lineFeed && provisional
                 && intervalAcquired && ! sounding && ! tempo.levelSettled()
                 && combReady && haveShort && shortResidual < 0.04f
-                && combRawBpm > kMinBpm && bpm > kMinBpm
+                && combRawBpm > kMinBpm && shortFitBpm > kMinBpm
+                && bpm > kMinBpm
                 && std::fabs (std::log2 (shortFitBpm / combRawBpm))
                        < std::log2 (1.025f)
                 && std::fabs (std::log2 (bpm / combRawBpm))
