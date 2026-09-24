@@ -2043,10 +2043,6 @@ void MainComponent::loadInternalTrack (juce::URL url)
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
     trackName = trackUrl.getFileName();
-    // The transport's read-ahead thread starts in setSource. Build the
-    // waveform first: both paths otherwise read the same AudioFormatReader
-    // concurrently, and an MP3 reader's stream position is shared.
-    buildTrackWaveform();
     trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
                               reader->sampleRate, 2);
     selectFollowSource (vp::FollowSource::internalPlayer);
@@ -2059,6 +2055,13 @@ void MainComponent::loadInternalTrack (juce::URL url)
     // epoch before the restart is requested. See docs/TODO.md item 3.
     engine.notifyInputRestart();
     trackTransport.start();
+    // The picture is not on the path to the tempo. Scanning the whole file
+    // through the transport's reader used to run first, on this thread, so
+    // the new song and the decoder restart both waited until the scan
+    // finished — measured as the long pause before a second track locks.
+    // A second stream keeps that scan off the reader the transport is
+    // already playing.
+    buildTrackWaveform();
     refreshInternalTrackButtons();
     relayoutSettings();
     if (settingsOverlay.isVisible())
@@ -2118,10 +2121,16 @@ void MainComponent::clearTrackWaveform()
 void MainComponent::buildTrackWaveform()
 {
     clearTrackWaveform();
-    if (trackReader == nullptr)
+    if (trackUrl.isEmpty())
         return;
 
-    auto* reader = trackReader->getAudioFormatReader();
+    // Not the transport's reader. setSource has already started its
+    // read-ahead thread, and an MP3 reader has one shared stream position.
+    auto stream = trackUrl.createInputStream (
+        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
+    std::unique_ptr<juce::AudioFormatReader> owned (
+        stream != nullptr ? trackFormats.createReaderFor (std::move (stream)) : nullptr);
+    auto* reader = owned.get();
     if (reader == nullptr || reader->lengthInSamples <= 0)
         return;
 

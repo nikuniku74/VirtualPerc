@@ -263,6 +263,16 @@ public:
             // until STOP. `needsResync` adopts a tempo only from a grid serial
             // the restart has not already published.
             neural.setSounding (false);
+            // A new file is not a tempo change inside one song. The part is
+            // held silent above, so nothing is playing on this clock: keeping
+            // the previous tempo, phase and trim is what the second song
+            // inherits. Drop them. An in-song tempo change does not come
+            // through here, and that one still must not restart the clock.
+            follower.reset();
+            evidence.restart();
+            lockedOnce = false;
+            heldBpm = 0.0f;
+            currentState = TrackingState::listening;
             if (tempoFollow && ! tapEstablished)
             {
                 waitForQuantize = true;
