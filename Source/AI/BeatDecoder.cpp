@@ -6058,6 +6058,34 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
             // when the crest was off lastBeat.
             postHoleReopenSec = eventTimeSec;
         }
+        // A medley hole. The first crest back is usually a hat, and with
+        // no kick yet that hat becomes the quarter: the part then sits on
+        // the offbeat until something moves it. While the part is sounding,
+        // a crest with no kick body does not place the beat. The kick does,
+        // even when it lands half a beat off the origin the hat would have
+        // kept. The click bank never sets sounding, so this does not run there.
+        if (lineFeed && sounding && beats >= kGridStaleBeats && bpm > kMinBpm)
+        {
+            const float eventLowBand = std::max (prevLowBand,
+                                                 std::max (prevPrevLowBand, lowBand));
+            if (eventLowBand < kLowBandMute)
+                acceptedByCurrentGrid = false;
+            else
+            {
+                const double offLast = std::fabs (beats - std::round (beats));
+                acceptedByCurrentGrid = true;
+                if (offLast > 0.5 - kOnGridTolerance
+                    && offLast < 0.5 + kOnGridTolerance
+                    && gridAnchorSec >= 0.0)
+                {
+                    const double periodSec = 60.0 / static_cast<double> (bpm);
+                    double shift = eventTimeSec - gridAnchorSec;
+                    shift -= std::round (shift / periodSec) * periodSec;
+                    gridAnchorSec += shift;
+                    ++gridSerial;
+                }
+            }
+        }
         // Syncopated snare-roll: crests ~0.87 of a beat off lastBeat still
         // sit inside keep 0.18 and ratchet lastBeat off the fold (32nd/
         // sync fixtures: frac 0.03→0.47, then a live ~10% yank). On-fold
