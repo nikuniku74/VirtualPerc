@@ -1124,13 +1124,6 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
-    if (argc > 1 && std::string (argv[1]) == "--ai")
-    {
-        vpRunAiBeatTests (gPassed, gFailed);
-        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
-        return gFailed == 0 ? 0 : 1;
-    }
-
     if (argc > 1 && std::string (argv[1]) == "--new-input")
     {
         vpRunNewInputTests (gPassed, gFailed);
