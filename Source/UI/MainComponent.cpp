@@ -316,11 +316,10 @@ namespace
         return out;
     }
 
-    /** One neon orb on the tempo. Centred and green when the part is on the
-        pulse; it slides right as the percussion runs ahead of the clock and
-        left as it falls behind, and the further it travels the redder it
-        burns. Several radial layers, each softer than the last, are the
-        bloom — a hard disc would read as a meter. */
+    /** One small orb on the centre of the tempo. Green when the part is on
+        the pulse; it slides a short way right as the percussion runs ahead
+        of the clock and left as it falls behind, and the further it travels
+        the redder it burns. */
     void paintTempoOrb (juce::Graphics& g, juce::Rectangle<float> lane,
                         float lead, float alpha)
     {
@@ -337,10 +336,12 @@ namespace
         const auto col = mag < 0.42f ? green.interpolatedWith (amber, mag / 0.42f)
                                      : amber.interpolatedWith (red, (mag - 0.42f) / 0.58f);
 
-        const float travel = lane.getWidth() * 0.36f;
+        // The rail runs from ÷2 to ×2. Lead −1 sits on the left button,
+        // +1 on the right; on the pulse the dot is in the middle.
+        const float travel = juce::jmax (0.0f, lane.getWidth() * 0.5f - 6.0f);
         const float cx = lane.getCentreX() + lead * travel;
         const float cy = lane.getCentreY();
-        const float r = juce::jlimit (10.0f, 34.0f, lane.getHeight() * 0.22f);
+        const float r = juce::jlimit (3.5f, 7.0f, lane.getHeight() * 0.055f);
 
         auto bloom = [&] (float radius, float a)
         {
@@ -358,9 +359,8 @@ namespace
         const float railY = cy - 0.6f;
         g.fillRoundedRectangle (lane.getCentreX() - travel, railY, travel * 2.0f, 1.2f, 0.6f);
 
-        bloom (r * 3.4f, alpha * 0.28f);
-        bloom (r * 2.1f, alpha * 0.50f);
-        bloom (r * 1.25f, alpha * 0.82f);
+        bloom (r * 2.2f, alpha * 0.22f);
+        bloom (r * 1.45f, alpha * 0.48f);
 
         g.setColour (col.withAlpha (alpha));
         g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
@@ -739,8 +739,6 @@ MainComponent::MainComponent()
 
     setupBtn (startButton, ink());
     setupBtn (stopButton, ink());
-    setupBtn (followButton, ink());
-    setupBtn (fixedButton, ink());
     setupBtn (bpmNudgeDown, ink());
     setupBtn (bpmNudgeUp, ink());
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
@@ -1042,6 +1040,8 @@ MainComponent::MainComponent()
         b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.18f));
     };
 
+    setupPageBtn (followButton, ink());
+    setupPageBtn (fixedButton, ink());
     setupPageBtn (settingsClose, ink());
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
@@ -3186,8 +3186,8 @@ void MainComponent::applyCompactVisibility()
     // SETUP stays visible on a phone too - it is the only way into the settings
     // page, and the compact layout gives it the status row's right side.
     settingsButton.setVisible (true);
-    followButton.setVisible (! compact);
-    fixedButton.setVisible (! compact);
+    followButton.setVisible (true);
+    fixedButton.setVisible (true);
     // Visible on a phone too: it now has its own row under the dots instead of
     // having to share their width.
     barButton.setVisible (true);
@@ -3495,8 +3495,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     const int naturalBpm = juce::jlimit (72, 156, area.getHeight() / 4);
     const int naturalBeats = juce::jlimit (52, 96, area.getHeight() / 6);
     const bool follow = engine.settings().tempoFollow.load();
-    // SEGUI/FISSO live on the status row now, so the old 36-point mode row is
-    // only kept for the ± BPM nudge that appears under FISSO.
+    // "L'1 è QUI" lives on the status row, where SEGUI/FISSO used to. The
+    // 36-point row under the tempo is only the ± BPM nudge that appears
+    // under FISSO.
     const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
     const int natural = 18 + 6 + 36 + 6 + naturalBpm + 16
                         + (follow ? 0 : 28) + 18 + 10
@@ -3521,9 +3522,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     area.removeFromTop (px (6));
     s.pill = area.removeFromTop (px (36));
     {
-        const int btnW = juce::jlimit (56, 84, s.pill.getWidth() / 6);
-        s.tempoMode = s.pill.removeFromRight (btnW * 2 + 4);
-        s.pill.removeFromRight (8); // keep the status line off the two buttons
+        const int btnW = juce::jlimit (108, 156, s.pill.getWidth() / 4);
+        s.barShift = s.pill.removeFromRight (btnW).reduced (2, 2);
+        s.pill.removeFromRight (8); // keep the status line off the button
     }
     area.removeFromTop (px (6));
     s.bpm = area.removeFromTop (bpmH);
@@ -3543,9 +3544,6 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.tempoLine = area.removeFromTop (px (18));
     area.removeFromTop (px (10));
     s.beats = area.removeFromTop (beatsH);
-    // Beside the dots, because that is what it moves.
-    s.barShift = s.beats.removeFromRight (juce::jmin (96, s.beats.getWidth() / 4))
-                        .reduced (2, beatsH / 4);
     if (trackReader != nullptr)
     {
         area.removeFromTop (px (6));
@@ -3667,10 +3665,6 @@ void MainComponent::layoutFull()
 
     {
         const bool follow = engine.settings().tempoFollow.load();
-        auto mode = rows.tempoMode;
-        const int btnW = juce::jmax (1, mode.getWidth() / 2);
-        followButton.setBounds (mode.removeFromLeft (btnW).reduced (2, 2));
-        fixedButton.setBounds (mode.reduced (2, 2));
         if (! follow && ! rows.tempoNudge.isEmpty())
         {
             auto nudge = rows.tempoNudge;
@@ -3769,7 +3763,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float gapDot = 7.0f;
         const float totalW = juce::jmin (static_cast<float> (rows.pill.getWidth()),
                                          dotR * 2.0f + gapDot + textW);
-        // Left of the leftover pill so SEGUI/FISSO own the right edge.
+        // Left of the leftover pill so "L'1 è QUI" owns the right edge.
         const float x0 = static_cast<float> (rows.pill.getX());
         const float cy = static_cast<float> (rows.pill.getCentreY());
         const juce::Point<float> dot { x0 + dotR, cy };
@@ -3787,17 +3781,11 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
-    // One orb on the tempo row. On the pulse it sits in the middle and
-    // burns green; ahead of the clock it slides right, behind it slides
-    // left, and the colour follows the distance.
-    if (! rows.bpm.isEmpty() && tempoBloomAmount > 0.02f)
-    {
-        paintTempoOrb (g, rows.bpm.toFloat(), tempoBloomLead, 0.85f * tempoBloomAmount);
-    }
-
     // The tempo, sized to the room it has rather than to a constant, so it is
     // the biggest thing on the screen in portrait and still the biggest thing
     // when the iPad is turned.
+    const auto numberR = rows.bpmNumber;
+
     const bool haveBpm = snap.bpm > 40.0f;
     if (haveBpm)
     {
@@ -3806,10 +3794,10 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // in, so a five-character tempo in a narrow landscape column came out
         // as "11...". Measure, scale, draw.
         const juce::String bpmText (snap.bpm, 1);
-        const float wanted = static_cast<float> (rows.bpm.getHeight()) * 0.88f;
+        const float wanted = static_cast<float> (numberR.getHeight()) * 0.88f;
         juce::Font f = fontDisplay (wanted);
         const float textW = juce::GlyphArrangement::getStringWidth (f, bpmText);
-        const float roomW = static_cast<float> (rows.bpmNumber.getWidth());
+        const float roomW = static_cast<float> (numberR.getWidth());
         if (textW > roomW && textW > 1.0f)
             f = f.withHeight (juce::jmax (1.0f, wanted * roomW / textW));
 
@@ -3817,10 +3805,10 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // The offset copy behind the digits is a glow on a dark ground and a
         // smear on a white one, so light gets a fainter one.
         g.setColour (fuchsia().withAlpha (gDarkMode ? 0.40f : 0.16f));
-        g.drawText (bpmText, rows.bpmNumber.translated (0, gDarkMode ? 3 : 2),
+        g.drawText (bpmText, numberR.translated (0, gDarkMode ? 3 : 2),
                     juce::Justification::centred, false);
         g.setColour (text());
-        g.drawText (bpmText, rows.bpmNumber, juce::Justification::centred, false);
+        g.drawText (bpmText, numberR, juce::Justification::centred, false);
     }
     else
     {
@@ -3831,11 +3819,27 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float barW = static_cast<float> (rows.bpm.getHeight()) * 0.30f;
         const float barH = juce::jmax (6.0f, static_cast<float> (rows.bpm.getHeight()) * 0.09f);
         const float gap = barW * 0.35f;
-        const float cx = static_cast<float> (rows.bpmNumber.getCentreX());
-        const float cy = static_cast<float> (rows.bpmNumber.getCentreY());
+        const float cx = static_cast<float> (numberR.getCentreX());
+        const float cy = static_cast<float> (numberR.getCentreY());
         g.setColour (text().withAlpha (0.16f));
         g.fillRoundedRectangle (cx - barW - gap * 0.5f, cy - barH * 0.5f, barW, barH, barH * 0.5f);
         g.fillRoundedRectangle (cx + gap * 0.5f, cy - barH * 0.5f, barW, barH, barH * 0.5f);
+    }
+
+    // Above the digits, from ÷2 across to ×2. On the pulse it sits in
+    // the middle and burns green; ahead of the clock it slides right,
+    // behind it slides left, and the colour follows the distance.
+    if (tempoBloomAmount > 0.02f && rows.bpm.getWidth() > 16)
+    {
+        const int left = rows.octaveDown.isEmpty() ? rows.bpm.getX()
+                                                    : rows.octaveDown.getX();
+        const int right = rows.octaveUp.isEmpty() ? rows.bpm.getRight()
+                                                   : rows.octaveUp.getRight();
+        const float y = static_cast<float> (rows.bpm.getY()) - 14.0f;
+        paintTempoOrb (g,
+                       { static_cast<float> (left), y,
+                         static_cast<float> (right - left), 14.0f },
+                       tempoBloomLead, 0.85f * tempoBloomAmount);
     }
 
     if (! rows.bpmLabel.isEmpty())
@@ -3992,7 +3996,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
 
     // One column at full width in both orientations. Two columns is what the
     // console does, because the console has enough in it to fill them; this page
-    // has six short cards, and split in two neither side had enough to reach
+    // has seven short cards, and split in two neither side had enough to reach
     // the bottom. Turned, the same six get shorter instead of narrower: the
     // captions stop wrapping.
     const int bodyW = juce::jmax (80, r.getWidth() - 24);
@@ -4001,8 +4005,9 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // Sized against their contents, placed second - the same order the stage
     // rows are computed in. A share of the column each gave a two-line caption
     // the same room as a seven-line read-out.
-    enum { kClock = 0, kBuffer, kInput, kFeel, kTests, kStatus, kCards };
+    enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kStatus, kCards };
     int h[kCards] = {
+        chrome + rowH,
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
         chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0)
@@ -4048,6 +4053,12 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         r.removeFromTop (cardGap);
         return out;
     };
+
+    {
+        auto body = card (take (h[kTempo]), "TEMPO");
+        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                   { &followButton, &fixedButton });
+    }
 
     {
         auto body = card (take (h[kClock]), "CLOCK");
