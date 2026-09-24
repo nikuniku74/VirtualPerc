@@ -258,14 +258,18 @@ public:
             // Stay armed. Do not restart the clock: an in-song tempo change
             // never comes through here. A new file does, and the part has to
             // leave the old grid before the decoder is allowed to defend it.
-            // `needsResync` adopts the new tempo only once that grid is valid,
-            // so a hypothesis that still says the old BPM cannot satisfy it
-            // (`hyp.valid` is `established`, which the restart clears).
+            // Tell the worker the part is quiet now, not at the end of this
+            // callback: the on-grid keep otherwise holds the previous file
+            // until STOP. `needsResync` adopts a tempo only from a grid serial
+            // the restart has not already published.
+            neural.setSounding (false);
             if (tempoFollow && ! tapEstablished)
             {
                 waitForQuantize = true;
                 quantizeWaitSamples = 0;
                 needsResync = true;
+                resyncGridSerial = lastGridSerial;
+                resyncGridArmed = true;
             }
         }
         lastInputEpoch = epoch;
@@ -552,6 +556,8 @@ private:
     bool heardMusic = false;
     bool hadPlayed = false;
     bool needsResync = false;
+    bool resyncGridArmed = false;
+    uint32_t resyncGridSerial = 0;
     bool waitForSongBeat = false;
     /** Whether a stroke actually came out last block. Nothing on the grid means
         nothing to disturb by moving it, which is the difference between placing

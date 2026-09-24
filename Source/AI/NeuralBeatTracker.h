@@ -84,8 +84,13 @@ public:
         const uint64_t prev = inputEpoch.load (std::memory_order_relaxed);
         uint64_t word = (static_cast<uint64_t> (epoch) << 2)
                         | (preserveComb ? 1ull : 0ull);
-        if (dropQueued || (((prev >> 2) == epoch) && ((prev & 2ull) != 0ull)))
-            word |= 2ull;
+        // A file change sets the drop bit, then the new file's own onset can
+        // publish a later epoch before the worker has read the first. That
+        // later epoch is a rhythm entrance and would keep the previous song's
+        // comb. Stick the drop, and do not preserve, until the worker clears
+        // the bit. STOP appeared to fix this because disarming clears sounding.
+        if (dropQueued || (prev & 2ull) != 0ull)
+            word = (word | 2ull) & ~1ull;
         inputEpoch.store (word, std::memory_order_relaxed);
     }
 

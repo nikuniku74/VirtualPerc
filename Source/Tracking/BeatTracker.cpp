@@ -229,6 +229,7 @@ void BeatTracker::reset() noexcept
     hadPlayed = false;
     sounding = false;
     needsResync = false;
+    resyncGridArmed = false;
     waitForSongBeat = false;
     armed = false;
     autoOctave = octaveAuto ? 0 : userOctave;
@@ -1483,8 +1484,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     }
 
     if (needsResync && armed && waitForQuantize && ! tapEstablished
-        && tempoFollow && periodic)
+        && tempoFollow && periodic
+        && (! resyncGridArmed || hyp.gridSerial != resyncGridSerial))
     {
+        resyncGridArmed = false;
         follower.setTargetTempo (nnBpm, std::max (nnConf, 0.75f));
         heldBpm = nnBpm;
         currentState = TrackingState::following;

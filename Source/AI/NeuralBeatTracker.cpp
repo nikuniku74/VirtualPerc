@@ -161,6 +161,17 @@ void NeuralBeatTracker::workerLoop()
 
             if (dropQueued)
             {
+                // The part is still sounding on the audio thread until this
+                // restart lands. The on-grid keep would then defend the
+                // previous file until STOP. Clear it before the restart, and
+                // retire the sticky drop bit once this word is the one the
+                // worker actually consumed.
+                wantedSounding.store (false, std::memory_order_relaxed);
+                decoder.setSounding (false);
+                uint64_t consumed = epoch;
+                if (inputEpoch.compare_exchange_strong (consumed, epoch & ~2ull,
+                                                       std::memory_order_relaxed))
+                    seenInputEpoch = epoch & ~2ull;
                 const uint64_t before = fifo.droppedSamples();
                 fifo.discardPending();
                 const uint64_t after = fifo.droppedSamples();
