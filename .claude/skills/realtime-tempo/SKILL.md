@@ -1335,15 +1335,21 @@ Clean Door B stays at 0.035.
 
 **Kept (2026-09-23), hold the counted rate through a sounding rest.** Once a part is playing, `hyp.beatGap` tells the clock to spend no phase steer in two cases: no beat accepted for 1.5 periods, or the kick body has been gone for more than 1.05 periods while hats and voice still crest (`kitBodyHolding`). The direct-live rail is 7.5% at high: a fifth of a beat of phase debt is spent as 129 BPM against a 120 clock (`/tmp/probe_gap_hold`, open 129.00, held 120.00). A kick train at low-band 0.80 never arms the flag; the same grid continued as hats at 0.02 arms it for 102 frames and the published tempo stays 120.00. A confirmed rapid window still spends. The bank passes lowBand 0, so the body is never heard there, and the quick hashes stay `8e3c8d2cdc5854f5`, `ca2588bfe0ce70c5`, `a22d3c04d2ac06d0`. A crest that still has kick-body energy refreshes the body and is not this rest.
 
-**Kept (2026-09-23), the beats after that rest use the holding rail.** Zeroing steer only while the rest lasts leaves the debt intact, and the next beats spend it at 7.5%: the same 0.20-beat debt reads 129.00 the moment the hold ends. For eight beats after the rest the steer is clamped to 3.5%, the rail the clock already uses when it is holding its ground. `/tmp/probe_gap_return`: open 129.00/129.00, held 120.00 during the rest and 124.20 once the beats return. A confirmed rapid window is not clamped: the same debt inside `beginTempoTransition` still reaches 150.00. The guard arms only from `beatGapHold`. Rebuilt quick bank: fisso `8e3c8d2cdc5854f5` 22.256/76.932, continuo `ca2588bfe0ce70c5` 36.551/91.156, gradino `99f863e93be8d563` 33.360/154.375, recovery 0.
+**Kept (2026-09-23), the beats after that rest use 1.5% for fourteen beats.** Zeroing steer only while the rest lasts leaves the debt intact, and the next beats spend it at 7.5%: the same 0.20-beat debt reads 129.00 the moment the hold ends. Eight beats at 3.5% closed 0.28 beats (`/tmp/probe_gap_return`: open 129.00, held 120.00 during the rest and 124.20 once the beats return) but on a song whose own tempo only wanders a couple of BPM the clock then sat on that rail: I WANNA DANCE, 12 s windows 122–128, after 12 s `|clock−bpm|` mean 0.91 p95 4.38 max 6.14, clock 117.70–133.97, 2714 blocks past 4 BPM. The plateaus were −4.50 BPM, which is 3.5% of ~128. 1.5% for fourteen beats still closes a 0.20-beat debt (14 × 0.015 = 0.21) before the live rail returns. Same song after the change: mean 0.74, p95 1.92, max 4.52, clock 118.94–130.88, 69 blocks past 4 BPM. The committed tempo itself still reaches 120.8–130.0; this rail only stops the clock adding another few BPM on top. A confirmed rapid window is not clamped. The guard arms only from `beatGapHold`. Quick bank unchanged: fisso `8e3c8d2cdc5854f5` 22.256/76.932, continuo `ca2588bfe0ce70c5` 36.551/91.156, gradino `bcf2c1d9141d2abb` 32.488/150.903, recovery 0.
 
-**Kept (2026-09-23), a small pause is not a faster tempo.** The 1.5-period hole and the 1.05-period body hold never see a rest that only just passes one beat. Past 1.20 periods with the part already playing, the clock holds its rate the same way (`smallPauseOpen` → `hyp.beatGap`), and the long-fit phase period is cleared so a short period cannot keep the phase running fast. A crest in that window that is more than 6% of a beat early is stored on the counted grid and does not call `updateTempo`. A hat under 1.20 still updates. A late crest still updates, so a ritardando is not frozen. The bank never sets `sounding`.
+**Rejected (2026-09-23), call a rest at 1.20 periods and snap an early crest.** A crest more than 6% of a beat early, with the gap between 1.20 and 2.5 periods, sounding, and the kit body already heard, was treated as the pause: `beatGap`, the long-fit period cleared, the crest snapped onto the grid without `updateTempo`. I WANNA DANCE showed the same ±4.5 BPM clock plateaus with that gate and without it. A beat only 20% late would have armed the eight-beat clamp on an ordinary feel. Reverted. Do not open the rest below 1.5 periods.
 
 **Kept (2026-09-23), the two live 4-beats may sit 4% apart.** The hold was 2%. On 234224 the first clean 4-beat is 137 and the next is 142 (truth 142, 3.3% apart), so the second vote never fired and the clock walked up from the 8-beat. Nothing else in the quick bank has two passing 4-beats between 2% and 4%. Fisso `8e3c8d2cdc5854f5` 22.256/76.932 and continuo `ca2588bfe0ce70c5` 36.551/91.156 unchanged. Gradino 33.360/154.375 → 33.270/153.677, hash `2e763c2ddde7d225`. Only 234224 moved: 71.7/158.2/190.2 → 70.3/147.1/180.0. Rate stays `kRateLive`. The fixed-regime hold is unchanged. `VPAlign --ramps` MIXER is the same checkpoint (flats 6.8/33.3 and 7.4/23.8, 30 s 19.9/78.4, 12 s 32.1/82.0, 120→132 25.8/81.6, 128→120 19.0/48.0) and `--steps` still passes, worst phase after evidence 24.5 ms.
 
 **Kept (2026-09-23), the live pair may be 7.5% off the 8-beat and the interval 2.5% off the 4-beat.** 289657's two beats were 2.1% and then 7.7% outside the old pair, and both 4-beats name the new tempo (88 against a truth of 89). No other quick-bank pair appears. The carried vote keeps the 2% interval test. Fisso and continuo hashes unchanged. Gradino 32.651/152.146 → 32.488/150.903, hash `bcf2c1d9141d2abb`. Only 289657 moved: 42.8/276.3/330.2 → 40.2/256.4/328.0. Rate stays `kRateLive`. `VPAlign --ramps` MIXER is the same checkpoint and `--steps` still passes, worst phase 24.5 ms.
 
 **Rejected (2026-09-23), take the ordinary live pair the way the carried vote does.** The current log has three live confirms and all three name the truth (234224, 289657, 297576); none on fisso or continuo. Publishing tempo, anchor and rapid anyway: fisso `8e3c8d2cdc5854f5` and continuo `ca2588bfe0ce70c5` unchanged, gradino mean 32.488 → 31.262, but 234224's phase went the wrong way, 70.3/147.1/180.0 → 66.9/156.1/202.6. 297576's wrong lattice did improve (p95 246.1 → 228.2, bpmErr 11.50% → 1.21%). The right number taken all at once can still open the phase. The live pair keeps walking at `kRateLive`.
+
+**Rejected (2026-09-23), re-anchor the grid when the newest interval is a hole.** 210467 slows 63→54 and the fit disappears. At t=53.90 the hole reads 20.7 (below `kMinBpm`), the previous quarter reads 54.6 and the comb reads 53.9, while bpm is still 64. Taking the comb and setting the grid on the beat that closed the hole moved only that seed, phase 108.7/493.9/548.7 → 130.3/420.9/516.6. The number is right at once and the phase stays near 400 ms, so the mean goes up. Do not spend the grid on that hole.
+
+**Kept (2026-09-23), take the comb in full when the newest interval is a hole and the quarter before it agrees.** Same frame, no grid move. The two raw quarters never agree, so a two-interval door does not fire. The comb at 1.0, only when it has left the committed tempo by more than 8%, the previous quarter is within 4% of the comb, and the newest interval is a hole (log2 above 0.40, which is how a 20 BPM hole qualifies below `kMinBpm`): only 210467 moved, 108.7/493.9/548.7 → 93.8/339.4/516.6. Fisso `8e3c8d2cdc5854f5` and continuo `ca2588bfe0ce70c5` unchanged. Gradino 31.239/138.647 hash `957235d9b3d026bc` → 30.308/128.993 hash `f5bfa30e91b39f1a`, p995 548.703 → 516.596. Recovery 0. `VPAlign --ramps` MIXER unchanged and `--steps` still PASS, worst phase 24.5 ms. The ungated blind-fit comb at 1.0 is still rejected: it moved continuo.
+
+**Kept (2026-09-23), a straddling fixed 4-beat only when the residual is in [0.06, 0.10).** 289657 stays fixed at 76 while the truth is already 89: at t=50.64 the 4-beat is 84 (residual 0.099) and at t=51.34 it is 86 (residual 0.085), the 8-beat still on 76. Two beats, at least 8% off the held tempo, the 8-beat within 2%, the interval within 5% of the 4-beat, and the second beat further from the held tempo than the first. Opening that from residual 0.03 took flat seed 64361 (truth 128.6) to 140 on two almost-clean beats (residual 0.031 and 0.033) and moved fisso 22.256/76.932 → 22.967/81.952, hash `1dbab2e6e14d4afc`. The floor at 0.06 does not pass there. Only 289657 moved: phase 40.2/256.4/328.0 → 20.2/60.3/310.4. Fisso hash stays `8e3c8d2cdc5854f5`, continuo `ca2588bfe0ce70c5`. Gradino 32.488/150.903 hash `bcf2c1d9141d2abb` → 31.239/138.647 hash `957235d9b3d026bc`. Recovery 0. `VPAlign --ramps` MIXER unchanged (6.8/33.3, 7.4/23.8, 19.9/78.4, 32.1/82.0, 25.8/81.6, 19.0/48.0) and `--steps` still PASS, worst phase 24.5 ms. Do not lower the residual floor back to 0.03.
 
 **Rejected (2026-09-23), do not let `checkGridPhase` shift the anchor when the intervals have already left.** A step lands late on the old grid and three late beats look like a flipped beat; the shift then wipes the history (210467 is blind, ioi 0, from t=48.72). Skipping the shift whenever the recent interval is 5% off the committed tempo: fisso 22.256/76.932 → 24.190/78.968 hash `6237abef47b69208`, continuo 36.551/91.156 → 43.774/107.854 hash `27a80e46bd178413`, gradino unchanged in the p95 and slightly worse. Narrowing it to a clean 4-beat (residual under 0.03, within 2% of the interval, more than 8% off the committed tempo, log2 under 0.45) left continuo and gradino hashes identical and moved only fisso, the wrong way: 22.256/76.932 → 23.735/77.838 hash `45d0b576211b3db5`. The half-beat correction is doing real work on flat tempos. Do not gate it on the intervals.
 
@@ -2485,6 +2491,8 @@ hats hole HOLD afterHoleHats **0** / phase **0.967**.
 MIXER mean still **25.8**. Control stays
 `/tmp/motion_kept_bpm90_i4pulse.csv`.
 
+**Kept (2026-09-23), "L'1 è QUI" names the nearest beat and does not move the phase.** The 2026-09-22 snap (`snapBeat(0, 0)` plus `declarePulseHere` setting the anchor to the sample) put phase on 0 from the middle of a beat. Half a beat of that shortens or stretches the beat under a part that is already playing, discards strokes that had not sounded yet, and is heard as the tempo jumping. The press now only rotates the count: phase ≤ 0.5 names the beat that has started, phase > 0.5 names the beat about to land (`beatInBar` 3, so the next wrap is the one). The decoder publishes that same count and leaves the lattice, the fits and the tempo where they are. `tapHold` still blocks `setGridPhase` for 0.70 s. TAP's first tap still snaps. The matrix never sends `barDeclare`.
+
 **Kept (2026-09-22), hats-only eighths fold to the quarter.**
 Hats-only at the start publishes the eighth (76 → 152):
 BeatNet peaks every hat and the HMM near 118 prefers the
@@ -2590,21 +2598,14 @@ gradino `a6249731026d9f82`, continuo **35.482/87.221**
 
 **Kept (2026-09-22), the long-fit phase hold clears on
 "L'1 è QUI".** `longFitPeriodHeld` otherwise drops only when
-`fastMotionCurrent` is false. `declarePulseHere` sets
-`lastBeatSec` to analysis now, so the next frames stay inside
-that window. While the hold is set and `longFitBpm` is still
-valid, `gridPhaseNow` keeps walking `60/longFitBpm` from the
-pre-button origin: the clock dips, then the anchor this
-command just wrote wins. The fit wipe in that same function
-already sets `longFitBpm` to 0, so that period does not
-survive the clear; the hold flag did, and the next valid long
-fit would be published again without a new four-term gate.
-Clear the flag beside the fit wipe. `hyp.ioiLead` and the
-0.01 s tau stay on `ioiClockLead`, which `resetMotionShadow`
-already drops. `snapBeat` clears the follower phase target,
-`tapHold` blocks `setGridPhase` for 0.70 s, and the worker
-republishes this origin after inference, so the end of the
-hold does not reapply the pre-declare grid. The matrix never
+`fastMotionCurrent` is false. The button used to set
+`lastBeatSec` to analysis now, so the next frames stayed inside
+that window and `gridPhaseNow` kept walking `60/longFitBpm` from
+the pre-button origin. That path cleared the flag beside the fit
+wipe. As of 2026-09-23 the button does not move the lattice or
+wipe the fits, so it does not take this clear either; the flag
+still drops only when fast motion ends. `hyp.ioiLead` and the
+0.01 s tau stay on `ioiClockLead`. The matrix never
 calls `declarePulseHere`. Do not clear this hold on ordinary
 motion.
 
@@ -2625,6 +2626,8 @@ the motion matrix pass `lowBand` 0, so this does not move
 their hashes. Do not hold from the fit residual: five of
 those cost half a bar on an accelerando, and a band speeding
 up with the drummer playing still has the body.
+
+**Kept (2026-09-23), an established tempo does not recompute from the hat alone.** The kick-body hold never arms on a hats-only passage: no crest clears the low-band mute, so every hat stays on the ordinary path and the eighths walk the counted tempo off the quarter. Once the tempo is established and no longer provisional, a direct-feed crest under `kLowBandMute` with high band above `kHighBandPresent` is stored on the counted grid and does not call `updateTempo`. `longFitPeriodHeld` drops for that passage so a short period cannot keep the phase fast. A kick still updates. While provisional, the eighth-fold still sees the raw intervals. High band defaults to 0, so the click bank and the matrix do not take it. Quick bank unchanged: fisso `8e3c8d2cdc5854f5`, continuo `ca2588bfe0ce70c5`, gradino `bcf2c1d9141d2abb`, recovery 0. A hats-only accelerando is not followed until a non-hat crest returns; that is the hold.
 
 **Kept (2026-09-22), post-pivot curvature veto in
 `observeGridStep`.** The detector already required the eight
@@ -3623,9 +3626,11 @@ still does not rotate the bar merely because the deadline arrived.
 rotation. It does **not** freeze the count against the grid: a `snapPhase` with
 `keepBarInStep` still carries it, which is what keeps a locked bar on the beat
 of the song it was locked to. **"L'1 è QUI"** (`BeatTracker::declareBarHere`)
-is the same gesture as TAP's first tap: NOW is beat zero, including a
-half-beat snap when the comb sat on the levare. It is not a bar-index
-rotate. Unlocking is a tap on the lit control: that
+names the nearest beat already on the clock as beat zero and locks the bar.
+It does not write the phase. A press in the second half of a beat names the
+beat about to land; a press in the first half names the beat that has started.
+TAP's first tap is still an instant `snapBeat`, because nothing is being
+asked to keep a stroke that is already in the air. Unlocking is a tap on the lit control: that
 hands the count back without rotating. The old five-tap unlock (all the way
 round the bar, then one more) read as a button stuck on. See docs/TODO.md
 item 13.

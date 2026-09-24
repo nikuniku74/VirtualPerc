@@ -689,13 +689,21 @@ void BeatTracker::nudgeBar (int beats) noexcept
 
 void BeatTracker::declareBarHere() noexcept
 {
-    // Used to only rotate the bar index. If the clock sat on the AND,
-    // relabelling that pulse as beat zero still played on the levare.
-    // TAP's first tap already means NOW is the one; this is the same
-    // snap, even while sounding. tapHold stops setGridPhase pulling
-    // the clock back onto a flipped decoder before the worker applies
-    // declarePulseHere. Automatic hats never take this path.
-    follower.snapBeat (0, 0.0f);
+    // The press names the one. Writing phase to 0, the way TAP's first
+    // tap does, shortens or stretches the beat under a part that is
+    // already playing: half a beat of that is a quarter-note hole or a
+    // doubled stroke, and it is heard as the tempo jumping. The one is
+    // the nearest beat already on the clock. phase in (0.5, 1) belongs
+    // to the beat about to land, so that beat — not the one just
+    // played — is beat zero. Nothing here touches tempo, trim, or the
+    // phase servo. tapHold still blocks setGridPhase for 0.70 s so the
+    // worker's publish of the same lattice cannot be read as a new
+    // grid. Automatic hats never take this path.
+    const int bar = follower.beatInBarIndex();
+    if (follower.beatPhase() <= 0.5f)
+        follower.rotateBarIndex (-bar);
+    else
+        follower.rotateBarIndex (3 - bar);
     holdBarDecision();
     barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
     tapHold = true;

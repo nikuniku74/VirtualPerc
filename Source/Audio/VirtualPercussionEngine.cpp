@@ -1489,10 +1489,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             tracker.nudgeBar (nudge - seenBarNudge);
             seenBarNudge = nudge;
         }
-        // The button "L'1 è QUI" declares the one *here*, not a quarter ahead:
-        // this instant becomes beat zero (a half-beat snap is allowed), and
-        // the bar locks. Each press is one re-anchor, whatever the auto
-        // currently believes.
+        // The button "L'1 è QUI" names the nearest beat as the one and
+        // locks the bar. It does not move the phase: a snap onto the
+        // sample shortens the beat under the part and is heard as the
+        // tempo jumping. Each press is one declaration.
         const int declare = cfg.barDeclare.load (std::memory_order_relaxed);
         if (declare != seenBarDeclare)
         {

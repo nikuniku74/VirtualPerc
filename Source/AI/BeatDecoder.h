@@ -193,14 +193,11 @@ public:
         (FEEL hats-then-Q); mute when lowBand is 0. */
     void setSounding (bool on) noexcept { sounding = on; }
 
-    /** The listener pressed "L'1 è QUI" on a quarter. `checkGridPhase` is
-        held while sounding, so an automatic fold cannot unflip a half that
-        was already wrong when the part came in. This is the one command
-        that may: NOW is a beat. Hats after a hole still cannot steal
-        lastBeat (`offLast` ~0.5 fails the 0.40 reopen). Does not bump
-        `gridSerial`: the clock has already snapped, and a rebuild-regrab
-        would stop the part. Clears `longFitPeriodHeld` with the fits:
-        lastBeat is now, so fast motion would keep the pre-button period. */
+    /** The listener pressed "L'1 è QUI". The one is the nearest beat
+        already on the grid, not this sample: moving the anchor onto the
+        sample publishes phase 0 from mid-beat and the clock spends that
+        as a rate bend. Does not move the lattice, the fits, or the tempo.
+        Hats after a hole still cannot steal lastBeat. */
     void declarePulseHere() noexcept;
 
     void setUserOctave (int octaves) noexcept;
@@ -377,6 +374,10 @@ private:
         the drum-pause hold below cannot arm there. */
     bool   kitBodyHeard = false;
     double kitBodyLastSec = -1.0;
+    /** Established tempo, and the crest is a hat: high band present,
+        low band under the kick mute. The counted grid is held. Probes
+        pass highBand 0, so this stays shut there. */
+    bool   hatGridHolding = false;
     /** A time at which a beat of the committed grid falls, taken from the
         fit rather than from the last peak. The phase is read off this. */
     double gridAnchorSec = -1.0;
@@ -592,15 +593,15 @@ private:
     /** Previous beat's IOI-indexed 4-beat, when it already sat on a
         step the 8-beat had not taken. Zero unless that beat passed. */
     float stepFourHoldBpm = 0.0f;
+    float stepFourStraddleHoldBpm = 0.0f;
     /** Previous live beat's IOI-indexed 4-beat, when it had already
         left the 8-beat by more than 8% and the newest interval agreed.
         Zero unless that beat passed. Confirmed on the next beat. */
     float liveFourHoldBpm = 0.0f;
-    /** Beats left in which "L'1 è QUI" may move the grid and must
-        not publish a new tempo. The history wipe that keeps the old
-        lattice from pulling the bar back also empties the fits; the
-        next short window and the comb would otherwise replace the
-        number the listener already had. */
+    /** Beats left to keep a declared tempo if a hold was armed. "L'1 è QUI"
+        no longer wipes the fits or moves the lattice, so it does not arm
+        this. A hold that is armed still restores `bpm` and the fixed
+        anchor at the end of `updateTempo`. */
     int   barTempoHoldBeats = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;

@@ -13,12 +13,17 @@ namespace
     constexpr float kRecoveryToleranceSeconds = 0.0075f;
     // After a sounding rest the direct-live rail is still 7.5%. A phase
     // debt of about 0.20 beats saturates it, and the displayed tempo jumps
-    // by about 8 BPM for the beats the drums come back on. The holding
-    // rail is 3.5%. Eight beats at that rate close 0.28 beats, so the
-    // debt from the rest is gone before the live rail is allowed back.
-    // A confirmed transition still uses its own window.
-    constexpr float kPostGapSteer = 0.035f;
-    constexpr int kPostGapBeats = 8;
+    // by about 8 BPM for the beats the drums come back on. 3.5% for eight
+    // beats closed that debt, and on a song whose own tempo only wanders
+    // a couple of BPM (I WANNA DANCE, 12 s windows 122–128) the clock
+    // then sat 4.5 BPM off the counted tempo for those beats: 2714
+    // blocks past 4 BPM, clock 117.7–134.0 against a published 120.7–130.
+    // 1.5% for fourteen beats still closes the 0.20-beat debt
+    // (14 * 0.015 = 0.21) before the live rail returns, and the sounding
+    // tempo stays inside the song's own wander. A confirmed transition
+    // still uses its own window.
+    constexpr float kPostGapSteer = 0.015f;
+    constexpr int kPostGapBeats = 14;
 
     // The loop's own noise floor, and why it is capped in *time*.
     //
@@ -1067,9 +1072,10 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // A rest while the part is already sounding. The direct-live rail is
     // 7.5% at high, which is about 8 BPM near 107: that is the surge
     // through a pause whose pulse has not changed. Hold the counted
-    // rate through the rest, then the holding rail for the beats the
-    // part comes back on. A confirmed transition still spends its own
-    // window.
+    // rate through the rest, then 1.5% for fourteen beats. 3.5% for
+    // eight beats closed the same debt and left the clock 4.5 BPM off
+    // a song that only wanders a couple of BPM. A confirmed transition
+    // still spends its own window.
     if (beatGapHold)
         gapSteerGuardBeats = kPostGapBeats;
     if (beatGapHold && ! rapidTransition)

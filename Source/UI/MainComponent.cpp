@@ -821,9 +821,9 @@ MainComponent::MainComponent()
     // hands the count back without rotating: the old five-tap unlock read as a
     // button stuck on. A TAP that declares the one still locks via the tracker.
     // See docs/TODO.md item 13. The button has one function, not two: it
-    // The button "L'1 è QUI": this instant is the one. Snaps the clock onto
-    // that quarter (a half-beat correction is allowed) and locks the bar.
-    // It is not a nudge and not a toggle.
+    // The button "L'1 è QUI": the nearest beat is the one. The bar locks.
+    // The phase is not snapped — that shortened the beat and was heard as
+    // the tempo jumping. It is not a nudge and not a toggle.
     barButton.onClick = [this]
     {
         engine.settings().barDeclare.fetch_add (1);

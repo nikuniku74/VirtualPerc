@@ -250,9 +250,9 @@ void NeuralBeatTracker::workerLoop()
         }
 
         // After this wakeup's audio, so timeSec is as current as the worker
-        // is. A press in the same block as process() already snapped the
-        // clock; publishing the new origin here is what stops setGridPhase
-        // pulling it back onto the levare once tapHold ends.
+        // is. The press names the nearest beat; publishing that count here
+        // is what the clock's bar already says, and the lattice is the one
+        // the part is playing on.
         const uint32_t declarePulse = wantedDeclarePulse.load (std::memory_order_relaxed);
         if (declarePulse != seenDeclarePulse)
         {

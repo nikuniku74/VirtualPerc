@@ -723,6 +723,7 @@ void BeatDecoder::reset() noexcept
     lastAcceptedLowBand = 0.0f;
     kitBodyHeard = false;
     kitBodyLastSec = -1.0;
+    hatGridHolding = false;
     postHoleReopenSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
@@ -841,6 +842,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
         lastAcceptedLowBand = 0.0f;
         kitBodyHeard = false;
         kitBodyLastSec = -1.0;
+        hatGridHolding = false;
         beatsInBar = 0;
     }
 
@@ -1115,6 +1117,7 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
     // confirms that hold or clears it. Every other boundary still drops it.
     if (! (previous == TempoRegime::fixed && r == TempoRegime::live))
         stepFourHoldBpm = 0.0f;
+    stepFourStraddleHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
     // A residual curve is meaningful only inside one uninterrupted fixed
     // tenure. Seed it from the accepted entry beat while leaving the scalar
@@ -1327,6 +1330,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     lastAcceptedLowBand = 0.0f;
     kitBodyHeard = false;
     kitBodyLastSec = -1.0;
+    hatGridHolding = false;
     stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
     barTempoHoldBeats = 0;
@@ -1841,9 +1845,9 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     // and the sounding keep freezes there (fixture B: phase 0.514 at
     // t=30, then no accepted pulse). Same hold as the octave snap: do
     // not re-argue the half under the player. The synthetic bank never
-    // sets sounding. The listener's "L'1 è QUI" is declarePulseHere,
-    // not this path: that command may move lastBeat by half a beat
-    // while sounding; automatic crests still cannot.
+    // sets sounding. The listener's "L'1 è QUI" names the nearest beat
+    // already on this grid; it does not move lastBeat. Automatic crests
+    // still cannot.
     if (sounding)
     {
         foldPhaseBeats = 0;
@@ -1903,51 +1907,24 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
 
 void BeatDecoder::declarePulseHere() noexcept
 {
-    // Listener said the one is here. checkGridPhase will not unflip a
-    // half under the player; this is the one command that may. Automatic
-    // hats still cannot steal lastBeat (offLast ~0.5 fails the 0.40 reopen).
-    // NOW is a beat — do not round onto the old lattice, or a 0.49 offset
-    // would stay off-grid and sounding keep would refuse the true quarter.
+    // Listener said the one is here. The clock places that on the nearest
+    // beat it is already playing; this must not publish a different grid.
+    // Setting the anchor to this sample makes beat phase 0 from the middle
+    // of a beat, and once the 0.70 s tap hold ends the clock spends up to
+    // half a beat of that error as a rate bend — the tempo jump the press
+    // was heard as. The lattice stays. The count matches the clock: phase
+    // in (0.5, 1) means the next beat is the one. Fits, the long-fit phase
+    // hold and the tempo are left alone; wiping them was what stopped a
+    // moved lattice pulling back, and this command no longer moves it.
+    // Automatic hats still cannot steal lastBeat.
     if (bpm < kMinBpm)
         return;
-    lastBeatSec = timeSec;
-    gridAnchorSec = timeSec;
-    foldPhaseBeats = 0;
-    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
-    clearTempoTransition (TempoTransitionReason::reset);
-    beatWrite = 0;
-    beatFilled = 0;
-    longWrite = 0;
-    longFilled = 0;
-    lastFitResidual = 1.0f;
-    straddleSinceSec = -1.0;
-    anchorBlend = 0.0;
-    longWindowStraddles = false;
-    lastFitCoverage = 0.0f;
-    lastFitIndexGap = 1.0f;
-    longFitBpm = 0.0f;
-    shortFitBpm = 0.0f;
-    shortFitResidual = 1.0f;
-    // The long-fit phase hold survives resetMotionShadow: it clears only
-    // when fast motion ends, and this command just set lastBeat to now, so
-    // the next frames stay inside that window. Left set, gridPhaseNow keeps
-    // walking 60/longFitBpm from the pre-button origin for those frames
-    // (the dip), and this anchor only wins once the hold drops (the
-    // recovery). longFitBpm is already 0 on the line above, so the period
-    // the hold reads does not survive the fit wipe; drop the hold itself
-    // in the same place. A later long fit has to open the four-term gate
-    // again. Ordinary motion never comes through here.
-    longFitPeriodHeld = false;
-    // Where the one is, not what the tempo is. The wipe above is what
-    // stops the old lattice pulling the bar back; it also empties the
-    // fits, and the next short window plus the comb would publish a
-    // new number. Keep the one already counted for one short window.
-    if (established)
-        barTempoHoldBeats = kShortFit;
-    const float newPeriod = 60.0f / bpm;
-    hyp.beatPhase = gridPhaseNow (newPeriod);
-    hyp.barPhase = wrap01 ((static_cast<float> (beatsInBar) + hyp.beatPhase) * 0.25f);
-    hyp.periodSec = newPeriod;
+    const float period = 60.0f / bpm;
+    const float p = gridPhaseNow (period);
+    beatsInBar = p <= 0.5f ? 0 : 3;
+    hyp.beatPhase = p;
+    hyp.barPhase = wrap01 ((static_cast<float> (beatsInBar) + p) * 0.25f);
+    hyp.periodSec = period;
 }
 
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
@@ -3147,9 +3124,10 @@ float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
 
 void BeatDecoder::updateTempo() noexcept
 {
-    // "L'1 è QUI" re-anchors the grid and wipes the fits. Until a new
-    // short window exists, restore the tempo (and the fixed anchor the
-    // next beat would chase) so that command cannot change the number.
+    // "L'1 è QUI" no longer wipes the fits: the lattice stays, so there
+    // is no new window to hold the tempo across. If a hold is still
+    // armed, restore the tempo (and the fixed anchor the next beat
+    // would chase) until it runs out.
     struct PinDeclaredTempo
     {
         BeatDecoder& self;
@@ -3732,6 +3710,7 @@ void BeatDecoder::updateTempo() noexcept
             lastAcceptedLowBand = 0.0f;
             kitBodyHeard = false;
             kitBodyLastSec = -1.0;
+            hatGridHolding = false;
             stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
             postHoleReopenSec = -1.0;
@@ -3998,6 +3977,47 @@ void BeatDecoder::updateTempo() noexcept
 
     if (! haveShort)
     {
+        // The fit is gone and the newest interval is a hole below the
+        // legal tempo. The quarter before it and the comb already name
+        // the same new tempo, and the committed number has not moved.
+        // 210467 at t=53.90: hole 20.7, previous quarter 54.6, comb 53.9,
+        // bpm still 64. The ordinary pull takes seven tenths of that and
+        // leaves the clock fast. Taking the comb in full on this frame
+        // only — the grid stays where it is. Moving the grid onto the
+        // beat that closed the hole held the phase near 400 ms and raised
+        // the mean, 108.7 → 130.3. Spending the same comb at 1.0 with no
+        // hole test moved a ramp. One hit in the quick bank.
+        if (lineFeed && tempoRegime == TempoRegime::live
+            && beatFilled >= 3 && bpm > kMinBpm
+            && combReady && combBpm > kMinBpm)
+        {
+            const int n0 = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+            const int n1 = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+            const int n2 = (beatWrite - 3 + kBeatHistory) % kBeatHistory;
+            const float newer = static_cast<float> (beatTime[n0] - beatTime[n1]);
+            const float older = static_cast<float> (beatTime[n1] - beatTime[n2]);
+            if (newer > 0.0f && older > 0.0f)
+            {
+                const float olderBpm = 60.0f / older;
+                const float newerBpm = 60.0f / newer;
+                const bool combLeft = std::fabs (std::log2 (combBpm / bpm)) > std::log2 (1.08f);
+                const bool olderAgrees = olderBpm > kMinBpm
+                                      && std::fabs (std::log2 (olderBpm / combBpm)) < std::log2 (1.04f);
+                const bool newerIsGap = std::fabs (std::log2 (newerBpm / combBpm)) > 0.40f;
+                if (combLeft && olderAgrees && newerIsGap)
+                {
+                    commit (combBpm, 1.0f);
+                    if (persistLead)
+                    {
+                        ioiClockLead = true;
+                        --ioiClockLeadBeats;
+                    }
+                    else
+                        ioiClockLeadBeats = 0;
+                    return;
+                }
+            }
+        }
         // Not enough clean beats on the grid; let the fold carry the tempo, and
         // only while the tempo is not being held: a fixed tempo that has already
         // been measured off its own beat times is not improved by a comb whose
@@ -4626,6 +4646,71 @@ void BeatDecoder::updateTempo() noexcept
                 else
                     stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
+
+                // A 4-beat that straddles a step is too dirty for the 0.03
+                // door and already names the new tempo, while the 8-beat is
+                // still on the held number. Two beats, residual in
+                // [0.06, 0.10), at least 8% off the held tempo, the 8-beat
+                // within 2% of it, the interval within 5% of the 4-beat.
+                // The second beat must be further from the held tempo than
+                // the first. Opening the same door from 0.03 took a flat
+                // 128.6 (seed 64361) to 140 on two almost-clean beats
+                // (residual 0.031 and 0.033) and moved fisso
+                // 22.256/76.932 → 22.967/81.952. The real step's pair
+                // sits at 0.099 then 0.085.
+                if (fitPeriodBefore (4, p4, r4, c4, a4, nullptr, 0,
+                                     static_cast<double> (recent))
+                    && r4 >= 0.06f && r4 < 0.10f && p4 > 0.0f && a4 >= 0.0)
+                {
+                    const float fourBpm = 60.0f / p4;
+                    const float ioiBpm = 60.0f / recent;
+                    const float gap = std::fabs (fourBpm - bpm) / held;
+                    const bool octave = std::fabs (std::log2 (fourBpm / held))
+                                        > kOctaveThreshold;
+                    const bool far = gap >= 0.08f;
+                    const bool shortHeld = std::fabs (shortFitBpm - bpm) <= 0.02f * held;
+                    const bool agree = std::fabs (ioiBpm - fourBpm)
+                                       <= 0.05f * std::max (kMinBpm, fourBpm);
+                    const bool sameSide = (fourBpm - bpm) * (ioiBpm - bpm) > 0.0f;
+                    const bool pass = ! octave && far && shortHeld && agree && sameSide;
+                    const float heldGap = std::fabs (stepFourStraddleHoldBpm - bpm)
+                                        / std::max (kMinBpm, bpm);
+                    const bool further = stepFourStraddleHoldBpm > kMinBpm
+                                      && gap > heldGap + 0.005f;
+                    const bool confirmed = pass && further
+                        && std::fabs (fourBpm - stepFourStraddleHoldBpm)
+                               <= 0.04f * fourBpm;
+                    if (confirmed)
+                    {
+                        bpm = fixedAnchorBpm = std::clamp (fourBpm, kMinBpm, kMaxBpm);
+                        gridAnchorSec = a4;
+                        beatFilled = 4;
+                        longFilled = longWrite = 0;
+                        fixedSamples = 0;
+                        fixedWalkRun = 0;
+                        stepFourHoldBpm = 0.0f;
+                        stepFourStraddleHoldBpm = 0.0f;
+                        liveFourHoldBpm = 0.0f;
+                        transitionState = TempoTransitionState::rapid;
+                        transitionReason = TempoTransitionReason::confirmed;
+                        transitionPeriodSec = 60.0f / bpm;
+                        transitionIntervals = 3;
+                        transitionConfidence = 1.0f;
+                        transitionRapidBeats = 0;
+                        transitionRapidDeadlineSec =
+                            timeSec + static_cast<double> (kTransitionRapidLifetimeBeats)
+                                          * static_cast<double> (transitionPeriodSec);
+                        transitionRefitBeats =
+                            kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
+                        transitionLastSec = gridAnchorSec;
+                        ++transitionSerial;
+                        resetMotionShadow (false, TempoMotionVeto::transition);
+                        return;
+                    }
+                    stepFourStraddleHoldBpm = pass ? fourBpm : 0.0f;
+                }
+                else
+                    stepFourStraddleHoldBpm = 0.0f;
             }
             else
                 stepFourHoldBpm = 0.0f;
@@ -5986,47 +6071,47 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                                                std::max (prevPrevLowBand, lowBand));
         const float beatHighBandNow = std::max (prevHighBand,
                                                 std::max (prevPrevHighBand, highBand));
-        // Drummer out, song still going. A percussionist who already has
-        // the time does not recompute it from a hat, a voice or a bass
-        // note that crests early: those confirm the pulse. Writing the
-        // crest into the fit is what accelerates. The body has to have
-        // been heard first, so a hats-only song still tracks, and one
-        // beat of hats between kicks still updates. The crest is stored
-        // on the held grid so the pause is not a hole the next kick
-        // reads as a new tempo.
-        const double heldPeriodSec = 60.0 / static_cast<double> (std::max (kMinBpm, bpm));
-        const double gapBeats = lastBeatSec >= 0.0
-                                    ? (eventTimeSec - lastBeatSec) / heldPeriodSec
-                                    : 0.0;
-        const double origin = gridAnchorSec >= 0.0 ? gridAnchorSec : lastBeatSec;
-        double onGrid = eventTimeSec;
-        if (origin >= 0.0)
-        {
-            const double n = std::round ((eventTimeSec - origin) / heldPeriodSec);
-            onGrid = origin + n * heldPeriodSec;
-        }
-        // A small pause is shorter than the 1.5-period hole, so the
-        // crest comes back early and the fit reads it as a faster
-        // tempo. One beat of hats (gap under 1.20) still updates.
-        // A late return is a ritardando and is not this path. The
-        // bank never sets sounding.
-        const bool earlyAfterSmallPause = sounding && established && ! provisional
-                                           && kitBodyHeard
-                                           && gapBeats > 1.20 && gapBeats < kGridStaleBeats
-                                           && eventTimeSec + 0.06 * heldPeriodSec < onGrid;
-        const bool holdPulse = earlyAfterSmallPause
-                               || (beatLowBandNow < kLowBandMute
-                                   && kitBodyHolding (eventTimeSec));
+        // Drummer out, or only the hat is speaking. A percussionist who
+        // already has the time does not recompute it from a hat that
+        // crests early: that confirms the pulse. Writing the crest into
+        // the fit is what accelerates. The kick-body hold still needs a
+        // body heard first, and it waits 1.05 periods, so a hat between
+        // two kicks does not arm it. A hat with no body — charleston
+        // instead of kick and snare — used to keep tracking, and the
+        // eighths walked the tempo off the quarter. Once the tempo is
+        // established, a hat-class crest (low band under the mute, high
+        // band present) is stored on the counted grid and does not call
+        // updateTempo. The kicks, when they are there, still do. High
+        // band defaults to 0, so the click bank and the matrix never
+        // take it. While the grid is still provisional the eighth-fold
+        // still has to see the raw intervals.
+        const bool hatClass = lineFeed
+                           && beatLowBandNow < kLowBandMute
+                           && beatHighBandNow > kHighBandPresent;
+        const bool holdHats = hatClass && established && ! provisional;
+        const bool holdPulse = (beatLowBandNow < kLowBandMute
+                                && kitBodyHolding (eventTimeSec))
+                            || holdHats;
         if (beatLowBandNow >= kLowBandMute)
         {
             kitBodyHeard = true;
             kitBodyLastSec = eventTimeSec;
+            hatGridHolding = false;
         }
         if (holdPulse)
         {
+            if (holdHats)
+                hatGridHolding = true;
             if (transitionState != TempoTransitionState::stable)
                 dropTransitionCandidate (TempoTransitionReason::expired);
-            const double snapped = onGrid;
+            const double periodSec = 60.0 / static_cast<double> (std::max (kMinBpm, bpm));
+            const double origin = gridAnchorSec >= 0.0 ? gridAnchorSec : lastBeatSec;
+            double snapped = eventTimeSec;
+            if (origin >= 0.0)
+            {
+                const double n = std::round ((eventTimeSec - origin) / periodSec);
+                snapped = origin + n * periodSec;
+            }
             registerBeat (snapped, prevPulse, beatLowBandNow, beatHighBandNow);
             lastBeatSec = snapped;
             lastAcceptedLowBand = beatLowBandNow;
@@ -6106,16 +6191,12 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     const bool fastMotionCurrent = lastBeatSec >= 0.0
                                    && timeSec - lastBeatSec
                                           <= 1.5 * static_cast<double> (newPeriod);
-    // While the kick body is gone the long fit must not keep a faster
-    // period in the published phase: the clock closes phase by bending
-    // its rate, so a short period here is the rush through the pause.
-    // A small pause never reaches the 1.5-period hole. 1.20 is past one
-    // beat of hats and short of treating a merely late beat as a rest.
-    // Sounding, so the bank's missed quarters are not this.
-    const bool smallPauseOpen = sounding && established && lastBeatSec >= 0.0
-                                 && timeSec - lastBeatSec
-                                        > 1.20 * static_cast<double> (newPeriod);
-    if (kitBodyHolding (timeSec) || smallPauseOpen)
+    // While the kick body is gone, or the pulse is only hats, the long
+    // fit must not keep a faster period in the published phase: the
+    // clock closes phase by bending its rate, so a short period here is
+    // the rush. Hats-only never sets kitBodyHeard, so the second flag
+    // is what covers that passage.
+    if (kitBodyHolding (timeSec) || hatGridHolding)
         longFitPeriodHeld = false;
     const bool longFitPeriodGate = fastMotionCurrent && ioiClockLead
                                     && intervalAcquired && longFitBpm >= kMinBpm;
@@ -6196,14 +6277,16 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
     hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
     hyp.ioiLead = fastMotionCurrent && ioiClockLead;
-    // A rest while the part is already playing. 1.5 periods with no
-    // beat is a hole; a small pause is the stretch past 1.20, before
-    // that hole, where an early crest would otherwise be spent at the
-    // 7.5% rail (about 8 BPM near 107). A hat one beat after a kick
-    // stays under 1.20 and does not arm this. The bank never sets
-    // sounding.
+    // One and a half periods with no accepted beat, or the kick body has
+    // been gone long enough that the crests still arriving are hats and
+    // voice. Either way the part is already playing and the pulse is the
+    // one counted: the direct-live rail would spend a phase debt at 7.5%
+    // (about 8 BPM near 107) through a rest that has not changed tempo.
+    // A hat one beat after a kick does not arm this — the body hold
+    // itself waits 1.05 periods. The bank passes lowBand 0, so the body
+    // is never heard there.
     hyp.beatGap = sounding && established && lastBeatSec >= 0.0
-                  && (smallPauseOpen || ! fastMotionCurrent || kitBodyHolding (timeSec));
+                  && (! fastMotionCurrent || kitBodyHolding (timeSec));
     hyp.transitionState = transitionState;
     hyp.transitionReason = transitionReason;
     hyp.transitionBpm = transitionPeriodSec > 0.0f ? 60.0f / transitionPeriodSec : 0.0f;

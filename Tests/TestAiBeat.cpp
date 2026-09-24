@@ -3847,6 +3847,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             for (int i = 0; i < toAnd; ++i, ++frame)
                 h = dec.observe (0.02f, 0.02f, 0.90f, 0.04f);
             const float flipped = dec.current().beatPhase;
+            const float bpmBefore = dec.current().bpm;
             dec.declarePulseHere();
             const float afterDeclare = dec.current().beatPhase;
             std::printf ("declare-pulse-here  flipped=%.3f  after=%.3f  bpm=%.2f\n",
@@ -3854,21 +3855,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
                          static_cast<double> (afterDeclare),
                          static_cast<double> (dec.current().bpm));
             expect (flipped > 0.40f && flipped < 0.60f
-                        && onQuarter (afterDeclare),
-                    "L'1 e' QUI re-anchors lastBeat onto the tapped quarter while sounding");
-            const uint32_t serialAtDeclare = dec.current().beatSerial;
+                        && std::fabs (afterDeclare - flipped) < 0.02f
+                        && std::fabs (dec.current().bpm - bpmBefore) < 0.05f,
+                    "L'1 e' QUI names the nearest beat and does not move the grid or the tempo");
             feed (framesPerBeat * 16, 0.0, 0.04f);
-            const uint32_t hatsAccepted = dec.current().beatSerial - serialAtDeclare;
-            std::printf ("declare-hats-hold  accepted=%u  phase=%.3f\n",
-                         hatsAccepted, static_cast<double> (dec.current().beatPhase));
-            expect (hatsAccepted == 0,
-                    "after the snap, sounding keep still refuses old-quarter hats");
-            const float bpmAtDeclare = dec.current().bpm;
             feed (framesPerBeat * 16, 0.5, 0.80f);
-            std::printf ("declare-tempo-hold  before=%.2f  after=%.2f\n",
-                         static_cast<double> (bpmAtDeclare),
-                         static_cast<double> (dec.current().bpm));
-            expect (std::fabs (dec.current().bpm - bpmAtDeclare) < 0.5f,
+            std::printf ("declare-tempo-hold  before=%.2f  after=%.2f  phase=%.3f\n",
+                         static_cast<double> (bpmBefore),
+                         static_cast<double> (dec.current().bpm),
+                         static_cast<double> (dec.current().beatPhase));
+            expect (std::fabs (dec.current().bpm - bpmBefore) < 0.5f,
                     "L'1 e' QUI does not move the tempo");
         }
 
@@ -9906,18 +9902,21 @@ struct BeatTrackerTimingProbe
         t.follower.snapPhase (0.5f);
         t.sounding = true;
         const float before = t.follower.beatPhase();
+        const float tempoBefore = t.follower.currentTempo();
         t.declareBarHere();
         const float after = t.follower.beatPhase();
         const int bar = t.follower.beatInBarIndex();
         t.suspendAnalysis();
         const bool ok = before > 0.40f && before < 0.60f
-                        && (after < 0.05f || after > 0.95f)
+                        && std::fabs (after - before) < 0.02f
+                        && std::fabs (t.follower.currentTempo() - tempoBefore) < 0.05f
                         && bar == 0
                         && t.barLocked
                         && t.tapHold;
-        std::printf ("declare-bar-here  before=%.3f  after=%.3f  beatInBar=%d  locked=%d  tapHold=%d %s\n",
+        std::printf ("declare-bar-here  before=%.3f  after=%.3f  beatInBar=%d  tempo=%.2f  locked=%d  tapHold=%d %s\n",
                      static_cast<double> (before), static_cast<double> (after),
-                     bar, t.barLocked ? 1 : 0, t.tapHold ? 1 : 0,
+                     bar, static_cast<double> (t.follower.currentTempo()),
+                     t.barLocked ? 1 : 0, t.tapHold ? 1 : 0,
                      ok ? "PASS" : "FAIL");
         return ok;
     }
