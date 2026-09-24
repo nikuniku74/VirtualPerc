@@ -200,6 +200,7 @@ private:
     bool tempoTrimEnabled = false;
     bool directTempoDirectionGuard = false;
     bool directLivePhaseFollow = false;
+    float directLiveSteer = 0.0f;
     bool beatGapHold = false;
     int gapSteerGuardBeats = 0;
     bool tempoMotionHint = false;

@@ -231,21 +231,30 @@ namespace
         return juce::jlimit (0.0f, 1.0f, (x - from) / (to - from));
     }
 
-    /** Where a hit sits against the pulse, as a colour. Display only.
+    /** Where the part sits against the pulse, as a position. Display only.
 
-        A frame of the analysis is 20 ms of jitter (`TempoFollower`), and a
-        lean inside that — a little past it, still — is not something a
-        listener hears as the part fighting the song. The band starts to
-        leave the green at 10 ms and is down in the red by 58 ms, so a small
-        drift moves it instead of sitting full until it falls off a cliff.
-        The 8 ms phase-lock bench is a tighter bar than this band.
+        `lead` is −1 when the percussion is behind the clock and +1 when it
+        is ahead. A frame of the analysis is 20 ms of jitter (`TempoFollower`),
+        and a lean inside that is not something a listener hears as the part
+        fighting the song, so the orb stays on the centre until 10 ms and
+        reaches the edge — and the red — at 58 ms. The 8 ms phase-lock bench
+        is a tighter bar than this.
+
+        The sign is where the part sits, not whether the clock is speeding up
+        or slowing down to get there. A positive `phaseErrorBeats` is the
+        clock ahead of the song, so the percussion is early and the follower
+        decelerates back toward the beat: the orb is on the right and slides
+        in to the centre as that error closes. A negative error is the part
+        behind, the clock accelerates, and the orb comes back from the left.
+        A loop whose read head is past the musical target is a positive
+        `loopPhaseMs`, the same right-hand side.
 
         The clock's rate bend is not scored: that bend is how a small error
-        gets closed. `amount` is whether the band is drawn at all. An empty
+        gets closed. `amount` is whether the orb is drawn at all. An empty
         stage stays dark rather than sitting on red before anyone has played. */
     struct TempoBloom
     {
-        float accuracy = 0.5f;
+        float lead = 0.0f;
         float amount = 0.0f;
     };
 
@@ -270,55 +279,27 @@ namespace
 
         if (silent && ! hot && s.confidence < 0.25f)
         {
-            out.accuracy = 1.0f;
+            out.lead = 0.0f;
             out.amount = 0.08f;
             return out;
         }
 
         const float bpm = juce::jmax (40.0f, s.clockBpm > 40.0f ? s.clockBpm : s.bpm);
-        float errMs = std::abs (s.phaseErrorBeats) * 60000.0f / bpm;
-        // A recorded loop can sit ahead of the clock while the onset residual
-        // is still ~0. The listener hears the loop.
+        // Positive is ahead of the beat. `phaseErrorBeats` is already clock
+        // minus song: positive while the part is early and the rate is bent
+        // down to walk it back. The loop residual is positive when the read
+        // head is past the beat. A playing loop is what is heard. The rate
+        // bend itself is not the position — only this residual is.
+        float signedMs = s.phaseErrorBeats * 60000.0f / bpm;
         if (s.loopPlaying)
-            errMs = juce::jmax (errMs, std::abs (s.loopPhaseMs));
+            signedMs = s.loopPhaseMs;
 
         // 0 inside a small pocket, 1 once the hit is far enough to fight
         // the beat. The old 30–85 ms ramp stayed full green and then the
         // display jumped; this one moves on a smaller error.
-        float bad = unitRamp (errMs, 10.0f, 58.0f);
-
-        // Not locked is its own problem, independent of a small residual.
-        if (weak)
-            bad = juce::jmax (bad, 0.80f);
-        else if (searching && ! hot)
-            bad = juce::jmax (bad, 0.55f);
-        else if (! hot)
-            bad = juce::jmax (bad, 1.0f - unitRamp (s.confidence, 0.22f, 0.60f));
-
-        // FISSO: the phase loop stands down, so a held error of 0 is not
-        // a verdict. A few percent against the lock is still the pocket;
-        // further than that is the same red ramp. Fold a half or a double —
-        // an octave choice is not a miss.
-        if (! s.tempoFollow && haveTempo)
-        {
-            const float analysis = s.combBpm > 40.0f ? s.combBpm
-                                  : (s.neuralBpm > 40.0f ? s.neuralBpm : 0.0f);
-            if (analysis > 40.0f)
-            {
-                float ratio = analysis / s.bpm;
-                while (ratio > 1.41421356f)
-                    ratio *= 0.5f;
-                while (ratio < 0.70710678f)
-                    ratio *= 2.0f;
-                bad = juce::jmax (bad, unitRamp (std::abs (ratio - 1.0f), 0.03f, 0.08f));
-                if (! s.hypValid)
-                    bad = juce::jmax (bad, 0.35f);
-            }
-            else if (! hot)
-                bad = juce::jmax (bad, 0.45f);
-        }
-
-        out.accuracy = 1.0f - juce::jlimit (0.0f, 1.0f, bad);
+        const float mag = unitRamp (std::abs (signedMs), 10.0f, 58.0f);
+        const float leadSign = signedMs < 0.0f ? -1.0f : (signedMs > 0.0f ? 1.0f : 0.0f);
+        out.lead = leadSign * mag;
 
         if (hot)
             out.amount = 1.0f;
@@ -335,79 +316,58 @@ namespace
         return out;
     }
 
-    /** One wide neon band behind the tempo, filled from the bottom. Red
-        sits at the bottom and green at the top. The colour is mapped on the
-        full height and the light dies out above the fill, so a short bar is
-        red and its top edge glows instead of being cut with a clip. One
-        slab: the equalizer's columns would read as several meters. */
-    void paintTempoBand (juce::Graphics& g, juce::Rectangle<float> band,
-                         float level, float alpha)
+    /** One neon orb on the tempo. Centred and green when the part is on the
+        pulse; it slides right as the percussion runs ahead of the clock and
+        left as it falls behind, and the further it travels the redder it
+        burns. Several radial layers, each softer than the last, are the
+        bloom — a hard disc would read as a meter. */
+    void paintTempoOrb (juce::Graphics& g, juce::Rectangle<float> lane,
+                        float lead, float alpha)
     {
-        if (band.getWidth() < 4.0f || band.getHeight() < 4.0f || alpha <= 0.004f)
+        if (lane.getWidth() < 8.0f || lane.getHeight() < 8.0f || alpha <= 0.004f)
             return;
         if (! gDarkMode)
             alpha *= 0.62f;
 
-        level = juce::jlimit (0.0f, 1.0f, level);
-        const float fill = 0.08f + 0.92f * level;
-        const float h = band.getHeight();
-        const float fillH = h * fill;
-        const float yTop = band.getBottom() - fillH;
+        lead = juce::jlimit (-1.0f, 1.0f, lead);
+        const float mag = std::abs (lead);
         const auto red   = juce::Colour (0xffff2a4a);
         const auto amber = juce::Colour (0xffffb01a);
         const auto green = juce::Colour (0xff3dffc2);
+        const auto col = mag < 0.42f ? green.interpolatedWith (amber, mag / 0.42f)
+                                     : amber.interpolatedWith (red, (mag - 0.42f) / 0.58f);
 
-        auto tone = [&] (float y01) noexcept
-        {
-            y01 = juce::jlimit (0.0f, 1.0f, y01);
-            if (y01 < 0.40f)
-                return red.interpolatedWith (amber, y01 / 0.40f);
-            if (y01 < 0.72f)
-                return amber.interpolatedWith (green, (y01 - 0.40f) / 0.32f);
-            return green;
-        };
+        const float travel = lane.getWidth() * 0.36f;
+        const float cx = lane.getCentreX() + lead * travel;
+        const float cy = lane.getCentreY();
+        const float r = juce::jlimit (10.0f, 34.0f, lane.getHeight() * 0.22f);
 
-        auto paintLayer = [&] (float a, float soft, float xBleed)
+        auto bloom = [&] (float radius, float a)
         {
-            const float yFeather = yTop - soft;
-            const float span = band.getBottom() - yFeather;
-            if (span < 2.0f || a <= 0.004f)
+            if (radius < 1.0f || a <= 0.004f)
                 return;
-            const auto lip = tone (fill);
-            juce::ColourGradient grad (red.withAlpha (a),
-                                       band.getCentreX(), band.getBottom(),
-                                       lip.withAlpha (0.0f),
-                                       band.getCentreX(), yFeather, false);
-            const float amberPos = (0.40f * h) / span;
-            const float greenPos = (0.72f * h) / span;
-            const float lipPos = fillH / span;
-            if (0.40f < fill && amberPos > 0.02f && amberPos < lipPos - 0.02f)
-                grad.addColour (amberPos, amber.withAlpha (a));
-            if (0.72f < fill && greenPos > 0.02f && greenPos < lipPos - 0.02f)
-                grad.addColour (greenPos, green.withAlpha (a));
-            if (lipPos > 0.04f && lipPos < 0.98f)
-                grad.addColour (lipPos, lip.withAlpha (a));
+            juce::ColourGradient grad (col.withAlpha (a), cx, cy,
+                                       col.withAlpha (0.0f), cx, cy + radius, true);
             g.setGradientFill (grad);
-            g.fillRect (band.getX() - xBleed, yFeather,
-                        band.getWidth() + xBleed * 2.0f,
-                        band.getBottom() - yFeather);
+            g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
         };
 
-        const float feather = juce::jmax (16.0f, h * 0.22f);
-        paintLayer (alpha * 0.34f, feather * 1.45f, juce::jmin (18.0f, h * 0.08f));
-        paintLayer (alpha * 0.82f, feather * 0.72f, 0.0f);
+        // A hairline so the slide has a centre to come back to. It stays
+        // dim: the orb is the reading, the rail is only the axis.
+        g.setColour (col.withAlpha (alpha * 0.16f));
+        const float railY = cy - 0.6f;
+        g.fillRoundedRectangle (lane.getCentreX() - travel, railY, travel * 2.0f, 1.2f, 0.6f);
 
-        const auto lip = tone (fill);
-        const float lipAbove = feather * 0.55f;
-        const float lipBelow = feather * 0.40f;
-        juce::ColourGradient lipGlow (lip.withAlpha (0.0f),
-                                      band.getCentreX(), yTop - lipAbove,
-                                      lip.withAlpha (0.0f),
-                                      band.getCentreX(), yTop + lipBelow, false);
-        lipGlow.addColour (lipAbove / (lipAbove + lipBelow),
-                           lip.brighter (0.45f).withAlpha (alpha));
-        g.setGradientFill (lipGlow);
-        g.fillRect (band.getX(), yTop - lipAbove, band.getWidth(), lipAbove + lipBelow);
+        bloom (r * 3.4f, alpha * 0.28f);
+        bloom (r * 2.1f, alpha * 0.50f);
+        bloom (r * 1.25f, alpha * 0.82f);
+
+        g.setColour (col.withAlpha (alpha));
+        g.fillEllipse (cx - r, cy - r, r * 2.0f, r * 2.0f);
+
+        const float core = r * (0.42f - 0.10f * mag);
+        g.setColour (juce::Colours::white.withAlpha (alpha * (0.92f - 0.40f * mag)));
+        g.fillEllipse (cx - core, cy - core, core * 2.0f, core * 2.0f);
     }
 
     void drawFlatButton (juce::Graphics& g, juce::Button& button, juce::Colour fill,
@@ -2856,15 +2816,14 @@ void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
 
-    // Both directions ease. A drop used to be copied onto this frame and
-    // then held, which is the bar slamming into the red. Falling is the
-    // fast one (most of the way in about a fifth of a second at 15 Hz);
-    // rising is slower so a single close beat does not flicker the green.
+    // Both directions ease, and at the same rate: the orb is a position,
+    // so rushing it one way and lagging the other would read as a bias.
+    // At 15 Hz a factor of 0.22 is most of the way across in about a third
+    // of a second — a slide, not a snap, and not so slow that a real lean
+    // arrives after the bar has already moved on.
     {
         const auto bloom = tempoBloomFor (snap);
-        const float toward = bloom.accuracy - tempoBloomAccuracy;
-        const float glide = toward < 0.0f ? 0.55f : 0.28f;
-        tempoBloomAccuracy += toward * glide;
+        tempoBloomLead += (bloom.lead - tempoBloomLead) * 0.22f;
         tempoBloomAmount += (bloom.amount - tempoBloomAmount) * 0.35f;
     }
 
@@ -3814,17 +3773,12 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
-    // One band behind the BPM and the four quarters, filled from the
-    // bottom. In the pocket it reaches the green; the further off, the
-    // lower it sits and the more of it is red.
-    if (! rows.bpm.isEmpty() && ! rows.beats.isEmpty() && tempoBloomAmount > 0.02f)
+    // One orb on the tempo row. On the pulse it sits in the middle and
+    // burns green; ahead of the clock it slides right, behind it slides
+    // left, and the colour follows the distance.
+    if (! rows.bpm.isEmpty() && tempoBloomAmount > 0.02f)
     {
-        const auto cluster = juce::Rectangle<float> (
-            static_cast<float> (area.getX()),
-            static_cast<float> (rows.bpm.getY()),
-            static_cast<float> (area.getWidth()),
-            static_cast<float> (rows.beats.getBottom() - rows.bpm.getY()));
-        paintTempoBand (g, cluster, tempoBloomAccuracy, 0.55f * tempoBloomAmount);
+        paintTempoOrb (g, rows.bpm.toFloat(), tempoBloomLead, 0.85f * tempoBloomAmount);
     }
 
     // The tempo, sized to the room it has rather than to a constant, so it is

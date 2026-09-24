@@ -4643,6 +4643,30 @@ void BeatDecoder::updateTempo() noexcept
                     }
                     stepFourHoldBpm = pass ? fourBpm : 0.0f;
                 }
+                else if (r4 < 0.06f && p4 > 0.0f && a4 >= 0.0)
+                {
+                    // The confirming beat still has to be under 0.03.
+                    // The beat before it, on 242143 at t=41.96, is residual
+                    // 0.031 and already names 134 against a held 146; the
+                    // next beat (residual 0.002) takes 132.6. That cut the
+                    // seed's p95 from 45.8 ms to 31.6 ms. Two beats both in
+                    // [0.03, 0.06) must not confirm: that pair on flat
+                    // 64361 took 128.6 to 140. 329252's earlier beat
+                    // (residual 0.039) is 2.6% off the interval, so the
+                    // confirming beat's 2% bar never arms it. Three percent
+                    // is only this arm.
+                    const float fourBpm = 60.0f / p4;
+                    const float ioiBpm = 60.0f / recent;
+                    const bool octave = std::fabs (std::log2 (fourBpm / held))
+                                        > kOctaveThreshold;
+                    const bool offHeld = std::fabs (fourBpm - bpm) >= 0.05f * held;
+                    const bool shortHeld = std::fabs (shortFitBpm - bpm) <= 0.03f * held;
+                    const bool agree = std::fabs (ioiBpm - fourBpm)
+                                       <= 0.03f * std::max (kMinBpm, fourBpm);
+                    const bool sameSide = (fourBpm - bpm) * (ioiBpm - bpm) > 0.0f;
+                    stepFourHoldBpm = (! octave && offHeld && shortHeld && agree && sameSide)
+                                          ? fourBpm : 0.0f;
+                }
                 else
                     stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;

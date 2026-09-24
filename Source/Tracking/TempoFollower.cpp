@@ -186,6 +186,7 @@ void TempoFollower::reset() noexcept
     tempoTrimEnabled = false;
     directTempoDirectionGuard = false;
     directLivePhaseFollow = false;
+    directLiveSteer = 0.0f;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     tempoMotionHint = false;
@@ -201,6 +202,7 @@ void TempoFollower::resetClock() noexcept
 {
     cancelPhaseRecovery();
     directLivePhaseFollow = false;
+    directLiveSteer = 0.0f;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     phase = 0.0;
@@ -830,7 +832,14 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         }
 
         float tau = phaseTargetTau;
-        if (farTargetSamples > static_cast<int> (sampleRate * 0.25))
+        // Shorten a slow average when the same phase error has held for a
+        // quarter of a second. The floor is 0.10 s. An ioi-lead follow is
+        // already 0.01 s (`kGridTauIoiLead`), and `std::clamp` aborts on the
+        // audio thread when the upper bound is below the lower one — that is
+        // the EVERYTIME SIGABRT after the clock had already stepped. A tau
+        // that is already at or under the floor has nothing to shorten.
+        if (farTargetSamples > static_cast<int> (sampleRate * 0.25)
+            && phaseTargetTau > 0.10f)
             tau = std::clamp (phaseTargetTau * kFarTarget / std::fabs (gap),
                               0.10f, phaseTargetTau);
 
@@ -1079,9 +1088,35 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     if (beatGapHold)
         gapSteerGuardBeats = kPostGapBeats;
     if (beatGapHold && ! rapidTransition)
+    {
         steer = 0.0f;
+        directLiveSteer = 0.0f;
+    }
     else if (gapSteerGuardBeats > 0 && ! rapidTransition)
         steer = std::clamp (steer, -kPostGapSteer, kPostGapSteer);
+
+    // A saturated direct-live rail is 7.5% at high, which at 123 BPM is
+    // the whole of a 123→132 reading in one buffer. The phase still has
+    // to close, but a percussionist leans over a beat, not inside one
+    // callback. Two percent of the tempo per beat. A confirmed rapid
+    // window keeps its own rail. A rest zeroes the lean in the same
+    // buffer: slewing that zero brought the pause surge back. The
+    // matrix lane does not set this follow, so the known-phase hashes
+    // do not see it.
+    if (directLivePhaseFollow && ! rapidTransition && ! beatGapHold
+        && tempo > 40.0f && numSamples > 0)
+    {
+        const float beatsInBlock = tempo / 60.0f
+                                 * static_cast<float> (numSamples)
+                                 / static_cast<float> (sampleRate);
+        const float maxStep = 0.02f * beatsInBlock;
+        const float delta = steer - directLiveSteer;
+        if (delta > maxStep)
+            steer = directLiveSteer + maxStep;
+        else if (delta < -maxStep)
+            steer = directLiveSteer - maxStep;
+    }
+    directLiveSteer = steer;
 
     const float applied = steer * nominalBeats;
     recoveryCorrection += applied;

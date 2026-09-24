@@ -459,11 +459,11 @@ private:
     /** Input peak with a slow release, so the meter can be read against its
         target band instead of flickering. Updated on the UI timer. */
     float micHold = 0.0f;
-    /** Smoothed copy of the tempo band. Starts mid-level and invisible so
-        the first lock eases in instead of flashing red from a zero. A drop
-        glides down; it is not copied onto the frame. UI timer only — the
-        audio thread never reads these. */
-    float tempoBloomAccuracy = 0.5f;
+    /** Smoothed copy of the tempo orb. `lead` is −1 behind the clock (drawn
+        left) and +1 ahead (drawn right); it eases in both directions so the
+        bloom slides instead of jumping. UI timer only — the audio thread
+        never reads these. */
+    float tempoBloomLead = 0.0f;
     float tempoBloomAmount = 0.0f;
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
