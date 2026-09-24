@@ -725,6 +725,7 @@ void BeatDecoder::reset() noexcept
     kitBodyLastSec = -1.0;
     hatGridHolding = false;
     postHoleReopenSec = -1.0;
+    refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
     foldPhaseBeats = 0;
@@ -843,6 +844,7 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
         kitBodyHeard = false;
         kitBodyLastSec = -1.0;
         hatGridHolding = false;
+        refusedHatAfterHoleSec = -1.0;
         beatsInBar = 0;
     }
 
@@ -1245,6 +1247,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     longFitPeriodHeld = false;
     lastAcceptedLowBand = 0.0f;
     postHoleReopenSec = -1.0;
+    refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
     foldPhaseBeats = 0;
     beatWrite = 0;
@@ -1335,6 +1338,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     liveFourHoldBpm = 0.0f;
     barTempoHoldBeats = 0;
     postHoleReopenSec = -1.0;
+    refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
     foldPhaseBeats = 0;
@@ -3712,6 +3716,7 @@ void BeatDecoder::updateTempo() noexcept
             stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
             postHoleReopenSec = -1.0;
+            refusedHatAfterHoleSec = -1.0;
             gridAnchorSec = -1.0;
             foldPhaseBeats = 0;
             beatWrite = 0;
@@ -6059,31 +6064,42 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
             postHoleReopenSec = eventTimeSec;
         }
         // A medley hole. The first crest back is usually a hat, and with
-        // no kick yet that hat becomes the quarter: the part then sits on
-        // the offbeat until something moves it. While the part is sounding,
-        // a crest with no kick body does not place the beat. The kick does,
-        // even when it lands half a beat off the origin the hat would have
-        // kept. The click bank never sets sounding, so this does not run there.
+        // no kick yet that hat becomes the quarter. While the part is
+        // sounding, a crest with no kick body does not place the beat.
+        // The anchor moves onto the kick only when that hat was just
+        // refused and the kick sits half a beat off the old origin, within
+        // one period of the hat. A kick after an ordinary hole does not
+        // move it: that shift is a phase jump, and the clock closes the
+        // jump by accelerating on passages that were already stable.
+        // The click bank never sets sounding, so this does not run there.
         if (lineFeed && sounding && beats >= kGridStaleBeats && bpm > kMinBpm)
         {
             const float eventLowBand = std::max (prevLowBand,
                                                  std::max (prevPrevLowBand, lowBand));
             if (eventLowBand < kLowBandMute)
+            {
                 acceptedByCurrentGrid = false;
+                refusedHatAfterHoleSec = eventTimeSec;
+            }
             else
             {
+                const double periodSec = 60.0 / static_cast<double> (bpm);
                 const double offLast = std::fabs (beats - std::round (beats));
-                acceptedByCurrentGrid = true;
-                if (offLast > 0.5 - kOnGridTolerance
+                const bool hatJustRefused = refusedHatAfterHoleSec >= 0.0
+                                         && eventTimeSec >= refusedHatAfterHoleSec
+                                         && eventTimeSec - refusedHatAfterHoleSec <= periodSec;
+                if (hatJustRefused
+                    && offLast > 0.5 - kOnGridTolerance
                     && offLast < 0.5 + kOnGridTolerance
                     && gridAnchorSec >= 0.0)
                 {
-                    const double periodSec = 60.0 / static_cast<double> (bpm);
+                    acceptedByCurrentGrid = true;
                     double shift = eventTimeSec - gridAnchorSec;
                     shift -= std::round (shift / periodSec) * periodSec;
                     gridAnchorSec += shift;
                     ++gridSerial;
                 }
+                refusedHatAfterHoleSec = -1.0;
             }
         }
         // Syncopated snare-roll: crests ~0.87 of a beat off lastBeat still

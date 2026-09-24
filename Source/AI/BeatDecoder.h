@@ -570,6 +570,12 @@ private:
     // held tempo. Remember the reopen so that confirmation can refuse a
     // huge post-hole jump. The synthetic bank never sets sounding.
     double postHoleReopenSec = -1.0;
+    /** Time of a hat refused after a stale hole while the part is sounding.
+        The kick that follows within one beat, half a beat off the old
+        origin, may take the grid. A kick after an ordinary hole must not:
+        moving the anchor there is a phase jump and the clock closes it by
+        accelerating. -1 when no such hat is waiting. */
+    double refusedHatAfterHoleSec = -1.0;
     // Door D (live) and unknown Door B: keep aiming at that 4-beat
     // for kShortFit, including kit-gap !haveShort frames.
     float ioiTargetHoldBpm = 0.0f;
