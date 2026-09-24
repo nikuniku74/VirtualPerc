@@ -2050,7 +2050,8 @@ the eighth once (`pairedSubdivision`, stillOnEighth so it
 does not repeat). Mute when the four peaks' max low-band is
 <0.05: the synthetic click bank and every probe that omits
 `observe`'s fourth argument pass 0. Not
-`kCadenceCorrectionEnabled` (still off); 50-vs-100 is not
+the rejected bar-cadence corrector (removed in the 2026-09-24 cleanup);
+50-vs-100 is not
 this band (`rawBpm` is not >145). Product file/mixer already
 passes `LogSpectFeatures::lowBandEnergy`.
 
@@ -3555,9 +3556,9 @@ app implements a convention already: the reportable range (`kMinBpm = 50`, so
 `updateAutoOctave`.
 
 So: **do not try to "fix" the octave in the decoder.** The test that measured
-all of this is still in `BeatDecoder::observeMetricalCadence`, switched off by
-`kCadenceCorrectionEnabled = false`, with the numbers in the comment above the
-constant - it is there to be re-measured in one command, not to be turned on.
+all of this remains in `docs/HANDOFF_OCTAVE_50BPM.md` and the octave probe;
+the rejected `BeatDecoder::observeMetricalCadence` path was removed on
+2026-09-24 after staying disabled in the shipped build.
 Deciding this case needs something from outside the audio: TAP, or a manual
 ÷2/×2. Those controls were removed from the UI in item 15 as redundant with the
 auto path; this measurement says they were not redundant for this class of
@@ -4634,6 +4635,75 @@ build measures differently run to run.
 The remaining multi-second wait on a second file was the waveform scan: it read the whole asset on the message thread before `setSource`, so neither playback nor the restart began until that read finished. Playback and `notifyInputRestart` now run first. The scan uses a second stream, because the transport reader is already in its read-ahead thread and an MP3 reader has one shared position. The earlier "build the waveform before `setSource`" note solved that shared-reader race by blocking playback; this keeps the race closed without holding the new song.
 
 **Kept (2026-09-24), a hat does not place the quarter after a hole while the part is sounding.** On a direct feed, once the gap is at least `kGridStaleBeats` (2.5 quarters), a crest with no kick body is refused and its time is kept in `refusedHatAfterHoleSec`. The anchor moves onto the following kick only when that hat was refused and the kick arrives within one period, half a beat off the old origin. A kick after an ordinary hole does not move the anchor and is not force-accepted: that shift is a phase jump, and the clock was closing it by accelerating on passages that were already stable. The click bank never sets `sounding`, so this does not run there.
+
+**Direct-file audit (2026-09-24, no engine change).** On the current tree,
+`VPTests --tempo-step` is 14/0, `--tempo-slow` 10/0, `--phase-lock` 15/0,
+`--bar` 10/0, and `VPAlign --steps` and `--ramps` pass. The rebuilt
+`probe_motion_matrix --quick` is red: fixed 23.0/78.1 ms mean/p95,
+continuous 38.8/95.0 ms, step 30.3/125.1 ms, with 0 curvature proofs in
+both fixed and continuous material (`selettore curvatura: FAIL`). The
+`--product-direct` lane is also red at 22.4/72.1, 40.2/115.0 and
+34.9/145.3 ms respectively. This is a baseline failure, not evidence for
+loosening the curve gate.
+
+The full-engine `VPTrack --player` replay of the listener's FEEL file at
+44.1 kHz still publishes 132.19 BPM at 20 s and 133.22 at 30 s while the
+activation comb reads 102.74 and 102.92; it reaches the 104-BPM reference
+only around 46 s. The same path on EVERYTIME is near 123 BPM through 140 s,
+then publishes 127.72 at 152 s while the sounding clock is 129.83 and the
+fit trust is 0.46; the comb is on a competing 156-BPM level there. These are
+observations without an annotated beat grid, so neither excerpt licenses a
+new tempo or phase authority. `VPTests --ai`, accidentally removed by the
+latest hat-placement commit, was restored as a test-only selector. The
+restored route reached 11 failures in its first 426 output lines before its
+long end-to-end portion was stopped; this is a partial run, not a suite pass.
+
+**Broader loaded-file audit (2026-09-24, no engine change).** Four independent
+16-case known-grid offsets (0/16/32/48) give continuous-motion mean/p95 phase
+38.8/95.0, 46.9/101.1, 35.8/83.7 and 55.2/127.3 ms. The motion bridge has
+0 authority frames in the first three offsets and 183 in the fourth; none
+has authority on flat or step cases. The offset-0 selector failure is therefore
+part of a sparse-authority problem, not a single song threshold. On a fresh
+complete `VPTrack --player` replay of SPLENDIDA GIORNATA (44.1 kHz), the
+published tempo starts near 109, wanders around 107–110 and ends at 111.5.
+An independent 12 s tempogram with usable clarity reads about 106.9–109.7
+over the earlier windows. `prec.py` reports structure 3.23 and worst
+10 s peak movement 254.5 ms, but `hist.py` shows the peak repeatedly
+alternating between phase 0 and 0.5 while the clock tempo is continuous:
+this may be a kick/snare emphasis change and is not an annotated phase error.
+
+**Rejected: prevent the long-fit phase period from re-arming on the same
+frame as a hat/body hold.** `longFitPeriodHeld` is cleared for
+`kitBodyHolding || hatGridHolding`, then the existing `ioiClockLead` gate can
+set it again. A scratch known-grid bank with a sounding part and a hats-only
+section at 52–60 s reproduced 535 ioi-lead hat frames. Adding the hold to
+the re-arm gate left the normal offset-0 matrix byte-identical, but worsened
+the hats bank's continuous-motion mean/p95 **74.82/214.63 -> 75.35/217.76
+ms** and changed its fixed trace too. The one-line candidate was reverted.
+Do not call this an isolated logic fix without a stronger phase reference and
+a bank where the hats enter after varied real motion.
+
+**Dead cadence experiment removed (2026-09-24).** The direct-feed
+`observeDownbeatCadence` and `observeMetricalCadence` paths were behind the
+literal `kCadenceCorrectionEnabled = false`; the latter still updated an
+eight-bin histogram on every accepted beat, but neither could publish a
+metrical hint. The failed 50-versus-100/half-time experiment and its fixture
+remain described in `docs/HANDOFF_OCTAVE_50BPM.md` and `docs/TODO.md` item 1.
+The decoder's active kick/hat low- and high-band logic is unchanged. For the
+cleanup, `VPTrack --player --trace --until 65` on the loaded FEEL WAV was
+byte-identical through its 64 s sample rows; the 16-case-per-family offset-0
+known-grid motion CSV was also byte-identical (fixed 23.03/78.12,
+continuous 38.79/95.03, step 30.28/125.05 ms mean/p95). `VPTests`
+`--tempo-slow` 10/0, `--tempo-step` 14/0, `--phase-lock` 15/0,
+`--bar` 10/0 and `--new-input` 3/0 passed; `VPAlign --steps` and
+`--ramps` passed their gates. `VPTests --octave focused` is still red at
+4/6, including file and mixer 50/100 BPM audible-alignment cases. The
+motion selector still fails its curvature-proof gate at baseline. The
+musician also reports persistent levare on some songs. That may be a
+half-beat phase error while BPM is correct; the existing `offbeat-lock` test
+and hat-to-kick half-steal path already address a narrower case. Without a
+song-annotated quarter grid, an automatic half-beat phase flip on a hat-only
+passage is ambiguous and has not passed a global A/B gate.
 
 ## 9. Map: "I want to change X"
 

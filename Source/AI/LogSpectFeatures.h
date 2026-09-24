@@ -26,8 +26,8 @@ public:
     /** Mean of those bands in a frame from `popFrame`. Kick and snare have body
         down there; a hi-hat has almost none, and since the bands are
         log10(mag + 1) an empty low end reads as very nearly zero rather than as
-        a small negative number. What the metrical-level test in BeatDecoder is
-        built on: see observeMetricalCadence. */
+        a small negative number. BeatDecoder uses it to distinguish a kit-body
+        pulse from a hi-hat crest. */
     static float lowBandEnergy (const float* frame) noexcept;
 
     /** How many of the top bands count as "hi-hat, not kick". Index 120..135

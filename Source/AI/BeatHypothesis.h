@@ -148,12 +148,9 @@ struct BeatHypothesis
     float    combBpm     = 0.0f;
     bool     levelSettled = false;
 
-    /** A whole-octave correction supported by the bar cadence, rather than by
-        the beat activation alone. On a slow 4/4 track whose hi-hat eighths
-        have been read as beats, successive true downbeats are eight accepted
-        grid beats apart; at the right level they are four. Valid only after
-        two consecutive bar intervals agree, and currently produced only for
-        a direct/file feed where the downbeat curve is usable. */
+    /** Reserved diagnostic field. The bar-cadence octave experiment was
+        removed after it halved a correct 100 BPM half-time groove; the
+        decoder leaves this invalid. Kept for the existing probe format. */
     int      metricalOctaveHint = 0;
     bool     metricalOctaveHintValid = false;
 
