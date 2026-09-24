@@ -5463,6 +5463,29 @@ void BeatDecoder::updateTempo() noexcept
             }
             target = bringSlowFitCurrent (target);
             float rate = kRateAcquiring;
+            // A direct-file intro can acquire from a few guitar/hat peaks at
+            // the wrong rate. Before the comb has tested the slower octave,
+            // the ordinary path protects that first interval and waits for
+            // the long fit. Once an eight-beat fit and the independent comb
+            // agree closely at a non-octave rate, the provisional interval
+            // has no reason to keep that privilege. This only changes a
+            // pre-lock grid; a sounding part and settled levels keep their
+            // existing transition and octave guards.
+            const bool provisionalSourcesAgree = lineFeed && provisional
+                && intervalAcquired && ! sounding && ! tempo.levelSettled()
+                && combReady && haveShort && shortResidual < 0.04f
+                && combRawBpm > kMinBpm && bpm > kMinBpm
+                && std::fabs (std::log2 (shortFitBpm / combRawBpm))
+                       < std::log2 (1.025f)
+                && std::fabs (std::log2 (bpm / combRawBpm))
+                       < kOctaveThreshold;
+            if (provisionalSourcesAgree)
+            {
+                target = combRawBpm;
+                if (std::fabs (std::log2 (bpm / combRawBpm))
+                        > std::log2 (1.04f))
+                    rate = 1.0f;
+            }
             // Door B in unknown at kRateLive. A dirty 8-beat is not
             // required: the 406 ms tail is integrated rate while the
             // 8-beat is still clean and 3.5 beats late (t=43.5). The

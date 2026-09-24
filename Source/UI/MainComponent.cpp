@@ -2041,19 +2041,24 @@ void MainComponent::loadInternalTrack (juce::URL url)
         refreshOctaveButtons();
     }
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
-    trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
-                              reader->sampleRate, 2);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
     trackName = trackUrl.getFileName();
+    // The transport's read-ahead thread starts in setSource. Build the
+    // waveform first: both paths otherwise read the same AudioFormatReader
+    // concurrently, and an MP3 reader's stream position is shared.
     buildTrackWaveform();
+    trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
+                              reader->sampleRate, 2);
     selectFollowSource (vp::FollowSource::internalPlayer);
-    trackTransport.start();
     // A different file is a different input, not a drift of the one before it.
     // Without this the tracker keeps the lock of the previous song, and with
     // START still on the percussion plays the old tempo for as long as the
     // decoder defends it - measured at 8-20 s, or until STOP. This restarts
-    // the decoder over; the clock is not restarted. See docs/TODO.md item 3.
+    // the decoder over; the clock is not restarted. Queue the reset before
+    // playback starts so the new source cannot run through the old decoder
+    // epoch before the restart is requested. See docs/TODO.md item 3.
     engine.notifyInputRestart();
+    trackTransport.start();
     refreshInternalTrackButtons();
     relayoutSettings();
     if (settingsOverlay.isVisible())

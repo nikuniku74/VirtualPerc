@@ -4498,6 +4498,31 @@ guards an abrupt weak-peak
 confirmation; the later EVERYTIME live-fit/phase excursion at ~141–160 s is a
 separate unresolved failure described above.
 
+**EVERYTIME loaded-file intro, later listener report (2026-09-24; read-only
+comparison).** A screenshot from the listener's updated iPad build, using
+CARICA/PLAY, shows 165.4 BPM near the start of the guitar and hi-hat intro,
+with `CERCO` and `livello provvisorio`. In this pre-lock state the main BPM
+comes directly from the decoder's neural hypothesis, not the follower glide.
+The listener says the estimate recovers slowly after the kit enters. The
+existing full-engine desktop replays of the same MP3 converted
+to WAV do **not** reproduce that onset: both 44.1 and 48 kHz publish about 119–120
+BPM at 1.6 s. The 48 kHz replay then drifts to about 114–117 while the comb
+already reads about 123–124 at 5–8 s; a rhythm entrance resets analysis near
+8.9 s and the published BPM reaches about 122.3 by 10.7 s. Thus the trace
+supports slow recovery of a provisional intro estimate, but does not reproduce
+the device's 165.4-BPM onset. Do not tune a 165 threshold against this replay.
+CARICA/PLAY's message-thread load had started transport before queuing the
+new-input epoch; the order is now reversed so playback cannot start before
+the restart request. Also, `buildTrackWaveform` used to read the same
+`AudioFormatReader` as `AudioTransportSource` *after* `setSource` had started
+JUCE's read-ahead thread; building the waveform before `setSource` now keeps
+those reads sequential. The transport's own `prepareToPlay` starts the
+buffering client during `setSource`, so transport not yet playing did not make
+the old order safe. These ordering fixes are not a measured solution to the
+device-only 165.4 reading. No probe or test was run in this turn at the
+listener's request. A future device trace needs source, gain, octave mode,
+neural/comb BPM and analysis epoch from the first seconds.
+
 **Late fill and bar-count guard (2026-09-24; implementation only, not
 verified at the listener's request).** The existing full-engine 44.1 kHz
 trace at t=141–153 s shows the long fit initially near 123 while the live
