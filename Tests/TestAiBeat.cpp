@@ -266,10 +266,10 @@ namespace
         /** One beat missing from the curve a few beats before the change, so one
             accepted interval spans two beats. */
         skippedBeat,
-        /** No tempo change at all: two reflection-quiet maxima, evenly spaced at
-            a period well off the committed one, standing in a gap between beats
-            that stayed loud. Everything about the pair except its level says
-            "tempo change". */
+        /** No tempo change at all: two quiet maxima from a reflection or fill,
+            evenly spaced at a period well off the committed one, standing in a
+            gap between beats that stayed loud. Everything about the pair except
+            its level says "tempo change". */
         weakEvidence
     };
 
@@ -3299,21 +3299,25 @@ void vpRunAiBeatTests (int& passed, int& failed)
                          : "a swallowed beat does not blind the microphone detector to the next step");
         }
 
-        // Through a microphone the room supplies quiet local maxima all the
-        // time, and two of them happening to be evenly spaced is the one way
-        // this detector can be talked into a tempo nobody played. Testing that
-        // against the absolute threshold proved nothing: the peak gate already
-        // requires it, so the condition could never fail. What separates a
-        // reflection from a beat is how loud it is beside the beats around it,
-        // and the tempo here never moves - so a confirmation is a tempo the
-        // room invented.
-        const auto weak = runDecoderStep (120.0f, 120.0f, false, StepAnomaly::weakEvidence);
-        std::printf ("tempo-step room weak-evidence  rapid=%d  bpm=%.1f\n",
-                     weak.rapidCount, static_cast<double> (weak.bpmLate));
-        expect (weak.rapidCount == 0,
-                "a reflection-quiet pair cannot confirm a tempo transition through a microphone");
-        expect (std::fabs (weak.bpmLate - 120.0f) <= 1.0f,
-                "and the grid it could not move is still on the tempo being played");
+        // A quiet pair inside a loud groove can be room reflections or a
+        // direct-file drum fill. The absolute peak gate accepts both; the
+        // relative strength of the surrounding beats distinguishes them from
+        // a new pulse. EVERYTIME at 48 kHz exposed the direct-file case: the
+        // third peak of a false 123 -> 130 confirmation was 0.498 against a
+        // 0.948 recent median, while the comb stayed near 123.
+        for (const bool line : { true, false })
+        {
+            const auto weak = runDecoderStep (120.0f, 120.0f, line,
+                                              StepAnomaly::weakEvidence);
+            std::printf ("tempo-step %s weak-evidence  rapid=%d  bpm=%.1f\n",
+                         line ? "line" : "room", weak.rapidCount,
+                         static_cast<double> (weak.bpmLate));
+            expect (weak.rapidCount == 0,
+                    line ? "a quiet direct-file fill cannot confirm a tempo transition"
+                         : "a reflection-quiet pair cannot confirm a tempo transition through a microphone");
+            expect (std::fabs (weak.bpmLate - 120.0f) <= 1.0f,
+                    "the weak pair leaves the counted tempo intact");
+        }
     }
 
     // The same bar, with the analysis starved on purpose.

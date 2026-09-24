@@ -201,6 +201,10 @@ private:
     bool directTempoDirectionGuard = false;
     bool directLivePhaseFollow = false;
     float directLiveSteer = 0.0f;
+    /** Once a locked tempo error exceeds 2 BPM the fast glide stays until the
+        error is back under half a BPM. The tail of a real step is not wobble.
+        A wander that never crosses 2 BPM keeps the slow glide. */
+    bool tempoGlideFast = false;
     bool beatGapHold = false;
     int gapSteerGuardBeats = 0;
     bool tempoMotionHint = false;

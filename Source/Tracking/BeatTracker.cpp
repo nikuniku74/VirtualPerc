@@ -723,12 +723,15 @@ void BeatTracker::notifyBarReentry (bool fromPause) noexcept
     // levare as the one. A seek still may land anywhere.
     barReentryHalfOnly = fromPause && barTrustEstablished;
 
-    // Pre-cut votes are about a numbering the hole has just made wrong.
-    // Leaving them would take eight bars of playing decay before the new
-    // 1 could win, which is the wait this window exists not to make.
+    // Pre-cut votes cannot describe the first new accents after a cut.
+    // Clear their histogram, but preserve an already trusted count across an
+    // ordinary pause. Clearing that latch used to reopen quarter rotations
+    // as soon as the short reentry window expired, even though nothing had
+    // established that the one had changed. A seek starts a new count.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
     voteBeats = 0.0f;
-    barTrustEstablished = false;
+    if (! fromPause)
+        barTrustEstablished = false;
     std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
     harmonyVoteCount = 0.0f;
     downbeatHoldSamples = 0;
@@ -900,19 +903,24 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         if (bestVotes < runnerUp + kBarWinMarginPlaying + extraMargin
             || downbeatHoldSamples > 0)
             return false;
-        // Once the one is trusted, a one-quarter move from the network swaps
-        // the battere and the levare under a part that was already on the
-        // beat. Half a bar is still allowed: that is the 1-vs-3, and it
-        // still has to clear this margin over the long count. The harmony
-        // is a different source and is not held to this; the button places
-        // the one when the network is simply on the wrong quarter.
-        if (barTrustEstablished && best != 2 && votes == downbeatVotes)
+        // Once the one is trusted, neither automatic source may move it by a
+        // quarter while the part is playing. The old exception for harmony
+        // let a chord change renumber 1 as 2 even though the network was
+        // forbidden to make that same move. A half-bar correction still has
+        // to clear the playing margin; the listener can place any quarter
+        // explicitly with the bar button.
+        if (barTrustEstablished && best != 2)
             return false;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
 
     follower.rotateBarIndex (-best);
     ++barRotations;
+    // The same evidence that was strong enough to place the one establishes
+    // it, including when harmony answered because the network could not.
+    // Otherwise the next chord change could move that newly placed one by
+    // another quarter before neural votes ever happened to trust it.
+    barTrustEstablished = true;
     // One rotation per return. Leaving the window open would let a second
     // plurality in the same four bars trade the one back.
     if (barReentrySamples > 0)

@@ -3586,10 +3586,11 @@ Then, and only then:
   decoder's uncertainty as if it were the band moving.
 - `TempoFollower::snapPhase(phase, keepBarInStep)` - a re-anchor. Use only when
   the grid is genuinely somewhere else. `keepBarInStep` decides what happens to
-  the *count* when the move crosses a beat boundary: **true while silent** (the
-  bar the part will enter on has to be the song's bar), **false while sounding**
-  (moving the count under a listener is "one, two, one" and is not worth a few
-  milliseconds - `BeatTracker.cpp:1407` passes `! sounding` for exactly this).
+  the *count* when the move crosses a beat boundary. The tracker passes **true
+  both while silent and while sounding**: a sounding snap is capped at 0.20
+  beat, and leaving the count behind after a boundary crossing silently moved
+  the one by a quarter. The re-anchor is reserved for a displaced grid; an
+  ordinary correction stays in the monotonic phase servo.
 
 **Never take the beat's position from a single onset.** See
 `docs/CORE_TIMING_AUDIT.md`. The fits carry the phase through their *intercept*,
@@ -3696,17 +3697,22 @@ do not establish performance on a real mixer or microphone.
 
 A PLL on the audio thread. Two knobs behave differently and both matter:
 
-**Rate glide** (`TempoFollower.cpp:423`). Acquisition and playing are different
-jobs:
+**Rate glide** (`TempoFollower::advanceSegment`). Acquisition and playing are
+different jobs:
 
 ```
-locked    : tau = 0.22 s if |err| <= 2.5 BPM, else 0.28 s
 not locked: tau = 0.045 s if |err| <= 1.2 BPM, else 0.18 s
+locked,    |err| <= 2 BPM and no larger move still closing: tau = 1.60 s
+locked,    |err| > 2 BPM, the tail of that move until |err| < 0.5 BPM,
+           a proved curve, or a confirmed transition: tau = 0.28 s
 ```
 
-Sounding, the decoder's ~6 Hz refresh must not be heard as six tiny
-accelerations a second. A real tempo move still crosses the wider branch and
-closes in well under a second. Tempo is clamped 40..220 BPM and *settles*
+Sounding, a wobble under 2 BPM must not be heard as the clock accelerating
+and braking. The old 0.22 s branch adopted that wobble faster than a real
+move. The slow path still adopts — it is not a freeze. A move past 2 BPM
+keeps the 0.28 s glide until it is within half a BPM, so the tail of a real
+step is not reclassified as wobble. A proved curve and a confirmed transition
+do too. Tempo is clamped 40..220 BPM and *settles*
 (snaps) within 0.02 BPM so `currentTempo()` reads as a round number.
 
 **Phase steering** by `FollowStrength` (`TempoFollower.cpp:524`, inside the
@@ -4467,6 +4473,60 @@ rhythmic cue/beat-grid and a diverse fill/bridge control bank, not weaker
 release or slower global phase following. `VPTrack --trace` now exposes clock,
 target, trim, phase error, trust and recovery count; the known-grid matrix has
 an optional `--product-direct` A/B lane. Its default hashes remain the control.
+
+**EVERYTIME early abrupt jump (2026-09-24).** The listener marked the playhead
+around 42% of the 189.2 s waveform, before the pause. The old 44.1 kHz replay
+was steady near 123 BPM there, but resampling the same WAV to 48 kHz reproduced
+the iPad-like event: at t=71.52 s the direct-feed interval detector confirmed
+123.02 -> 130.26 BPM in one publication, and the heard clock reached 136.72
+BPM at 71.9 s. The activation comb stayed at 123.20 with salience 1.00.
+The three candidate strengths were 0.827/0.801/0.498 against a recent median
+of 0.948; the third peak was a weak fill/tom-like onset. `lineFeed` exempted
+this path from the existing 0.70 x median beat-strength gate, despite the
+same rule already protecting room input. Applying that gate to both paths
+eliminates the false transition: on the 48 kHz full-engine replay, t=70–90 s
+published BPM spans 123.01–123.25 and the clock peaks at 123.66, versus
+123.12–131.62 and 136.72 before. No song BPM or timestamp enters production.
+The 16-case quick known-grid matrix is byte-identical with and without the
+change in both the default and `--product-direct` lanes; `VPAlign --steps` and
+`--ramps` pass, and `VPTests --tempo-step` is 14/0. The TAP suite also exercises
+a quiet pair on direct feed as well as room. A partial full TAP run reached 13
+failures whose assertion texts all occur in the earlier
+`/tmp/vp-everytime/vptests.log`; it was stopped during the long ONNX phase-lock
+section after the focused gates passed, so it is not a full-suite pass. This
+guards an abrupt weak-peak
+confirmation; the later EVERYTIME live-fit/phase excursion at ~141–160 s is a
+separate unresolved failure described above.
+
+**Late fill and bar-count guard (2026-09-24; implementation only, not
+verified at the listener's request).** The existing full-engine 44.1 kHz
+trace at t=141–153 s shows the long fit initially near 123 while the live
+target rises through 125–130, fit trust is frequently 0.30, and the
+clock-minus-analysis phase error reaches -0.201 beat. The clock reaches
+about 130 BPM at t=152.4 while the published number is 128.08. This is a
+phase-loop contribution on top of a false-looking live fit, not proof that
+the recording changed tempo. `TempoFollower` now withholds the direct-live
+phase-trust override only when the raw displacement exceeds 0.06 beat,
+fit trust is below 0.50, and neither proved motion nor a confirmed
+transition/recovery owns the correction. The existing poor-evidence lean
+limit of 0.020 beat then applies even when the raw displacement exceeds
+`kLeanIsElsewhere`; small direct-feed corrections keep their former path.
+This is narrower than the previously rejected blanket removal of direct-live
+phase trust. It prevents weak fill evidence from spending a large phase debt
+as audible acceleration; it does not certify the decoder's BPM estimate, so
+the late false live-fit climb may still require independent rhythmic evidence.
+Do not claim a measured improvement until a replay is permitted.
+
+A second route to an audible 1→2 slip existed independently of BPM: after a
+trusted bar survived a pause, `notifyBarReentry` cleared the trust latch,
+allowing a quarter rotation after its short half-bar-only window expired.
+While sounding, `tryAlignFrom` also exempted harmony from the trusted-bar
+quarter guard. Preserve the latch across a pause (clear it on seek), and
+apply the quarter guard to both automatic sources. A successful automatic
+placement now establishes the count even when harmony was the source; otherwise
+the next chord change could move its newly placed one again. An explicit bar-button
+press can still place any quarter; a supported half-bar correction remains
+automatic. These edits have not been tested or listened to in this turn.
 
 `scripts/probe_tempo.cpp` has no CMake target of its own; build any probe source
 ad hoc with `VP_STYLE_SRC=scripts/probe_tempo.cpp VP_PROBE_DIR=scripts` and the

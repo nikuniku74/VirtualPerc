@@ -187,6 +187,7 @@ void TempoFollower::reset() noexcept
     directTempoDirectionGuard = false;
     directLivePhaseFollow = false;
     directLiveSteer = 0.0f;
+    tempoGlideFast = false;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     tempoMotionHint = false;
@@ -203,6 +204,7 @@ void TempoFollower::resetClock() noexcept
     cancelPhaseRecovery();
     directLivePhaseFollow = false;
     directLiveSteer = 0.0f;
+    tempoGlideFast = false;
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     phase = 0.0;
@@ -734,7 +736,22 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     // follower controls; it neither changes the decoded target nor survives
     // loss of full shape authority.
     const float controlTrust = tempoMotionProven ? 1.0f : tempoTrust;
-    const float phaseControlTrust = (tempoMotionProven || directLivePhaseFollow)
+    constexpr float kFarTarget = 0.06f;
+    // A live line feed normally gets the responsive phase loop even when its
+    // fit is temporarily rough. A *large* displacement on a rough
+    // fit is different: through a fill the accepted tom/snare crests can walk
+    // away from the counted quarter, and giving that observation full phase
+    // authority makes the clock accelerate to catch a beat the band never
+    // moved. A proved tempo curve or an explicit transition/recovery keeps its
+    // own authority. Small corrections retain the direct-live response.
+    const bool dubiousDirectPhase = directLivePhaseFollow && ! tempoMotionProven
+                                    && tempoTrust < kTrustToSetRate
+                                    && transitionSamplesRemaining <= 0
+                                    && phaseRecoverySamplesRemaining <= 0
+                                    && havePhaseTarget
+                                    && std::fabs (phaseTarget) > kFarTarget;
+    const float phaseControlTrust = (tempoMotionProven
+                                     || (directLivePhaseFollow && ! dubiousDirectPhase))
                                         ? 1.0f : tempoTrust;
     recoveryCooldownSamples = std::max (0, recoveryCooldownSamples - numSamples);
     recoveryAgeSamples = std::min (recoveryAgeSamples + numSamples, static_cast<int> (sampleRate * 30.0));
@@ -762,14 +779,22 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
 
     // Acquisition and playing are deliberately different jobs. Before the
     // first stroke there is nothing to disturb, so take a credible new rate
-    // quickly. Once the part is sounding, the decoder's roughly 6 Hz refresh
-    // must not be heard as six tiny accelerations a second: a player holds the
-    // pulse and lets phase correction deal with the small timing differences.
-    // A real, sustained tempo move still crosses the wider branch and closes in
-    // well under a second; only the sub-2.5 BPM wobble is given more inertia.
-    const float glide = locked
-                            ? (std::fabs (err) <= 2.5f ? 0.22f : 0.28f)
-                            : (std::fabs (err) <= 1.2f ? 0.045f : 0.18f);
+    // quickly. Once the part is sounding, a wobble under 2 BPM is averaged over
+    // about a second and a half. The old 0.22 s constant adopted that wobble
+    // faster than a real move, which is the clock accelerating and braking
+    // for seconds on an analysis that has not gone anywhere. A move past 2 BPM
+    // keeps 0.28 s until it is within half a BPM, so the tail of a real step
+    // is not reclassified as wobble and still lands inside a second. A
+    // proved curve and a confirmed transition do too. This is not a freeze:
+    // the slow path still adopts, and a real accelerando grows past 2 BPM.
+    const float absErr = std::fabs (err);
+    if (absErr > 2.0f)
+        tempoGlideFast = true;
+    else if (absErr < 0.5f)
+        tempoGlideFast = false;
+    const float glide = ! locked ? (absErr <= 1.2f ? 0.045f : 0.18f)
+                                 : ((rapidTransition || tempoMotionProven || tempoGlideFast)
+                                        ? 0.28f : 1.60f);
 
     // Floored while the beats the tempo was fitted through are worse placed
     // than this song's own - which is what a passage with the drummer out looks
@@ -814,7 +839,6 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // noise does not hold a sign across them. After that the target is
         // adopted about as fast as it is far, and the slow average goes back to
         // being the slow average as soon as the gap closes.
-        constexpr float kFarTarget = 0.06f;
         const float gap = wrapCentered (phaseTarget - phaseErrEma);
         const bool sameWay = farTargetSign == 0
                              || gap * static_cast<float> (farTargetSign) > 0.0f;
@@ -854,7 +878,8 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // an offset is the one thing a low-pass cannot take out.
         const float poorLean = (1.0f - std::clamp (phaseControlTrust, kMinTempoTrust, 1.0f))
                                / (1.0f - kMinTempoTrust);
-        if (poorLean > 0.0f && std::fabs (phaseTarget) < kLeanIsElsewhere)
+        if (poorLean > 0.0f
+            && (std::fabs (phaseTarget) < kLeanIsElsewhere || dubiousDirectPhase))
         {
             const float lim = kPoorLeanBeats
                               + (1.0f - poorLean) * (kLeanIsElsewhere - kPoorLeanBeats);

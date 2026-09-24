@@ -2245,13 +2245,12 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
                                     ? 0.5f * std::fabs (first - interval) / mean
                                     : 1.0f;
 
-        // Through a microphone, also insist the peaks were really peaks.
-        //
-        // A room supplies quiet local maxima all the time - a chair, a
-        // reflection, the tail of the last stroke - and two of those happening
-        // to be evenly spaced is the one way this detector can be talked into a
-        // tempo nobody played. A line feed has no such supply and is not charged
-        // for it.
+        // An abrupt change needs beat-strength peaks on both input paths. A
+        // direct file has no room reflections, but a fill can still put a
+        // quieter tom or ghost on the beat lattice. On EVERYTIME at 48 kHz the
+        // false 123 -> 130 confirmation's third peak was 0.498 against a 0.948
+        // recent median, while the activation comb stayed at 123. The prior
+        // direct-feed exemption let that weaker peak confirm the change.
         //
         // Measuring that against `beatThresh` alone, as this first did, tested
         // nothing: a peak only reaches here by clearing `beatThresh` in the
@@ -2263,10 +2262,9 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
         const float strengthFloor = std::max (beatThresh,
                                               kTransitionStrengthFraction
                                                   * recentBeatStrengthMedian());
-        const bool strongEnough = lineFeed
-                                  || (strength >= strengthFloor
-                                      && prevStrength >= strengthFloor
-                                      && transitionFirstStrength >= strengthFloor);
+        const bool strongEnough = strength >= strengthFloor
+                                  && prevStrength >= strengthFloor
+                                  && transitionFirstStrength >= strengthFloor;
 
         // And the change has to survive being measured properly. What opened
         // the candidate was one interval against the committed period, which is
