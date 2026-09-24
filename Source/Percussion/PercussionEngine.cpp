@@ -890,7 +890,11 @@ namespace
     // every song. Hold the strokes back by it. The clock is not moved: the
     // lead still lines a slap up with a shaker, and this only parks the pair
     // on the beat instead of just before it.
-    constexpr double kHeardEarlyHoldSec = 0.008;
+    // 8 ms left the 120 BPM energy about 1 ms early, and the attack the ear
+    // locks onto is still a few milliseconds before that. 12 ms parks the
+    // measured +9.1 ms residual a few milliseconds late instead. The clock
+    // is not moved.
+    constexpr double kHeardEarlyHoldSec = 0.012;
 
     /** Where a recording is heard as starting, in samples from its first.
         Taken at the point the energy envelope first reaches a large fraction of
