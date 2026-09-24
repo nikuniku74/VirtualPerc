@@ -336,12 +336,15 @@ namespace
         const auto col = mag < 0.42f ? green.interpolatedWith (amber, mag / 0.42f)
                                      : amber.interpolatedWith (red, (mag - 0.42f) / 0.58f);
 
-        // The rail runs from ÷2 to ×2. Lead −1 sits on the left button,
-        // +1 on the right; on the pulse the dot is in the middle.
-        const float travel = juce::jmax (0.0f, lane.getWidth() * 0.5f - 6.0f);
+        // The rail runs from ÷2 to ×2, pulled in a tenth so the extremes
+        // sit inside the buttons rather than on them. On the pulse the
+        // dot is in the middle.
+        const float travel = juce::jmax (0.0f, (lane.getWidth() * 0.5f - 6.0f) * 0.90f);
         const float cx = lane.getCentreX() + lead * travel;
         const float cy = lane.getCentreY();
-        const float r = juce::jlimit (3.5f, 7.0f, lane.getHeight() * 0.055f);
+        // The lane is 14 px tall. Half of that is a 7 px disc, twice the
+        // 3.5 px one: the old factor never left the 3.5 floor.
+        const float r = juce::jlimit (7.0f, 14.0f, lane.getHeight() * 0.5f);
 
         auto bloom = [&] (float radius, float a)
         {
@@ -3835,7 +3838,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                                     : rows.octaveDown.getX();
         const int right = rows.octaveUp.isEmpty() ? rows.bpm.getRight()
                                                    : rows.octaveUp.getRight();
-        const float y = static_cast<float> (rows.bpm.getY()) - 14.0f;
+        // The disc is twice as tall as before, so the lane sits higher
+        // and the ball stays clear of the digits.
+        const float y = static_cast<float> (rows.bpm.getY()) - 18.0f;
         paintTempoOrb (g,
                        { static_cast<float> (left), y,
                          static_cast<float> (right - left), 14.0f },
