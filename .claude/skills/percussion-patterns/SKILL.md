@@ -419,6 +419,10 @@ were playing.
   measured `.attack` and the same hold against the kit lead, with a sharp
   beater at sample 0 so the audible open sits on the quarter. Do not fix
   early drums by moving the clock.
+  The click bench still sits early after that lead is subtracted (+9.1 ms at
+  120 BPM). `kHeardEarlyHoldSec` (8 ms) delays every stroke by that remainder
+  so the pair lands on the beat. It is not a tempo change and it does not
+  change how far a slap waits for a shaker.
 - **Voices**: `kVoices = 16`. A stolen voice is faded out over a few
   milliseconds, never switched off - cutting a sounding grain is a step, and a
   step is a click. `hardSteals()` counts thefts from still-sounding voices and

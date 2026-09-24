@@ -884,6 +884,14 @@ namespace
     /** Ceiling on the attack compensation. */
     constexpr double kMaxAttackLeadSec = 0.025;
 
+    // After the attack lead is subtracted, the click bench still hears the
+    // kit early: +4.8 / +2.5 / +9.1 ms at 78 / 100 / 120 BPM. That remainder
+    // is what a listener hears as every stroke a few milliseconds early on
+    // every song. Hold the strokes back by it. The clock is not moved: the
+    // lead still lines a slap up with a shaker, and this only parks the pair
+    // on the beat instead of just before it.
+    constexpr double kHeardEarlyHoldSec = 0.008;
+
     /** Where a recording is heard as starting, in samples from its first.
         Taken at the point the energy envelope first reaches a large fraction of
         the peak it will reach inside the attack window - not the first sample
@@ -1304,7 +1312,8 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
     // the bank and its own, so a slap and a shaker started for the same beat are
     // *heard* together instead of eleven milliseconds apart. The clock supplies
     // the matching lead, so the pair lands on the beat rather than after it.
-    const int hold = std::max (0, bankAttackLead - s.attack);
+    const int heardHold = static_cast<int> (sampleRate * kHeardEarlyHoldSec);
+    const int hold = std::max (0, bankAttackLead - s.attack) + heardHold;
 
     auto& v = allocateVoice();
     v.stroke = stroke;
