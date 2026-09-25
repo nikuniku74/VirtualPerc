@@ -537,7 +537,9 @@ private:
     bool debugOpen = false;
     bool darkMode = true;
     bool themeFollowsSystem = true;
-    bool audioReady = false;
+    /** Written by JUCE's device lifecycle and read by the message-thread
+        watchdog. A plain bool made the recovery decision a data race. */
+    std::atomic<bool> audioReady { false };
     /** Last layout pass. Enter compact below 560×680; leave only once the
         window is clearly large enough (600×740) so a Split View drag does not
         rebuild the page every pixel. */

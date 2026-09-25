@@ -3192,8 +3192,10 @@ void MainComponent::timerCallback()
         // same cooldown, it also means plugging the cable back in brings the
         // sound back without touching anything.
         const uint32_t now = audioBlocks.load (std::memory_order_relaxed);
-        const bool haveDevice = deviceManager.getCurrentAudioDevice() != nullptr;
-        const bool moving = haveDevice && audioReady && now != seenAudioBlocks;
+        auto* device = deviceManager.getCurrentAudioDevice();
+        const bool haveDevice = device != nullptr;
+        const bool playing = haveDevice && device->isPlaying();
+        const bool moving = playing && audioReady && now != seenAudioBlocks;
 
         if (moving)
         {
@@ -3223,6 +3225,15 @@ void MainComponent::timerCallback()
             // reopen itself after a second.
             if (++stalledTicks >= 12)
                 rebuildAudioDevice ("device open but never prepared");
+        }
+        else if (haveDevice && ! playing)
+        {
+            // RemoteIO may reject a restart after an iOS interruption. Its
+            // callback count can still look recent; the device itself knows
+            // that it is no longer playing. Allow transient route changes a
+            // second before replacing the failed unit.
+            if (++stalledTicks >= 12)
+                rebuildAudioDevice ("audio device stopped after interruption");
         }
         else
         {

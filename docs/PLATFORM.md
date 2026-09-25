@@ -197,6 +197,18 @@ The settings page counts them under **STATO / riavvii**. It should read 0. A
 number that climbs on its own is a rig losing its audio device repeatedly, and
 the rebuild is papering over it rather than fixing it.
 
+With AirPods, an iPad window move or the document picker can also interrupt the
+audio session without stopping the file transport: the playhead advances while
+RemoteIO produces no audible output. JUCE's local iOS patch had stopped
+reactivating the session on `AVAudioSessionInterruptionTypeEnded` to avoid the
+click caused by redundant activation on ordinary route notifications. It now
+reactivates and starts RemoteIO only on an actual interruption end. If that
+start fails, the device reports itself stopped and the existing watchdog builds
+a fresh unit after one second. The watchdog's prepared flag is atomic because
+JUCE's device lifecycle and the message-thread timer use different threads.
+The OS interruption itself may still make a short gap; recovery must not leave
+the file playing silently until the listener changes 44.1/AUTO.
+
 The category is `AVAudioSessionCategoryPlayAndRecord` with `MixWithOthers`, `DefaultToSpeaker`, `AllowBluetoothA2DP` and `AllowAirPlay`. `MixWithOthers` is what lets the track being played along to keep playing; HFP Bluetooth is deliberately absent, because that route is 8-16 kHz and makes everything mixed through it sound slow and crushed.
 
 The background-audio entitlement is for an armed live performance, not for idle

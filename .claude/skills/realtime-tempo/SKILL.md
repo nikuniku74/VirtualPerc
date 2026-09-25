@@ -4801,8 +4801,16 @@ this narrowly corroborated pre-lock case. This does not establish the cause
 of every mid-song STOP improvement: a wrong phase or octave after a settled
 lock takes different guarded paths. The trace now reports `level` alongside
 `nn`, `clock`, `phaseErr`, `queueMs` and `audible` to distinguish them. No test
-or device measurement has yet been run on this change, per the listener's
-instruction to reserve tests for the end and obtain confirmation.
+or device measurement had been run on this change at that point, per the
+listener's instruction to reserve tests for the end and obtain confirmation.
+
+Follow-up (2026-09-25): `VPTests --state-timing` passed its new-file and
+bar-hold checks, `--new-input` passed 15/0, and the real ONNX `--phase-lock`
+passed 15/0 at 78/100/120/138/156 BPM. These do not isolate the provisional
+short-fit/comb correction *while sounding* or establish why a particular
+mid-song STOP/START improves alignment. The full host suite was stopped after
+unrelated existing failures (phase-steer noise, slow-level, conga patterns,
+attack alignment); do not cite it as a green gate for a new phase policy.
 
 ## 9. Map: "I want to change X"
 
