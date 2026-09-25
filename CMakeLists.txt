@@ -223,7 +223,7 @@ else()
     message (STATUS "No Assets/Percussion/*.wav - percussion falls back to synthesis")
 endif()
 
-# One-shot hits (absorb, reggae horn). WAV, not MP3: the audio thread
+# One-shot hits (absorb, reggae horn, uplifter fx, riser). WAV, not MP3: the audio thread
 # only reads the decoded buffer, and the MP3 decoder stays off.
 file (GLOB VP_HIT_SAMPLES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Hits/*.wav")

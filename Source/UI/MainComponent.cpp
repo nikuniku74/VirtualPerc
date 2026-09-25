@@ -1094,14 +1094,28 @@ MainComponent::MainComponent()
     setupFader (hornVolSlider, hornHitLabel, hornHitValue, "HORN",
                 0.0, 1.0, 1.00,
                 [this] (float v) { hitVoices[1].gain.store (v, std::memory_order_relaxed); });
+    setupFader (uplifterVolSlider, uplifterHitLabel, uplifterHitValue, "UPLIFTER FX",
+                0.0, 1.0, 1.00,
+                [this] (float v) { hitVoices[2].gain.store (v, std::memory_order_relaxed); });
+    setupFader (riserVolSlider, riserHitLabel, riserHitValue, "RISER 2",
+                0.0, 1.0, 1.00,
+                [this] (float v) { hitVoices[3].gain.store (v, std::memory_order_relaxed); });
     absorbVolSlider.getProperties().set ("voiceOnFill", true);
     absorbVolSlider.getProperties().set ("hitLit", false);
     absorbVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff8a1a));
     hornVolSlider.getProperties().set ("voiceOnFill", true);
     hornVolSlider.getProperties().set ("hitLit", false);
     hornVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff2a4a));
+    uplifterVolSlider.getProperties().set ("voiceOnFill", true);
+    uplifterVolSlider.getProperties().set ("hitLit", false);
+    uplifterVolSlider.setColour (juce::Slider::rotarySliderFillColourId, fuchsia());
+    riserVolSlider.getProperties().set ("voiceOnFill", true);
+    riserVolSlider.getProperties().set ("hitLit", false);
+    riserVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xff9b6bff));
     absorbVolSlider.onTap = [this] { hitVoices[0].request.fetch_add (1, std::memory_order_release); };
     hornVolSlider.onTap = [this] { hitVoices[1].request.fetch_add (1, std::memory_order_release); };
+    uplifterVolSlider.onTap = [this] { hitVoices[2].request.fetch_add (1, std::memory_order_release); };
+    riserVolSlider.onTap = [this] { hitVoices[3].request.fetch_add (1, std::memory_order_release); };
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -2554,6 +2568,14 @@ void MainComponent::loadPrefs()
     hitVoices[1].gain.store (hornVol, std::memory_order_relaxed);
     setFader (hornVolSlider, hornHitValue, hornVol);
 
+    const float uplifterVol = clamp01 (prefs->getDoubleValue ("uplifterVolume", 1.00), 1.00);
+    hitVoices[2].gain.store (uplifterVol, std::memory_order_relaxed);
+    setFader (uplifterVolSlider, uplifterHitValue, uplifterVol);
+
+    const float riserVol = clamp01 (prefs->getDoubleValue ("riserVolume", 1.00), 1.00);
+    hitVoices[3].gain.store (riserVol, std::memory_order_relaxed);
+    setFader (riserVolSlider, riserHitValue, riserVol);
+
     const float inGain = juce::jlimit (0.0, 4.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
     inputGainSlider.setValue (inGain, juce::dontSendNotification);
@@ -2677,6 +2699,10 @@ void MainComponent::savePrefs (bool flush)
                      static_cast<double> (hitVoices[0].gain.load (std::memory_order_relaxed)));
     prefs->setValue ("hornVolume",
                      static_cast<double> (hitVoices[1].gain.load (std::memory_order_relaxed)));
+    prefs->setValue ("uplifterVolume",
+                     static_cast<double> (hitVoices[2].gain.load (std::memory_order_relaxed)));
+    prefs->setValue ("riserVolume",
+                     static_cast<double> (hitVoices[3].gain.load (std::memory_order_relaxed)));
     prefs->setValue ("inputGain",
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
@@ -2933,11 +2959,15 @@ void MainComponent::prepareHits (double sampleRate)
         voice.pos = 0;
     };
 
-    int absorbSize = 0, hornSize = 0;
+    int absorbSize = 0, hornSize = 0, uplifterSize = 0, riserSize = 0;
     const char* absorb = VpHitData::getNamedResource ("absorb_wav", absorbSize);
     const char* horn = VpHitData::getNamedResource ("reggae_horn_wav", hornSize);
+    const char* uplifter = VpHitData::getNamedResource ("uplifter_fx_wav", uplifterSize);
+    const char* riser = VpHitData::getNamedResource ("riser_2_wav", riserSize);
     load (hitVoices[0], absorb, absorbSize);
     load (hitVoices[1], horn, hornSize);
+    load (hitVoices[2], uplifter, uplifterSize);
+    load (hitVoices[3], riser, riserSize);
    #else
     juce::ignoreUnused (sampleRate);
    #endif
@@ -3223,6 +3253,10 @@ void MainComponent::timerCallback()
         hitVoices[0].sounding.load (std::memory_order_relaxed));
     hornVolSlider.getProperties().set ("hitLit",
         hitVoices[1].sounding.load (std::memory_order_relaxed));
+    uplifterVolSlider.getProperties().set ("hitLit",
+        hitVoices[2].sounding.load (std::memory_order_relaxed));
+    riserVolSlider.getProperties().set ("hitLit",
+        hitVoices[3].sounding.load (std::memory_order_relaxed));
     repaint();
 }
 
@@ -3441,62 +3475,45 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
 
 void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
 {
-    constexpr int nKnobs = 6;
+    constexpr int nKnobs = 8;
     juce::Label*  names[]   = { &shakerVolLabel,  &congaVolLabel,  &cembaloVolLabel,
-                                &clapVolLabel,    &absorbHitLabel,  &hornHitLabel };
+                                &clapVolLabel,    &absorbHitLabel,  &hornHitLabel,
+                                &uplifterHitLabel, &riserHitLabel };
     juce::Component* cells[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider,
-                                 &clapVolSlider,   &absorbVolSlider, &hornVolSlider };
+                                 &clapVolSlider,   &absorbVolSlider, &hornVolSlider,
+                                 &uplifterVolSlider, &riserVolSlider };
     auto placeKnob = [] (juce::Rectangle<int> col, juce::Label& name, juce::Component& s)
     {
         name.setVisible (false);
         s.setBounds (col);
     };
 
-    // A narrow column is tall for its width. Three across fills that height;
-    // four across stayed a short block in the middle and left the card empty.
-    if (body.getWidth() < 500 && body.getHeight() > 80)
+    // The disc is the short side of its cell. Three across makes that side
+    // wider, so it is the layout whenever a third row still leaves a bigger
+    // disc than two rows of four. A short card cannot spare that row: four
+    // across, and the discs shrink to the height that is left.
+    const int gap = 8;
+    const auto discFor = [&] (int across) noexcept
     {
-        const int gap = 8;
-        const int cols = 3;
-        const int colW = juce::jmax (1, body.getWidth() / cols);
-        const int rowH = juce::jmax (1, (body.getHeight() - gap) / 2);
-        auto placeRow = [&] (juce::Rectangle<int> row, int begin, int count)
-        {
-            row.removeFromLeft (juce::jmax (0, (row.getWidth() - colW * count) / 2));
-            for (int i = 0; i < count; ++i)
-                placeKnob (row.removeFromLeft (colW), *names[begin + i], *cells[begin + i]);
-        };
-        auto top = body.removeFromTop (rowH);
-        body.removeFromTop (juce::jmin (gap, body.getHeight()));
-        placeRow (top, 0, 3);
-        placeRow (body, 3, 3);
-    }
-    else
+        const int nRows = (nKnobs + across - 1) / across;
+        const int col = juce::jmax (1, body.getWidth() / across);
+        const int row = juce::jmax (1, (body.getHeight() - gap * (nRows - 1)) / nRows);
+        return juce::jmin (col, row);
+    };
+    const int perRow = discFor (3) >= discFor (4) ? 3 : 4;
+    const int rows = (nKnobs + perRow - 1) / perRow;
+    const int colW = juce::jmax (1, body.getWidth() / perRow);
+    const int rowH = juce::jmax (1, (body.getHeight() - gap * (rows - 1)) / rows);
+    for (int row = 0; row < rows; ++row)
     {
-    // Two rows of three make a bigger disc than six across,
-    // once the card is tall enough to hold them.
-    const int wideCol = juce::jmax (1, body.getWidth() / 3);
-    const int rowGap = 6;
-    const int oneSize = juce::jmax (1, juce::jmin (body.getWidth() / nKnobs, body.getHeight()));
-    const int twoSize = juce::jmin (wideCol, juce::jmax (1, (body.getHeight() - rowGap) / 2));
-    if (twoSize > oneSize && body.getHeight() >= twoSize * 2 + rowGap)
-    {
-        const int rowH = twoSize;
-        auto block = body.withSizeKeepingCentre (juce::jmin (body.getWidth(), wideCol * 3), rowH * 2 + rowGap);
-        auto top = block.removeFromTop (rowH);
-        block.removeFromTop (rowGap);
-        auto bottom = block.removeFromTop (rowH);
-        for (int i = 0; i < 3; ++i)
-            placeKnob (top.removeFromLeft (wideCol), *names[i], *cells[i]);
-        for (int i = 3; i < nKnobs; ++i)
-            placeKnob (bottom.removeFromLeft (wideCol), *names[i], *cells[i]);
-    }
-    else
-    {
-        const int knobColW = juce::jmax (1, body.getWidth() / nKnobs);
-        for (int i = 0; i < nKnobs; ++i)
-            placeKnob (body.removeFromLeft (knobColW), *names[i], *cells[i]);
-    }
+        const int begin = row * perRow;
+        const int count = juce::jmin (perRow, nKnobs - begin);
+        auto line = body.removeFromTop (rowH);
+        if (row + 1 < rows && body.getHeight() > 0)
+            body.removeFromTop (juce::jmin (gap, body.getHeight()));
+        line.removeFromLeft (juce::jmax (0, (line.getWidth() - colW * count) / 2));
+        for (int i = 0; i < count; ++i)
+            placeKnob (line.removeFromLeft (colW), *names[begin + i], *cells[begin + i]);
     }
 
     shakerVolSlider.setVisible (true);
@@ -3513,6 +3530,8 @@ void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
     clapVolValue.setVisible (false);
     absorbVolSlider.setVisible (true);
     hornVolSlider.setVisible (true);
+    uplifterVolSlider.setVisible (true);
+    riserVolSlider.setVisible (true);
 }
 
 namespace
@@ -3541,10 +3560,10 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     const int gap = 6;
     constexpr int kChrome = 22;      // compact card title strip + padding
     constexpr int kMisureRow = 52;   // the square row is capped here
-    const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 5);
+    const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 4);
     const int misureH = kChrome + kMisureRow;
-    const int knobsH = kChrome + knobColW;   // the name sits inside the disc
-    // On a phone the squares (MISURE, seven across) and the knobs (FEEL, five
+    const int knobsH = kChrome + knobColW * 2 + 8;   // two rows, four across
+    // On a phone the squares (MISURE, seven across) and the knobs (FEEL, four
     // across) are limited by their *width*, so handing their cards extra height
     // only floats them in empty space - which is where a tall portrait screen
     // was going. Size those two to their content and give the rest to the two

@@ -486,6 +486,12 @@ private:
     VoiceKnob hornVolSlider;
     juce::Label hornHitLabel { {}, "HORN" };
     juce::Label hornHitValue { {}, "100%" };
+    VoiceKnob uplifterVolSlider;
+    juce::Label uplifterHitLabel { {}, "UPLIFTER FX" };
+    juce::Label uplifterHitValue { {}, "100%" };
+    VoiceKnob riserVolSlider;
+    juce::Label riserHitLabel { {}, "RISER 2" };
+    juce::Label riserHitValue { {}, "100%" };
     struct HitVoice
     {
         juce::AudioBuffer<float> pcm;
@@ -495,7 +501,7 @@ private:
         uint32_t playing = 0;
         int pos = 0;
     };
-    HitVoice hitVoices[2];
+    HitVoice hitVoices[4];
     double hitRate = 0.0;
 
     juce::AudioBuffer<float> inputScratch;
