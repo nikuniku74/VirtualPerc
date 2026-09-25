@@ -4705,6 +4705,100 @@ and hat-to-kick half-steal path already address a narrower case. Without a
 song-annotated quarter grid, an automatic half-beat phase flip on a hat-only
 passage is ambiguous and has not passed a global A/B gate.
 
+**Immediate loaded-file lock audit (2026-09-24, no engine change).**
+`probe_matrix --quick` on the direct-feed decoder (12 rhythmic styles,
+52/120/168 BPM, two seeds each) measures a 7.15 s mean stable acquisition,
+19/72 later excursions and six never-acquired half-time runs. Lowering only
+`kFastAcquireMarginLine` from 0.55 to 0.30 in a temporary build makes mean
+acquisition 7.16 s, leaves excursions/never-acquired unchanged, and worsens
+the swallowed-mix and gap styles by 0.09/0.08 s. Lowering only
+`kAnchorAcquireMarginLine` from 2.5 to 1.5 is byte-identical on the same bank.
+Neither margin is the remaining bottleneck; do not land either shortcut.
+`NeuralBeatTracker` already publishes every available 20 ms model frame, and
+the armed direct-feed state exposes an established grid without an extra
+160 ms hold. `MainComponent::loadInternalTrack` starts playback after the
+decoder restart; it does no tempo analysis before PLAY. Its synchronous
+whole-file waveform scan then blocks the message thread, so the BPM display
+can appear late even while the audio worker is running. The user
+requires analysis to remain live, so pre-reading a loaded file is excluded.
+On fresh `VPTrack --player --step 0.2` traces, SPLENDIDA publishes ~110.6 BPM
+at 0.8 s and enters FOLLOWING by 1.0 s; its part waits until 8.5 s because
+the low-band rhythm share does not first cross 0.30 until 6.7 s. EVERYTIME
+publishes ~119.2 BPM at 1.6 s and enters FOLLOWING by 1.8 s; its music onset
+creates a fresh analysis epoch at 8.9 s and the part joins the next quarter
+at 9.3 s. Those waits are rhythm-entrance decisions, not a decoder or
+publication queue. Removing the `rhythmSeen` guard would repeat the measured
+false entrance on a non-rhythmic intro (item 29). A correct quarter/levare
+choice from the live beginning still needs causal rhythmic evidence.
+
+**Loaded-file UI assertion (2026-09-25).** The empty-waveform paint path passed
+`"Onda in caricamento\u2026"` directly to JUCE's ASCII `String (const char*)`
+conversion. The C++ Unicode escape makes UTF-8 bytes above 127, which that
+debug constructor asserts on. This is a concrete candidate for the reported
+iPad `juce_String.cpp` SIGTRAP just after switching to BRANO, when the second
+waveform reader cannot supply peaks. The placeholder now uses ASCII dots.
+Mac Release and Debug compiled before the later queue/waveform edits; the iPad
+crash is not yet device-verified. The synchronous scan was subsequently changed
+as described below and also awaits verification.
+
+**Repeated source-change check (2026-09-25, test and trace only).** The same
+engine, audio device and worker were kept running while `--new-input` changed
+the synthetic grid 60→120→90→150→60 BPM without STOP. Each change advanced
+the analysis epoch exactly once, reset the model's recurrent state, and
+reacquired within 0.1 BPM by the end of its 5–6 s observation (`13/0`
+assertions). This rules out a simple cumulative
+tempo/comb state leak in that fixture; it does not model CoreML overload,
+remote file reads, or a real band. The debug trace now includes FIFO queue
+milliseconds, gap count and restart count so an iPad capture can distinguish
+worker starvation from a wrong but timely musical hypothesis.
+
+**Pending verification (2026-09-25): one-shot epochs and exact queue cut.**
+`BeatTracker::setInputEpoch` used to re-publish the same epoch on every audio
+block. The worker clears the sticky queue-drop bit with a compare/exchange;
+an audio-thread load of the old word followed by a store could restore that
+bit after the worker cleared it, causing another cold restart for one file.
+The tracker now publishes only on a changed epoch or an explicit drop, and the
+producer composes that word with a compare/exchange so a concurrent worker
+clear cannot be overwritten from a stale copy.
+`NeuralBeatTracker` captures the FIFO write cursor before the new file's first
+block is fed and the worker discards only samples before that cursor. Its old
+`discardPending()` discarded the new file's queued beginning whenever the
+worker woke after playback had started. The event word release/acquire orders
+the cursor, and the worker skips a superseded event before reading more audio.
+These changes touch restart delivery and queue accounting, not BPM thresholds,
+phase selection or the live band's continuous clock. Per the listener's
+request, builds, probes, tests and listening are deferred until explicit
+confirmation; no performance or regression claim is established yet.
+The source button also used to switch between player, mixer and iPad without
+notifying the engine of a new input; the preceding source's grid could survive
+until an unrelated level epoch. It now requests a fresh input epoch on an
+actual source change. File loading suppresses that one notification and sends
+its existing restart after the reader has been installed, so it remains one
+restart per loaded file.
+The separate waveform reader now scans at most 32768 audio frames per UI tick
+after PLAY rather than all samples in the load callback. The track's duration
+comes from the transport reader immediately, so seeking is available before
+the picture finishes. This is visual read-ahead only; BeatNet still receives
+the audio being played live. The iPad file-provider latency of an individual
+read and the final waveform timing remain to be verified.
+
+**PLAY versus STOP lock investigation (2026-09-25, pending verification).**
+The direct-file analysis bus does not include the generated percussion and
+skips acoustic leak subtraction. STOP nevertheless changes `sounding` in the
+tracker/decoder and lets the tracker snap its phase exactly while silent.
+During PLAY it deliberately steers phase by rate to avoid skipped or doubled
+strokes; the existing serial-change path can rejoin a displaced grid. A second,
+independent STOP-only gate was found in `BeatDecoder::updateTempo`: when the
+initial interval grid was provisional, an eight-beat short fit and the comb
+could agree within 2.5% at a non-octave rate, but their fast correction was
+forbidden as soon as the part started. That gate has been removed only for
+this narrowly corroborated pre-lock case. This does not establish the cause
+of every mid-song STOP improvement: a wrong phase or octave after a settled
+lock takes different guarded paths. The trace now reports `level` alongside
+`nn`, `clock`, `phaseErr`, `queueMs` and `audible` to distinguish them. No test
+or device measurement has yet been run on this change, per the listener's
+instruction to reserve tests for the end and obtain confirmation.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

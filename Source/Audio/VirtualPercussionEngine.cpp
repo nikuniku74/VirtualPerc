@@ -440,9 +440,9 @@ void VirtualPercussionEngine::notifyTrackSeek() noexcept
 
 void VirtualPercussionEngine::notifyInputRestart() noexcept
 {
-    // A new file is a new input, not a cut inside one. Queue the fresh epoch
-    // for the audio thread: the clock is never restarted, only the evidence
-    // it was fitted through.
+    // A new file or selected source is a new input, not a cut inside one.
+    // Queue a fresh epoch for the audio thread so evidence fitted to the
+    // previous source cannot steer the newly selected one.
     inputRestartPending.store (true, std::memory_order_relaxed);
 }
 
@@ -1622,16 +1622,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     const float inputTrim = std::clamp (
         cfg.inputGain.load (std::memory_order_relaxed), 0.0f, 4.0f);
     const float sourcePeak = inputTrim > 1.0e-6f ? postPeak / inputTrim : 0.0f;
-    // A new file is a new input. Loading another track while START stayed on
-    // left the level and rhythm history describing the song that is gone, and
+    // A new file or selected source is a new input. Loading another track
+    // while START stayed on left the level and rhythm history describing the
+    // song that is gone, and
     // the decoder defending its tempo: measured, a 60 BPM file loaded under a
     // 120 BPM one reported the old tempo until STOP was pressed. STOP works
     // because disarming clears `sounding`, and the on-grid keep will not
     // defend a grid once the part is quiet. Drop the history - it was measured
     // on audio that is no longer arriving - and force a fresh epoch. The
-    // queued samples are still the previous file; `dropQueuedInput` tells the
-    // worker to throw them away instead of re-certifying that tempo. The
-    // clock itself is never restarted. See docs/TODO.md item 3.
+    // queued samples before this callback belong to the previous source;
+    // `dropQueuedInput` lets the worker discard only those samples. The part
+    // is silenced before the old clock is cleared. An in-song tempo change
+    // never takes this path. See docs/TODO.md item 3.
     bool dropQueuedInput = false;
     if (inputRestartPending.exchange (false, std::memory_order_relaxed))
     {

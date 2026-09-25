@@ -44,6 +44,7 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     seenDropped = 0;
     modelRefill = 0;
     inputEpoch.store (0, std::memory_order_relaxed);
+    dropBeforeWrite.store (0, std::memory_order_relaxed);
     seenInputEpoch = 0;
     wantedDeclarePulse.store (0, std::memory_order_relaxed);
     seenDeclarePulse = 0;
@@ -149,18 +150,26 @@ void NeuralBeatTracker::workerLoop()
         // Apply the event before processing more audio. A new source discards
         // its predecessor's evidence; an arrangement entrance keeps the
         // continuous analysis but invalidates the grid fitted to the intro.
-        // A new file also drops whatever is still queued: that audio is the
-        // previous file, and feeding it after the restart is what re-locks
-        // the tempo STOP then appears to release.
-        const uint64_t epoch = inputEpoch.load (std::memory_order_relaxed);
+        // A new file drops the queued audio up to the captured source boundary.
+        // Feeding that previous file after the restart re-locks the tempo STOP
+        // then appears to release; dropping past the boundary loses the new
+        // file's first evidence and makes acquisition needlessly late.
+        const uint64_t epoch = inputEpoch.load (std::memory_order_acquire);
         if (epoch != seenInputEpoch)
         {
             const bool preserveComb = (epoch & 1u) != 0;
             const bool dropQueued = (epoch & 2u) != 0;
-            seenInputEpoch = epoch;
+            const uint32_t dropBefore = dropQueued
+                ? dropBeforeWrite.load (std::memory_order_relaxed) : 0u;
 
             if (dropQueued)
             {
+                uint64_t consumed = epoch;
+                if (! inputEpoch.compare_exchange_strong (consumed, epoch & ~2ull,
+                                                          std::memory_order_acq_rel,
+                                                          std::memory_order_acquire))
+                    continue; // a newer file superseded this restart
+                seenInputEpoch = epoch & ~2ull;
                 // The part is still sounding on the audio thread until this
                 // restart lands. The on-grid keep would then defend the
                 // previous file until STOP. Clear it before the restart, and
@@ -168,12 +177,11 @@ void NeuralBeatTracker::workerLoop()
                 // worker actually consumed.
                 wantedSounding.store (false, std::memory_order_relaxed);
                 decoder.setSounding (false);
-                uint64_t consumed = epoch;
-                if (inputEpoch.compare_exchange_strong (consumed, epoch & ~2ull,
-                                                       std::memory_order_relaxed))
-                    seenInputEpoch = epoch & ~2ull;
                 const uint64_t before = fifo.droppedSamples();
-                fifo.discardPending();
+                // The producer captured this cursor before feeding the first
+                // block of the new file. The worker can wake later; discarding
+                // everything currently queued would also erase that beginning.
+                fifo.discardBefore (dropBefore);
                 const uint64_t after = fifo.droppedSamples();
                 seenDropped = after;
                 const uint64_t discarded = after - before;
@@ -192,6 +200,8 @@ void NeuralBeatTracker::workerLoop()
                     completedTotal.fetch_add (static_cast<int64_t> (discarded),
                                               std::memory_order_release);
             }
+            else
+                seenInputEpoch = epoch;
 
             decoder.notifyInputRestart (preserveComb);
             // Preserve the model together with the comb on continuous music.
@@ -201,6 +211,11 @@ void NeuralBeatTracker::workerLoop()
             if (model != nullptr && ! preserveComb)
                 model->reset();
         }
+
+        // A second source may have replaced this one while the reset ran.
+        // Handle its boundary before reading a block from its FIFO.
+        if (inputEpoch.load (std::memory_order_acquire) != seenInputEpoch)
+            continue;
 
         const int n = fifo.pop (popBuf.data(), static_cast<int> (popBuf.size()));
 

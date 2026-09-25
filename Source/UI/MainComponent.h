@@ -87,12 +87,13 @@ private:
     void loadInternalTrack (juce::URL url);
     void seekInternalTrack (double proportion);
     void buildTrackWaveform();
+    void processTrackWaveform();
     void clearTrackWaveform();
     void relayoutSettings();
     void layoutTrackWaveform();
     int  trackWaveformHeight() const noexcept;
     void toggleInternalTrack();
-    void selectFollowSource (vp::FollowSource source);
+    void selectFollowSource (vp::FollowSource source, bool restartInput = true);
     bool internalTrackSelected() const noexcept;
     void refreshInternalTrackButtons();
     void refreshProcButton();
@@ -490,6 +491,10 @@ private:
     TrackWaveform trackWaveform { *this };
 
     juce::Array<float> trackWavePeaks;
+    std::unique_ptr<juce::AudioFormatReader> trackWaveScanReader;
+    juce::AudioBuffer<float> trackWaveScanBuffer;
+    int64_t trackWaveScanPos = 0;
+    float trackWaveMaxPeak = 0.0f;
     double trackWaveLengthSec = 0.0;
     double trackWavePreview = -1.0;
 

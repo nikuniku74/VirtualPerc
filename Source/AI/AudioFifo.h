@@ -130,28 +130,38 @@ public:
         return static_cast<int> (wi - ri);
     }
 
-    /** Worker thread only. The read cursor belongs to the consumer; the
-        producer never moves it. Skips every sample already queued and counts
-        the skip in `droppedSamples()`, so a new file does not get analysed as
-        a continuation of the file that was replaced. Samples the producer
-        pushes after `w` is sampled stay queued. */
-    void discardPending() noexcept
+    /** The producer's cursor before it writes the next block. A source-change
+        event captures this on the audio thread, so the worker can discard only
+        the previous source even if the new file has already queued audio. */
+    uint32_t writePosition() const noexcept
     {
-        const uint32_t wi = w.load (std::memory_order_acquire);
-        const uint32_t ri = r.load (std::memory_order_relaxed);
-        const uint32_t pending = wi - ri;
-        if (pending == 0)
-            return;
-        dropped.fetch_add (static_cast<uint64_t> (pending), std::memory_order_relaxed);
-        r.store (wi, std::memory_order_release);
+        return w.load (std::memory_order_acquire);
     }
 
-    /** Samples the producer overwrote before the consumer read them, counted
-        as the consumer reaches the hole. The consumer needs this to keep its
-        own position in step with the producer's sample count; without it a
-        single overrun would silently offset every timestamp derived
-        downstream. Frames processed plus samples dropped is always exactly
-        what was pushed. */
+    /** Worker thread only. Discard through a captured producer cursor, leaving
+        later samples in the FIFO. If the worker has already passed the cursor,
+        there is nothing old left to discard. Cursor subtraction is modular;
+        the live FIFO span is far below half the 32-bit range. */
+    void discardBefore (uint32_t cursor) noexcept
+    {
+        const uint32_t ri = r.load (std::memory_order_relaxed);
+        const uint32_t distance = cursor - ri;
+        if (distance == 0 || distance >= 0x80000000u)
+            return;
+
+        const uint32_t wi = w.load (std::memory_order_acquire);
+        const uint32_t count = std::min (distance, wi - ri);
+        if (count == 0)
+            return;
+        dropped.fetch_add (static_cast<uint64_t> (count), std::memory_order_relaxed);
+        r.store (ri + count, std::memory_order_release);
+    }
+
+    /** Samples skipped by an overrun or a source change. The consumer needs
+        this to keep its position in step with the producer's sample count;
+        without it a gap would offset every timestamp derived downstream.
+        Frames processed plus samples dropped is always exactly what was
+        pushed. */
     uint64_t droppedSamples() const noexcept
     {
         return dropped.load (std::memory_order_acquire);

@@ -1577,6 +1577,22 @@ void vpRunNewInputTests (int& passed, int& failed)
     gFail = &failed;
     std::printf ("\nnew input (item 3)\n");
 
+    {
+        vp::AudioFifo fifo;
+        fifo.prepare (32);
+        const float oldAudio[8] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        const float newAudio[4] { 101, 102, 103, 104 };
+        fifo.push (oldAudio, 8);
+        const auto boundary = fifo.writePosition();
+        fifo.push (newAudio, 4); // the worker wakes after the new file started
+        fifo.discardBefore (boundary);
+        float out[4] {};
+        const int got = fifo.pop (out, 4);
+        expect (got == 4 && out[0] == 101.0f && out[3] == 104.0f
+                    && fifo.droppedSamples() == 8,
+                "source cut preserves already queued audio from the new file");
+    }
+
     // A pulse train whose tempo can be switched while it runs. The decoder is
     // the real one, so it is a fresh analysis epoch - not the stub - that has
     // to make it let go of the old tempo. This is the engine's contract for
@@ -1586,7 +1602,7 @@ void vpRunNewInputTests (int& passed, int& failed)
     public:
         explicit SwitchTempoModel (double startFramesPerBeat) : fpb (startFramesPerBeat) {}
         bool prepare (int) override { return true; }
-        void reset() override {}
+        void reset() override { resets.fetch_add (1, std::memory_order_relaxed); }
         bool infer (const float*, int, float out[3]) override
         {
             const double per = fpb.load (std::memory_order_relaxed);
@@ -1603,6 +1619,7 @@ void vpRunNewInputTests (int& passed, int& failed)
             return true;
         }
         std::atomic<double> fpb;
+        std::atomic<int> resets { 0 };
     private:
         double phaseBeats = 0.0;
     };
@@ -1650,7 +1667,7 @@ void vpRunNewInputTests (int& passed, int& failed)
 
     // A steady tone, so the ordinary quiet-to-loud epoch watcher cannot fire on
     // its own: the only restart counted below is the one under test.
-    const int n = static_cast<int> (sr * 20.0);
+    const int n = static_cast<int> (sr * 36.0);
     std::vector<float> tone (static_cast<size_t> (n), 0.0f);
     for (int i = 0; i < n; ++i)
         tone[static_cast<size_t> (i)] = 0.15f * std::sin (
@@ -1661,13 +1678,14 @@ void vpRunNewInputTests (int& passed, int& failed)
     int pos = pump (eng, tone.data(), n, 0, static_cast<int> (sr * 8.0), oL, oR);
     const float bpmBefore = eng.snapshot().bpm;
     const int restartsBefore = eng.snapshot().analysisRestarts;
+    const int modelResetsBefore = raw->resets.load (std::memory_order_relaxed);
 
     // The band has changed song: the tempo doubles, and the UI declares a new
     // input because a different file was loaded. No STOP in between.
     raw->fpb.store (framesFor (120.0), std::memory_order_relaxed);
     eng.notifyInputRestart();
     pos = pump (eng, tone.data(), n, pos, static_cast<int> (sr * 5.0), oL, oR);
-    const auto after = eng.snapshot();
+    auto after = eng.snapshot();
 
     std::printf ("new-input      bpm %.1f -> %.1f  restarts %d -> %d\n",
                  bpmBefore, after.bpm, restartsBefore, after.analysisRestarts);
@@ -1675,8 +1693,29 @@ void vpRunNewInputTests (int& passed, int& failed)
             "the engine is following the first input before the change");
     expect (after.analysisRestarts == restartsBefore + 1,
             "a new input forces exactly one fresh analysis epoch");
+    expect (raw->resets.load (std::memory_order_relaxed) > modelResetsBefore,
+            "a new input clears the neural model's recurrent state");
     expect (after.bpm > 112.0f && after.bpm < 128.0f,
             "and the decoder re-acquires the new tempo without a STOP");
+    // Keep the same engine, worker and audio device alive across more songs.
+    // This catches stale epoch/comb/clock state that a single change misses.
+    for (const float nextBpm : { 90.0f, 150.0f, 60.0f })
+    {
+        const int restarts = after.analysisRestarts;
+        const int modelResets = raw->resets.load (std::memory_order_relaxed);
+        raw->fpb.store (framesFor (nextBpm), std::memory_order_relaxed);
+        eng.notifyInputRestart();
+        pos = pump (eng, tone.data(), n, pos, static_cast<int> (sr * 6.0), oL, oR);
+        after = eng.snapshot();
+        std::printf ("new-input      target %.0f bpm %.1f restarts %d -> %d\n",
+                     nextBpm, after.bpm, restarts, after.analysisRestarts);
+        expect (after.analysisRestarts == restarts + 1,
+                "each further song starts exactly one fresh analysis epoch");
+        expect (raw->resets.load (std::memory_order_relaxed) > modelResets,
+                "each further song clears the neural model's recurrent state");
+        expect (std::fabs (after.bpm - nextBpm) < 8.0f,
+                "each further song acquires its own tempo without STOP");
+    }
     (void) pos;
 }
 

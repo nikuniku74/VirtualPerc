@@ -220,6 +220,7 @@ public:
     void setInputEpoch (uint32_t epoch, bool preserveComb = false,
                         bool dropQueued = false) noexcept
     {
+        const bool changed = ! seenEpoch || epoch != lastInputEpoch;
         if (seenEpoch && epoch != lastInputEpoch)
         {
             harmonicTempo.reset();
@@ -263,7 +264,7 @@ public:
             // until STOP. `needsResync` adopts a tempo only from a grid serial
             // the restart has not already published.
             neural.setSounding (false);
-            // A new file is not a tempo change inside one song. The part is
+            // A new source is not a tempo change inside one song. The part is
             // held silent above, so nothing is playing on this clock: keeping
             // the previous tempo, phase and trim is what the second song
             // inherits. Drop them. An in-song tempo change does not come
@@ -284,7 +285,11 @@ public:
         }
         lastInputEpoch = epoch;
         seenEpoch = true;
-        neural.setInputEpoch (epoch, preserveComb, dropQueued);
+        // The worker clears the sticky queue-drop bit after consuming it.
+        // Re-publishing the same epoch on every audio block could race that
+        // clear and re-arm the restart for a file that has already begun.
+        if (changed || dropQueued)
+            neural.setInputEpoch (epoch, preserveComb, dropQueued);
     }
 
     /** The un-normalised analysis input is plainly music-level. This must be

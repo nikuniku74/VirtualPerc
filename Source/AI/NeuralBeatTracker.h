@@ -81,17 +81,28 @@ public:
         // with the following epoch's kind. Bit 0 is continuous music, for
         // which recurrent state and comb history both survive. Bit 1 drops
         // audio queued from the previous source.
-        const uint64_t prev = inputEpoch.load (std::memory_order_relaxed);
-        uint64_t word = (static_cast<uint64_t> (epoch) << 2)
-                        | (preserveComb ? 1ull : 0ull);
         // A file change sets the drop bit, then the new file's own onset can
         // publish a later epoch before the worker has read the first. That
         // later epoch is a rhythm entrance and would keep the previous song's
         // comb. Stick the drop, and do not preserve, until the worker clears
         // the bit. STOP appeared to fix this because disarming clears sounding.
-        if (dropQueued || (prev & 2ull) != 0ull)
-            word = (word | 2ull) & ~1ull;
-        inputEpoch.store (word, std::memory_order_relaxed);
+        if (dropQueued)
+            dropBeforeWrite.store (fifo.writePosition(), std::memory_order_relaxed);
+        uint64_t prev = inputEpoch.load (std::memory_order_relaxed);
+        for (;;)
+        {
+            uint64_t word = (static_cast<uint64_t> (epoch) << 2)
+                            | (preserveComb ? 1ull : 0ull);
+            if (dropQueued || (prev & 2ull) != 0ull)
+                word = (word | 2ull) & ~1ull;
+            // Re-read the sticky bit if the worker cleared it meanwhile.
+            // A plain store based on an old `prev` could re-arm an already
+            // consumed source change. Release also publishes the FIFO boundary.
+            if (inputEpoch.compare_exchange_strong (prev, word,
+                                                    std::memory_order_release,
+                                                    std::memory_order_relaxed))
+                break;
+        }
     }
 
     /** Reject publications describing audio older than the input position at
@@ -163,6 +174,8 @@ private:
     std::atomic<uint32_t> wantedDeclarePulse { 0 };
     std::atomic<uint64_t> inputEpoch { 0 };
     static_assert (std::atomic<uint64_t>::is_always_lock_free);
+    std::atomic<uint32_t> dropBeforeWrite { 0 };
+    static_assert (std::atomic<uint32_t>::is_always_lock_free);
     std::atomic<int64_t> minimumAnalysisSample { 0 };
     uint64_t seenInputEpoch = 0;
     uint32_t seenDeclarePulse = 0;

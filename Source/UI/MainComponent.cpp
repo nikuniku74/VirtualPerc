@@ -1984,13 +1984,20 @@ bool MainComponent::internalTrackSelected() const noexcept
            == static_cast<int> (vp::FollowSource::internalPlayer);
 }
 
-void MainComponent::selectFollowSource (vp::FollowSource source)
+void MainComponent::selectFollowSource (vp::FollowSource source, bool restartInput)
 {
+    const auto previous = static_cast<vp::FollowSource> (
+        engine.settings().followSource.load (std::memory_order_relaxed));
     if (source != vp::FollowSource::internalPlayer && trackTransport.isPlaying())
         trackTransport.stop();
 
     engine.settings().followSource.store (static_cast<int> (source),
                                           std::memory_order_relaxed);
+    // A mixer, the iPad speaker and the internal player are different inputs.
+    // Reusing the preceding source's grid makes the new one defend its BPM.
+    // File loading requests its own restart after the reader is installed.
+    if (restartInput && source != previous)
+        engine.notifyInputRestart();
     refreshSourceButton();
     savePrefs();
     repaint();
@@ -2032,6 +2039,8 @@ void MainComponent::loadInternalTrack (juce::URL url)
     }
 
     const bool differentTrack = trackUrl != url;
+    // Release the previous file-provider stream before replacing its URL.
+    trackWaveScanReader.reset();
     trackTransport.stop();
     trackTransport.setSource (nullptr);
     // A manual octave is a judgement about the previous recording, not an
@@ -2048,22 +2057,19 @@ void MainComponent::loadInternalTrack (juce::URL url)
     trackName = trackUrl.getFileName();
     trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
                               reader->sampleRate, 2);
-    selectFollowSource (vp::FollowSource::internalPlayer);
+    selectFollowSource (vp::FollowSource::internalPlayer, false);
     // A different file is a different input, not a drift of the one before it.
     // Without this the tracker keeps the lock of the previous song, and with
     // START still on the percussion plays the old tempo for as long as the
     // decoder defends it - measured at 8-20 s, or until STOP. This restarts
-    // the decoder over; the clock is not restarted. Queue the reset before
+    // the decoder and retires the old source's silent clock. Queue it before
     // playback starts so the new source cannot run through the old decoder
     // epoch before the restart is requested. See docs/TODO.md item 3.
     engine.notifyInputRestart();
     trackTransport.start();
-    // The picture is not on the path to the tempo. Scanning the whole file
-    // through the transport's reader used to run first, on this thread, so
-    // the new song and the decoder restart both waited until the scan
-    // finished — measured as the long pause before a second track locks.
-    // A second stream keeps that scan off the reader the transport is
-    // already playing.
+    // The picture uses a second reader because the playing reader belongs to
+    // the read-ahead thread. Only its setup runs here; the timer scans bounded
+    // blocks after PLAY so a full-file pass cannot hold the BPM display.
     buildTrackWaveform();
     refreshInternalTrackButtons();
     relayoutSettings();
@@ -2114,6 +2120,9 @@ int MainComponent::trackWaveformHeight() const noexcept
 
 void MainComponent::clearTrackWaveform()
 {
+    trackWaveScanReader.reset();
+    trackWaveScanPos = 0;
+    trackWaveMaxPeak = 0.0f;
     trackWavePeaks.clearQuick();
     trackWaveLengthSec = 0.0;
     trackWavePreview = -1.0;
@@ -2124,57 +2133,70 @@ void MainComponent::clearTrackWaveform()
 void MainComponent::buildTrackWaveform()
 {
     clearTrackWaveform();
-    if (trackUrl.isEmpty())
+    if (trackUrl.isEmpty() || trackReader == nullptr)
         return;
+
+    // The transport reader already knows the duration. Seeking does not need
+    // to wait for a second stream or the picture to finish.
+    const auto* playingReader = trackReader->getAudioFormatReader();
+    if (playingReader != nullptr && playingReader->sampleRate > 0.0
+        && playingReader->lengthInSamples > 0)
+        trackWaveLengthSec = static_cast<double> (playingReader->lengthInSamples)
+                             / playingReader->sampleRate;
 
     // Not the transport's reader. setSource has already started its
     // read-ahead thread, and an MP3 reader has one shared stream position.
     auto stream = trackUrl.createInputStream (
         juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
-    std::unique_ptr<juce::AudioFormatReader> owned (
+    trackWaveScanReader.reset (
         stream != nullptr ? trackFormats.createReaderFor (std::move (stream)) : nullptr);
-    auto* reader = owned.get();
-    if (reader == nullptr || reader->lengthInSamples <= 0)
+    if (trackWaveScanReader == nullptr || trackWaveScanReader->lengthInSamples <= 0)
+    {
+        trackWaveScanReader.reset();
         return;
+    }
 
     constexpr int kCols = 1024;
     trackWavePeaks.resize (kCols);
     trackWavePeaks.fill (0.0f);
+    trackWaveScanBuffer.setSize (juce::jmax (1, (int) trackWaveScanReader->numChannels),
+                                 32768, false, false, true);
+}
 
-    const int64_t total = reader->lengthInSamples;
-    const int numCh = juce::jmax (1, (int) reader->numChannels);
-    const int block = 65536;
-    juce::AudioBuffer<float> buf (numCh, block);
+void MainComponent::processTrackWaveform()
+{
+    if (trackWaveScanReader == nullptr)
+        return;
 
-    for (int64_t pos = 0; pos < total;)
+    // One bounded decode per UI tick. The old whole-file pass held the message
+    // thread after PLAY, hiding BPM updates while the live worker was running.
+    auto& reader = *trackWaveScanReader;
+    const int64_t total = reader.lengthInSamples;
+    const int n = (int) juce::jmin<int64_t> (trackWaveScanBuffer.getNumSamples(),
+                                           total - trackWaveScanPos);
+    if (n <= 0 || ! reader.read (&trackWaveScanBuffer, 0, n, trackWaveScanPos, true, true))
     {
-        const int n = (int) juce::jmin<int64_t> (block, total - pos);
-        if (! reader->read (&buf, 0, n, pos, true, true))
-            break;
-
-        for (int i = 0; i < n; ++i)
-        {
-            const int64_t sampleIdx = pos + i;
-            const int col = (int) juce::jlimit<int64_t> (0, kCols - 1, (sampleIdx * kCols) / total);
-            float peak = 0.0f;
-            for (int c = 0; c < numCh; ++c)
-                peak = juce::jmax (peak, std::abs (buf.getSample (c, i)));
-            trackWavePeaks.set (col, juce::jmax (trackWavePeaks.getReference (col), peak));
-        }
-        pos += n;
+        trackWaveScanReader.reset();
+        return;
     }
 
-    float maxPeak = 0.0f;
-    for (float p : trackWavePeaks)
-        maxPeak = juce::jmax (maxPeak, p);
-    if (maxPeak > 1.0e-9f)
-        for (float& p : trackWavePeaks)
-            p /= maxPeak;
-
-    trackWaveLengthSec = static_cast<double> (total) / reader->sampleRate;
-    trackWaveform.setVisible (true);
-    relayoutSettings();
-    trackWaveform.repaint();
+    const int numCh = trackWaveScanBuffer.getNumChannels();
+    const int kCols = trackWavePeaks.size();
+    for (int i = 0; i < n; ++i)
+    {
+        const int64_t sampleIdx = trackWaveScanPos + i;
+        const int col = (int) juce::jlimit<int64_t> (0, kCols - 1,
+                                                    (sampleIdx * kCols) / total);
+        float peak = 0.0f;
+        for (int c = 0; c < numCh; ++c)
+            peak = juce::jmax (peak, std::abs (trackWaveScanBuffer.getSample (c, i)));
+        auto& current = trackWavePeaks.getReference (col);
+        current = juce::jmax (current, peak);
+        trackWaveMaxPeak = juce::jmax (trackWaveMaxPeak, current);
+    }
+    trackWaveScanPos += n;
+    if (trackWaveScanPos >= total)
+        trackWaveScanReader.reset();
 }
 
 void MainComponent::seekInternalTrack (double proportion)
@@ -2978,6 +3000,7 @@ void MainComponent::timerCallback()
 
     if (tapFlash > 0)
         --tapFlash;
+    processTrackWaveform();
     if (trackReader != nullptr)
         trackWaveform.repaint();
     refreshStartButton();
@@ -3031,6 +3054,7 @@ void MainComponent::timerCallback()
             + " auth=" + juce::String (snap.motionBridgeAuthority, 2)
             + " bpm=" + juce::String (snap.bpm, 2)
             + " nn=" + juce::String (snap.neuralBpm, 2)
+            + " level=" + juce::String (snap.levelSettled ? 1 : 0)
             + " short=" + juce::String (snap.shortFitBpm, 2)
             + " long=" + juce::String (snap.longFitBpm, 2)
             + " target=" + juce::String (snap.targetBpm, 2)
@@ -3067,6 +3091,11 @@ void MainComponent::timerCallback()
             + "/" + juce::String (snap.fitCoverage, 2)
             + " tau=" + juce::String (snap.gridTauSec, 2)
             + " hyp=" + juce::String (snap.hypValid ? 1 : 0)
+            + " queueMs=" + juce::String (snap.sampleRate > 1.0f
+                ? 1000.0f * static_cast<float> (snap.analysisBacklog) / snap.sampleRate
+                : 0.0f, 1)
+            + " gaps=" + juce::String (snap.analysisGaps)
+            + " restarts=" + juce::String (snap.analysisRestarts)
             + " state=" + juce::String (vp::toString (snap.state)));
     }
    #endif
@@ -4399,11 +4428,12 @@ void MainComponent::TrackWaveform::paint (juce::Graphics& g)
     const auto& peaks = owner.trackWavePeaks;
     const auto wave = bounds.reduced (6.0f, 10.0f);
 
-    if (peaks.isEmpty() || owner.trackWaveLengthSec <= 0.0)
+    if (peaks.isEmpty() || owner.trackWaveLengthSec <= 0.0
+        || (owner.trackWaveScanReader != nullptr && owner.trackWaveScanPos == 0))
     {
         g.setColour (mute());
         g.setFont (fontUi (11.0f, false));
-        g.drawFittedText ("Onda in caricamento\u2026", bounds.toNearestInt(),
+        g.drawFittedText ("Onda in caricamento...", bounds.toNearestInt(),
                           juce::Justification::centred, 1);
         return;
     }
@@ -4416,7 +4446,8 @@ void MainComponent::TrackWaveform::paint (juce::Graphics& g)
     for (int x = 0; x < w; ++x)
     {
         const int idx = (x * peaks.size()) / w;
-        const float amp = peaks[juce::jlimit (0, peaks.size() - 1, idx)];
+        const float amp = peaks[juce::jlimit (0, peaks.size() - 1, idx)]
+                          / juce::jmax (owner.trackWaveMaxPeak, 1.0e-9f);
         const float barH = juce::jmax (1.0f, amp * halfH * 2.0f);
         const float px = wave.getX() + static_cast<float> (x);
         g.fillRect (px, midY - barH * 0.5f, 1.0f, barH);

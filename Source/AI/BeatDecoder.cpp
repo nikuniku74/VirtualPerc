@@ -5233,11 +5233,14 @@ void BeatDecoder::updateTempo() noexcept
             // the ordinary path protects that first interval and waits for
             // the long fit. Once an eight-beat fit and the independent comb
             // agree closely at a non-octave rate, the provisional interval
-            // has no reason to keep that privilege. This only changes a
-            // pre-lock grid; a sounding part and settled levels keep their
-            // existing transition and octave guards.
+            // has no reason to keep that privilege. START can already have
+            // brought the part in on the provisional grid: gating this repair
+            // on !sounding makes STOP the only way to release that wrong first
+            // rate. The short fit and comb must independently agree, and the
+            // rule remains confined to a pre-lock, non-octave correction.
+            // Settled levels keep their transition and octave guards.
             const bool provisionalSourcesAgree = lineFeed && provisional
-                && intervalAcquired && ! sounding && ! tempo.levelSettled()
+                && intervalAcquired && ! tempo.levelSettled()
                 && combReady && haveShort && shortResidual < 0.04f
                 && combRawBpm > kMinBpm && shortFitBpm > kMinBpm
                 && bpm > kMinBpm
