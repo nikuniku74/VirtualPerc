@@ -221,9 +221,17 @@ public:
                         bool dropQueued = false) noexcept
     {
         const bool changed = ! seenEpoch || epoch != lastInputEpoch;
-        if (seenEpoch && epoch != lastInputEpoch)
-        {
-            harmonicTempo.reset();
+            if (seenEpoch && epoch != lastInputEpoch)
+            {
+                // A tap owns the tempo until this point: every block retargets
+                // the clock at the tapped BPM, so a song that starts afterwards
+                // is never acquired. STOP releases the same three flags, which
+                // is why start-then-stop appeared to fix it. A tap during the
+                // song still owns it; only a new epoch ends that ownership.
+                tapHold = false;
+                tapAligned = false;
+                tapEstablished = false;
+                harmonicTempo.reset();
             harmonicSourceActive = false;
             harmonicBeatIndex = -1;
             noNetworkTempoSamples = 0;
