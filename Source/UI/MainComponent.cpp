@@ -10,6 +10,12 @@
  #include "VpLoopBankData.h"
 #endif
 
+#if defined (VP_HAS_HIT_SAMPLES) && VP_HAS_HIT_SAMPLES
+ #include "VpHitData.h"
+ #include <juce_audio_formats/juce_audio_formats.h>
+ #include <juce_dsp/juce_dsp.h>
+#endif
+
 namespace
 {
     bool gDarkMode = true;
@@ -62,6 +68,18 @@ namespace
             return "MUTO";
         const float db = 20.0f * std::log10 (gain);
         return (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
+    }
+
+    juce::String ellipsis (const juce::String& text, const juce::Font& font, float width)
+    {
+        if (juce::GlyphArrangement::getStringWidth (font, text) <= width)
+            return text;
+        const juce::String dot = juce::String::fromUTF8 ("\xe2\x80\xa6");
+        juce::String cut = text;
+        while (cut.isNotEmpty()
+               && juce::GlyphArrangement::getStringWidth (font, cut + dot) > width)
+            cut = cut.dropLastCharacters (1);
+        return cut + dot;
     }
 
     juce::String knobValueText (const juce::Slider& s)
@@ -427,6 +445,8 @@ juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton& b
 {
     const float dim = juce::jmin ((float) buttonHeight, (float) juce::jmax (1, button.getWidth()));
     const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
+    if ((bool) button.getProperties().getWithDefault ("circle", false))
+        return fontUi (juce::jmax (11.0f, dim * 0.42f));
     // Kit-sound chips: a step up from the 9 px Misure floor, not a title.
     if (chipFill)
         return fontUi (juce::jmax (12.0f, dim * 0.38f));
@@ -437,11 +457,13 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
                                                     bool, bool)
 {
     const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
+    const bool circle = (bool) button.getProperties().getWithDefault ("circle", false);
     const bool compact = button.getWidth() <= button.getHeight() + 8;
     // chipFill cells hug their label; keep the 6 px Misure side inset even
     // when the chip is narrower than a square.
     const bool tight = compact && ! chipFill;
-    auto area = button.getLocalBounds().reduced (tight ? 2 : 6, tight ? 2 : 4);
+    auto area = button.getLocalBounds().reduced (circle ? 1 : (tight ? 2 : 6),
+                                                 circle ? 1 : (tight ? 2 : 4));
     if (area.isEmpty())
         return;
 
@@ -451,6 +473,27 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     const float room = static_cast<float> (area.getWidth());
     if (w > room && w > 1.0f)
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
+
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
+    {
+        static juce::Image gear;
+        static bool gearWhite = true;
+        if (! gear.isValid() || gearWhite != gDarkMode)
+        {
+            gearWhite = gDarkMode;
+            constexpr int px = 64;
+            gear = juce::Image (juce::Image::ARGB, px, px, true);
+            juce::Image::BitmapData bits (gear, juce::Image::BitmapData::writeOnly);
+            if (! vp::copySystemGear (px, bits.data, bits.lineStride, gDarkMode))
+                gear = {};
+        }
+        auto box = button.getLocalBounds().reduced (5);
+        const int side = juce::jmin (box.getWidth(), box.getHeight());
+        box = box.withSizeKeepingCentre (side, side);
+        if (gear.isValid())
+            g.drawImage (gear, box.toFloat(), juce::RectanglePlacement::centred);
+        return;
+    }
 
     g.setFont (f);
     const float alpha = button.isEnabled()
@@ -469,6 +512,22 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           const juce::Colour& backgroundColour,
                                                           bool, bool shouldDrawButtonAsDown)
 {
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
+        return;
+
+    if ((bool) button.getProperties().getWithDefault ("circle", false))
+    {
+        auto bounds = button.getLocalBounds().toFloat();
+        const float d = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        auto disc = bounds.withSizeKeepingCentre (d, d);
+        const bool on = button.getToggleState() || shouldDrawButtonAsDown;
+        g.setColour (on ? fuchsia() : ink());
+        g.fillEllipse (disc);
+        g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
+        g.drawEllipse (disc.reduced (0.6f), 1.0f);
+        return;
+    }
+
     drawFlatButton (g, button, backgroundColour, shouldDrawButtonAsDown);
 }
 
@@ -570,10 +629,15 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const bool voiceKnob = (bool) slider.getProperties().getWithDefault ("voiceOnFill", false);
     const bool voiceOff = voiceKnob
                           && ! (bool) slider.getProperties().getWithDefault ("voiceEnabled", true);
+    // Sample knobs carry hitLit. Off is the same disc as a muted voice, in
+    // their own colour at 0.40. Full colour only while that sample is playing.
+    const bool hitKnob = slider.getProperties().contains ("hitLit");
+    const bool hitLit = (bool) slider.getProperties().getWithDefault ("hitLit", false);
+    const bool hitDark = hitKnob && ! hitLit;
     const juce::Colour accent = voiceKnob
         ? slider.findColour (juce::Slider::rotarySliderFillColourId)
         : fuchsia();
-    const float alpha = slider.isEnabled() ? (voiceOff ? 0.40f : 1.0f) : 0.45f;
+    const float alpha = slider.isEnabled() ? ((voiceOff || hitDark) ? 0.40f : 1.0f) : 0.45f;
 
     const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
     const bool micMeter = (bool) slider.getProperties().getWithDefault ("micMeter", false);
@@ -693,15 +757,28 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const bool longText = valueText.length() > 4;
     const float th = juce::jlimit (7.0f, longText ? 9.0f : 11.0f,
                                    innerR * (longText ? 0.32f : 0.40f));
+    const juce::String name = slider.getProperties().getWithDefault ("knobName", {}).toString();
+    const float nameH = name.isEmpty() ? 0.0f : juce::jlimit (7.0f, 9.0f, innerR * 0.26f);
+    const float block = th + (nameH > 0.0f ? nameH + 1.0f : 0.0f);
+    const float top = centre.y - block * 0.5f;
+    const auto valueCol = (micMeter && micLook.amount > 0.18f ? juce::Colours::white : needle)
+                              .withMultipliedAlpha (alpha);
     g.setFont (fontUi (th, true));
-    g.setColour ((micMeter && micLook.amount > 0.18f ? juce::Colours::white : needle)
-                     .withMultipliedAlpha (alpha));
+    g.setColour (valueCol);
     g.drawFittedText (valueText,
-                      juce::Rectangle<float> (centre.x - innerR * 0.92f,
-                                              centre.y - th * (longText ? 0.85f : 0.55f),
-                                              innerR * 1.84f,
-                                              th * (longText ? 1.8f : 1.15f)).toNearestInt(),
-                      juce::Justification::centred, longText ? 2 : 1);
+                      juce::Rectangle<float> (centre.x - innerR * 0.78f, top,
+                                              innerR * 1.56f, th).toNearestInt(),
+                      juce::Justification::centred, 1);
+    if (nameH > 0.0f)
+    {
+        auto nameFont = fontUi (nameH, false);
+        g.setFont (nameFont);
+        g.setColour (valueCol.withMultipliedAlpha (0.72f));
+        g.drawText (ellipsis (name, nameFont, innerR * 1.56f),
+                    juce::Rectangle<float> (centre.x - innerR * 0.78f, top + th + 1.0f,
+                                            innerR * 1.56f, nameH).toNearestInt(),
+                    juce::Justification::centred, false);
+    }
 }
 
 MainComponent::MainComponent()
@@ -730,7 +807,8 @@ MainComponent::MainComponent()
     }
     setLookAndFeel (&appLaf);
 
-    addAndMakeVisible (tapZone);
+    addChildComponent (tapZone);
+    tapZone.setVisible (false);
 
     auto setupBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
@@ -745,13 +823,19 @@ MainComponent::MainComponent()
     setupBtn (bpmNudgeDown, ink());
     setupBtn (bpmNudgeUp, ink());
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
+    settingsButton.setButtonText ({});
+    settingsButton.getProperties().set ("gearIcon", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
+    barButton.setVisible (false);
+    setupBtn (tapButton, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
+    halveButton.getProperties().set ("circle", true);
+    doubleButton.getProperties().set ("circle", true);
 
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
@@ -785,16 +869,17 @@ MainComponent::MainComponent()
     // The button "L'1 è QUI": the nearest beat is the one. The bar locks.
     // The phase is not snapped — that shortened the beat and was heard as
     // the tempo jumping. It is not a nudge and not a toggle.
-    barButton.onClick = [this]
-    {
-        engine.settings().barDeclare.fetch_add (1);
-    };
+    tapButton.onClick = [this] { tapPressed(); };
     setupBtn (sub4, ink());
     setupBtn (sub8, ink());
     setupBtn (sub16, ink());
 
-    startButton.onClick = [this] { startPressed(); };
-    stopButton.onClick = [this] { stopPressed(); };
+    startButton.onClick = [this]
+    {
+        if (userWantsArmed) stopPressed();
+        else                startPressed();
+    };
+    stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
     fixedButton.onClick = [this] { applyTempoFollow (false); };
     bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
@@ -887,14 +972,14 @@ MainComponent::MainComponent()
         refreshStyleButtons();
     };
 
-    subAuto.onClick = [this] { applySubdivision (vp::Subdivision::autoDetect); };
+    subAuto.setVisible (false);
     sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
     sub8.onClick    = [this] { applySubdivision (vp::Subdivision::eighth); };
     sub16.onClick   = [this] { applySubdivision (vp::Subdivision::sixteenth); };
 
     auto setupFader = [this] (juce::Slider& s, juce::Label& name, juce::Label& value,
                               const char* title, double minV, double maxV, double initial,
-                              double dblClick, std::function<void (float)> apply,
+                              std::function<void (float)> apply,
                               std::function<juce::String (float)> fmt = {})
     {
         if (! fmt)
@@ -918,6 +1003,7 @@ MainComponent::MainComponent()
         value.setText (fmt (static_cast<float> (initial)), juce::dontSendNotification);
 
         addAndMakeVisible (s);
+        s.getProperties().set ("knobName", juce::String (title));
         // Vertical drag, not circular: the old faders were up/down, and a
         // finger cannot describe an arc on a 50-point disc.
         s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
@@ -927,7 +1013,7 @@ MainComponent::MainComponent()
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         s.setRange (minV, maxV, 0.01);
         s.setValue (initial, juce::dontSendNotification);
-        s.setDoubleClickReturnValue (true, dblClick);
+        s.setDoubleClickReturnValue (false, 0.0);
         auto* sp = &s;
         auto* valueLab = &value;
         s.onValueChange = [this, sp, valueLab, apply, fmt]
@@ -941,16 +1027,16 @@ MainComponent::MainComponent()
     };
 
     setupFader (shakerVolSlider, shakerVolLabel, shakerVolValue, "SHAKER",
-                0.0, 1.0, 1.00, 1.0,
+                0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().shakerVolume.store (v); });
     setupFader (congaVolSlider, congaVolLabel, congaVolValue, "CONGAS",
-                0.0, 1.0, 1.00, 1.0,
+                0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().congaVolume.store (v); });
     setupFader (cembaloVolSlider, cembaloVolLabel, cembaloVolValue, "CEMBALO",
-                0.0, 1.0, 1.00, 1.0,
+                0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().cembaloVolume.store (v); });
     setupFader (clapVolSlider, clapVolLabel, clapVolValue, "CLAP",
-                0.0, 1.0, 1.00, 1.0,
+                0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().clapVolume.store (v); });
     auto tapVoice = [this] (std::atomic<bool>& flag)
     {
@@ -975,7 +1061,7 @@ MainComponent::MainComponent()
     cembaloVolSlider.onHold = [this, holdVoice] { holdVoice (2); };
     clapVolSlider.onHold    = [this, holdVoice] { holdVoice (3); };
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
-                0.0, 4.0, 1.00, 1.0,
+                0.0, 4.0, 1.00,
                 [this] (float v) { engine.settings().inputGain.store (v); },
                 micGainText);
     // A trim is read in dB and turned in dB. It was linear in amplitude over
@@ -990,8 +1076,7 @@ MainComponent::MainComponent()
     // of drag is a deliberate full-screen gesture: 0.06 dB per point at unity,
     // 0.18 at -20, 0.28 at -28. Between 1.6 and 7.6 times steadier, and the
     // steadiest gain is where the old one was worst. This is the one control a
-    // player sets once, carefully, on a stage; a double tap still returns it to
-    // unity.
+    // player sets once, carefully, on a stage.
     //
     // The top is +12 dB rather than +6 because the point of the trim is to
     // reach the band the meter draws, and a stage feed sitting at -30 dBFS
@@ -999,11 +1084,29 @@ MainComponent::MainComponent()
     inputGainSlider.setSkewFactorFromMidPoint (1.0);
     inputGainSlider.setMouseDragSensitivity (600);
     inputGainSlider.getProperties().set ("micMeter", true);
+    // Unity is 1.0, which the disc draws as 100%. The other knobs stay where
+    // a double tap left them.
+    inputGainSlider.setDoubleClickReturnValue (true, 1.0);
+
+    setupFader (absorbVolSlider, absorbHitLabel, absorbHitValue, "ABSORB",
+                0.0, 1.0, 1.00,
+                [this] (float v) { hitVoices[0].gain.store (v, std::memory_order_relaxed); });
+    setupFader (hornVolSlider, hornHitLabel, hornHitValue, "HORN",
+                0.0, 1.0, 1.00,
+                [this] (float v) { hitVoices[1].gain.store (v, std::memory_order_relaxed); });
+    absorbVolSlider.getProperties().set ("voiceOnFill", true);
+    absorbVolSlider.getProperties().set ("hitLit", false);
+    absorbVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff8a1a));
+    hornVolSlider.getProperties().set ("voiceOnFill", true);
+    hornVolSlider.getProperties().set ("hitLit", false);
+    hornVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff2a4a));
+    absorbVolSlider.onTap = [this] { hitVoices[0].request.fetch_add (1, std::memory_order_release); };
+    hornVolSlider.onTap = [this] { hitVoices[1].request.fetch_add (1, std::memory_order_release); };
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
-                0.0, 1.0, 0.50, 0.50,
+                0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
     setupFader (reverbSlider, reverbLabel, reverbValue, "REVERB",
-                0.0, 1.0, 0.30, 0.30,
+                0.0, 1.0, 0.30,
                 [this] (float v) { engine.settings().reverbAmount.store (v); });
 
     addAndMakeVisible (bpmEdit);
@@ -1263,7 +1366,7 @@ void MainComponent::refreshThemeColours()
         &subAuto, &sub4, &sub8,
         &sub16, &naturalButton, &swingButton,
         &dynamicsButton, &halveButton, &doubleButton,
-        &barButton,
+        &barButton, &tapButton,
         &settingsButton, &settingsClose, &procButton,
         &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
@@ -1375,6 +1478,7 @@ void MainComponent::refreshVoiceKnobs()
         s.setColour (juce::Slider::rotarySliderFillColourId, fill);
         name.setColour (juce::Label::textColourId, fill);
         name.setText (vp::toString (sound), juce::dontSendNotification);
+        s.getProperties().set ("knobName", vp::toString (sound));
         name.setAlpha (on ? 1.0f : 0.42f);
         s.repaint();
     };
@@ -1411,6 +1515,13 @@ void MainComponent::tapPressed()
         ensureMicrophone();
     engine.tap();
     tapFlash = 2;
+}
+
+void MainComponent::declareBar()
+{
+    // The nearest beat is the one. The bar locks. The phase is not snapped:
+    // that shortened the beat and was heard as the tempo jumping.
+    engine.settings().barDeclare.fetch_add (1);
 }
 
 void MainComponent::applyTempoFollow (bool follow)
@@ -1467,6 +1578,7 @@ void MainComponent::refreshTempoModeButtons()
 
 void MainComponent::refreshStartButton()
 {
+    startButton.setButtonText (userWantsArmed ? "STOP" : "START");
     startButton.setColour (juce::TextButton::buttonColourId, userWantsArmed ? fuchsia() : ink());
     // White reads on the fuchsia fill and nowhere else.
     startButton.setColour (juce::TextButton::textColourOffId,
@@ -2326,10 +2438,13 @@ void MainComponent::loadPrefs()
 
     const int sub = prefs->getIntValue ("subdivision",
                                         engine.settings().subdivision.load());
-    if (sub == static_cast<int> (vp::Subdivision::autoDetect)
-        || sub == static_cast<int> (vp::Subdivision::quarter)
-        || sub == static_cast<int> (vp::Subdivision::eighth)
-        || sub == static_cast<int> (vp::Subdivision::sixteenth))
+    // AUTO was eighths. A saved AUTO becomes 1/8 so a button is lit and the
+    // part does not change.
+    if (sub == static_cast<int> (vp::Subdivision::autoDetect))
+        engine.settings().subdivision.store (static_cast<int> (vp::Subdivision::eighth));
+    else if (sub == static_cast<int> (vp::Subdivision::quarter)
+             || sub == static_cast<int> (vp::Subdivision::eighth)
+             || sub == static_cast<int> (vp::Subdivision::sixteenth))
         engine.settings().subdivision.store (sub);
 
     // The level the player last chose, and whether they chose one at all. Both
@@ -2430,6 +2545,14 @@ void MainComponent::loadPrefs()
     const float clapVol = clamp01 (prefs->getDoubleValue ("clapVolume", 1.00), 1.00);
     engine.settings().clapVolume.store (clapVol);
     setFader (clapVolSlider, clapVolValue, clapVol);
+
+    const float absorbVol = clamp01 (prefs->getDoubleValue ("absorbVolume", 1.00), 1.00);
+    hitVoices[0].gain.store (absorbVol, std::memory_order_relaxed);
+    setFader (absorbVolSlider, absorbHitValue, absorbVol);
+
+    const float hornVol = clamp01 (prefs->getDoubleValue ("hornVolume", 1.00), 1.00);
+    hitVoices[1].gain.store (hornVol, std::memory_order_relaxed);
+    setFader (hornVolSlider, hornHitValue, hornVol);
 
     const float inGain = juce::jlimit (0.0, 4.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
@@ -2550,6 +2673,10 @@ void MainComponent::savePrefs (bool flush)
                      static_cast<double> (engine.settings().cembaloVolume.load()));
     prefs->setValue ("clapVolume",
                      static_cast<double> (engine.settings().clapVolume.load()));
+    prefs->setValue ("absorbVolume",
+                     static_cast<double> (hitVoices[0].gain.load (std::memory_order_relaxed)));
+    prefs->setValue ("hornVolume",
+                     static_cast<double> (hitVoices[1].gain.load (std::memory_order_relaxed)));
     prefs->setValue ("inputGain",
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
@@ -2615,7 +2742,6 @@ void MainComponent::refreshSubdivisionButtons()
         b.setColour (juce::TextButton::buttonColourId, ink());
         b.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
     };
-    paint (subAuto, static_cast<int> (vp::Subdivision::autoDetect));
     paint (sub4,    static_cast<int> (vp::Subdivision::quarter));
     paint (sub8,    static_cast<int> (vp::Subdivision::eighth));
     paint (sub16,   static_cast<int> (vp::Subdivision::sixteenth));
@@ -2757,6 +2883,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     if (trackScratch.getNumSamples() < scratchSize || trackScratch.getNumChannels() < 2)
         trackScratch.setSize (2, scratchSize, false, false, true);
     trackTransport.prepareToPlay (samplesPerBlockExpected, sr);
+    prepareHits (sr);
     // Same clock, analysis still alive: skip prepare(). It zeros the leak
     // ring, resets BeatTracker (the clock) and start() then clearVoices()
     // every sounding stroke - the crack on a Split View / window reset.
@@ -2771,8 +2898,92 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     audioReady = true;
 }
 
+void MainComponent::prepareHits (double sampleRate)
+{
+    if (sampleRate < 8000.0)
+        return;
+    if (std::abs (hitRate - sampleRate) < 1.0 && hitVoices[0].pcm.getNumSamples() > 0)
+        return;
+    hitRate = sampleRate;
+
+   #if defined (VP_HAS_HIT_SAMPLES) && VP_HAS_HIT_SAMPLES
+    auto load = [sampleRate] (HitVoice& voice, const char* data, int size)
+    {
+        voice.pcm.setSize (0, 0);
+        if (data == nullptr || size <= 0)
+            return;
+        auto* stream = new juce::MemoryInputStream (data, static_cast<size_t> (size), false);
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (stream, true));
+        if (reader == nullptr || reader->lengthInSamples <= 0)
+            return;
+
+        juce::AudioBuffer<float> src (static_cast<int> (reader->numChannels),
+                                      static_cast<int> (reader->lengthInSamples));
+        reader->read (&src, 0, src.getNumSamples(), 0, true, true);
+        const double step = reader->sampleRate / sampleRate;
+        const int outN = juce::jmax (1, static_cast<int> (std::ceil (src.getNumSamples() / step)));
+        voice.pcm.setSize (src.getNumChannels(), outN);
+        for (int c = 0; c < src.getNumChannels(); ++c)
+        {
+            juce::LagrangeInterpolator interp;
+            interp.reset();
+            interp.process (step, src.getReadPointer (c), voice.pcm.getWritePointer (c), outN);
+        }
+        voice.pos = 0;
+    };
+
+    int absorbSize = 0, hornSize = 0;
+    const char* absorb = VpHitData::getNamedResource ("absorb_wav", absorbSize);
+    const char* horn = VpHitData::getNamedResource ("reggae_horn_wav", hornSize);
+    load (hitVoices[0], absorb, absorbSize);
+    load (hitVoices[1], horn, hornSize);
+   #else
+    juce::ignoreUnused (sampleRate);
+   #endif
+}
+
+void MainComponent::mixHits (float* const* outs, int numChannels, int numSamples) noexcept
+{
+    if (outs == nullptr || numChannels <= 0 || numSamples <= 0)
+        return;
+
+    for (auto& voice : hitVoices)
+    {
+        const uint32_t req = voice.request.load (std::memory_order_acquire);
+        if (req != voice.playing)
+        {
+            voice.playing = req;
+            voice.pos = 0;
+        }
+        const int total = voice.pcm.getNumSamples();
+        if (voice.playing == 0 || total <= 0 || voice.pos >= total)
+        {
+            voice.sounding.store (false, std::memory_order_relaxed);
+            continue;
+        }
+        voice.sounding.store (true, std::memory_order_relaxed);
+
+        const int n = juce::jmin (numSamples, total - voice.pos);
+        const int srcCh = voice.pcm.getNumChannels();
+        for (int c = 0; c < numChannels; ++c)
+        {
+            if (outs[c] == nullptr)
+                continue;
+            const float* src = voice.pcm.getReadPointer (juce::jmin (c, srcCh - 1), voice.pos);
+            juce::FloatVectorOperations::addWithMultiply (
+                outs[c], src, voice.gain.load (std::memory_order_relaxed), n);
+        }
+        voice.pos += n;
+        if (voice.pos >= total)
+            voice.sounding.store (false, std::memory_order_relaxed);
+    }
+}
+
 void MainComponent::releaseResources()
 {
+    for (auto& voice : hitVoices)
+        voice.sounding.store (false, std::memory_order_relaxed);
     trackTransport.releaseResources();
     audioReady = false;
 }
@@ -2836,6 +3047,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         }
 
         engine.process (inPtrs, used, outPtrs, used, chunk);
+        mixHits (outPtrs, used, chunk);
 
         // The tracker gets the unattenuated file above. Playback keeps headroom for
         // the generated percussion; this affects only the BRANO path.
@@ -3007,98 +3219,11 @@ void MainComponent::timerCallback()
     refreshTempoModeButtons();
     if (engine.settings().grooveAuto.load())
         refreshStyleButtons();
+    absorbVolSlider.getProperties().set ("hitLit",
+        hitVoices[0].sounding.load (std::memory_order_relaxed));
+    hornVolSlider.getProperties().set ("hitLit",
+        hitVoices[1].sounding.load (std::memory_order_relaxed));
     repaint();
-
-   #if JUCE_DEBUG
-    // Message-thread-only trace for an iPad listening pass. Five samples per
-    // second are enough to expose which stage starts late without putting I/O
-    // anywhere near the audio callback. JUCE_DEBUG keeps it out of performance
-    // builds; no on-device panel or screen recording is required.
-    static int vpTempoTraceTick = 0;
-    static const double vpTempoTraceStartMs =
-        juce::Time::getMillisecondCounterHiRes();
-    if ((++vpTempoTraceTick % 3) == 0)
-    {
-        const auto shape = static_cast<vp::TempoMotionShapeModel> (
-            snap.motionShapeModel);
-        const char* shapeName = "ATTESA";
-        switch (shape)
-        {
-            case vp::TempoMotionShapeModel::invalid:           shapeName = "INVALIDA"; break;
-            case vp::TempoMotionShapeModel::insufficient:      shapeName = "ATTESA"; break;
-            case vp::TempoMotionShapeModel::affine:            shapeName = "LINEARE"; break;
-            case vp::TempoMotionShapeModel::quadratic:         shapeName = "CURVA"; break;
-            case vp::TempoMotionShapeModel::hinge:             shapeName = "GRADINO"; break;
-            case vp::TempoMotionShapeModel::affineWithOutlier: shapeName = "PICCO"; break;
-        }
-
-        const char* bridgeName = snap.motionBridgeAuthority >= 0.999f
-                                     ? "PIENO"
-                                     : (snap.motionBridgeAuthority > 0.0f
-                                            ? "AVVIO" : "SPENTO");
-        const char* sourceName = snap.source == vp::FollowSource::internalPlayer
-                                     ? "BRANO"
-                                     : (snap.source == vp::FollowSource::speaker
-                                            ? "IPAD" : "MIXER");
-
-        juce::Logger::writeToLog (
-            "[VP_TEMPO_TRACE]"
-            " t=" + juce::String (
-                (juce::Time::getMillisecondCounterHiRes()
-                 - vpTempoTraceStartMs) * 0.001,
-                2)
-            + " src=" + juce::String (sourceName)
-            + " regime=" + juce::String (vp::regimeLabel (snap.tempoRegime))
-            + " shape=" + juce::String (shapeName)
-            + " bridge=" + juce::String (bridgeName)
-            + " auth=" + juce::String (snap.motionBridgeAuthority, 2)
-            + " bpm=" + juce::String (snap.bpm, 2)
-            + " nn=" + juce::String (snap.neuralBpm, 2)
-            + " level=" + juce::String (snap.levelSettled ? 1 : 0)
-            + " short=" + juce::String (snap.shortFitBpm, 2)
-            + " long=" + juce::String (snap.longFitBpm, 2)
-            + " target=" + juce::String (snap.targetBpm, 2)
-            + " clock=" + juce::String (snap.clockBpm, 2)
-            + " trim=" + juce::String (snap.tempoTrimBpm, 2)
-            + " phaseErr=" + juce::String (snap.phaseErrorBeats * 1000.0f
-                                              * 60.0f
-                                              / std::max (40.0f, snap.clockBpm),
-                                              1)
-            + "ms"
-            + " recover=" + juce::String (snap.phaseRecoveryEvents)
-            + " barTrust=" + juce::String (snap.barTrusted ? 1 : 0)
-            + " barReentry=" + juce::String (snap.barReentry ? 1 : 0)
-            + " clapOn=" + juce::String (
-                engine.settings().clapEnabled.load (std::memory_order_relaxed) ? 1 : 0)
-            + " audible=" + juce::String (snap.percussionAudible ? 1 : 0)
-            + " standDown=" + juce::String (snap.standingDown ? 1 : 0)
-            + " shapeBpm=" + juce::String (snap.motionShapeBpm, 2)
-            + " wins=" + juce::String (snap.motionShapeWins)
-            + " bic=" + juce::String (snap.motionShapeEvidence, 2)
-            + " vsHinge=" + juce::String (snap.motionShapeVsHinge, 2)
-            + " quarantine=" + juce::String (snap.motionShapeQuarantine)
-            + " fast=" + juce::String (snap.fastTempoDeviation * 100.0f, 2)
-            + "% raw=" + juce::String (snap.fastIntervalDeviation * 100.0f, 2)
-            + "% votes=" + juce::String (snap.fastTempoEvidence)
-            + "/" + juce::String (snap.fastTempoDirection)
-            + " transition="
-            + juce::String (static_cast<int> (snap.tempoTransitionState))
-            + "/" + juce::String (static_cast<int> (snap.tempoTransitionReason))
-            + " transBpm=" + juce::String (snap.tempoTransitionBpm, 2)
-            + " intervals=" + juce::String (snap.tempoTransitionIntervals)
-            + " pBeat=" + juce::String (snap.pBeat, 3)
-            + " fit=" + juce::String (snap.fitResidual, 3)
-            + "/" + juce::String (snap.fitCoverage, 2)
-            + " tau=" + juce::String (snap.gridTauSec, 2)
-            + " hyp=" + juce::String (snap.hypValid ? 1 : 0)
-            + " queueMs=" + juce::String (snap.sampleRate > 1.0f
-                ? 1000.0f * static_cast<float> (snap.analysisBacklog) / snap.sampleRate
-                : 0.0f, 1)
-            + " gaps=" + juce::String (snap.analysisGaps)
-            + " restarts=" + juce::String (snap.analysisRestarts)
-            + " state=" + juce::String (vp::toString (snap.state)));
-    }
-   #endif
 }
 
 juce::BorderSize<int> MainComponent::effectiveSafeArea() const
@@ -3153,7 +3278,11 @@ juce::Rectangle<int> MainComponent::safePadded (juce::Rectangle<int> area) const
 
 juce::Rectangle<int> MainComponent::layoutColumn() const
 {
-    return safePadded (getLocalBounds());
+    // START owns a standard button strip along the bottom of the page.
+    // Everything else is laid out in what remains.
+    auto r = safePadded (getLocalBounds());
+    r.removeFromBottom (juce::jmin (52, juce::jmax (0, r.getHeight() / 8)));
+    return r;
 }
 
 bool MainComponent::isLandscape() const
@@ -3188,7 +3317,16 @@ void MainComponent::updateCompactLayout() noexcept
 juce::Rectangle<int> MainComponent::compactPadded (juce::Rectangle<int> area) const
 {
    #if JUCE_IOS
-    juce::BorderSize<int> pad { 10, 8, 8, 8 };
+    // The iPad window controls (move / resize) are drawn on top of the
+    // content and are not in the safe area. 32 still left the status row
+    // and the tempo orb under that bar. 80 clears it. A phone has no such
+    // bar; its top is the safe area alone.
+    const auto* screen = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    const bool ipad = screen != nullptr
+                      && juce::jmin (screen->totalArea.getWidth(),
+                                     screen->totalArea.getHeight()) >= 700;
+    const int topFloor = ipad ? 80 : 10;
+    juce::BorderSize<int> pad { topFloor, 8, 8, 8 };
     const auto safe = effectiveSafeArea();
     pad = { juce::jmax (pad.getTop(), safe.getTop()),
             juce::jmax (pad.getLeft(), safe.getLeft()),
@@ -3222,7 +3360,7 @@ void MainComponent::applyCompactVisibility()
     fixedButton.setVisible (true);
     // Visible on a phone too: it now has its own row under the dots instead of
     // having to share their width.
-    barButton.setVisible (true);
+    barButton.setVisible (false);
     const bool showNudge = ! compact && ! engine.settings().tempoFollow.load();
     bpmNudgeDown.setVisible (showNudge);
     bpmNudgeUp.setVisible (showNudge);
@@ -3236,19 +3374,17 @@ void MainComponent::applyCompactVisibility()
 
 void MainComponent::layoutTransport (juce::Rectangle<int> body)
 {
-    const int half = juce::jmax (1, body.getWidth() / 2);
     const int rx = juce::jmin (4, juce::jmax (0, body.getWidth() / 8));
     const int ry = juce::jmin (4, juce::jmax (0, body.getHeight() / 4));
-    startButton.setBounds (body.removeFromLeft (half).reduced (rx, ry));
-    stopButton.setBounds (body.reduced (rx, ry));
+    startButton.setBounds (body.reduced (rx, ry));
 }
 
 void MainComponent::layoutMisure (juce::Rectangle<int> body)
 {
     const int btnGap = 5;
-    constexpr int nMisureSq = 7;
+    constexpr int nMisureSq = 6;
     juce::TextButton* squares[] = {
-        &dynamicsButton, &subAuto, &sub4, &sub8, &sub16,
+        &dynamicsButton, &sub4, &sub8, &sub16,
         &naturalButton, &swingButton
     };
 
@@ -3277,7 +3413,7 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
             if (i < 2 && top.getWidth() > btnGap)
                 top.removeFromLeft (btnGap);
         }
-        const int wBottom = juce::jmax (1, (bottom.getWidth() - btnGap * 3) / 4);
+        const int wBottom = juce::jmax (1, (bottom.getWidth() - btnGap * 2) / 3);
         for (int i = 3; i < nMisureSq; ++i)
         {
             squares[i]->setBounds (bottom.removeFromLeft (wBottom));
@@ -3305,46 +3441,62 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
 
 void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
 {
-    constexpr int nKnobs = 5;
+    constexpr int nKnobs = 6;
     juce::Label*  names[]   = { &shakerVolLabel,  &congaVolLabel,  &cembaloVolLabel,
-                                &clapVolLabel,    &inputGainLabel };
-    juce::Slider* sliders[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider,
-                                &clapVolSlider,   &inputGainSlider };
-    auto placeKnob = [] (juce::Rectangle<int> col, juce::Label& name, juce::Slider& s)
+                                &clapVolLabel,    &absorbHitLabel,  &hornHitLabel };
+    juce::Component* cells[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider,
+                                 &clapVolSlider,   &absorbVolSlider, &hornVolSlider };
+    auto placeKnob = [] (juce::Rectangle<int> col, juce::Label& name, juce::Component& s)
     {
-        const int labelH = juce::jmin (11, juce::jmax (0, col.getHeight() / 6));
-        name.setBounds (col.removeFromBottom (labelH));
-        if (col.getHeight() > 1)
-            col.removeFromBottom (1);
+        name.setVisible (false);
         s.setBounds (col);
     };
 
-    // A knob on a phone is as wide as a fifth of the screen and no wider, so
-    // extra height on this card would otherwise just float them. Three and
-    // two makes each of them half again as big, which is the point of the
-    // room. The pair on the second row is centred under the three above.
+    // A narrow column is tall for its width. Three across fills that height;
+    // four across stayed a short block in the middle and left the card empty.
+    if (body.getWidth() < 500 && body.getHeight() > 80)
+    {
+        const int gap = 8;
+        const int cols = 3;
+        const int colW = juce::jmax (1, body.getWidth() / cols);
+        const int rowH = juce::jmax (1, (body.getHeight() - gap) / 2);
+        auto placeRow = [&] (juce::Rectangle<int> row, int begin, int count)
+        {
+            row.removeFromLeft (juce::jmax (0, (row.getWidth() - colW * count) / 2));
+            for (int i = 0; i < count; ++i)
+                placeKnob (row.removeFromLeft (colW), *names[begin + i], *cells[begin + i]);
+        };
+        auto top = body.removeFromTop (rowH);
+        body.removeFromTop (juce::jmin (gap, body.getHeight()));
+        placeRow (top, 0, 3);
+        placeRow (body, 3, 3);
+    }
+    else
+    {
+    // Two rows of three make a bigger disc than six across,
+    // once the card is tall enough to hold them.
     const int wideCol = juce::jmax (1, body.getWidth() / 3);
     const int rowGap = 6;
-    constexpr int kUsefulKnob = 70;   // below this a knob is a fiddly target
-    if (body.getWidth() / nKnobs < 90
-        && body.getHeight() >= (kUsefulKnob + 11) * 2 + rowGap)
+    const int oneSize = juce::jmax (1, juce::jmin (body.getWidth() / nKnobs, body.getHeight()));
+    const int twoSize = juce::jmin (wideCol, juce::jmax (1, (body.getHeight() - rowGap) / 2));
+    if (twoSize > oneSize && body.getHeight() >= twoSize * 2 + rowGap)
     {
-        const int rowH = juce::jmin ((body.getHeight() - rowGap) / 2, wideCol + 11);
-        auto block = body.withSizeKeepingCentre (body.getWidth(), rowH * 2 + rowGap);
+        const int rowH = twoSize;
+        auto block = body.withSizeKeepingCentre (juce::jmin (body.getWidth(), wideCol * 3), rowH * 2 + rowGap);
         auto top = block.removeFromTop (rowH);
         block.removeFromTop (rowGap);
         auto bottom = block.removeFromTop (rowH);
         for (int i = 0; i < 3; ++i)
-            placeKnob (top.removeFromLeft (wideCol), *names[i], *sliders[i]);
-        bottom.removeFromLeft (wideCol / 2);
+            placeKnob (top.removeFromLeft (wideCol), *names[i], *cells[i]);
         for (int i = 3; i < nKnobs; ++i)
-            placeKnob (bottom.removeFromLeft (wideCol), *names[i], *sliders[i]);
+            placeKnob (bottom.removeFromLeft (wideCol), *names[i], *cells[i]);
     }
     else
     {
         const int knobColW = juce::jmax (1, body.getWidth() / nKnobs);
         for (int i = 0; i < nKnobs; ++i)
-            placeKnob (body.removeFromLeft (knobColW), *names[i], *sliders[i]);
+            placeKnob (body.removeFromLeft (knobColW), *names[i], *cells[i]);
+    }
     }
 
     shakerVolSlider.setVisible (true);
@@ -3359,9 +3511,8 @@ void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
     clapVolSlider.setVisible (true);
     clapVolLabel.setVisible (true);
     clapVolValue.setVisible (false);
-    inputGainSlider.setVisible (true);
-    inputGainLabel.setVisible (true);
-    inputGainValue.setVisible (false);
+    absorbVolSlider.setVisible (true);
+    hornVolSlider.setVisible (true);
 }
 
 namespace
@@ -3373,7 +3524,7 @@ namespace
     constexpr int kCompactBpmH   = 104;
     constexpr int kCompactBeatsH = 62;
     constexpr int kCompactBarH   = 38;   // a full-width target, not a strip
-    constexpr int kCompactGapA   = 4;   // status row -> BPM
+    constexpr int kCompactGapA   = 22;  // status row -> BPM; the orb lane lives here
     constexpr int kCompactGapB   = 6;   // BPM -> dots
     constexpr int kCompactGapC   = 4;   // dots -> "L'1 e QUI"
     constexpr int kCompactTempoNatural =
@@ -3384,6 +3535,7 @@ namespace
 MainComponent::CompactGeom MainComponent::compactGeom() const
 {
     auto r = compactPadded (getLocalBounds());
+    r.removeFromBottom (juce::jmin (52, juce::jmax (0, r.getHeight() / 8)));
     CompactGeom g;
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
@@ -3391,7 +3543,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     constexpr int kMisureRow = 52;   // the square row is capped here
     const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 5);
     const int misureH = kChrome + kMisureRow;
-    const int knobsH = kChrome + 11 + knobColW;   // label + a square knob
+    const int knobsH = kChrome + knobColW;   // the name sits inside the disc
     // On a phone the squares (MISURE, seven across) and the knobs (FEEL, five
     // across) are limited by their *width*, so handing their cards extra height
     // only floats them in empty space - which is where a tall portrait screen
@@ -3399,49 +3551,33 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     // things that do grow with the room: the tempo read-out and TRASPORTO's
     // buttons. In landscape there is not even room for that, so everything
     // shrinks together rather than the last card running off the bottom.
-    const int room = juce::jmax (0, n - 3 * gap);
-    const int tempoMin = kCompactTempoNatural, transportMin = 56;
-    int tempoH, transportH, misH, knH;
-    const int natural = tempoMin + transportMin + misureH + knobsH;
+    const int room = juce::jmax (0, n - 2 * gap);
+    const int tempoMin = kCompactTempoNatural;
+    int tempoH, misH, knH;
+    const int natural = tempoMin + misureH + knobsH;
     if (natural > room)
     {
         const float f = static_cast<float> (room) / static_cast<float> (natural);
         tempoH = juce::jmax (40, juce::roundToInt (static_cast<float> (tempoMin) * f));
-        transportH = juce::jmax (40, juce::roundToInt (static_cast<float> (transportMin) * f));
         misH = juce::jmax (30, juce::roundToInt (static_cast<float> (misureH) * f));
         knH = juce::jmax (44, juce::roundToInt (static_cast<float> (knobsH) * f));
     }
     else
     {
-        // The tempo column takes its natural height and no more. It used to
-        // take everything that was left over, and since its rows are a fixed
-        // size that surplus came out as empty screen under the dots - which is
-        // exactly the hole this layout kept showing. Spend it downwards
-        // instead: bigger START/STOP first, then a second row of squares, then
-        // a second row of knobs, each only if there is room for the whole step.
         tempoH = tempoMin;
-        int extra = room - tempoMin - transportMin - misureH - knobsH;
-
-        const int toTransport = juce::jmin (extra, 132 - transportMin);
-        transportH = transportMin + toTransport;
-        extra -= toTransport;
-
+        int extra = room - tempoMin - misureH - knobsH;
         misH = misureH;
         if (extra >= kMisureRow + 6)
         {
-            misH += kMisureRow + 6;      // squares wrap to two rows and grow
+            misH += kMisureRow + 6;
             extra -= kMisureRow + 6;
         }
-
-        // Whatever is left goes to FEEL, which is the last card on the page:
-        // it wraps its knobs when the height is there, so the surplus turns
-        // into bigger knobs rather than into padding.
         knH = knobsH + juce::jmax (0, extra);
     }
+    juce::ignoreUnused (knH);
     g.tempo = r.removeFromTop (takeAtMost (r.getHeight(), tempoH));
     if (r.getHeight() > gap) r.removeFromTop (gap);
-    g.transport = r.removeFromTop (takeAtMost (r.getHeight(), transportH));
-    if (r.getHeight() > gap) r.removeFromTop (gap);
+    g.transport = {};
     g.misure = r.removeFromTop (takeAtMost (r.getHeight(), misH));
     if (r.getHeight() > gap) r.removeFromTop (gap);
     g.knobs = r;
@@ -3469,8 +3605,8 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     // SETUP rides the status row's right side: the words are left-aligned and
     // the rest of the row is empty, and a phone has no title row to put it in.
     {
-        const int btnW = clampW (54, 96, s.pill.getWidth() / 4);
-        s.settings = s.pill.removeFromRight (btnW).reduced (1);
+        const int side = juce::jmin (s.pill.getHeight(), 34);
+        s.settings = s.pill.removeFromRight (side).reduced (1);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
     }
@@ -3487,10 +3623,13 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
     s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC)));
-    // "L'1 e QUI" goes under the dots rather than beside them: it is the
-    // control that moves them, and a phone has no width to spare next to them.
-    s.barShift = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)))
-                     .reduced (juce::jmax (8, area.getWidth() / 5), 1);
+    // TAP sits alone under the dots. Declaring the one is a tap on the BPM.
+    {
+        auto row = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)))
+                       .reduced (0, 1);
+        s.tap = row;
+        s.barShift = {};
+    }
     return s;
 }
 
@@ -3531,9 +3670,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // 36-point row under the tempo is only the ± BPM nudge that appears
     // under FISSO.
     const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
-    const int natural = 18 + 6 + 36 + 6 + naturalBpm + 16
+    const int natural = 18 + 6 + 36 + 22 + naturalBpm + 16
                         + (follow ? 0 : 28) + 18 + 10
-                        + naturalBeats + 20 + trackExtra;
+                        + naturalBeats + 6 + 36 + 20 + trackExtra;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
                           : 1.0f;
@@ -3553,12 +3692,8 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.title = area.removeFromTop (px (18));
     area.removeFromTop (px (6));
     s.pill = area.removeFromTop (px (36));
-    {
-        const int btnW = juce::jlimit (108, 156, s.pill.getWidth() / 4);
-        s.barShift = s.pill.removeFromRight (btnW).reduced (2, 2);
-        s.pill.removeFromRight (8); // keep the status line off the button
-    }
-    area.removeFromTop (px (6));
+    s.barShift = {};
+    area.removeFromTop (px (22));
     s.bpm = area.removeFromTop (bpmH);
     {
         // A bounded block, centred. Wider than this and the two octave buttons
@@ -3576,6 +3711,8 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.tempoLine = area.removeFromTop (px (18));
     area.removeFromTop (px (10));
     s.beats = area.removeFromTop (beatsH);
+    area.removeFromTop (px (6));
+    s.tap = area.removeFromTop (px (36)).reduced (0, 2);
     if (trackReader != nullptr)
     {
         area.removeFromTop (px (6));
@@ -3605,20 +3742,12 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     const int btnGap = 5;
     const int innerW = juce::jmax (1, area.getWidth() - 24);
 
-    const int n = area.getHeight();
-    const int hTransport = juce::roundToInt (static_cast<float> (n) * 0.20f);
     // Style select is a compact name; leftover width goes to the squares.
-    const int nMisureSq = 7;
+    const int nMisureSq = 6;
     const int styleW = 68;
     const int misureSide = juce::jlimit (28, 52,
         (innerW - styleW - btnGap * nMisureSq) / nMisureSq);
     const int hMisure = chrome + misureSide;
-
-    {
-        auto body = card (area.removeFromTop (hTransport), "TRASPORTO");
-        layoutTransport (body);
-        area.removeFromTop (gap);
-    }
 
     {
         auto body = card (area.removeFromTop (hMisure), "MISURE");
@@ -3652,6 +3781,23 @@ void MainComponent::resized()
     else
         layoutFull();
 
+    {
+        auto full = isCompact() ? compactPadded (getLocalBounds())
+                                : safePadded (getLocalBounds());
+        const int strip = juce::jmin (52, juce::jmax (0, full.getHeight() / 8));
+        auto row = full.removeFromBottom (strip).reduced (10, 4);
+        const int side = juce::jmax (1, row.getHeight());
+        inputGainSlider.setBounds (row.removeFromRight (side));
+        if (row.getWidth() > 8)
+            row.removeFromRight (8);
+        startButton.setBounds (row);
+        inputGainLabel.setVisible (false);
+        inputGainValue.setVisible (false);
+        inputGainSlider.setVisible (true);
+        startButton.toFront (false);
+        inputGainSlider.toFront (false);
+    }
+
     applyCompactVisibility();
     layoutTrackWaveform();
     // SETUP sits over the painted stage in the compact layout, so it has to be
@@ -3678,7 +3824,7 @@ void MainComponent::layoutFull()
     // One button now. The four that used to live here - source, theme, click
     // test, debug - are all things a player sets before the set and never
     // during it, and every one of them was a stray tap away from the transport.
-    settingsButton.setBounds (util.removeFromRight (96).reduced (2));
+    settingsButton.setBounds (util.removeFromRight (util.getHeight()).reduced (2));
     r.removeFromTop (8);
 
     if (isLandscape())
@@ -3687,13 +3833,20 @@ void MainComponent::layoutFull()
         r.removeFromTop (stage.getHeight() + 14);
 
     const auto rows = stageRows (stage);
-    halveButton.setBounds (rows.octaveDown);
-    doubleButton.setBounds (rows.octaveUp);
-    barButton.setBounds (rows.barShift);
-
-    tapStrip = juce::Rectangle<int>::leftTopRightBottom (stage.getX(), rows.bpm.getY(),
-                                                         stage.getRight(), rows.beats.getBottom());
-    tapZone.setBounds (tapStrip);
+    auto placeOctave = [] (juce::Rectangle<int> col, juce::TextButton& b)
+    {
+        const int side = juce::jlimit (26, 36, juce::jmin (col.getWidth(), col.getHeight()));
+        b.setBounds (col.withSizeKeepingCentre (side, side));
+    };
+    placeOctave (rows.octaveDown, halveButton);
+    placeOctave (rows.octaveUp, doubleButton);
+    barButton.setBounds ({});
+    tapButton.setBounds (rows.tap);
+    tapStrip = {};
+    tapZone.setBounds (juce::Rectangle<int>::leftTopRightBottom (
+        stage.getX(), rows.bpm.getY(), stage.getRight(), rows.beats.getBottom()));
+    tapZone.setVisible (true);
+    tapZone.toBack();
 
     {
         const bool follow = engine.settings().tempoFollow.load();
@@ -3719,14 +3872,21 @@ void MainComponent::layoutCompact()
     cards.clearQuick();
     const auto g = compactGeom();
     const auto rows = compactTempoRows (g.tempo);
-    halveButton.setBounds (rows.octaveDown);
-    doubleButton.setBounds (rows.octaveUp);
+    auto placeOctave = [] (juce::Rectangle<int> col, juce::TextButton& b)
+    {
+        const int side = juce::jlimit (26, 36, juce::jmin (col.getWidth(), col.getHeight()));
+        b.setBounds (col.withSizeKeepingCentre (side, side));
+    };
+    placeOctave (rows.octaveDown, halveButton);
+    placeOctave (rows.octaveUp, doubleButton);
     settingsButton.setBounds (rows.settings);
-    barButton.setBounds (rows.barShift);
-
-    tapStrip = juce::Rectangle<int>::leftTopRightBottom (g.tempo.getX(), rows.bpm.getY(),
-                                                         g.tempo.getRight(), rows.beats.getBottom());
-    tapZone.setBounds (tapStrip);
+    barButton.setBounds ({});
+    tapButton.setBounds (rows.tap);
+    tapStrip = {};
+    tapZone.setBounds (juce::Rectangle<int>::leftTopRightBottom (
+        g.tempo.getX(), rows.bpm.getY(), g.tempo.getRight(), rows.beats.getBottom()));
+    tapZone.setVisible (true);
+    tapZone.toBack();
 
     auto card = [&] (juce::Rectangle<int> bounds, const char* title)
     {
@@ -3734,7 +3894,6 @@ void MainComponent::layoutCompact()
         return innerCard (bounds, 8, 4, 14);
     };
 
-    layoutTransport (card (g.transport, "TRASPORTO"));
     layoutMisure (card (g.misure, "MISURE"));
     layoutFeelKnobs (card (g.knobs, "FEEL"));
 }
@@ -3867,9 +4026,11 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                                     : rows.octaveDown.getX();
         const int right = rows.octaveUp.isEmpty() ? rows.bpm.getRight()
                                                    : rows.octaveUp.getRight();
-        // The disc is twice as tall as before, so the lane sits higher
-        // and the ball stays clear of the digits.
-        const float y = static_cast<float> (rows.bpm.getY()) - 18.0f;
+        // Just under the status row. 18 above the digits put the lane on
+        // "SEGUENDO" / "IN ASCOLTO" and on the setup gear.
+        const float y = rows.pill.isEmpty()
+                            ? static_cast<float> (rows.bpm.getY()) - 18.0f
+                            : static_cast<float> (rows.pill.getBottom()) + 3.0f;
         paintTempoOrb (g,
                        { static_cast<float> (left), y,
                          static_cast<float> (right - left), 14.0f },
@@ -4131,10 +4292,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         auto row = body.withSizeKeepingCentre (colW * nKnobs, body.getHeight());
         auto placeKnob = [&] (juce::Label& name, juce::Slider& s)
         {
-            auto col = row.removeFromLeft (colW);
-            name.setBounds (col.removeFromBottom (11));
-            col.removeFromBottom (1);
-            s.setBounds (col);
+            name.setVisible (false);
+            s.setBounds (row.removeFromLeft (colW));
         };
         placeKnob (intensityLabel, intensitySlider);
         placeKnob (reverbLabel, reverbSlider);

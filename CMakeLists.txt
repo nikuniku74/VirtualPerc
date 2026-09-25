@@ -223,6 +223,21 @@ else()
     message (STATUS "No Assets/Percussion/*.wav - percussion falls back to synthesis")
 endif()
 
+# One-shot hits (absorb, reggae horn). WAV, not MP3: the audio thread
+# only reads the decoded buffer, and the MP3 decoder stays off.
+file (GLOB VP_HIT_SAMPLES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Hits/*.wav")
+if (VP_HIT_SAMPLES)
+    juce_add_binary_data (VpHitSamples
+        HEADER_NAME VpHitData.h
+        NAMESPACE VpHitData
+        SOURCES ${VP_HIT_SAMPLES}
+    )
+    set (VP_HAS_HIT_SAMPLES TRUE)
+else()
+    set (VP_HAS_HIT_SAMPLES FALSE)
+endif()
+
 # The recorded bank is embedded rather than copied as loose bundle resources.
 # iOS bundle paths are platform details; loading from BinaryData gives the core
 # the same bytes on iPad, simulator and the host app, before the device opens.
@@ -653,6 +668,10 @@ function (vp_apply_ai_options target)
     if (VP_HAS_PERC_SAMPLES)
         target_compile_definitions (${target} PRIVATE VP_HAS_PERC_SAMPLES=1)
         target_link_libraries (${target} PRIVATE VpPercussionSamples juce::juce_audio_formats)
+    endif()
+    if (VP_HAS_HIT_SAMPLES)
+        target_compile_definitions (${target} PRIVATE VP_HAS_HIT_SAMPLES=1)
+        target_link_libraries (${target} PRIVATE VpHitSamples juce::juce_audio_formats)
     endif()
     if (VP_SIGNALSMITH_ACTIVE)
         target_compile_definitions (${target} PRIVATE VP_USE_SIGNALSMITH=1)

@@ -35,6 +35,7 @@ private:
     void startPressed();
     void stopPressed();
     void tapPressed();
+    void declareBar();
     void applyTempoFollow (bool follow);
     void nudgeFixedBpm (float delta);
     void refreshTempoModeButtons();
@@ -165,6 +166,8 @@ private:
     void layoutTransport (juce::Rectangle<int> body);
     void layoutMisure (juce::Rectangle<int> body);
     void layoutFeelKnobs (juce::Rectangle<int> body);
+    void prepareHits (double sampleRate);
+    void mixHits (float* const* outs, int numChannels, int numSamples) noexcept;
 
     struct CompactGeom
     {
@@ -220,6 +223,7 @@ private:
             under the two buttons and out of the column. */
         juce::Rectangle<int> octaveDown, bpmNumber, octaveUp;
         juce::Rectangle<int> barShift;
+        juce::Rectangle<int> tap;
         /** Compact only: the SETUP button rides the status row's right side,
             because a phone has no title row to put it in. */
         juce::Rectangle<int> settings;
@@ -266,8 +270,8 @@ private:
     };
 
     /** Invisible hit target over the BPM and the quarters.
-        A press anywhere in that zone is TAP; the flash is painted on the stage
-        so it sits on the same numbers the player is looking at. */
+        A press there declares the one, the same action as "L'1 è QUI".
+        TAP tempo lives on its own button. */
     struct TapZone final : juce::Component
     {
         explicit TapZone (MainComponent& o) : owner (o)
@@ -276,7 +280,7 @@ private:
             setInterceptsMouseClicks (true, false);
             setWantsKeyboardFocus (false);
         }
-        void mouseDown (const juce::MouseEvent&) override { owner.tapPressed(); }
+        void mouseDown (const juce::MouseEvent&) override { owner.declareBar(); }
         MainComponent& owner;
     };
 
@@ -307,6 +311,7 @@ private:
     vp::EngineSnapshot snap;
 
     juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
+    juce::TextButton tapButton { "TAP" };
     juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
     juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton startButton { "START" };
@@ -415,6 +420,7 @@ private:
         void mouseDown (const juce::MouseEvent& e) override
         {
             held = false;
+            dragged = false;
             juce::Slider::mouseDown (e);
             if (onHold != nullptr)
                 startTimer (450);
@@ -423,17 +429,19 @@ private:
         {
             if (held)
                 return;
-            if (e.getDistanceFromDragStart() > 6)
-                stopTimer();
+            // A press that stays put is the sample (or the mute). The slider
+            // otherwise treats that press as a drag and the tap never fires.
+            if (e.getDistanceFromDragStart() <= 8.0f)
+                return;
+            dragged = true;
+            stopTimer();
             juce::Slider::mouseDrag (e);
         }
         void mouseUp (const juce::MouseEvent& e) override
         {
             stopTimer();
-            const bool tap = ! held && ! e.mouseWasDraggedSinceMouseDown()
-                             && e.getNumberOfClicks() == 1;
             juce::Slider::mouseUp (e);
-            if (tap && onTap != nullptr)
+            if (! held && ! dragged && onTap != nullptr)
                 onTap();
         }
         void timerCallback() override
@@ -444,6 +452,7 @@ private:
                 onHold();
         }
         bool held = false;
+        bool dragged = false;
     };
     VoiceKnob shakerVolSlider;
     juce::Label  shakerVolLabel { {}, "SHAKER" };
@@ -469,6 +478,25 @@ private:
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
+    /** One-shot hits. Same cell as a FEEL knob; a press starts the sample,
+        a press while it is sounding cuts it and starts it again. */
+    VoiceKnob absorbVolSlider;
+    juce::Label absorbHitLabel { {}, "ABSORB" };
+    juce::Label absorbHitValue { {}, "100%" };
+    VoiceKnob hornVolSlider;
+    juce::Label hornHitLabel { {}, "HORN" };
+    juce::Label hornHitValue { {}, "100%" };
+    struct HitVoice
+    {
+        juce::AudioBuffer<float> pcm;
+        std::atomic<uint32_t> request { 0 };
+        std::atomic<float> gain { 1.0f };
+        std::atomic<bool> sounding { false };
+        uint32_t playing = 0;
+        int pos = 0;
+    };
+    HitVoice hitVoices[2];
+    double hitRate = 0.0;
 
     juce::AudioBuffer<float> inputScratch;
     juce::AudioBuffer<float> trackScratch;

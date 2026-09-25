@@ -475,9 +475,8 @@ The DEBUG panel labels shape decisions in words (`CURVA`, `GRADINO`, `LINEARE`,
 `PICCO ISOLATO`, `IN ATTESA`), labels bridge state (`SPENTO`, `AVVIO`, `PIENO`)
 and displays the heard clock BPM beside decoder and target BPM. That is the
 manual iPad seam for locating latency without interpreting enum integers.
-In a JUCE debug build the same decision chain is also emitted automatically to
-the Xcode console about five times per second. Filter on `VP_TEMPO_TRACE`; the
-trace is message-thread-only and is compiled out of performance builds.
+The automatic `VP_TEMPO_TRACE` console log was removed; the DEBUG panel is the
+remaining on-device reading of the same chain.
 The first real iPad trace exposed a lifetime bug in the listening candidate: an
 earlier hinge kept `shapeHingeActive` latched after its visible twelve-beat
 quarantine reached zero, so later decisive `CURVA` frames in `live` remained at

@@ -5,6 +5,7 @@
 #import <dispatch/dispatch.h>
 
 #include <cmath>
+#include <cstring>
 #include <utility>
 
 namespace vp
@@ -246,6 +247,42 @@ SafeAreaInsets windowSafeAreaInsets()
     out.bottom = pts (insets.bottom);
     out.right  = pts (insets.right);
     return out;
+}
+
+bool copySystemGear (int px, unsigned char* argb, int lineStride, bool white)
+{
+    if (px < 8 || argb == nullptr || lineStride < px * 4)
+        return false;
+
+    UIImageSymbolConfiguration* cfg =
+        [UIImageSymbolConfiguration configurationWithPointSize: (CGFloat) px
+                                                        weight: UIImageSymbolWeightRegular];
+    UIColor* ink = white ? UIColor.whiteColor : UIColor.blackColor;
+    UIImage* symbol = [[UIImage systemImageNamed: @"gearshape" withConfiguration: cfg]
+                          imageWithTintColor: ink
+                               renderingMode: UIImageRenderingModeAlwaysOriginal];
+    if (symbol == nil)
+        return false;
+
+    UIGraphicsBeginImageContextWithOptions (CGSizeMake (px, px), false, 1.0);
+    [symbol drawInRect: CGRectMake (0, 0, px, px)];
+    UIImage* drawn = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    if (drawn.CGImage == nil)
+        return false;
+
+    std::memset (argb, 0, static_cast<size_t> (lineStride) * static_cast<size_t> (px));
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate (argb, (size_t) px, (size_t) px, 8,
+                                              (size_t) lineStride, space,
+                                              kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease (space);
+    if (ctx == nullptr)
+        return false;
+
+    CGContextDrawImage (ctx, CGRectMake (0, 0, px, px), drawn.CGImage);
+    CGContextRelease (ctx);
+    return true;
 }
 
 } // namespace vp

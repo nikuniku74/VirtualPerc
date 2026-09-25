@@ -61,6 +61,10 @@ struct SafeAreaInsets
 };
 SafeAreaInsets windowSafeAreaInsets();
 
+/** Standard settings glyph (SF Symbol gearshape), into a JUCE ARGB buffer:
+    little-endian bytes B,G,R,A, premultiplied. False off Apple. */
+bool copySystemGear (int px, unsigned char* argb, int lineStride, bool white);
+
 /** Called on the message thread when iOS has restarted its media server.
 
     Everything audio the process owns is invalid after that - the session, the
