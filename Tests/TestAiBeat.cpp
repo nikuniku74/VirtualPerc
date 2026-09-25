@@ -1577,6 +1577,50 @@ void vpRunNewInputTests (int& passed, int& failed)
     gFail = &failed;
     std::printf ("\nnew input (item 3)\n");
 
+    // An occasional failed model call still consumes one 20 ms feature frame.
+    // The next successful publication must describe the current frame, not
+    // one frame earlier for the rest of the session.
+    {
+        class DropOneInferenceModel final : public vp::IBeatModel
+        {
+        public:
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float out[3]) override
+            {
+                const int n = calls.fetch_add (1, std::memory_order_relaxed) + 1;
+                if (n == 20)
+                    return false;
+                out[0] = 0.03f;
+                out[1] = 0.03f;
+                out[2] = 0.94f;
+                return true;
+            }
+            std::atomic<int> calls { 0 };
+        };
+
+        auto model = std::make_unique<DropOneInferenceModel>();
+        auto* raw = model.get();
+        vp::NeuralBeatTracker worker;
+        worker.setModel (std::move (model));
+        worker.start (48000.0);
+        float silence[256] {};
+        constexpr int fed = 256 * 188;
+        for (int i = 0; i < fed / 256; ++i)
+            worker.feed (silence, 256);
+        const auto deadline = std::chrono::steady_clock::now()
+                              + std::chrono::seconds (3);
+        while (worker.completedSamples() < fed
+               && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        vp::BeatHypothesis last;
+        const bool published = worker.tryLoad (last);
+        const int calls = raw->calls.load (std::memory_order_relaxed);
+        worker.stop();
+        expect (published && calls > 20 && last.frameIndex == static_cast<uint64_t> (calls),
+                "one failed inference does not shift all later beat timestamps");
+    }
+
     {
         vp::AudioFifo fifo;
         fifo.prepare (32);

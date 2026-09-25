@@ -250,16 +250,20 @@ void NeuralBeatTracker::workerLoop()
 
             while (features.popFrame (frame))
             {
-                if (model == nullptr || ! model->infer (frame, LogSpectFeatures::kDim, act))
-                    continue;
-
-                // The band energy the network was handed, before it is thrown
-                // away: the decoder's three probabilities cannot tell a kick
-                // from a hi-hat, and the metrical level turns on exactly that.
-                // See docs/HANDOFF_OCTAVE_50BPM.md.
-                auto h = decoder.observe (act[0], act[1], act[2],
-                                          LogSpectFeatures::lowBandEnergy (frame),
-                                          LogSpectFeatures::highBandEnergy (frame));
+                const bool inferred = model != nullptr
+                                      && model->infer (frame, LogSpectFeatures::kDim, act);
+                // One consumed feature frame is one step of decoder time.
+                // Skipping a failed inference compressed that time by 20 ms;
+                // every later publication then carried a permanently early
+                // analysis timestamp and phase projection. Silence records a
+                // missing observation without inventing a beat.
+                // The band energy belongs to a real model result only: it is
+                // the cue that distinguishes a kick from a hi-hat.
+                auto h = inferred
+                    ? decoder.observe (act[0], act[1], act[2],
+                                       LogSpectFeatures::lowBandEnergy (frame),
+                                       LogSpectFeatures::highBandEnergy (frame))
+                    : decoder.observe (0.0f, 0.0f, 1.0f);
                 h.analysisSample = analysisSampleFor (h.frameIndex);
                 slot.publish (h);
             }
