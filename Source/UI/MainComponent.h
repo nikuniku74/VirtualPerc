@@ -549,7 +549,7 @@ private:
     bool forceEnginePrepare = false;
     bool audioOpened = false;
     bool micGranted = false;
-    bool userWantsArmed = false;
+    std::atomic<bool> userWantsArmed { false };
     int  inputChannels = 0;
     int  tapFlash = 0;
 

@@ -1512,14 +1512,14 @@ void MainComponent::startPressed()
     if (! internalTrackSelected())
         ensureMicrophone();
     userWantsArmed = true;
-    engine.start();
+    engine.requestStart();
     refreshStartButton();
 }
 
 void MainComponent::stopPressed()
 {
     userWantsArmed = false;
-    engine.stop();
+    engine.requestStop();
     refreshStartButton();
 }
 

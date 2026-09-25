@@ -4812,6 +4812,24 @@ mid-song STOP/START improves alignment. The full host suite was stopped after
 unrelated existing failures (phase-steer noise, slow-level, conga patterns,
 attack alignment); do not cite it as a green gate for a new phase policy.
 
+**Transport handoff (2026-09-25).** The UI's START/STOP callbacks previously
+called `VirtualPercussionEngine::start/stop` on the message thread while the
+audio callback used the same BeatTracker, voices and loop players. These
+mutations now cross one atomic command word and execute at the start of the
+next audio callback. A STOP and START between callbacks execute in that order;
+the fast manual re-entry is retained. `userWantsArmed`, read by the device
+prepare callback, is atomic. This removes a data race, but is not evidence
+that the race caused a particular wrong-quarter lock. `VPTests --transport`
+compared the queued and direct paths sample by sample over START, STOP,
+restart, and same-buffer STOP/START: 4/0. `--state-timing` passes its 15
+checks; ONNX `--phase-lock` is 15/0 at 78/100/120/138/156 BPM;
+`probe_recovery` still passes all 0.075/0.125/0.20-beat shifts and noise
+controls. The unsigned iPadOS Debug target builds. The direct live
+recording had seven false re-grabs in about 4.5 minutes when serial changes
+were treated as grounds to mute. Do not add a fixed half-second mute based
+only on phase error; a new automatic interruption needs evidence that
+distinguishes a true grid change from a decoder phase nudge or a levare.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

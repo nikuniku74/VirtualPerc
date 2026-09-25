@@ -362,6 +362,23 @@ void VirtualPercussionEngine::stop() noexcept
     hybrid.stop();
 }
 
+void VirtualPercussionEngine::requestStart() noexcept
+{
+    constexpr unsigned int pending = 1u, armed = 2u;
+    pendingTransport.fetch_or (pending | armed, std::memory_order_release);
+}
+
+void VirtualPercussionEngine::requestStop() noexcept
+{
+    constexpr unsigned int pending = 1u, armed = 2u, stopped = 4u;
+    // Preserve a STOP across a quick STOP/START pair, even if no audio block
+    // landed between the two UI taps. The final desired state is STOP here.
+    unsigned int old = pendingTransport.load (std::memory_order_relaxed);
+    while (! pendingTransport.compare_exchange_weak (
+        old, (old | pending | stopped) & ~armed,
+        std::memory_order_release, std::memory_order_relaxed)) {}
+}
+
 bool VirtualPercussionEngine::loadLoopBank (const std::string& manifestPath, std::string& error)
 {
     auto bank = std::make_unique<LoopBank>();
@@ -1416,6 +1433,16 @@ void VirtualPercussionEngine::process (const float* const* inputs, int numInputs
 
     if (numSamples <= 0)
         return;
+
+    constexpr unsigned int pending = 1u, armed = 2u, stopped = 4u;
+    const unsigned int transport = pendingTransport.exchange (0u, std::memory_order_acq_rel);
+    if ((transport & pending) != 0u)
+    {
+        if ((transport & stopped) != 0u)
+            stop();
+        if ((transport & armed) != 0u)
+            start();
+    }
 
     // A host is entitled to hand over a longer block than it announced - a
     // screen lock, a route change, an AirPlay hop. Split it rather than

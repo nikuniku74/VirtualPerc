@@ -50,8 +50,15 @@ public:
     }
     void reset() noexcept;
 
+    /** Direct state changes for the audio thread or device prepare callback.
+        Message-thread controls use requestStart/requestStop. */
     void start() noexcept;
     void stop() noexcept;
+    /** UI transport commands: hand off the tracker and voice mutations to the
+        next audio callback. A STOP followed by START before that callback
+        still runs both, so the manual re-entry keeps its meaning. */
+    void requestStart() noexcept;
+    void requestStop() noexcept;
     void tap() noexcept;
     void tapAt (double timeSeconds) noexcept;
 
@@ -472,6 +479,9 @@ private:
         must drop the old song's evidence, while a seek within one file must
         keep the tempo - see notifyInputRestart and notifyTrackSeek. */
     std::atomic<bool> inputRestartPending { false };
+    /** Pending UI command, final armed state, and whether STOP occurred since
+        the previous callback. During playback, process() owns these mutations. */
+    std::atomic<unsigned int> pendingTransport { 0 };
     int   musicGapSamples = 0;
     bool  musicGapArmed = false;
     std::atomic<bool> lastBarTrusted { false };

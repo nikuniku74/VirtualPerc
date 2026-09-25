@@ -1,3 +1,4 @@
+#include "AI/StubBeatModel.h"
 #include "Audio/VirtualPercussionEngine.h"
 #include "Percussion/PercussionEngine.h"
 #include "TestAiBeat.h"
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
+#include <memory>
 #include <random>
 #include <string>
 #include <utility>
@@ -1198,6 +1200,59 @@ int main (int argc, char** argv)
     {
         vpRunStateTimingTest (gPassed, gFailed);
         return gFailed ? 1 : 0;
+    }
+    if (argc > 1 && std::string (argv[1]) == "--transport")
+    {
+        vp::VirtualPercussionEngine direct, queued;
+        direct.setBeatModel (std::make_unique<vp::StubBeatModel>());
+        queued.setBeatModel (std::make_unique<vp::StubBeatModel>());
+        direct.prepare (sr, block, 1);
+        queued.prepare (sr, block, 1);
+        direct.setFixedBpm (120.0f);
+        queued.setFixedBpm (120.0f);
+        float in[block] {};
+        float directL[block] {}, directR[block] {};
+        float queuedL[block] {}, queuedR[block] {};
+        const float* inputs[1] { in };
+        float* directOut[2] { directL, directR };
+        float* queuedOut[2] { queuedL, queuedR };
+        auto render = [&] (int blocks)
+        {
+            bool equal = true;
+            for (int i = 0; i < blocks; ++i)
+            {
+                direct.process (inputs, 1, directOut, 2, block);
+                queued.process (inputs, 1, queuedOut, 2, block);
+                for (int n = 0; n < block; ++n)
+                    equal &= directL[n] == queuedL[n] && directR[n] == queuedR[n];
+            }
+            return equal;
+        };
+
+        direct.start();
+        queued.requestStart();
+        expect (render (static_cast<int> (sr / block * 2.0))
+                    && direct.shakerHits() > 0
+                    && queued.snapshot().percussionAudible == direct.snapshot().percussionAudible,
+                "queued START matches audio-thread START sample for sample");
+        direct.stop();
+        queued.requestStop();
+        expect (render (2) && ! queued.snapshot().percussionAudible,
+                "queued STOP silences the next audio block");
+        direct.start();
+        queued.requestStart();
+        expect (render (static_cast<int> (sr / block))
+                    && queued.snapshot().percussionAudible == direct.snapshot().percussionAudible,
+                "queued START rejoins with the same clock phase");
+        direct.stop();
+        direct.start();
+        queued.requestStop();
+        queued.requestStart();
+        expect (render (4)
+                    && queued.snapshot().percussionAudible == direct.snapshot().percussionAudible,
+                "STOP/START between callbacks still performs both commands");
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
     }
     if (argc > 1 && std::string (argv[1]) == "--phase-lock")
     {
