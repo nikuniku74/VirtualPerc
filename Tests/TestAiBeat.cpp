@@ -9822,6 +9822,38 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool newFileMustEarnItsOwnLock()
+    {
+        BeatTracker t;
+        t.sampleRate = 48000.0;
+        t.setInputEpoch (0);
+        t.currentState = TrackingState::following;
+        t.armed = true;
+        t.beatCount = 80;
+        t.listeningSamples = 48000;
+        t.smoothedConf = 0.9f;
+        t.samplesSinceBeat = 0;
+        t.sounding = true;
+        t.hadPlayed = true;
+        t.downbeatHoldSamples = 48000 * 9;
+        t.setInputEpoch (1, false, true);
+
+        const bool fresh = t.beatCount == 0 && t.listeningSamples == 0
+                           && t.smoothedConf == 0.0f && ! t.sounding
+                           && ! t.hadPlayed && t.downbeatHoldSamples == 0;
+        t.heldBpm = 120.0f;
+        t.inputPeakEnv = 0.02f;
+        t.updateState (0.8f, true, true, true, 256);
+        const bool waitsForCurrentSong = t.currentState == TrackingState::listening;
+
+        t.beatCount = 2;
+        t.listeningSamples = 48000;
+        t.samplesSinceBeat = 0;
+        t.updateState (0.8f, true, true, true, 256);
+        return fresh && waitsForCurrentSong
+               && t.currentState == TrackingState::following;
+    }
+
     static bool barTrustSurvivesWeakVotesButNotReentry()
     {
         BeatTracker t;
@@ -10285,6 +10317,10 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    const bool newFileLock = vp::BeatTrackerTimingProbe::newFileMustEarnItsOwnLock();
+    std::printf ("state-timing new file earns its own lock %s\n",
+                 newFileLock ? "PASS" : "FAIL");
+    (newFileLock ? passed : failed)++;
     const bool barContinuity = vp::BeatTrackerTimingProbe::barTrustSurvivesWeakVotesButNotReentry();
     std::printf ("state-timing bar trust holds weak votes, clears on epoch/seek/STOP %s\n",
                  barContinuity ? "PASS" : "FAIL");

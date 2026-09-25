@@ -271,6 +271,26 @@ public:
             // through here, and that one still must not restart the clock.
             follower.reset();
             evidence.restart();
+            // The old clock is gone, so its acquisition proof is gone too.
+            // Keeping these counters let the next file enter FOLLOWING on its
+            // first provisional beat, with the previous file's confidence and
+            // listening time. A retained bar hold could also prevent the
+            // silent clock from snapping to the new file's beat for seconds.
+            samplesSinceBeat = 0;
+            lockHoldSamples = 0;
+            lowHoldSamples = 0;
+            listeningSamples = 0;
+            beatCount = 0;
+            smoothedConf = 0.0f;
+            inputPeakEnv = 0.0f;
+            quietSamples = 0;
+            gridMuteSamples = 0;
+            ghostLockSamples = 0;
+            downbeatHoldSamples = 0;
+            barReentrySamples = 0;
+            barReentryHalfOnly = false;
+            sounding = false;
+            hadPlayed = false;
             lockedOnce = false;
             heldBpm = 0.0f;
             currentState = TrackingState::listening;
