@@ -41,6 +41,9 @@ int main (int argc, char** argv)
     // later. --bpm then refers to the second file. docs/TODO.md item 48.
     std::string thenPath;
     double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0;
+    // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
+    // and the engine is told, as MainComponent does.
+    double seekAt = -1.0, seekTo = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -67,6 +70,8 @@ int main (int argc, char** argv)
         else if (a == "--at")         thenAt = std::atof (next());
         else if (a == "--stop-gap")   stopGap = std::atof (next());
         else if (a == "--stop-after") stopAfter = std::atof (next());
+        else if (a == "--seek-at")    seekAt = std::atof (next());
+        else if (a == "--seek-to")    seekTo = std::atof (next());
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -106,7 +111,8 @@ int main (int argc, char** argv)
     else
         append (wav, wav.frames);
     const int n = static_cast<int> (mono.size());
-    bool switched = false, stoppedAfter = false, restartedAfterGap = false;
+    bool switched = false, stoppedAfter = false, restartedAfterGap = false, seeked = false;
+    long readOffset = 0;
 
     constexpr int block = 256;
     vp::VirtualPercussionEngine eng;
@@ -149,7 +155,7 @@ int main (int argc, char** argv)
     std::vector<double> restartAt;
     vp::EngineSnapshot s {};
 
-    while (pos + block <= n && pos / sr < until)
+    while (pos + block <= n && pos + readOffset + block <= n && pos / sr < until)
     {
         if (switchAt >= 0 && ! switched && pos >= switchAt)
         {
@@ -172,8 +178,15 @@ int main (int argc, char** argv)
             eng.start();
             std::printf ("# %.1f s: START\n", pos / sr);
         }
+        if (seekAt >= 0.0 && ! seeked && pos >= static_cast<int> (seekAt * sr))
+        {
+            seeked = true;
+            readOffset = static_cast<long> (seekTo * sr) - pos;
+            eng.notifyTrackSeek();
+            std::printf ("# %.1f s: seek a %.1f s del file\n", pos / sr, seekTo);
+        }
         const int take = std::min ({ block, n - pos, hop - inHop, switchAt > pos ? switchAt - pos : block });
-        const float* ins[1] = { mono.data() + pos };
+        const float* ins[1] = { mono.data() + pos + readOffset };
         eng.process (ins, 1, outs, 2, take);
         s = eng.snapshot();
         const double t = pos / sr;

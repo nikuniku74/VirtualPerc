@@ -386,6 +386,9 @@ private:
     std::atomic<int>   lastOctave { 0 };
     std::atomic<float> lastCombBpm { 0.0f };
     std::atomic<bool>  lastLevelSettled { false };
+    /** Audio thread only: the part has played on a confirmed metrical level
+        since it last stopped or the file changed. See the epoch call. */
+    bool playedOnSettledLevel = false;
     std::atomic<float> lastFitResidual { 1.0f };
     std::atomic<float> lastFitCoverage { 0.0f };
     std::atomic<float> lastShortFitBpm { 0.0f };

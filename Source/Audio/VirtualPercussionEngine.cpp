@@ -1743,9 +1743,28 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // tempo the restart just dropped.
     if (dropQueuedInput)
         preserveCombOnEpoch = false;
+    // A loaded file never goes quiet into a *different* source: the next song
+    // is another file and restarts explicitly (notifyInputRestart). A cold
+    // epoch mid-song - a near-silent break, then the band back - threw away
+    // the comb and the model under a playing part, and the fresh acquisition
+    // wandered for ~10 s (LET ME LOVE YOU 99 -> 60 and VITA 96 -> 62 on the
+    // iPad; 197 -> 79 at 48 kHz on the desktop). Once the part has played on a
+    // confirmed level, it is the arrangement entrance it looks like: keep comb
+    // and model, drop only the grid. Latched, because `levelSettled` can read
+    // false for the one block the break ends in (it did at 48 kHz). Mixer
+    // input keeps the cold epoch - there a quiet gap and a band can be the
+    // next song.
+    else if (levelJumped && ! preserveCombOnEpoch && playedOnSettledLevel
+             && cfg.followSource.load (std::memory_order_relaxed)
+                    == static_cast<int> (FollowSource::internalPlayer))
+        preserveCombOnEpoch = true;
     tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed),
                            preserveCombOnEpoch, dropQueuedInput);
     const auto tr = tracker.process (mono.data(), numSamples);
+    if (! tr.percussionShouldPlay || dropQueuedInput)
+        playedOnSettledLevel = false;
+    else if (tr.levelSettled)
+        playedOnSettledLevel = true;
 
     percussion.setBarTrusted (tr.barTrusted);
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
