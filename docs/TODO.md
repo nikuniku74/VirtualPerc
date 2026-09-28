@@ -3797,6 +3797,21 @@ Banco: 9 brani + EVERYTIME a 44.1/48 kHz + 5 estratti Flamingo, `line_scan.py`
   44.1k; SPLENDIDA, VITA, LET ME LOVE YOU meglio a 48k). L'iPad lavora a 48k.
 - [ ] EVERYTIME 48k: slittamento a ~150 s ancora aperto.
 
+### 53. Suono delle percussioni: conga dal loop scelto, volume, DANCE di default 🟡 (2026-09-28 — resta ascolto)
+
+Richiesta: suoni realistici, quelli di SampleFocus "Salsa Congas Loop - Dance 3"
+tranne la conga più bassa (le note basse sulla conga media). Poi: conga troppo
+basse rispetto agli altri suoni (knob sempre al massimo) e la conga alta
+stoppata molto più bassa dell'altra. Figura di default: DANCE.
+
+- [x] `scripts/prepare_loop_congas.py` (numpy) taglia il loop in `Assets/Percussion`: aperti, slap, slap chiuso, heel, toe, muff, tapado veri; code degli aperti modellate fino a 300 ms; attacco allineato (picco a 2-3 ms). Licenza: non CC0, vedi ATTRIBUTION.md.
+- [x] `PercussionEngine`: intonazione naturale (`kDrumTune` 1.0), colpi stoppati dal loro file senza smorzamento artificiale, conga +5 dB (`kCongaLevel`), soft clip sopra 0.80.
+- [x] Volume percepito (dBA, 150 ms, vel 0.9): conga da ~-24 a ~-19 (battimani -18.5, cembalo -21); slap chiuso a velocità media da 6.2 a 1.3 dB sotto l'aperto.
+- [x] Default DANCE + migrazione una tantum delle preferenze; test del default aggiornato.
+- [x] `VPTests --percussion` 17/0; allineamento attacchi identico a HEAD (il FAIL da 2.7 ms è il battimani sintetico, preesistente); `--leak` righe MIXER identiche. Percorso microfono iPad peggiorato (righe no-leak e seam): accettato, per ora solo mixer e brani caricati.
+- [x] Shaker sostituito con `soft-bright-shaker_128bpm.wav` (`scripts/prepare_loop_shaker.py`): accento = `shaker_down`, i tre colpi leggeri diversi = `shaker_up`/`_b`/`_med` e `shaker_down_med`; coda naturale, senza il decadimento imposto dei vecchi VCSL. Volume -25.4 dBA come prima (conga -19). Allineamento attacchi: dispersione 3.04 ms (HEAD 2.85, prima dei suoni 2.71; soglia 2 ms già rossa per il battimani sintetico): il resto è lo shaker su ±2.5 ms, dove il soft clip arrotonda la cima della sua salita lenta a velocità alta. `--percussion` 17/0, righe MIXER di `--leak` invariate.
+- [ ] ascolto su iPad.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

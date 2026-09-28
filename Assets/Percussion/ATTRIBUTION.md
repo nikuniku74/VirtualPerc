@@ -21,10 +21,16 @@ percussionist's own device; read https://samplefocus.com/license before any
 public release. The loop's lowest drum (~205 Hz) is not used; `tumba*` is the
 mid conga, at the percussionist's request.
 
-Shakers, claps and cembalo are VCSL, recorded by Sam Gossner: the shaker down-
-and up-strokes are VCSL *Shaker, Small*; the claps are VCSL *Claps* (the
-ensemble takes, not the `SoloClap` velocity ladder); the cembalo is VCSL
-*Tambourine 1* and *2*.
+The **shaker** (`shaker_down*`, `shaker_up*`) is, since the same day, cut from
+the loop the percussionist chose, `soft-bright-shaker_128bpm.wav` (128 BPM,
+two bars), by `scripts/prepare_loop_shaker.py`: the accent is `shaker_down`,
+the three different light strokes are `shaker_up`, `_b`, `_med` and
+`shaker_down_med`. Same licence caution as the congas: the file came from a
+sample site, not a CC0 library; check its terms before a public release.
+
+Claps and cembalo are VCSL, recorded by Sam Gossner: the claps are VCSL
+*Claps* (the ensemble takes, not the `SoloClap` velocity ladder); the cembalo
+is VCSL *Tambourine 1* and *2*.
 
 ## What each file is
 
@@ -46,12 +52,6 @@ ring (three partials, one decay).
 
 | File | Original | What it is |
 |---|---|---|
-| `shaker_down.wav` | `Mid_ShakerHighFaster_Down_rr1` | shaker, accented down-stroke |
-| `shaker_down_b.wav` | `Mid_ShakerHighFaster_Down_rr2` | shaker down — round-robin |
-| `shaker_down_med.wav` | `Mid_ShakerDouble_Down_rr1` | shaker down, lighter |
-| `shaker_up.wav` | `Mid_ShakerHighFaster_Up_rr1` | shaker, return stroke |
-| `shaker_up_b.wav` | `Mid_ShakerHighFaster_Up_rr2` | shaker up — round-robin |
-| `shaker_up_med.wav` | `Mid_ShakerLowFaster_Up_rr2` | shaker up, lighter |
 | `clap.wav` | `Clap_rr1` | backbeat clap, ensemble |
 | `clap_b.wav` | `Clap_rr3` | clap — round-robin |
 | `clap_med.wav` | `Clap_rr6` | clap — third take, tightest of the set |

@@ -455,6 +455,53 @@ Two `render()` traps that have each cost a bug:
   than the real pulse and swallowed every second stroke. A `reanchored` tick
   discards pending (not-yet-sounded) voices; tails already begun are left alone.
 
+### The loop congas (2026-09-28)
+
+The conga bank is no longer VCSL. The percussionist picked SampleFocus
+"Salsa Congas Loop - Dance 3" (licence note in Assets/Percussion/ATTRIBUTION.md:
+not CC0, fine on his own device). `scripts/prepare_loop_congas.py` cuts it:
+
+- Only the mid conga (~325 Hz) and its slaps/muted strokes; the loop's lowest
+  drum is left out on request and `tumba*` is the mid conga too.
+- Every event, ghosts included, ends the file before it; no open tone rings
+  clean past ~120 ms in the loop, so each is continued to the engine's 300 ms
+  cap by its own fitted ring (three partials, one decay, 10 ms crossfade).
+- Files start 3 ms before the first-strike peak with a 0.5 ms fade-in: the
+  drum-strike check wants the peak within 4 ms; the open tone's hand takes
+  ~5 ms to reach it.
+- `heel`, `toe`, `muff`, `slap_closed`, `tapado` now have real takes.
+  `buildBank` loads a stroke's own stem first and `layerFromRecording(...,
+  ownTake)` then skips the artificial `extraDecay`; without the files it still
+  derives them from open/slap as before.
+- Loop hit 11 (palm, then body 30 ms later) is not used: heard 10 ms after
+  every other stroke, past what attack compensation carries. Loop hit 18 (a
+  light, spiky slap) is not the `_med` slap: peak-normalised it sat 6 dBA
+  under the open tone at medium velocity; the derived medium layer is 1.3 dB.
+- `kDrumTune` is 1.0 (natural pitch). The synthesis fallback keeps its own
+  `kSynthDrumTune` (2^(5/12)).
+- `kCongaLevel` 1.778 (+5 dB) on the congas' knob: A-weighted over the loudest
+  150 ms at velocity 0.9 the congas were ~-24 dBA against -21 cembalo and
+  -18.5 clap; now ~-19. A soft clip (tanh above 0.80) at the end of
+  `render` rounds peaks instead of clipping them; it also covers stacked
+  shaker+conga+clap, which could already exceed full scale.
+- Measured: attack spread identical to HEAD (25.9-28.6 ms; the 2.7 ms
+  pre-existing FAIL is the synthesized clap), drum-strike 2.0-3.0 ms,
+  `VPTests --percussion` 17/0, `--leak` MIXER rows and seam unchanged. The iPad
+  speaker path is worse (no-leak rows, and the canceller-on/off seam through
+  the room): the new congas pass the modelled speaker's 260 Hz high-pass where
+  the old tuned ones mostly did not. Accepted by the percussionist: mixer and
+  loaded files only for now.
+- The shaker is cut from `soft-bright-shaker_128bpm.wav` by
+  `scripts/prepare_loop_shaker.py`: its accent is `shaker_down`, its three
+  distinct light strokes are `shaker_up`, `_b`, `_med` and `shaker_down_med`.
+  Files start at 35% of the stroke's envelope peak minus 1 ms (the shaker
+  convention) and keep their own tail - no imposed exponential. Take 3 as
+  `shaker_up` came out 2.5 ms late in the attack-align check (its broad swell
+  crosses 80% differently once the soft clip rounds it), take 1 is used.
+- Default figure is DANCE (`EngineSettings::grooveStyle`), with a one-time
+  preference migration (`grooveDanceDefault`) so an old saved MARCHA does not
+  keep it.
+
 ## 12. Editing checklist
 
 Adding or changing a style:
