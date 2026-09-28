@@ -414,6 +414,11 @@ namespace
     // How far the comb may move and still be casting the same vote.
     constexpr float kOctaveVoteHold = 0.10f;
 
+    // Below this placement trust a long-held direct-feed FISSO is not left on
+    // fast votes alone. The same 0.50 at which TempoFollower withholds the
+    // direct-live phase override.
+    constexpr float kPoorPlacementTrust = 0.50f;
+
     // The stale-grid watchdog (docs/TODO.md item 19).
     //
     // The octave snap above is looking for a *metrical level*, so it only fires
@@ -4034,6 +4039,17 @@ void BeatDecoder::updateTempo() noexcept
         return target + (boundedRecent - target) * weight;
     };
 
+    if (placementTrustSerial != gridSerial)
+    {
+        placementTrust.restart();
+        placementTrustSerial = gridSerial;
+        placementTrustSec = -1.0;
+    }
+    placementTrust.observe (lastFitResidual, lastFitCoverage,
+                            placementTrustSec >= 0.0 ? timeSec - placementTrustSec : 0.0,
+                            shortFitResidual);
+    placementTrustSec = timeSec;
+
     switch (tempoRegime)
     {
         case TempoRegime::unknown:
@@ -4258,7 +4274,54 @@ void BeatDecoder::updateTempo() noexcept
                         && (lineFeed || windowAgrees))
                     || (haveLong && std::fabs (anchorError) > 0.06f)));
 
-            if (releaseFixed)
+            // A fill is not a tempo. EVERYTIME's bridge left a 204-beat FISSO
+            // at 141 s on two fast votes while both fits were two to three
+            // times worse placed than the song's own (placement trust 0.30)
+            // and the fold stayed on 123. The published tempo climbed to 129
+            // and the clock slipped a whole beat by 156 s, although the grid
+            // before and after is one 123.0 line (115 beats apart, -23 ms).
+            //
+            // Poor placement alone does not separate that from motion: two
+            // continuous-motion seeds of the known-grid bank (192847, 208685)
+            // leave FISSO at trust 0.30 too, with the fold unmoved. What they
+            // do not have is tenure - 14 and 25 beats in FISSO against 204.
+            // So a release on fast votes is held only when all of these say
+            // "same tempo": placement poor against this song, a FISSO that has
+            // held two long windows, a move below the smallest step any
+            // detector here claims (kGridStepMinimum, 2.5%: every held
+            // attempt in that fill was 1.4-2.0%, while the known-grid steps it
+            // delayed at 8.7% were 4-5%), the long window not
+            // `moving`, and the fold not following the short fit. Sustained or
+            // large evidence (below) still releases, and the hold ends by
+            // itself when any witness changes. Direct feed only.
+            //
+            // The fold's witness is compared on the short fit's octave (140 ->
+            // 75: it reads 150, the same pulse), and only for direction: on a
+            // fast ramp it is seconds late, so a quarter of the way counts.
+            bool combSupportsMove = false;
+            if (combReady && haveShort && combRawBpm > kMinBpm && shortFitBpm > kMinBpm)
+            {
+                const float combOnShort = combRawBpm * std::exp2 (std::round (
+                                              std::log2 (shortFitBpm / combRawBpm)));
+                const float shortMove = shortFitBpm - bpm;
+                const float combMove = combOnShort - bpm;
+                combSupportsMove =
+                    std::fabs (std::log2 (combOnShort / shortFitBpm)) < kStaleGridThreshold
+                    && shortMove * combMove > 0.0f
+                    && std::fabs (combMove) >= 0.25f * std::fabs (shortMove);
+            }
+            const bool smallMove = haveShort && shortFitBpm > kMinBpm
+                && std::fabs (shortFitBpm - bpm) < kGridStepMinimum * bpm;
+            const bool poorlyPlaced = lineFeed && placementTrust.trust() < kPoorPlacementTrust
+                                      && smallMove && ! moving && ! combSupportsMove
+                                      && beatsInRegime >= 2 * kLongFit;
+            // Sustained or large evidence is not a fill's: six wandered beats,
+            // five beats past 4.5%, or a 6% anchor error still release.
+            const bool sustainedRelease = beatsInRegime >= kRegimeMinBeats
+                && (fixedErrorBeats >= kBeatsToLeaveFixed
+                    || fastDriftLargeBeats >= kFastBeatsAlone
+                    || (haveLong && std::fabs (anchorError) > 0.06f));
+            if (releaseFixed && (! poorlyPlaced || sustainedRelease))
             {
                 enterRegime (TempoRegime::live);
                 fixedErrorBeats = 0;

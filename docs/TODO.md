@@ -3713,6 +3713,31 @@ accordo modulo ottave entro `kStaleGridRelease`, stesso livello entro
 - [x] **"secondo brano: si allinea solo dopo STOP" (2026-09-28)** — `VPTrack --then B.wav --at 60 [--stop-after X --stop-gap G]`. Build *prima* di questo item, SPLENDIDA→FEEL: senza STOP aggancio tenuto a **46.08 s** dal cambio, con STOP a +15 s e START a +18 s a **28.97 s** (STOP toglie `sounding` e quindi il rifiuto post-buco). Con questo item, senza STOP: **24.88 s**. EVERYTIME→SPLENDIDA e SPLENDIDA→EVERYTIME: identici con e senza STOP in entrambe le build (2.06 / 5.31 s). Da t≈+10 s le tracce con e senza STOP coincidono anche in fase.
 - [ ] ascolto.
 
+### 49. EVERYTIME: il fill fa uscire il tempo e il clock slitta di un battito 🟡 (2026-09-28, parziale: 44.1 kHz risolto, 48 kHz no — resta ascolto)
+
+**Causa, misurata.** Griglia del brano prima del fill (110-136 s) 123.04 BPM,
+dopo (166-186 s) 122.88: la prima retta, prolungata di 115 battiti, cade sulla
+seconda a -23 ms. **Il brano non accelera.** Il decoder, FISSO da 204 battiti,
+esce a 141 s su due voti veloci mentre i due fit sono 2-3 volte peggio piazzati
+del solito (fiducia 0.30) e il comb resta su 123; pubblica fino a 129 e il clock
+anticipa -206 ms a 150 s e **slitta di un battito intero** verso 156 s (l'1 si
+sposta). Misura: `scripts/analysis/line_check.py` (nuovo).
+
+**Tenuto.** `BeatDecoder`: su feed diretto non si esce da un FISSO lungo
+(>= 2 finestre lunghe, 48 battiti) su soli voti veloci quando *tutti* dicono
+"stesso tempo": fiducia di piazzamento (`EvidenceTrust`, la stessa del tracker)
+< 0.50, spostamento del fit corto < `kGridStepMinimum` (2.5%), finestra lunga non
+`moving`, comb che non segue il fit corto (confronto modulo ottava, almeno 1/4
+della strada). L'evidenza sostenuta (6 battiti sbandati, 5 oltre 4.5%, ancora
+6%) esce comunque.
+
+- [x] EVERYTIME 44.1k `VPTrack --player`: tempo nel 2% **94.0 → 98.6%**; errore reale del clock nel fill da -232 ms + slittamento di un battito a **-54 ms max, nessuno slittamento**.
+- [x] Banco a griglia nota (`probe_motion_matrix --quick`, entrambe le corsie): offset 0 **identico**; offset 32 fisso 20.9/50.5 → **20.4/47.4** (un falso rilascio in meno); offset 48 gradino 33.7/145.6 → **33.2/140.3**; offset 16 gradino 33.6/153.9 → 34.0/154.2 (solo il seme 257997, già rotto: 21% di errore BPM, livello sbagliato). Matrice completa: gradino 37.6/150.7 → 37.6/150.4, continuo invariato. `probe_tempo_step`, `VPAlign --ramps/--steps` identici; `VPTests --tempo-step/--tempo-slow/--new-input/--bar/--state-timing` identici. FEEL, SPLENDIDA, Sally identici al byte.
+- [ ] **EVERYTIME 48k non migliora** (90.6% → 90.6%, slitta ancora a 142-156 s): a 99.8 s la fiducia rimbalza a 1.00 per un battito (fit corto del fill momentaneamente pulito) e lo spostamento è +3.9%, quindi esce; tornato FISSO l'anzianità riparte e a 141.7 s ha 22 battiti. Isteresi sulla fiducia o anzianità "per tempo" sarebbero soglie da un solo brano: servono altri fill reali con griglia (usare `line_check.py` su brani a tempo costante).
+- [ ] ascolto su iPad.
+
+Scartati (stessa sessione, controllo = HEAD): sola fiducia (continuo 38.8/95.0 → 41.8/111.1, `VPAlign --ramps` FAIL, 140→75 13.6 → 24 s); + comb che arriva sul fit corto (rampa 12 s FAIL 84.1 → 107.0); + comb solo di direzione e modulo ottava (continuo 39.6/100.0, 140→75 ancora 24 s); + esenzione "curva provata" g >= 0.50 (banco quasi pari ma EVERYTIME torna 94.0%: anche il fill ha g 0.66); stime a 4 battiti ripetute come prova di gradino (il fill corre coerente per 3 battiti: 126.7/127.3/125.1); anzianità senza tetto 2.5% (gradino offset 32: 242175 p95 113 → 190 ms).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

@@ -4,6 +4,7 @@
 #include "AI/BeatHmm.h"
 #include "AI/TempoEstimator.h"
 #include "AI/TempoMotionTracker.h"
+#include "Tracking/PhaseTrust.h"
 
 namespace vp
 {
@@ -522,6 +523,13 @@ private:
     // whole octaves). The post-hole refusal defends a lattice the fold has
     // corroborated; one it never agreed with is not a leftover to protect.
     float combAgreedBpm = 0.0f;
+    // How well the beats being fitted are placed against what this song has
+    // been giving (the tracker's own EvidenceTrust, fed per accepted beat).
+    // A direct-feed FISSO release needs it: a fill moves both fits while the
+    // song keeps its tempo. Restarted whenever the grid is rebuilt.
+    EvidenceTrust placementTrust;
+    double   placementTrustSec = -1.0;
+    uint32_t placementTrustSerial = 0;
     /** Time of a hat refused after a stale hole while the part is sounding.
         The kick that follows within one beat, half a beat off the old
         origin, may take the grid. A kick after an ordinary hole must not:

@@ -4867,6 +4867,43 @@ hole, then a 150 lattice for 30 s) holds 100.00 on both. FEEL through
 difference 0.05 BPM. EVERYTIME 44.1k, SPLENDIDA and Sally byte-identical.
 Listening still open (`docs/TODO.md` item 48).
 
+**Kept (2026-09-28), a long FISSO is not left on fast votes through a fill.**
+EVERYTIME 44.1 kHz: the grid before the bridge (110-136 s, 123.04) and after
+it (166-186 s, 122.88) is one line (115 beats, -23 ms), so the song holds its
+tempo. The decoder, FISSO for 204 beats, released at 141 s on two fast votes
+with both fits 2-3x worse placed than the song's own (placement trust 0.30) and
+the fold on 123; it published up to 129 and the clock slipped a whole beat by
+156 s. `scripts/analysis/line_check.py` measures the clock against that line
+(any steady-tempo recording becomes a known grid this way).
+
+On a direct feed the fixed-regime release is now held when all witnesses say
+"same tempo": `EvidenceTrust` (the tracker's class, fed per accepted beat,
+restarted per grid serial) below `kPoorPlacementTrust` 0.50, tenure >=
+2 * kLongFit, short-fit move below `kGridStepMinimum` (2.5%), long window not
+`moving`, and the fold not following the short fit (octave-folded, same
+direction, >= 1/4 of the move). Sustained/large evidence (fixedErrorBeats,
+fastDriftLargeBeats, 6% anchor error) still releases.
+
+Result: EVERYTIME 44.1k time inside 2% 94.0 -> 98.6%, clock worst in the fill
+-54 ms with no slip. Quick bank offset 0 identical (both lanes); offset 32
+fisso 20.9/50.5 -> 20.4/47.4; offset 48 gradino 33.7/145.6 -> 33.2/140.3;
+offset 16 gradino 33.6/153.9 -> 34.0/154.2 (only broken seed 257997, 21% BPM
+error). Full matrix gradino 37.6/150.7 -> 37.6/150.4, continuo unchanged.
+`probe_tempo_step`, `VPAlign --ramps/--steps`, focused VPTests, FEEL,
+SPLENDIDA, Sally identical.
+
+Not solved: EVERYTIME 48k (same audio) still slips at 142-156 s. At 99.8 s the
+per-beat trust flicks to 1.00 (the fill's short fit briefly clean) with a +3.9%
+move, so it releases; back in FISSO the tenure restarts (22 beats at 141.7 s).
+Trust hysteresis or tempo-based tenure were not tried: they would be thresholds
+from one song. Rejected on the way, all against HEAD: trust alone (continuo
+38.8/95.0 -> 41.8/111.1, VPAlign ramps FAIL, 140->75 13.6 -> 24 s); fold that
+must reach the short fit (12 s ramp FAIL 84.1 -> 107.0); curve exemption g >=
+0.50 (the fill has g 0.66 too); repeated 4-beat estimates as step proof (the
+fill rushes coherently for three beats); tenure without the 2.5% cap (offset 32
+seed 242175 p95 113 -> 190 ms). In-window evidence does not separate a rushing
+fill from a sloppy small step; tenure and the fold are what differ.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
