@@ -4940,6 +4940,24 @@ remeasuring everything. Also rejected the same day: sticky poor trust plus an
 8.7% move bound for the item-49 hold (EVERYTIME 48k still slips, 239 -> 242 ms;
 gradino offset 32 41.4/168.6 -> 42.1/176.5). docs/TODO.md item 52.
 
+**Kept (2026-09-28), a loaded file's mid-song cold epoch keeps comb and
+model.** After a near-silent break, the band's return trips the level-step
+epoch in `updateAnalysisEpoch` (`preserveCombOnEpoch = false`), built for
+empty room -> band. On a loaded file with the part playing it cleared comb and
+model and the fresh acquisition wandered for ~10 s: the listener heard LET ME
+LOVE YOU 99 -> 60 and VITA 96 -> 62 on the iPad; desktop 48 kHz reproduces
+LET ME LOVE YOU at 112 s (clock to 78) and BLUE SKY at 67 s (clock to 178).
+For `FollowSource::internalPlayer`, once the part has played on a settled level
+(`playedOnSettledLevel`, latched; the instantaneous `levelSettled` read 0 in the
+very block the break ended at 48 kHz), that epoch is sent as an arrangement
+entrance. Clock over the 15 s after the restart: LET ME LOVE YOU 48k 78-98 ->
+91-100, VITA 44.1k line-check worst 124 -> 72 ms, BLUE SKY 48k 85-178 -> 86-88;
+the other 16 bank files unchanged. Mixer input keeps the cold epoch (a quiet gap
+then a band can be the next song). A tracker-side hold of the old tempo was
+tried first and rejected: it released on the old decoder's stale publication,
+then on the first post-restart guess that happened to be near, and made a
+111 BPM clock spike on VITA.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

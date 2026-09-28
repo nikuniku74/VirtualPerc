@@ -3812,6 +3812,31 @@ stoppata molto più bassa dell'altra. Figura di default: DANCE.
 - [x] Shaker sostituito con `soft-bright-shaker_128bpm.wav` (`scripts/prepare_loop_shaker.py`): accento = `shaker_down`, i tre colpi leggeri diversi = `shaker_up`/`_b`/`_med` e `shaker_down_med`; coda naturale, senza il decadimento imposto dei vecchi VCSL. Volume -25.4 dBA come prima (conga -19). Allineamento attacchi: dispersione 3.04 ms (HEAD 2.85, prima dei suoni 2.71; soglia 2 ms già rossa per il battimani sintetico): il resto è lo shaker su ±2.5 ms, dove il soft clip arrotonda la cima della sua salita lenta a velocità alta. `--percussion` 17/0, righe MIXER di `--leak` invariate.
 - [ ] ascolto su iPad.
 
+### 54. Brano caricato: a metà brano il tempo crolla (99 -> 60, 96 -> 62) e poi riprende 🟢 (2026-09-28, corretto e misurato — resta ascolto)
+
+Segnalazione dall'iPad, brano caricato: LET ME LOVE YOU a metà da 99 a 60, VITA
+a 62, poi ripresi. **Causa:** dopo un passaggio quasi silenzioso la ripresa
+della band fa scattare l'epoca "a freddo" di `updateAnalysisEpoch` (pensata per
+stanza vuota -> band), che azzera comb e modello mentre la parte suona; il
+nuovo aggancio passa ~10 s su livelli sbagliati. Riprodotto sul Mac: LET ME LOVE
+YOU a 112 s (48 kHz: clock fino a 78), VITA a 79-83 s, BLUE SKY 48 kHz a 67 s
+(clock fino a 178).
+
+**Correzione** (`VirtualPercussionEngine`): per un brano caricato, dopo che la
+parte ha suonato su un livello confermato, quell'epoca diventa un ingresso di
+arrangiamento (comb e modello conservati, si butta solo la griglia). Il fatto
+"ha suonato su un livello confermato" è memorizzato: `levelSettled` letto
+nell'istante valeva 0 proprio nel blocco del riavvio a 48 kHz. Il mixer
+mantiene l'epoca a freddo (lì una pausa e una band possono essere il brano dopo).
+
+- [x] Clock nei 15 s dopo il riavvio: LET ME LOVE YOU 48k 78-98 -> **91-100**, 44.1k 99-115 -> 100-104; VITA 44.1k 94-98 -> 94.5-97, errore peggiore contro la griglia vera 124 -> **72 ms**; BLUE SKY 48k 85-178 -> **86-88**. Tutti gli altri 16 file invariati (rumore di scheduling). `VPTests --new-input` 16/0, `--rhythm` 3/0, `--bar` 10/0, `--makeup b/c/e/f` verdi; `--makeup a` 53/7 e `d` 10/2 identici a prima dei cambi di suono (preesistenti).
+- [x] Scartata prima: tenere il tempo nel tracker durante il riaggancio. Si rilasciava sulle ultime ipotesi del decoder vecchio, poi sulla prima ipotesi nuova vicina per caso; VITA 44.1k faceva un picco del clock a 111.
+- Nota: con il comb conservato LET ME LOVE YOU 44.1k passa da 197 a 99.5 al riavvio (l'ottava del comb). Sull'iPad era già a 99.
+- [ ] ascolto su iPad.
+
+Suite completa prima/dopo i cambi di suono (item 53): 652/31 -> 647/36. Nuovi FAIL solo sul percorso altoparlante/microfono iPad (3 righe del cancellatore e la battuta dall'armonia senza batteria, 100% -> 4%: le conga a 325 Hz passano l'altoparlante simulato e finiscono nel cromagramma). Il test del canale cassa fallisce uguale prima e dopo.
+`VPTrack` ha ora anche `--seek-at T --seek-to U` (seek nella forma d'onda).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
