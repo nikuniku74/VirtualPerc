@@ -1621,6 +1621,70 @@ void vpRunNewInputTests (int& passed, int& failed)
                 "one failed inference does not shift all later beat timestamps");
     }
 
+    // A new file resets the feature extractor mid-hop. The first frame after
+    // it must be dated from the restart sample exactly as a fresh start dates
+    // its first frame: a fixed refill lost the partial hop, and the song loaded
+    // second played 15-16 ms early (docs/TODO.md item 50).
+    {
+        class QuietModel final : public vp::IBeatModel
+        {
+        public:
+            bool prepare (int) override { return true; }
+            void reset() override {}
+            bool infer (const float*, int, float out[3]) override
+            {
+                out[0] = 0.03f;
+                out[1] = 0.03f;
+                out[2] = 0.94f;
+                return true;
+            }
+        };
+        auto runTo = [] (vp::NeuralBeatTracker& w, int64_t target)
+        {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (3);
+            while (w.completedSamples() < target && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+        };
+        float silence[256] {};
+        constexpr int before = 256 * 37;   // not a whole number of hops
+        constexpr int after = 256 * 150;
+
+        vp::NeuralBeatTracker fresh;
+        fresh.setModel (std::make_unique<QuietModel>());
+        fresh.start (48000.0);
+        for (int i = 0; i < after / 256; ++i)
+            fresh.feed (silence, 256);
+        runTo (fresh, after);
+        vp::BeatHypothesis a;
+        const bool haveA = fresh.tryLoad (a);
+        fresh.stop();
+
+        vp::NeuralBeatTracker second;
+        second.setModel (std::make_unique<QuietModel>());
+        second.start (48000.0);
+        for (int i = 0; i < before / 256; ++i)
+            second.feed (silence, 256);
+        runTo (second, before);
+        vp::BeatHypothesis atRestart;
+        const bool haveR = second.tryLoad (atRestart);
+        second.setInputEpoch (1, false, true);
+        for (int i = 0; i < after / 256; ++i)
+            second.feed (silence, 256);
+        runTo (second, before + after);
+        vp::BeatHypothesis b;
+        const bool haveB = second.tryLoad (b);
+        second.stop();
+
+        std::printf ("restart-date   fresh frame %llu at %lld, second frame +%llu at %lld-%d\n",
+                     (unsigned long long) a.frameIndex, (long long) a.analysisSample,
+                     (unsigned long long) (b.frameIndex - atRestart.frameIndex),
+                     (long long) b.analysisSample, before);
+        expect (haveA && haveR && haveB
+                    && b.frameIndex - atRestart.frameIndex == a.frameIndex
+                    && b.analysisSample - before == a.analysisSample,
+                "a file loaded second is dated like a file loaded first");
+    }
+
     {
         vp::AudioFifo fifo;
         fifo.prepare (32);

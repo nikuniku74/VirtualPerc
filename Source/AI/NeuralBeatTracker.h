@@ -180,11 +180,16 @@ private:
     uint64_t seenInputEpoch = 0;
     uint32_t seenDeclarePulse = 0;
     uint64_t seenDropped = 0;
-    /** Model samples of extra priming the feature extractor has needed across
-        all discontinuities. After a reset it buffers a whole frame before
-        emitting again, not one hop, so without this every later frame would be
-        timestamped early by that difference. */
-    int64_t modelRefill = 0;
+    /** Where the feature extractor last started from nothing: the input
+        sample (dropped audio included) and the decoder frame index before its
+        first frame. A reset discards the partial hop and the resampler's
+        buffered input, so a fixed "one frame minus one hop" refill dated every
+        later frame early by up to a hop plus that buffer, and each new file
+        added to it: measured 15-16 ms early for a song loaded second. */
+    int64_t  segmentInputStart = 0;
+    uint64_t segmentFrameBase = 0;
+    int64_t  inputPopped = 0;
+    uint64_t lastFrameIndex = 0;
     double deviceSr = 48000.0;
     double inputSamplesPerModelSample = 1.0;
     /** Device samples that make one analysis hop: the unit of useful work. */

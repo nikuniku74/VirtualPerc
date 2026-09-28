@@ -42,7 +42,10 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     gapCount.store (0, std::memory_order_relaxed);
     wakeCount.store (0, std::memory_order_relaxed);
     seenDropped = 0;
-    modelRefill = 0;
+    segmentInputStart = 0;
+    segmentFrameBase = 0;
+    inputPopped = 0;
+    lastFrameIndex = 0;
     inputEpoch.store (0, std::memory_order_relaxed);
     dropBeforeWrite.store (0, std::memory_order_relaxed);
     seenInputEpoch = 0;
@@ -187,9 +190,10 @@ void NeuralBeatTracker::workerLoop()
                 const uint64_t discarded = after - before;
                 resampler.reset();
                 features.reset();
-                // Same compensation as a dropout: after a reset the extractor
-                // buffers a whole frame before emitting again.
-                modelRefill += kBeatModelFrame - kBeatModelHop;
+                // The extractor starts again from the first sample the FIFO
+                // still holds, exactly as it did at launch.
+                segmentInputStart = inputPopped + static_cast<int64_t> (after);
+                segmentFrameBase = lastFrameIndex;
                 const double lostSec = static_cast<double> (discarded) / deviceSr;
                 // Before the restart, so the restart's tenure clear is what
                 // stands. The discontinuity only stops the splice reading as
@@ -238,7 +242,9 @@ void NeuralBeatTracker::workerLoop()
             if (model != nullptr)
                 model->reset();
             decoder.notifyDiscontinuity (lostSec);
-            modelRefill += kBeatModelFrame - kBeatModelHop;
+            // This pop starts after the hole.
+            segmentInputStart = inputPopped + static_cast<int64_t> (droppedNow);
+            segmentFrameBase = lastFrameIndex;
             gapCount.fetch_add (1, std::memory_order_relaxed);
         }
 
@@ -265,8 +271,10 @@ void NeuralBeatTracker::workerLoop()
                                        LogSpectFeatures::highBandEnergy (frame))
                     : decoder.observe (0.0f, 0.0f, 1.0f);
                 h.analysisSample = analysisSampleFor (h.frameIndex);
+                lastFrameIndex = h.frameIndex;
                 slot.publish (h);
             }
+            inputPopped += n;
 
             // `available() == 0` only proves that pop() took the input. This
             // release happens after every inference and publication caused by
@@ -316,22 +324,18 @@ void NeuralBeatTracker::workerLoop()
 
 int64_t NeuralBeatTracker::analysisSampleFor (uint64_t frameIndex) noexcept
 {
-    // Frames leave LogSpectFeatures on a fixed grid: the first once frameLen
-    // samples have arrived, then one per hop. So the position of any frame is
-    // arithmetic, no plumbing required.
+    // Frames leave LogSpectFeatures on a fixed grid from its last (re)start:
+    // the first once frameLen samples have arrived, then one per hop. So the
+    // position of any frame is arithmetic, no plumbing required.
     //
     // The decoder's clock ticks one hop per frame, while the audio the frame
     // describes is centred half a window back. Anchoring on that centre is what
     // makes the delay the audio thread computes a real acoustic delay.
-    const double modelPos = static_cast<double> (frameIndex) * kBeatModelHop
-                            + kBeatModelFrame * 0.5 - kBeatModelHop
-                            + static_cast<double> (modelRefill);
-    const double inputPos = modelPos * inputSamplesPerModelSample;
-
-    // Anything the FIFO overwrote never reached the feature extractor, so the
-    // worker is that much further behind the audio thread than its own frame
-    // count suggests.
-    return static_cast<int64_t> (inputPos) + static_cast<int64_t> (fifo.droppedSamples());
+    const double modelPos =
+        static_cast<double> (static_cast<int64_t> (frameIndex)
+                             - static_cast<int64_t> (segmentFrameBase) - 1) * kBeatModelHop
+        + kBeatModelFrame * 0.5;
+    return segmentInputStart + static_cast<int64_t> (modelPos * inputSamplesPerModelSample);
 }
 
 } // namespace vp
