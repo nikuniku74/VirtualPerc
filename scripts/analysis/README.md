@@ -17,6 +17,7 @@ da `VPTrack --pulses`.
 | `prec.py wav pulses lo hi` | i tre indicatori di precisione insieme: struttura, spostamento di fase fra finestre, deviazione degli strattoni della griglia. |
 | `score_dip.py pulses` | fase esatta del clock contro la griglia nota generata da `makedip.py`: picco e primo rientro entro 15 ms tenuto quattro secondi. |
 | `line_check.py pulses pre_lo pre_hi post_lo post_hi` | griglia nota ricavata dal brano stesso: la retta del tratto stabile prima di un'uscita, se cade sui battiti del tratto dopo, è la verità anche in mezzo. Errore di fase reale del clock in ms e slittamenti di un battito intero. |
+| `line_scan.py pulses...` | la stessa cosa in automatico su tutto il brano: trova le coppie di tratti stabili che si confermano, e riporta secondi verificati, errore medio/peggiore del clock e slittamenti di battito. |
 | `score.py trace` | il BPM pubblicato contro una curva di riferimento: errore medio, uscite oltre il 4% e loro durata. |
 | `extract_live.swift input.m4a dir [start-sec duration-sec]` | senza intervallo crea i cinque estratti centrali usati da `bench_live.py`; con intervallo estrae un tratto preciso. Aggiunge 3 s di silenzio iniziale. |
 

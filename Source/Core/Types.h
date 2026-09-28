@@ -462,7 +462,8 @@ struct EngineSettings
     // player who is listening - and switchable, because a fixed part is what
     // some jobs want. See Percussion/BandDynamics.h.
     std::atomic<bool>  dynamicsFollow  { true };
-    std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::marcha) };
+    // DANCE is the default figure at the percussionist's request (2026-09-28).
+    std::atomic<int>   grooveStyle     { static_cast<int> (GrooveStyle::dance) };
     // Let the music choose the part. Off by default: measured at 3 cases in 9
     // against material whose style is known, which is no better than always
     // guessing the same style. See docs/AUDIO_ENGINE.md.

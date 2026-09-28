@@ -2471,13 +2471,18 @@ void MainComponent::loadPrefs()
         prefs->getBoolValue ("tempoOctaveAuto",
                              engine.settings().tempoOctaveAuto.load()));
 
-    const int style = prefs->getIntValue ("grooveStyle",
-                                          engine.settings().grooveStyle.load());
+    // DANCE became the default figure on 2026-09-28. An install that saved a
+    // figure before then saved the old default: start it once from DANCE, then
+    // honour whatever is chosen after that.
+    const bool danceDefaultSeen = prefs->getBoolValue ("grooveDanceDefault", false);
+    const int style = danceDefaultSeen
+                          ? prefs->getIntValue ("grooveStyle", engine.settings().grooveStyle.load())
+                          : engine.settings().grooveStyle.load();
     if (style >= 0 && style < static_cast<int> (vp::GrooveStyle::count))
         engine.settings().grooveStyle.store (style);
 
     engine.settings().grooveAuto.store (
-        prefs->getBoolValue ("grooveAuto", engine.settings().grooveAuto.load()));
+        danceDefaultSeen && prefs->getBoolValue ("grooveAuto", engine.settings().grooveAuto.load()));
     engine.settings().dynamicsFollow.store (
         prefs->getBoolValue ("dynamicsFollow", engine.settings().dynamicsFollow.load()));
 
@@ -2676,6 +2681,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("tempoOctaveAuto", engine.settings().tempoOctaveAuto.load());
     prefs->setValue ("grooveStyle", engine.settings().grooveStyle.load());
     prefs->setValue ("grooveAuto", engine.settings().grooveAuto.load());
+    prefs->setValue ("grooveDanceDefault", true);
     prefs->setValue ("dynamicsFollow", engine.settings().dynamicsFollow.load());
     prefs->setValue ("shakerEnabled", engine.settings().shakerEnabled.load());
     prefs->setValue ("congasEnabled", engine.settings().congasEnabled.load());

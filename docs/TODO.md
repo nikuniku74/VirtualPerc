@@ -3738,6 +3738,65 @@ della strada). L'evidenza sostenuta (6 battiti sbandati, 5 oltre 4.5%, ancora
 
 Scartati (stessa sessione, controllo = HEAD): sola fiducia (continuo 38.8/95.0 → 41.8/111.1, `VPAlign --ramps` FAIL, 140→75 13.6 → 24 s); + comb che arriva sul fit corto (rampa 12 s FAIL 84.1 → 107.0); + comb solo di direzione e modulo ottava (continuo 39.6/100.0, 140→75 ancora 24 s); + esenzione "curva provata" g >= 0.50 (banco quasi pari ma EVERYTIME torna 94.0%: anche il fill ha g 0.66); stime a 4 battiti ripetute come prova di gradino (il fill corre coerente per 3 battiti: 126.7/127.3/125.1); anzianità senza tetto 2.5% (gradino offset 32: 242175 p95 113 → 190 ms).
 
+### 50. Secondo brano caricato con START acceso: percussioni sempre un po' in anticipo 🟢 (2026-09-28, corretto e misurato — resta ascolto)
+
+Segnalazione: dopo il cambio file le percussioni stanno sempre leggermente
+avanti; lo stesso brano caricato per primo dopo un avvio pulito è a tempo.
+**Causa:** al cambio file il worker (`NeuralBeatTracker`) azzera estrattore e
+resampler e compensava con un riempimento fisso `frame - hop`, che ignora i
+campioni rimasti a metà hop e nel resampler: da lì ogni ipotesi era datata
+presto (fino a ~20 ms), la fase proiettata troppo avanti, e l'errore **si
+sommava** a ogni file caricato. Ora ogni frame è datato dal campione d'ingresso
+esatto da cui l'estrattore è ripartito, come al primo avvio.
+
+- [x] `VPTrack --then` (INFINITO → SPLENDIDA a 60 s) contro SPLENDIDA da sola: **+16.07 ms in anticipo → 0.00 ms**; con il cambio spostato di 7/13 ms +15 → -1 ms; FEEL → INFINITO +0.8 ms. Un brano caricato per primo è identico al byte.
+- [x] Nuovo test `VPTests --new-input`: "a file loaded second is dated like a file loaded first" — **FAIL col codice vecchio** (640 campioni, 13 ms), PASS col nuovo; 16/0. `--phase-lock` 15/0, `--state-timing`, `--bar` 10/0, `--tempo-step` 14/0 identici al controllo.
+- [ ] ascolto su iPad (vale anche per i buchi da sovraccarico del worker: stesso azzeramento).
+
+### 51. Banco reale con griglia ricavata dal brano (2026-09-28)
+
+`scripts/analysis/line_scan.py` trova da solo, in ogni brano, coppie di tratti
+stabili la cui retta prolungata cade sull'altro, e misura lì l'errore reale del
+clock e gli slittamenti di battito. Su EVERYTIME ritrova lo slittamento del
+fill (t=150, 241 ms, 2 salti) e la sua scomparsa con l'item 49 (67 ms, 0).
+Banco: 9 brani dell'utente a 44.1 e 48 kHz + 5 estratti Flamingo, in
+`VPTrack --player --pulses`. L'item 49 è **neutro** su tutti e 22 (identici o
+rumore di scheduling all'ultima cifra).
+
+Uscite trovate (tolleranza 20 ms, da analizzare come EVERYTIME, senza tarare
+sul brano):
+- [ ] ASPETTANDO IL SOLE ~172 s: 190 ms, a entrambe le frequenze;
+- [ ] SPLENDIDA ~105 s (44.1k): 209 ms;
+- [ ] LET ME LOVE YOU ~74 s (44.1k): 151 ms, 1 slittamento;
+- [ ] VITA ~90 s (44.1k): 124 ms;
+- [ ] **FEEL a 48 kHz finisce a 208 BPM** (44.1k: 106): livello doppio a seconda della frequenza. L'iPad lavora a 48 kHz.
+- nota: con tolleranza 12 ms quasi nessun brano verifica tratti; il clock oscilla più di 12 ms rms su 16 s, oppure il tempo del brano non è costante (Flamingo live: 0 s, come atteso).
+
+### 52. EVERYTIME a 48 kHz e dipendenza dalla frequenza del dispositivo: due candidati respinti 🔴 (2026-09-28)
+
+Banco: 9 brani + EVERYTIME a 44.1/48 kHz + 5 estratti Flamingo, `line_scan.py`
+(tolleranza 20 ms), più banco sintetico completo. Controllo = HEAD (item 49/50).
+
+- **Respinto: regola fill più robusta** (fiducia scarsa "appiccicosa" per
+  `kShortFit` battiti, tetto dello spostamento a `kStaleGridThreshold`).
+  EVERYTIME 48k slitta ancora (239 → 242 ms, stesso salto); gradino sintetico
+  peggiora (offset 32 41.4/168.6 → 42.1/176.5; completa 37.6/150.4 →
+  37.9/152.3). Nessun altro brano reale cambia.
+- **Respinto: filtro anti-aliasing prima del resampler** (`LinearResampler` non
+  filtra: 44.1k è decimazione pura, 48k interpolazione lineare; l'energia sopra
+  11 kHz si ripiega diversamente per frequenza). FIR Kaiser -61 dB oltre
+  11.025 kHz, ritardo compensato. Il banco peggiora nel complesso: FEEL 44.1k
+  106 → **209**, BLUE SKY 48k 85 → **171**, EVERYTIME 44.1k torna a slittare
+  (4 salti), VITA 124 → 300 ms, `VPTests --phase-lock` 156 BPM letto **78**
+  (FAIL). Migliorano ASPETTANDO (190 → 51 ms) e LET ME LOVE YOU (151 → 77 ms).
+  La catena (soglie, bande alte cassa/charleston, ottave) è tarata sull'ingresso
+  attuale con l'aliasing: cambiarlo sposta le ottave in modo imprevedibile. Non
+  riproporlo senza ritarare e rimisurare tutto.
+- Osservazione: 44.1k e 48k danno risultati diversi sugli stessi brani, ma
+  nessuna delle due è sistematicamente migliore (FEEL e EVERYTIME meglio a
+  44.1k; SPLENDIDA, VITA, LET ME LOVE YOU meglio a 48k). L'iPad lavora a 48k.
+- [ ] EVERYTIME 48k: slittamento a ~150 s ancora aperto.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

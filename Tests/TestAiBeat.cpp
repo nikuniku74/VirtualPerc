@@ -2377,9 +2377,10 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "dedicated kick input remains disabled by default");
 
         // The shipped controls must describe a musical part, not only carry
-        // default scalar values: both hands play the marcha on eighths, the
-        // conga leaves beat one to the band, and its paired open tones still
-        // pull out of the bar on 4 and the "and" of 4.
+        // default scalar values: DANCE (the percussionist's default since
+        // 2026-09-28) with the shaker on eighths, the conga leaving beat one to
+        // the band, a few sixteenths, and the open tone pulling out of the bar
+        // on the "and" of 4.
         vp::GrooveEngine defaultGroove;
         defaultGroove.prepare (0xdefa017u);
         defaultGroove.setStyle (static_cast<vp::GrooveStyle> (
@@ -2422,10 +2423,11 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && defaults.shakerEnabled.load() && defaults.congasEnabled.load()
                     && ! defaults.grooveAuto.load()
                     && ! defaults.shakerNatural.load()
-                    && defaults.grooveStyle.load() == static_cast<int> (vp::GrooveStyle::marcha)
+                    && defaults.grooveStyle.load() == static_cast<int> (vp::GrooveStyle::dance)
                     && defaultShakers == 8 && defaultCongas > 0 && defaultOdd > 0
-                    && ! congaOnOne && openOnFour && openOnAndFour,
-                "the default is an eighth-note shaker with the full marcha, including its sixteenths");
+                    && ! congaOnOne && openOnAndFour,
+                "the default is an eighth-note shaker with the full dance figure, including its sixteenths");
+        (void) openOnFour;
 
         vp::BeatHypothesis known;
         known.valid = true;

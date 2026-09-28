@@ -1,6 +1,6 @@
 # Percussion samples
 
-The conga and shaker recordings in this folder come from the **Versilian
+The shaker, clap and cembalo recordings in this folder come from the **Versilian
 Community Sample Library (VCSL)** and **VS Chamber Orchestra 2: Community
 Edition**, both released by Versilian Studios LLC under **CC0 1.0** (public
 domain). No attribution is required; this file is a courtesy so the source is
@@ -10,24 +10,42 @@ not lost.
 - VSCO 2 CE: <https://github.com/sgossner/VSCO-2-CE>
 - Licence: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
 
-Recorded by Sam Gossner. The conga / tumba / quinto one-shots are the VCSL
-*Struck Membranophones / Conga* set; the shaker down- and up-strokes are VCSL
-*Shaker, Small*; the claps are VCSL *Claps* (the ensemble takes, not the
-`SoloClap` velocity ladder); the cembalo is VCSL *Tambourine 1* and *2*.
+The **congas** (`tumba*`, `open*`, `slap*`, `slap_closed*`, `heel*`, `toe*`,
+`muff*`, `tapado*`) are no longer VCSL. Since 2026-09-28 they are cut from the
+loop the percussionist chose: SampleFocus **"Salsa Congas Loop - Dance 3"**
+(120 BPM, published by Dezz / user1259059406567, "Standard Licensing - Royalty
+Free"), by `scripts/prepare_loop_congas.py`. **That is not CC0.** SampleFocus's
+standard licence covers using a sample inside music; shipping the sound itself
+inside a distributed app may count as redistribution. Fine for the
+percussionist's own device; read https://samplefocus.com/license before any
+public release. The loop's lowest drum (~205 Hz) is not used; `tumba*` is the
+mid conga, at the percussionist's request.
+
+Shakers, claps and cembalo are VCSL, recorded by Sam Gossner: the shaker down-
+and up-strokes are VCSL *Shaker, Small*; the claps are VCSL *Claps* (the
+ensemble takes, not the `SoloClap` velocity ladder); the cembalo is VCSL
+*Tambourine 1* and *2*.
 
 ## What each file is
 
+| File | Source | What it is |
+|---|---|---|
+| `open`, `_b`, `_med`, `_soft` | loop hits 22, 3, 16, 23 | mid conga (~325 Hz), open tone |
+| `tumba`, `_b`, `_med`, `_soft` | loop hits 9, 10, 15, 4 | the same mid conga, other open takes |
+| `slap`, `_b` | loop hits 0, 12 | slap |
+| `slap_closed`, `_b` | loop hits 0, 12 | the loop's slaps are already stopped |
+| `heel` | loop hit 2 | palm, muted |
+| `toe`, `_b` | loop hits 13, 1 | fingertip ghost notes |
+| `muff` | loop hit 17 | muted tone |
+| `tapado`, `_b` | loop hits 14, 5 | stopped, pitch taken out |
+
+Hit numbers are the first two-bar phrase, see the script. No open tone in the
+loop rings clean past ~120 ms (the next sixteenth, or a ghost note, lands on
+it); the script continues each one to the engine's 300 ms with its own fitted
+ring (three partials, one decay).
+
 | File | Original | What it is |
 |---|---|---|
-| `tumba.wav` | `Tumba_HitN_v4_rr1` | low drum, open tone — loud take |
-| `tumba_b.wav` | `Tumba_HitN_v3_rr1` | low drum, open tone — second take, round-robin |
-| `tumba_med.wav` | `Tumba_HitN_v2_rr1` | low drum, medium velocity |
-| `open.wav` | `Conga_HitN_v3_rr2` | mid drum, open tone — loud take |
-| `open_b.wav` | `Conga_HitN_v2_rr2` | mid drum, open tone — round-robin |
-| `open_med.wav` | `Conga_HitN_v1_rr2` | mid drum, medium velocity |
-| `slap.wav` | `Quinto_HitN_v3_rr2` | high drum, short open — the groove's slap accent |
-| `slap_b.wav` | `Quinto_HitN_v3_rr1` | high drum — round-robin |
-| `slap_med.wav` | `Quinto_HitN_v1_rr1` | high drum, medium velocity |
 | `shaker_down.wav` | `Mid_ShakerHighFaster_Down_rr1` | shaker, accented down-stroke |
 | `shaker_down_b.wav` | `Mid_ShakerHighFaster_Down_rr2` | shaker down — round-robin |
 | `shaker_down_med.wav` | `Mid_ShakerDouble_Down_rr1` | shaker down, lighter |
@@ -74,10 +92,10 @@ truncated before any second hit, normalised, faded out, and written as mono
 16-bit WAV. `scripts/prepare_vcsl_samples.py` does this and can be re-run
 against replacements.
 
-heel, toe and muff have no recording of their own: `PercussionEngine` derives
-them from the open tone by damping it, which is physically what those strokes
-are. The quietest dynamic layer of each articulation is derived the same way
-when a `_soft` take is not present.
+heel, toe, muff, slap_closed and tapado now have recordings of their own and
+are played as recorded. Without those files `PercussionEngine` still derives
+them from the open tone / slap by damping it. The quietest dynamic layer of
+each articulation is derived the same way when a `_soft` take is not present.
 
 Triangle is a FEEL assignment, not a VCSL take in this folder yet. Drop these
 in and they will be picked up by the existing `*.wav` glob:

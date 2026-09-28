@@ -4904,6 +4904,42 @@ fill rushes coherently for three beats); tenure without the 2.5% cap (offset 32
 seed 242175 p95 113 -> 190 ms). In-window evidence does not separate a rushing
 fill from a sloppy small step; tenure and the fold are what differ.
 
+**Kept (2026-09-28), frames after a restart are dated from the restart
+sample.** On a new file (and on a FIFO overrun) the worker resets the resampler
+and `LogSpectFeatures`, then compensated with a fixed `frame - hop` refill. That
+ignores the partial hop and the resampler's buffered input thrown away by the
+reset, so every later hypothesis was dated early by up to ~20 ms, the phase was
+projected too far and the part played early - and the error accumulated with
+every file loaded. `NeuralBeatTracker` now keeps `segmentInputStart` (input
+sample incl. dropped audio where the extractor restarted) and
+`segmentFrameBase`; `analysisSampleFor` dates frame f at segmentInputStart +
+((f - base - 1) * hop + frame/2) * ratio, identical to the old formula for a
+session without restarts. `VPTrack --then`: SPLENDIDA loaded second +16.07 ms
+early -> 0.00 ms; a file loaded first byte-identical. New `VPTests --new-input`
+assertion fails on the old worker (640 samples) and passes now; `--phase-lock`
+15/0 unchanged.
+
+`scripts/analysis/line_scan.py` turns any steady-tempo recording into a known
+grid automatically (pairs of steady stretches whose lines agree) and reports
+verified-span phase error and whole-beat slips. See docs/TODO.md item 51 for
+the first scan of the listener's nine songs at 44.1/48 kHz (item-49 rule
+neutral on all; excursions located at ASPETTANDO ~172 s, SPLENDIDA ~105 s,
+LET ME LOVE YOU ~74 s, VITA ~90 s; FEEL at 48 kHz ends on the double, 208).
+
+**Rejected (2026-09-28), anti-alias filter before `LinearResampler`.** The
+resampler does not low-pass: 44.1 kHz is plain 2:1 decimation, 48 kHz linear
+interpolation, so hats/cymbals above 11 kHz fold into the top bands, and fold
+differently per device rate. A Kaiser FIR (-61 dB above 11.025 kHz, group delay
+subtracted in `analysisSampleFor`) made the real bank worse overall: FEEL 44.1k
+106 -> 209, BLUE SKY 48k 85 -> 171, EVERYTIME 44.1k slips again, VITA worst
+124 -> 300 ms, `VPTests --phase-lock` reads the 156 BPM click as 78. Better
+only on ASPETTANDO (190 -> 51 ms) and LET ME LOVE YOU (151 -> 77 ms). The whole
+chain - thresholds, the high-band kick/hat logic, octave arbitration - is
+tuned on today's aliased input; do not "fix" the input without retuning and
+remeasuring everything. Also rejected the same day: sticky poor trust plus an
+8.7% move bound for the item-49 hold (EVERYTIME 48k still slips, 239 -> 242 ms;
+gradino offset 32 41.4/168.6 -> 42.1/176.5). docs/TODO.md item 52.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

@@ -35,9 +35,9 @@ public:
     void setReverbAmount (float amount) noexcept;
     /** Playback-rate ratio for the *recorded* drums (the congas and everything
         else that is not unpitched metal). `kDrumTune` by default. Exposed so a
-        render or a build can try a brighter kit without recompiling - the
-        recorded VCSL congas sit at 139/165/216 Hz, and the default raises them
-        a perfect fourth to 185/220/288 Hz. Must be set before `prepare()`. */
+        render or a build can try a brighter kit without recompiling. The
+        default plays the loop congas at their recorded pitch (mid conga
+        ~325 Hz). Must be set before `prepare()`. */
     void setDrumTune (float ratio) noexcept;
     /** Diagnostic/rendering switch. False builds the procedural bank even when
         recordings are embedded; set before prepare(). */
@@ -181,7 +181,7 @@ private:
     void   buildBank() noexcept;
     void   measureBankAttacks() noexcept;
     void   layerFromRecording (Sample& dest, const std::vector<float>& src,
-                               Stroke stroke, float force, std::uint32_t seed) noexcept;
+                               Stroke stroke, float force, std::uint32_t seed, bool ownTake = false) noexcept;
     Voice& allocateVoice() noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset,
                     KitSound part = KitSound::count) noexcept;
@@ -216,8 +216,8 @@ private:
     int   clapSound = static_cast<int> (KitSound::clap);
     float reverbAmount = 0.30f;
     /** Playback-rate ratio for the recorded drums. Defaults to `kDrumTune`
-        (a perfect fourth above the samples' natural pitch) in the .cpp. */
-    float drumTune = 1.33484f;
+        (natural pitch for the loop congas) in the .cpp. */
+    float drumTune = 1.0f;
     float requestedSwing = 0.0f;
     float appliedSwing = 0.0f;
     GrooveStyle requestedStyle = GrooveStyle::marcha;

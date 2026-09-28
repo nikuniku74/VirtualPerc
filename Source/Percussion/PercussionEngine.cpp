@@ -33,10 +33,26 @@ namespace
     // (2^(5/12) = 1.335): tumba 185 Hz, open 220 Hz, slap 288 Hz. The ratio
     // stays exposed through `setDrumTune` for a different room or band.
     //
-    // It is one number on purpose: it drives the synthesised bank and the
-    // playback rate of the recordings together, so the two halves of the bank
-    // cannot end up tuned against each other.
-    constexpr float kDrumTune = 1.33484f; // 2^(5/12)
+    // That fourth was for the VCSL takes. The congas are now cut from the
+    // salsa loop the percussionist chose (2026-09-28, scripts/
+    // prepare_loop_congas.py), already at the pitch he wants to hear - mid
+    // conga ~325 Hz - so the recordings play at their natural rate. The
+    // synthesis fallback, used only when Assets/Percussion is missing, keeps
+    // the tuning it always had.
+    constexpr float kDrumTune = 1.0f;
+    constexpr float kSynthDrumTune = 1.33484f; // 2^(5/12), the fallback only
+
+    // The congas' level at a full knob. Measured A-weighted over the loudest
+    // 150 ms at velocity 0.9, the loop congas sat near -24 dBA against -21
+    // for the cembalo and -18.5 for the clap, and under a band they share the
+    // bass and guitars' octave: the percussionist had to keep the knob at the
+    // top to hear them at all (2026-09-28). +5 dB puts them beside the clap.
+    constexpr float kCongaLevel = 1.778f;
+    // Samples are normalised near full scale, so that gain - and any stack of
+    // shaker, conga and clap on one sixteenth - can exceed it. Above the knee
+    // peaks are rounded rather than clipped; only the first milliseconds of a
+    // loud stroke reach it.
+    constexpr float kSoftClipKnee = 0.80f;
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
@@ -197,10 +213,9 @@ namespace
 
     DrumSpec specFor (Stroke s) noexcept
     {
-        // Concert-pitch figures for the synthesis fallback, scaled by kDrumTune
-        // so it stays tuned with the recorded bank. Shakers are unpitched and
-        // stay where they were.
-        constexpr float kTune = kDrumTune;
+        // Concert-pitch figures for the synthesis fallback. Shakers are
+        // unpitched and stay where they were.
+        constexpr float kTune = kSynthDrumTune;
         switch (s)
         {
             case Stroke::tumba: return { 139.0f * kTune, 0.10f,  8.5f, 0.30f, -0.30f };
@@ -727,7 +742,8 @@ bool PercussionEngine::loadNamedWav (const char* name, std::vector<float>& mono)
 
 
 void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float>& src,
-                                           Stroke stroke, float force, std::uint32_t seed) noexcept
+                                           Stroke stroke, float force, std::uint32_t seed,
+                                           bool ownTake) noexcept
 {
     // `force` is 1 for a recording that already is that dynamic layer, and
     // 0..1 when the layer is derived from a louder take: hitting a drum softer
@@ -769,6 +785,8 @@ void PercussionEngine::layerFromRecording (Sample& dest, const std::vector<float
         case Stroke::triangleClosed2: extraDecay = 88.0f; break;
         default: break;
     }
+    if (ownTake && ! isTriangleStroke (stroke))
+        extraDecay = 0.0f;
 
     const int nSrc = static_cast<int> (src.size());
     const float sr = static_cast<float> (sampleRate);
@@ -961,7 +979,9 @@ void PercussionEngine::buildBank() noexcept
     // from one of those - see `fromOpen` and `fromSlap` below.
     static const char* kStem[kStrokes] = {
         "shaker_down", "shaker_up", "tumba", "open", "slap",
-        nullptr, nullptr, nullptr, nullptr, nullptr,
+        // Muted and stopped strokes: a real take when the bank has one (the
+        // loop congas do), otherwise derived from open/slap below.
+        "heel", "toe", "muff", "slap_closed", "tapado",
         // The clap is synthesised - see `synthesizeClap`. The VCSL ensemble take
         // is a room of people clapping once, which is a fine recording and the
         // wrong instrument: a dance clap is a flam of hands and a tail, and it
@@ -986,15 +1006,7 @@ void PercussionEngine::buildBank() noexcept
         const bool fromSlap = stroke == Stroke::slapClosed || stroke == Stroke::tapado;
 
         std::vector<float> hard, hardB, med, soft;
-        if (fromOpen)
-        {
-            hard = openTone;
-        }
-        else if (fromSlap)
-        {
-            hard = slapTone;
-        }
-        else if (kStem[st] != nullptr)
+        if (kStem[st] != nullptr)
         {
             char name[64];
             std::snprintf (name, sizeof name, "%s_wav", kStem[st]);
@@ -1006,6 +1018,13 @@ void PercussionEngine::buildBank() noexcept
             std::snprintf (name, sizeof name, "%s_soft_wav", kStem[st]);
             loadNamedWav (name, soft);
         }
+        // A recording of the stroke itself is already muted by the hand that
+        // played it; only a derived one needs the damping added.
+        const bool ownTake = ! hard.empty();
+        if (! ownTake && fromOpen)
+            hard = openTone;
+        else if (! ownTake && fromSlap)
+            hard = slapTone;
 
         const bool haveSource = ! hard.empty();
         // The tambourine has no dynamic layers, and that is not laziness about
@@ -1098,7 +1117,7 @@ void PercussionEngine::buildBank() noexcept
                     force = 0.28f;
                 }
 
-                layerFromRecording (s, *src, stroke, force, seed);
+                layerFromRecording (s, *src, stroke, force, seed, ownTake);
             }
         }
     }
@@ -1477,7 +1496,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             case KitSound::shaker:   g = shakerVolume;  break;
             case KitSound::cembalo:  g = cembaloVolume; break;
             case KitSound::clap:     g = clapVolume;    break;
-            case KitSound::congas:
+            case KitSound::congas:   g = congaVolume * kCongaLevel; break;
             case KitSound::triangle:
             case KitSound::count:    break;
         }
@@ -1518,6 +1537,20 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
 
     if (reverbAmount > 0.001f)
         reverb.processStereo (left, right, numSamples);
+
+    auto soften = [] (float x) noexcept
+    {
+        const float a = std::fabs (x);
+        if (a <= kSoftClipKnee)
+            return x;
+        const float room = 1.0f - kSoftClipKnee;
+        return std::copysign (kSoftClipKnee + room * std::tanh ((a - kSoftClipKnee) / room), x);
+    };
+    for (int n = 0; n < numSamples; ++n)
+    {
+        left[n] = soften (left[n]);
+        right[n] = soften (right[n]);
+    }
 
     samplesSinceHit += numSamples;
     if (samplesSinceHit > 10000000)
