@@ -209,6 +209,20 @@ JUCE's device lifecycle and the message-thread timer use different threads.
 The OS interruption itself may still make a short gap; recovery must not leave
 the file playing silently until the listener changes 44.1/AUTO.
 
+**Follow-up, 2026-09-28:** the listener still hears a crack and then silence on
+the first window drag/resize after each launch; changing CLOCK or BUFFER
+restores output. The earlier interruption-end fix was insufficient. The local
+JUCE patch also made `restart()` return whenever RemoteIO still appeared
+running, even when a route notification had requested a restart. That can
+leave the file callback advancing with an output unit disconnected from the
+audible route. A route-configuration change now rebuilds RemoteIO on the
+message thread, with a one-second guard against notifications produced by
+that rebuild. A failed start is exposed through `isPlaying()` to the app's
+watchdog. Closing the unit calls `AudioOutputUnitStop`, not Start. The unsigned
+iPadOS Debug target compiles; AirPods/resize behaviour still needs a device
+check before this can be called fixed. A brief OS route-transition gap may
+remain even if the persistent silence is gone.
+
 The category is `AVAudioSessionCategoryPlayAndRecord` with `MixWithOthers`, `DefaultToSpeaker`, `AllowBluetoothA2DP` and `AllowAirPlay`. `MixWithOthers` is what lets the track being played along to keep playing; HFP Bluetooth is deliberately absent, because that route is 8-16 kHz and makes everything mixed through it sound slow and crushed.
 
 The background-audio entitlement is for an armed live performance, not for idle

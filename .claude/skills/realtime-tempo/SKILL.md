@@ -4830,6 +4830,21 @@ were treated as grounds to mute. Do not add a fixed half-second mute based
 only on phase error; a new automatic interruption needs evidence that
 distinguishes a true grid change from a decoder phase nudge or a levare.
 
+**iPad route recovery, 2026-09-28 (device check pending).** The listener reports
+that the first drag/resize after each app launch still cracks and can leave
+AirPods silent until CLOCK or BUFFER is changed, while the file advances.
+The earlier JUCE interruption-end patch did not solve this. In the local JUCE
+iOS device, route notifications could reach `restart()` but its live-unit
+early return discarded them; `RouteConfigurationChange` did not even request
+one. The route path now reconstructs RemoteIO on the message thread, with a
+one-second guard for its own route-configuration notification. `close()` stops
+the unit before disposal, and start failures make `isPlaying()` false so the
+existing app watchdog can replace it. The analysis worker and tempo policy are
+untouched. The unsigned iPadOS Debug build compiles; neither a host probe nor
+the simulator can prove AirPods output after a real iPad resize. Do not label
+the persistent-silence symptom fixed until the first resize after a fresh
+launch is heard on the device.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
