@@ -671,6 +671,7 @@ void BeatDecoder::reset() noexcept
     kitBodyLastSec = -1.0;
     hatGridHolding = false;
     postHoleReopenSec = -1.0;
+    combAgreedBpm = 0.0f;
     refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
@@ -1098,6 +1099,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     liveFourHoldBpm = 0.0f;
     barTempoHoldBeats = 0;
     postHoleReopenSec = -1.0;
+    combAgreedBpm = 0.0f;
     refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
     gridAnchorSec = -1.0;
@@ -3327,6 +3329,10 @@ void BeatDecoder::updateTempo() noexcept
     if (octaveMismatchBeats == 0)
         octaveVoteBpm = 0.0f;
 
+    if (combReady && tempo.salience() > kOctaveSnapSalience && bpm > kMinBpm && combRawBpm > kMinBpm
+        && std::fabs (disagreement - std::round (disagreement)) < kStaleGridRelease)
+        combAgreedBpm = bpm;
+
     if (octaveMismatchBeats >= snapBeats)
     {
         // Post-pause leftover comb: 100 vs 150 is not an octave argument
@@ -3335,8 +3341,19 @@ void BeatDecoder::updateTempo() noexcept
         // unknown, history wiped). Real steps have no 2.5-beat hole.
         // The synthetic bank never sets sounding. IOI+4 on that comb
         // is a real level the fits have seen.
+        // Only a lattice the fold once corroborated is a pre-hole grid
+        // worth defending. FEEL: acquisition landed on ~132 while the fold
+        // read ~103 at salience 1.00 from the start and never agreed; any
+        // sounding hole latches this refusal for the rest of the song
+        // (postHoleReopenSec never expires) - the plausible cause of the
+        // mismatch counter returning to 0 there until ~47 s. A dropout keeps
+        // the corroboration, like the tempo. Fixture D's 100 was
+        // corroborated before its hole, so its refusal is unchanged.
+        const bool heldLatticeCorroborated =
+            combAgreedBpm > kMinBpm
+            && std::fabs (std::log2 (bpm / combAgreedBpm)) < kStaleGridThreshold;
         bool refusePostHoleComb = false;
-        if (sounding && postHoleReopenSec >= 0.0
+        if (sounding && postHoleReopenSec >= 0.0 && heldLatticeCorroborated
             && combRawBpm > kMinBpm && bpm > kMinBpm
             && std::fabs (std::log2 (combRawBpm / bpm)) > kStaleGridThreshold)
         {
@@ -3476,6 +3493,7 @@ void BeatDecoder::updateTempo() noexcept
             stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
             postHoleReopenSec = -1.0;
+            combAgreedBpm = 0.0f;
             refusedHatAfterHoleSec = -1.0;
             gridAnchorSec = -1.0;
             foldPhaseBeats = 0;

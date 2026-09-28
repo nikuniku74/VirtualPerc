@@ -3695,6 +3695,23 @@ dall'item 46 (acquisizione, non cambio a brano agganciato).
 - [ ] riprodurre offline sul file dell'utente con la rete vera e la traccia `VP_TEMPO_TRACE`;
 - [ ] misurare quanto del ritardo è acquisizione del decoder e quanto è la discesa del clock.
 
+### 48. Griglia sbagliata non d'ottava difesa per tutto il brano dopo un buco 🟡 (2026-09-28, banchi ok — resta ascolto)
+
+FEEL da file: il decoder pubblica ~132 per ~46 s mentre il fold legge ~103 a
+salienza 1.00. `postHoleReopenSec` in `BeatDecoder` è un timbro che **non scade
+mai**: dopo il primo buco da 2,5 quarti con la parte che suona, il rifiuto
+`refusePostHoleComb` blocca per il resto del brano ogni correzione non d'ottava
+dal fold (salvo 4-beat già sul fold). Il rifiuto esiste per difendere una
+griglia giusta prima della pausa (fixture D, 100→150); ora difende solo una
+griglia che il fold ha **almeno una volta confermato** (`combAgreedBpm`,
+accordo modulo ottave entro `kStaleGridRelease`, stesso livello entro
+`kStaleGridThreshold`). Nessuna soglia nuova, nessun titolo.
+
+- [x] banchi, controllo = HEAD ricompilato: `probe_motion_matrix --quick` (anche `--product-direct`), `probe_tempo_step`, `VPAlign --ramps`/`--steps` **byte-identici**; `VPTests --tempo-step` 14/0, `--tempo-slow` 10/0, `--new-input` 15/0, `--bar` 10/0 su entrambi. Fixture post-pausa ricostruita (100 corroborato, buco 3/4/6 quarti, poi reticolo 150 per 30 s): 100.00 fisso in controllo e candidato;
+- [x] `VPTrack --player --step 1 --bpm 104` su FEEL: primo aggancio tenuto 3 s **46.09 → 24.88 s**, tempo nel 2% **50.3 → 58.8 %**; a 26 s pubblica 102.6 (prima 132.7). Dopo 60 s differenza media 0.05 BPM (max 1.06), secondi fuori 2% 79 → 78;
+- [x] controlli reali: EVERYTIME 44.1k, SPLENDIDA, Sally identici al byte; EVERYTIME 48k differisce solo sull'ultima cifra di due righe (scheduler del worker), riepilogo identico;
+- [ ] ascolto.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

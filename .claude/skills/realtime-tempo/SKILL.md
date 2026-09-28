@@ -4845,6 +4845,28 @@ the simulator can prove AirPods output after a real iPad resize. Do not label
 the persistent-silence symptom fixed until the first resize after a fresh
 launch is heard on the device.
 
+**Kept (2026-09-28): the post-hole refusal defends only a
+corroborated lattice.** `postHoleReopenSec` never expires, so one sounding
+hole used to arm `refusePostHoleComb` for the rest of the song: every later
+non-octave fold correction was refused unless the 4-beat already sat on the
+fold. That is the plausible cause of FEEL holding ~132 while the fold read
+~103 until ~47 s. `combAgreedBpm` records the committed tempo at which the fold
+last named the same pulse (modulo octaves, within `kStaleGridRelease`, at
+snap salience); the refusal now applies only while `bpm` is still within
+`kStaleGridThreshold` of it. Fixture D's 100 was corroborated before its
+pause, so its refusal is unchanged; a lattice the fold never agreed with is
+not a leftover to protect. The transition path's `afterHole` stamp is left
+untouched. Against a rebuilt HEAD control: `probe_motion_matrix --quick`
+(default and `--product-direct`), `probe_tempo_step`, `VPAlign --ramps` and
+`--steps` byte-identical (the synthetic banks never set `sounding`);
+`VPTests --tempo-step/--tempo-slow/--new-input/--bar` 14/10/15/10 pass on
+both. A reconstructed post-pause fixture (100 corroborated, 3/4/6-quarter
+hole, then a 150 lattice for 30 s) holds 100.00 on both. FEEL through
+`VPTrack --player --bpm 104`: first 3 s lock 46.09 -> 24.88 s, time inside
+2% 50.3 -> 58.8%, published 132.7 -> 102.6 at 26 s; after 60 s mean
+difference 0.05 BPM. EVERYTIME 44.1k, SPLENDIDA and Sally byte-identical.
+Listening still open (`docs/TODO.md` item 48).
+
 ## 9. Map: "I want to change X"
 
 | X | file |

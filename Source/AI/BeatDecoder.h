@@ -518,6 +518,10 @@ private:
     // held tempo. Remember the reopen so that confirmation can refuse a
     // huge post-hole jump. The synthetic bank never sets sounding.
     double postHoleReopenSec = -1.0;
+    // Committed tempo at which the fold last named the same pulse (modulo
+    // whole octaves). The post-hole refusal defends a lattice the fold has
+    // corroborated; one it never agreed with is not a leftover to protect.
+    float combAgreedBpm = 0.0f;
     /** Time of a hat refused after a stale hole while the part is sounding.
         The kick that follows within one beat, half a beat off the old
         origin, may take the grid. A kick after an ordinary hole must not:
