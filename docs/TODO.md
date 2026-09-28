@@ -3710,6 +3710,7 @@ accordo modulo ottave entro `kStaleGridRelease`, stesso livello entro
 - [x] banchi, controllo = HEAD ricompilato: `probe_motion_matrix --quick` (anche `--product-direct`), `probe_tempo_step`, `VPAlign --ramps`/`--steps` **byte-identici**; `VPTests --tempo-step` 14/0, `--tempo-slow` 10/0, `--new-input` 15/0, `--bar` 10/0 su entrambi. Fixture post-pausa ricostruita (100 corroborato, buco 3/4/6 quarti, poi reticolo 150 per 30 s): 100.00 fisso in controllo e candidato;
 - [x] `VPTrack --player --step 1 --bpm 104` su FEEL: primo aggancio tenuto 3 s **46.09 → 24.88 s**, tempo nel 2% **50.3 → 58.8 %**; a 26 s pubblica 102.6 (prima 132.7). Dopo 60 s differenza media 0.05 BPM (max 1.06), secondi fuori 2% 79 → 78;
 - [x] controlli reali: EVERYTIME 44.1k, SPLENDIDA, Sally identici al byte; EVERYTIME 48k differisce solo sull'ultima cifra di due righe (scheduler del worker), riepilogo identico;
+- [x] **"secondo brano: si allinea solo dopo STOP" (2026-09-28)** — `VPTrack --then B.wav --at 60 [--stop-after X --stop-gap G]`. Build *prima* di questo item, SPLENDIDA→FEEL: senza STOP aggancio tenuto a **46.08 s** dal cambio, con STOP a +15 s e START a +18 s a **28.97 s** (STOP toglie `sounding` e quindi il rifiuto post-buco). Con questo item, senza STOP: **24.88 s**. EVERYTIME→SPLENDIDA e SPLENDIDA→EVERYTIME: identici con e senza STOP in entrambe le build (2.06 / 5.31 s). Da t≈+10 s le tracce con e senza STOP coincidono anche in fase.
 - [ ] ascolto.
 
 ## Standby

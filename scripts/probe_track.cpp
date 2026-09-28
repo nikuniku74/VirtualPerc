@@ -35,6 +35,12 @@ int main (int argc, char** argv)
     double reference = 0.0, gainDb = 0.0, traceStep = 2.0, until = 1.0e9;
     bool trace = false, speaker = false, loadedFile = false;
     std::string pulses, follow;
+    // A second file loaded while START stays armed, as CARICA does mid-set.
+    // --stop-gap G emulates the listener's workaround: STOP --stop-after X
+    // seconds after the load (default at the load) and START again G seconds
+    // later. --bpm then refers to the second file. docs/TODO.md item 48.
+    std::string thenPath;
+    double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -57,6 +63,10 @@ int main (int argc, char** argv)
         // the app ships with; the bench needs it because how tightly the
         // clock holds a real drummer is exactly what this chooses.
         else if (a == "--follow")     follow = next();
+        else if (a == "--then")       thenPath = next();
+        else if (a == "--at")         thenAt = std::atof (next());
+        else if (a == "--stop-gap")   stopGap = std::atof (next());
+        else if (a == "--stop-after") stopAfter = std::atof (next());
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -75,12 +85,28 @@ int main (int argc, char** argv)
     if (! vp::loadWavFile (path, wav, why)) { std::printf ("wav: %s\n", why.c_str()); return 1; }
 
     const double sr = wav.sampleRate;
-    const int n = wav.frames;
-    std::vector<float> mono (static_cast<size_t> (n));
     const float g = static_cast<float> (std::pow (10.0, gainDb / 20.0));
-    for (int i = 0; i < n; ++i)
-        mono[static_cast<size_t> (i)] = 0.5f * (wav.left[static_cast<size_t> (i)]
-                                                + wav.right[static_cast<size_t> (i)]) * g;
+    std::vector<float> mono;
+    auto append = [&] (const vp::WavAudio& w, int frames)
+    {
+        for (int i = 0; i < frames; ++i)
+            mono.push_back (0.5f * (w.left[static_cast<size_t> (i)]
+                                    + w.right[static_cast<size_t> (i)]) * g);
+    };
+    int switchAt = -1;
+    if (! thenPath.empty())
+    {
+        vp::WavAudio second;
+        if (! vp::loadWavFile (thenPath, second, why)) { std::printf ("wav: %s\n", why.c_str()); return 1; }
+        if (second.sampleRate != wav.sampleRate) { std::printf ("--then: sample rate diverso\n"); return 1; }
+        switchAt = std::clamp (static_cast<int> ((thenAt > 0.0 ? thenAt : 60.0) * sr), 0, wav.frames);
+        append (wav, switchAt);
+        append (second, second.frames);
+    }
+    else
+        append (wav, wav.frames);
+    const int n = static_cast<int> (mono.size());
+    bool switched = false, stoppedAfter = false, restartedAfterGap = false;
 
     constexpr int block = 256;
     vp::VirtualPercussionEngine eng;
@@ -125,7 +151,28 @@ int main (int argc, char** argv)
 
     while (pos + block <= n && pos / sr < until)
     {
-        const int take = std::min ({ block, n - pos, hop - inHop });
+        if (switchAt >= 0 && ! switched && pos >= switchAt)
+        {
+            switched = true;
+            eng.notifyInputRestart();
+            std::printf ("# %.1f s: carico %s%s\n", pos / sr, thenPath.c_str(),
+                         stopGap >= 0.0 ? " con STOP" : " (START resta acceso)");
+        }
+        const int stopSample = switchAt + static_cast<int> (stopAfter * sr);
+        if (switched && stopGap >= 0.0 && ! stoppedAfter && pos >= stopSample)
+        {
+            stoppedAfter = true;
+            eng.stop();
+            std::printf ("# %.1f s: STOP\n", pos / sr);
+        }
+        if (stoppedAfter && ! restartedAfterGap
+            && pos >= stopSample + static_cast<int> (stopGap * sr))
+        {
+            restartedAfterGap = true;
+            eng.start();
+            std::printf ("# %.1f s: START\n", pos / sr);
+        }
+        const int take = std::min ({ block, n - pos, hop - inHop, switchAt > pos ? switchAt - pos : block });
         const float* ins[1] = { mono.data() + pos };
         eng.process (ins, 1, outs, 2, take);
         s = eng.snapshot();
@@ -137,7 +184,8 @@ int main (int argc, char** argv)
             restartAt.push_back (t);
         }
 
-        if (reference > 0.0 && s.state == vp::TrackingState::following)
+        if (reference > 0.0 && s.state == vp::TrackingState::following
+            && (switchAt < 0 || switched))
         {
             const bool right = std::fabs (s.bpm - reference) <= reference * 0.02;
             (right ? rightSeconds : offSeconds) += take / sr;
@@ -206,6 +254,8 @@ int main (int argc, char** argv)
         std::printf ("riferimento %.2f BPM (+-2%%)\n", reference);
         std::printf ("primo aggancio tenuto 3 s: %s\n",
                      firstRight >= 0.0 ? (std::to_string (firstRight) + " s").c_str() : "mai");
+        if (switchAt >= 0 && firstRight >= 0.0)
+            std::printf ("dopo il cambio brano: %.2f s\n", firstRight - switchAt / sr);
         std::printf ("tempo dentro il 2%%: %.1f%%  (%.1f s su %.1f)\n",
                      tot > 0.0 ? rightSeconds / tot * 100.0 : 0.0, rightSeconds, tot);
     }
