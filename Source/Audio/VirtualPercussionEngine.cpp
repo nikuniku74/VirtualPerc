@@ -450,9 +450,18 @@ void VirtualPercussionEngine::setFixedBpm (float bpm) noexcept
 
 void VirtualPercussionEngine::notifyTrackSeek() noexcept
 {
-    // A seek is a cut, not a new song. Restarting the decoder here was
-    // throwing away a tempo that is still right; the one is what moved.
+    // A seek is a new input to the analysis, exactly as loading a file is.
+    // Keeping the decoder here (the old rule: "a tempo that is still right")
+    // held the old tempo 9-13 s after a seek into another song of a long
+    // file, and STOP, which stands the grid defence down, looked like the
+    // only way out. Measured, and every softer variant was worse: keeping
+    // only comb and model let the old comb vote for 5 s (9.5 s, 10.5 s);
+    // keeping them with the part silenced never found 123 after 87. As a
+    // new input: 1.5 s and 3.0 s. A seek inside one song pays the cold
+    // acquisition instead (EVERYTIME 3.0 s, SPLENDIDA 1.5 s, which was 9 s,
+    // BLUE SKY 10 s, which was 0). docs/TODO.md item 55.
     barReentryPending.store (true, std::memory_order_relaxed);
+    notifyInputRestart();
 }
 
 void VirtualPercussionEngine::notifyInputRestart() noexcept

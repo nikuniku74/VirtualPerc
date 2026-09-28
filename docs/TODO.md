@@ -3837,6 +3837,39 @@ mantiene l'epoca a freddo (lì una pausa e una band possono essere il brano dopo
 Suite completa prima/dopo i cambi di suono (item 53): 652/31 -> 647/36. Nuovi FAIL solo sul percorso altoparlante/microfono iPad (3 righe del cancellatore e la battuta dall'armonia senza batteria, 100% -> 4%: le conga a 325 Hz passano l'altoparlante simulato e finiscono nel cromagramma). Il test del canale cassa fallisce uguale prima e dopo.
 `VPTrack` ha ora anche `--seek-at T --seek-to U` (seek nella forma d'onda).
 
+### 55. Traccia lunga con più brani: dopo un salto nella forma d'onda il nuovo BPM arriva tardi 🟢 (2026-09-28, corretto e misurato — resta ascolto)
+
+Segnalazione: in una traccia con tanti brani, saltando a un brano con un BPM
+molto diverso il tempo nuovo arriva dopo molto; con uno STOP arriva subito.
+Causa: `notifyTrackSeek` apriva solo la finestra dell'1. Il decoder teneva
+griglia, fit, comb e modello del brano di prima e, con la parte che suona, le
+guardie che difendono la griglia (keep sull'ultimo battito, rifiuto dopo un
+buco, livello tenuto) la difendevano contro il brano nuovo. Ora un seek è un
+nuovo ingresso come un file nuovo: `notifyTrackSeek` chiama
+`notifyInputRestart` (epoca a freddo, coda scartata, parte in silenzio fino
+alla nuova griglia, clock azzerato come al cambio file). L'inseguimento dentro
+un brano non passa di qui: matrice, VPAlign e rampe sono identici per
+costruzione.
+
+File di prova in `/tmp/vp-multisong` (EVERYTIME 123 / BLUE SKY 87 / SPLENDIDA
+108, `mk.py`), metrica `score.py`: primo tratto di 3 s entro il 2% (ottava
+ammessa) dopo il salto.
+
+- [x] Salto fra brani diversi: EVERYTIME -> BLUE SKY **9.5 -> 1.5 s**, BLUE SKY -> EVERYTIME **13.5 -> 3.0 s**.
+- [x] Salto dentro lo stesso brano: SPLENDIDA 9.0 -> **1.5 s**, EVERYTIME 0 -> 3.0 s, BLUE SKY **0 -> 10 s** (l'acquisizione a freddo del corpo di BLUE SKY legge 135 per ~8 s). Costo accettato: un salto è un riaggancio.
+- [x] Scartate: (a) epoca conservata (comb e modello tenuti, parte che suona): 9.5 / 10.5 s, il comb vecchio vota per ~5 s; (b) epoca a freddo senza silenziare la parte: 3.5 / 15.5 s; (c) comb conservato con la parte silenziata: BLUE SKY -> EVERYTIME mai.
+- [x] `VPTests --bar` 10/0 (il test del seek ora chiede un'epoca nuova e l'1 giusto a metà quarto; prima chiedeva il contrario), `--new-input` e `--state-timing` verdi.
+- [ ] ascolto su iPad.
+
+Aperto, non toccato: il **cambio brano naturale** dentro il file (senza salto).
+Con 1.5 s di silenzio fra i brani: BLUE SKY -> EVERYTIME 32.5 s, SPLENDIDA ->
+EVERYTIME 16 s, EVERYTIME -> BLUE SKY 14 s. Una pausa e poi una band nel
+file è esattamente il caso che l'item 54 tratta come stesso brano. Nel probe
+uno STOP di 1 s a 8.5 s dal cambio non aggancia subito (16 -> 11, 14 -> 10.5,
+32.5 -> 45 s), e neppure un riavvio a freddo: EVERYTIME a ~28 s legge 107 per
+~20 s (stessa acquisizione sbagliata di FEEL). Un avviso "premi STOP"
+prometterebbe un rimedio che il probe non mostra.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

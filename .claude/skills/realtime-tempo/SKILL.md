@@ -3660,11 +3660,15 @@ bar and the winner clears the playing margin (0.20). While the part is
 already playing on a trusted one, the network may not move the bar by one
 quarter; a half-bar correction still needs the long count and that margin.
 The harmony fallback is not held to that rule. The button remains the way
-to place the one on the other quarter. A seek
-(`notifyTrackSeek`) is unchanged. Verify with `VPTests --bar`.
+to place the one on the other quarter. A seek (`notifyTrackSeek`) is a
+new input since 2026-09-28 (see below). Verify with `VPTests --bar`.
 
-**Loading another file is a new input, not a cut.** A seek keeps the tempo and
-only moves the one; a *different file* is a different source, and the decoder
+**Loading another file is a new input, not a cut, and so is a seek.** A
+seek used to keep the tempo and only move the one; in a long file with
+several songs that held the old tempo 9-13 s after a jump into another song
+(docs/TODO.md item 55), so `notifyTrackSeek` now calls `notifyInputRestart`.
+Softer variants (keep comb and model, with or without the part sounding)
+were measured and were worse. A *different file* is a different source, and the decoder
 holds a lock that is right for the song that is gone. `loadInternalTrack` calls
 `VirtualPercussionEngine::notifyInputRestart()`, which forces a fresh
 `analysisEpoch` with `preserveCombOnEpoch = false` - the same restart the input

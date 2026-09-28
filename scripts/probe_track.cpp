@@ -42,8 +42,10 @@ int main (int argc, char** argv)
     std::string thenPath;
     double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0;
     // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
-    // and the engine is told, as MainComponent does.
-    double seekAt = -1.0, seekTo = 0.0;
+    // and the engine is told, as MainComponent does. --stop-gap then counts
+    // from the seek. --from T scores --bpm only from T seconds on (a long
+    // file with several songs).
+    double seekAt = -1.0, seekTo = 0.0, scoreFrom = 0.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -72,6 +74,7 @@ int main (int argc, char** argv)
         else if (a == "--stop-after") stopAfter = std::atof (next());
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
+        else if (a == "--from")       scoreFrom = std::atof (next());
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -164,8 +167,9 @@ int main (int argc, char** argv)
             std::printf ("# %.1f s: carico %s%s\n", pos / sr, thenPath.c_str(),
                          stopGap >= 0.0 ? " con STOP" : " (START resta acceso)");
         }
-        const int stopSample = switchAt + static_cast<int> (stopAfter * sr);
-        if (switched && stopGap >= 0.0 && ! stoppedAfter && pos >= stopSample)
+        const int stopSample = (switchAt >= 0 ? switchAt : static_cast<int> (seekAt * sr))
+                             + static_cast<int> (stopAfter * sr);
+        if ((switched || seeked) && stopGap >= 0.0 && ! stoppedAfter && pos >= stopSample)
         {
             stoppedAfter = true;
             eng.stop();
@@ -198,7 +202,7 @@ int main (int argc, char** argv)
         }
 
         if (reference > 0.0 && s.state == vp::TrackingState::following
-            && (switchAt < 0 || switched))
+            && (switchAt < 0 || switched) && pos / sr >= scoreFrom)
         {
             const bool right = std::fabs (s.bpm - reference) <= reference * 0.02;
             (right ? rightSeconds : offSeconds) += take / sr;
@@ -269,6 +273,8 @@ int main (int argc, char** argv)
                      firstRight >= 0.0 ? (std::to_string (firstRight) + " s").c_str() : "mai");
         if (switchAt >= 0 && firstRight >= 0.0)
             std::printf ("dopo il cambio brano: %.2f s\n", firstRight - switchAt / sr);
+        else if (scoreFrom > 0.0 && firstRight >= 0.0)
+            std::printf ("dopo --from: %.2f s\n", firstRight - scoreFrom);
         std::printf ("tempo dentro il 2%%: %.1f%%  (%.1f s su %.1f)\n",
                      tot > 0.0 ? rightSeconds / tot * 100.0 : 0.0, rightSeconds, tot);
     }

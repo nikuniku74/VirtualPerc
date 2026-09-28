@@ -68,10 +68,10 @@ public:
     /** Lock a BPM and switch to FISSO. Tap and later nudges still update it. */
     void setFixedBpm (float bpm) noexcept;
 
-    /** The backing track jumped to a new position. Opens the bar re-entry
-        window (item 2) so the one can catch the new downbeats; does *not*
-        restart the tempo decoder - the clock kept time. Call from the
-        message thread on seek. */
+    /** The backing track jumped to a new position. A new input to the
+        analysis, as a new file is (see notifyInputRestart): in a long file
+        the jump may land in another song. Call from the message thread on
+        seek. */
     void notifyTrackSeek() noexcept;
 
     /** The input is a different source now - the ordinary case is loading
@@ -82,8 +82,8 @@ public:
         defending a tempo the new song never had. Forces a fresh analysis epoch
         on the audio thread and discards analysis audio still queued from the
         previous file. The clock itself is never restarted - see
-        docs/TODO.md item 3. Call from the message thread on load, never on a
-        seek within one file (that is notifyTrackSeek). */
+        docs/TODO.md item 3. Call from the message thread on load; a seek
+        goes through notifyTrackSeek, which calls this. */
     void notifyInputRestart() noexcept;
 
     EngineSettings& settings() noexcept { return cfg; }

@@ -1530,7 +1530,8 @@ void vpRunBarReentryTests (int& passed, int& failed)
     }
 
     {
-        // Seek: notifyTrackSeek opens the window and does not bump the epoch.
+        // Seek: a new input to the analysis, like a new file (item 55). One
+        // fresh epoch, and the count lands on the new downbeats.
         auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
         auto* raw = model.get();
         vp::VirtualPercussionEngine eng;
@@ -1553,20 +1554,25 @@ void vpRunBarReentryTests (int& passed, int& failed)
         raw->shifted.store (true, std::memory_order_relaxed);
         eng.notifyTrackSeek();
         pos = pump (eng, song.data(), n, pos, static_cast<int> (sr * (fourBarsSec + 1.0)), oL, oR);
+        // Read the count in the middle of a quarter, not on its edge.
+        const double beatSamples = 60.0 / static_cast<double> (trackBpm) * sr;
+        const double inBeat = std::fmod (static_cast<double> (pos), beatSamples);
+        pos = pump (eng, song.data(), n, pos,
+                    static_cast<int> (std::fmod (1.5 * beatSamples - inBeat, beatSamples)),
+                    oL, oR);
         auto after = eng.snapshot();
         const int beatAfter = std::clamp (static_cast<int> (after.barPhase * 4.0f), 0, 3);
 
-        const double beatSamples = 60.0 / static_cast<double> (trackBpm) * sr;
         const int fileBeat = static_cast<int> (static_cast<double> (pos) / beatSamples);
         const int expected = ((fileBeat - 2) % 4 + 4) % 4;
 
         std::printf ("bar-seek       restarts %d->%d rot %d->%d beat=%d expected=%d\n",
                      restartsBefore, after.analysisRestarts,
                      rotBefore, after.barRotations, beatAfter, expected);
-        expect (starved || after.analysisRestarts == restartsBefore,
-                "seek does not restart the tempo decoder");
-        expect (starved || (after.barRotations == rotBefore + 1 && beatAfter == expected),
-                "seek re-aligns the one inside the re-entry window");
+        expect (starved || after.analysisRestarts == restartsBefore + 1,
+                "seek starts exactly one fresh analysis epoch");
+        expect (starved || beatAfter == expected,
+                "seek re-aligns the one on the new downbeats");
         (void) pos;
     }
 }
