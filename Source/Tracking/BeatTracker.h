@@ -527,6 +527,7 @@ private:
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
     bool barIsTrustedNow() noexcept;
+    bool holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept;
     void updateAutoOctave (float bpm, bool periodic, int numSamples,
                            bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
@@ -613,6 +614,10 @@ private:
     int  autoOctave = 0;
     int  autoWant = 0;
     int  autoHoldSamples = 0;
+    /** The grid serial on which holdSoundingLevel last moved the level: the
+        worker has not applied that shift until a later serial arrives. */
+    uint32_t levelHoldSerial = 0;
+    bool levelHoldPending = false;
     int tapHoldSamples = 0;
     int downbeatHoldSamples = 0;
     bool barLocked = false;

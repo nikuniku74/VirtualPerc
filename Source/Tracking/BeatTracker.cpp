@@ -682,6 +682,45 @@ void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,
     }
 }
 
+bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept
+{
+    // A part that is playing keeps its level, whoever argues otherwise.
+    // updateAutoOctave already refuses to move AUTO under a sounding part, but
+    // the analysis can move by itself: an arrangement entrance drops the grid
+    // and the next acquisition may pick the other octave. THE REASON, about
+    // 85 BPM: rhythm entrance at 167.7 s, the new lattice acquired at 170.45,
+    // the clock took it in one block and the decoder then held 170 for the
+    // rest of the song (docs/TODO.md item 57). An exact double or half of the
+    // tempo being played is answered by shifting the level back. Only ÷2/×2,
+    // a new file or a seek change the octave while the part plays. Returns
+    // true when this hypothesis is such an octave: the clock must not take it,
+    // not even for the half second before the worker applies the shift.
+    if (! sounding || ! tempoFollow || tapEstablished || bpm < 40.0f || heldBpm < 40.0f)
+        return false;
+
+    constexpr float kOctaveMatch = 0.10f;   // log2, about 7%
+    const float r = std::log2 (bpm / heldBpm);
+    const int jump = std::fabs (r - 1.0f) < kOctaveMatch ? 1
+                   : (std::fabs (r + 1.0f) < kOctaveMatch ? -1 : 0);
+    if (jump == 0)
+        return false;
+    if (levelHoldPending && gridSerial == levelHoldSerial)
+        return true;
+    levelHoldPending = false;
+    int& level = octaveAuto ? autoOctave : userOctave;
+    const int next = level - jump;
+    if (next < -1 || next > 1)
+        return true;
+
+    level = next;
+    autoWant = autoOctave;
+    autoHoldSamples = 0;
+    neural.setUserOctave (level);
+    levelHoldSerial = gridSerial;
+    levelHoldPending = true;
+    return true;
+}
+
 void BeatTracker::nudgeBar (int beats) noexcept
 {
     follower.rotateBarIndex (beats);
@@ -1283,9 +1322,13 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
         follower.beginTempoTransition (hyp.transitionBpm);
 
+    // An exact octave of the tempo being played is not a tempo for the clock.
+    const bool octaveAway = haveHyp && periodic && ! harmonicSourceActive
+                            && holdSoundingLevel (nnBpm, hyp.gridSerial);
+
     if (tempoOwned)
         follower.setTargetTempo (heldBpm, 0.95f);
-    else if (nnBpm > 50.0f)
+    else if (nnBpm > 50.0f && ! octaveAway)
     {
         // The decoder now guards its own metrical level and decides for itself
         // whether the tempo is fixed or moving, so there is nothing left for a

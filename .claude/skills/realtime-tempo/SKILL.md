@@ -4848,6 +4848,11 @@ untouched. The unsigned iPadOS Debug build compiles; neither a host probe nor
 the simulator can prove AirPods output after a real iPad resize. Do not label
 the persistent-silence symptom fixed until the first resize after a fresh
 launch is heard on the device.
+Follow-up the same day (docs/TODO.md item 56): the first open passes rate
+0, `chooseBestSampleRate` turns that into the constructed 44100 and the iOS
+Pimpl kept it as `targetSampleRate` while the route ran at 48000; every
+`restart()` asked the session for 44100 again. `open()` now pins the target
+to the rate iOS granted. Device check still pending.
 
 **Kept (2026-09-28): the post-hole refusal defends only a
 corroborated lattice.** `postHoleReopenSec` never expires, so one sounding

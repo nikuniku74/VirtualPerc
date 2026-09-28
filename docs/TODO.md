@@ -3870,6 +3870,25 @@ uno STOP di 1 s a 8.5 s dal cambio non aggancia subito (16 -> 11, 14 -> 10.5,
 ~20 s (stessa acquisizione sbagliata di FEEL). Un avviso "premi STOP"
 prometterebbe un rimedio che il probe non mostra.
 
+### 56. iPad: al primo ridimensionamento/spostamento della finestra crack e silenzio 🟡 (2026-09-28, corretto in JUCE — resta prova su iPad)
+
+Sintomo: solo la prima volta dopo l'avvio (e dopo ogni rebuild), ridimensionare
+o spostare la finestra fa un crack e poi niente audio; cambiare CLOCK o BUFFER
+lo fa tornare, e dopo non succede più.
+Causa (lettura del codice, non ancora misurata sul device): la prima apertura
+passa rate 0, `AudioDeviceManager::chooseBestSampleRate` prende la frequenza
+"attuale" del device appena costruito, cioè 44100, e il Pimpl iOS la tiene come
+`targetSampleRate` anche se la route resta a 48000. Ogni cambio di route
+(ridimensionare/spostare la finestra lo è) passa da `restart()`, che richiede di
+nuovo 44100 alla sessione sotto l'unità in corsa. CLOCK o BUFFER riaprono il
+device con 48000 come obiettivo: da lì `restart()` non scrive più la sessione.
+Fix in `third_party/JUCE/.../juce_Audio_ios.cpp` (`open`): dopo
+`setTargetSampleRateAndBufferSize`, `targetSampleRate = sampleRate` (si chiede
+quello che iOS ha concesso). Il file è tornato tutto CRLF come in HEAD di JUCE.
+
+- [x] Build Debug iPad riuscita e installata (2026-09-28 17:02).
+- [ ] Prova su iPad: app appena avviata, brano in play, ridimensionare e spostare la finestra più volte (anche con AirPods). Se si ripete: build con `JUCE_IOS_AUDIO_LOGGING=1` e log da `devicectl ... --console`.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
