@@ -3109,7 +3109,37 @@ void BeatDecoder::updateTempo() noexcept
     // phase. A level that is still provisional is a guess and has nothing to
     // defend; one that is established has tenure, and the vote below is what
     // tenure is for.
-    const bool nonOctaveDisagreement = combReady && provisional && ! octaveArgument
+    //
+    // Tenure is earned by the fold, though, not by the clock. A grid the fold
+    // has never named since this input began (`combAgreedBpm`, settled and
+    // salient, below) and that is visibly starving - this accepted beat
+    // closed a gap of more than kGridStaleBeats of its own periods, so the
+    // real onsets are landing off it - is still the acquisition's guess.
+    // LET ME LOVE YOU acquired 165, lost `provisional` to a fold passing
+    // through 144 on its way to 196, then sat at 153 over a 98 song for 13 s:
+    // the sounding part let about one beat in four onto that grid, the fold
+    // was right and salient throughout, but its settled flag flickers from one
+    // refresh to the next and each unsettled beat took a vote back
+    // (docs/TODO.md item 60). Every half was measured. "Ever named" rather
+    // than "named at this tempo": after a real step the new grid has not been
+    // named either, and the fold there is the stale one. Starving: a right
+    // grid the fold has not named yet catches its beats, and letting the
+    // unconfirmed fold vote there snapped a swung 132 onto its 88 (the
+    // long-short cell) on the known-phase bank. Sounding: only a playing part
+    // keeps the on-grid gate shut after a hole, which is what starves a wrong
+    // grid; silent, the stale-grid waive re-anchors it by itself, and the
+    // same rule there moved the 12 s ramp of `VPAlign --ramps`.
+    bool gridStarving = false;
+    if (beatFilled >= 2 && bpm > kMinBpm)
+    {
+        const int newestI = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
+        const int olderI = (beatWrite - 2 + kBeatHistory) % kBeatHistory;
+        gridStarving = beatTime[newestI] - beatTime[olderI]
+                       > kGridStaleBeats * 60.0 / static_cast<double> (bpm);
+    }
+    const bool gridUncorroborated = sounding && combAgreedBpm < kMinBpm && gridStarving;
+    const bool nonOctaveDisagreement = combReady && (provisional || gridUncorroborated)
+                                       && ! octaveArgument
                                        && disagreement > kOctaveThreshold
                                        && tempo.salience() > kOctaveSnapSalience;
     const bool combMayCorrect = tempo.levelSettled()
@@ -3196,9 +3226,22 @@ void BeatDecoder::updateTempo() noexcept
     // for sixteen beats with no confirmed transition in between. A stale fold
     // after a real step up is still rebuilding and drifts, so it does not
     // collect them; the transition quarantine resets the count as well.
+    //
+    // Not a subharmonic, though - the rule just above for the half. After
+    // 120 -> 160 the old fold settled on a third of the new grid, steady for
+    // sixteen beats once the quarantine had ended, and the proof handed it the
+    // tempo: probe_tempo_step finished that step at 53.3 BPM (docs/TODO.md
+    // item 60). A 3:2 or 5:3 lattice is not a whole multiple of the fold; a
+    // third or a quarter of the grid is.
     constexpr int kProvenSlowerLevelBeats = 16;
     constexpr float kSteadyFold = 0.04f;    // log2, about 3%
-    const bool combOtherSlower = combSlower && ! combCleanHalf && tempo.levelSettled()
+    const float slowerRatio = combSlower ? bpm / combRawBpm : 0.0f;
+    const float slowerMultiple = std::round (slowerRatio);
+    const bool combSubharmonic = slowerMultiple >= 3.0f
+                                 && std::fabs (std::log2 (slowerRatio / slowerMultiple))
+                                        < kSteadyFold;
+    const bool combOtherSlower = combSlower && ! combCleanHalf && ! combSubharmonic
+                                 && tempo.levelSettled()
                                  && ! transitionOwnsRate
                                  && tempo.salience() > kOctaveSnapSalience;
     if (combOtherSlower

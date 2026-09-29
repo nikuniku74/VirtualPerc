@@ -4004,6 +4004,109 @@ AUTO; un livello manuale è dell'ascoltatore. `VPTrack --octave-at T --octave N`
 simula la pressione: EVERYTIME ÷2 128 → 61, VITA ×2 96 → 192, stabili. ÷2 resta
 senza effetto se la metà scende sotto 50 BPM (`kMinBpm`, voluto: VITA 96 → 48).
 
+### 60. Verifica dell'item 59 e aggancio iniziale: una regressione chiusa, un caso migliorato 🟢 (2026-09-29, misurato — resta ascolto su iPad)
+
+Controllo dopo il commit 21861d7 (item 59) su brano caricato e mixer.
+
+**Regressione trovata e corretta.** `probe_tempo_step` era FAIL su HEAD: il salto
+120 → 160 finiva a **53.3 BPM**. Bisect: PASS fino a 21861d7~1, FAIL da 21861d7;
+isolata la terza modifica dell'item 59 (via d'uscita dal veto `unprovenSlowerOctave`
+dopo 16 battiti di pettine fermo). Dopo il salto il pettine vecchio si assesta su
+**un terzo** della nuova griglia, fermo per 16 battiti appena finita la quarantena,
+e la prova gli consegnava il tempo. Il commento accanto (`combCleanHalf`) diceva già
+che un sottomultiplo non deve mai guadagnarla. Ora `combOtherSlower` esclude i
+sottomultipli interi (rapporto griglia/pettine vicino a 3, 4, …, entro `kSteadyFold`);
+le griglie 3:2 e 5:3 per cui l'item 59 era nato (132/88, 165/99) restano ammesse.
+- [x] `probe_tempo_step` di nuovo **PASS**, tabella identica a prima dell'item 59.
+- [x] ASPETTANDO (il caso dell'item 59) identico sul banco brani: il guadagno resta.
+
+**LET ME LOVE YOU 44.1k: 11 s su 153 sopra una canzone a 98.** Traccia del voto
+d'ottava (stampa temporanea, rimossa): la griglia 165 perdeva `provisional` su un
+pettine di passaggio (144, salienza 0.22, verso 196); poi il pettine giusto
+(196 = 2×98, salienza 1.00) doveva raccogliere 4 voti, ma mentre la parte suona la
+griglia sbagliata accetta ~1 colpo su 4 (ogni colpo accettato chiude un buco di
+>2.5 battiti) e il flag `levelSettled` lampeggia da un refresh all'altro: ogni
+battito "non assestato" toglieva un voto. Corretto in `nonOctaveDisagreement`: una
+griglia che il pettine **non ha mai confermato** da quando è iniziato l'ingresso
+(`combAgreedBpm`), **che sta morendo di fame** (il colpo accettato chiude un buco di
+più di `kGridStaleBeats` periodi) e **con la parte che suona** è ancora un'ipotesi
+d'aggancio: il disaccordo non d'ottava vale anche senza `levelSettled`. Ogni
+condizione è misurata:
+- senza "mai confermata" (anche "non confermata a questo tempo"): dopo un vero
+  salto il pettine vecchio votava → gradino offset 16 34.05/154.2 → 34.45/157.5;
+- senza "affamata": swing 0.61 a 132 (seed 321349) scattava sull'88 del pettine
+  (cella lunga-corta) → stessa perdita sul gradino;
+- senza "suona": `VPAlign --ramps` rampa 12 s MIXER 35.5 → 37.2 ms (da muta la
+  griglia affamata si riaggancia da sola col waive del gate sul battito).
+- [x] Banco brani (22 casi): LET ME LOVE YOU 44k aggancio **27.9 → 20.3 s**, sbagliato
+  nei primi 40 s **19.5 → 10.4 s**, sbagliato totale 29.0 → 20.0 s; gli altri 21
+  identici (I WANNA DANCE 44k da solo è identico byte per byte: le ±0.2 s viste nel
+  banco erano non-determinismo con 16 processi in parallelo — il banco va lanciato
+  senza compilazioni o test in contemporanea).
+- [x] Identici byte per byte a HEAD: `probe_matrix --quick`, `probe_motion_matrix
+  --quick --verbose` offset 0/16/32/48 in entrambe le corsie (per seed),
+  `VPAlign --ramps` e `--steps`.
+- [x] `VPTests --tempo-step` 14/0, `--tempo-slow` 10/0, `--state-timing` 15/0,
+  `--new-input` 16/0, `--bar` 10/0.
+- Nota: `VPTests --bar` sotto CPU carica fallisce a volte «seek re-aligns the one»
+  (beat=1 atteso 2) **anche su HEAD** (2/25 HEAD, 1/25 candidato alternati sotto lo
+  stesso carico); da solo passa sempre. Preesistente, non legato a questo item.
+- [ ] Ascolto su iPad (LET ME LOVE YOU; e un cambio di tempo netto sul mixer).
+
+### 61. Primo quarto: un conteggio "fidato" sbagliato non si correggeva più 🟢 (2026-09-29, misurato — resta ascolto)
+
+Misura sul banco brani (stampa temporanea dei voti in `BeatTracker`, rimossa;
+script `barscan.py` / `barvotes.py` / `barrule.py` / `barok.py` nello scratchpad
+della sessione, non nel repo). Riferimento per l'1: dove rete **e** armonia (due
+fonti indipendenti) concordano a fine brano; 15 dei 22 casi ne hanno uno.
+- La parte entra al quarto successivo (~2 s), prima che i voti di downbeat
+  arrivino alla soglia d'ingresso; dopo vale la soglia "mentre suona" (47 battiti)
+  e, appena il conteggio è fidato (`barTrustEstablished`, basta che 8 battiti di
+  voti diano ragione al conteggio corrente), **solo** spostamenti di mezza battuta.
+- Anticipare la decisione non serve: la regola d'ingresso applicata subito dopo
+  l'entrata sarebbe giusta 4 volte e sbagliata 6. I primi voti sono inaffidabili.
+- Il danno vero: in 5 casi su 22 (FEEL 44k, INFINITO 44k, SPLENDIDA 48k, UNA
+  CANZONE 44k/48k) a fine brano rete e armonia concordano che l'1 è **un quarto**
+  più in là, e il divieto lo teneva lì per tutto il brano.
+- Corretto in `BeatTracker::tryAlignFrom`: sul conteggio fidato uno spostamento di
+  un quarto è ammesso se l'altra fonte nomina lo stesso quarto, ognuna col proprio
+  margine ordinario (rete: margine "mentre suona" 0.20 su ≥32 battiti; armonia:
+  margine base 0.10 su ≥8 cambi, materiale tonale). Un fill o una pausa spostano
+  una fonte, non due.
+- [x] Secondi suonati fuori dall'1 sui 15 casi con riferimento: **1370 → 914 s**
+  (FEEL 44k 252 → 74, INFINITO 44k 271 → 22, SPLENDIDA 48k 149 → 121); nessun
+  brano peggiora; negli altri 7 casi nessuna rotazione in più. UNA CANZONE resta
+  (armonia troppo debole, margine 0.07: non allentato).
+- [x] `VPBar` (materiale sintetico con l'1 vero) identico a HEAD; `VPTests --bar`
+  10/0, `--state-timing` 15/0, `--new-input` 16/0, `--tempo-step` 14/0,
+  `--tempo-slow` 10/0; `VPAlign --ramps/--steps` identici; clock e tempo invariati
+  (cambia solo il numero della battuta).
+- **Respinto:** il veto opposto (armonia chiara che blocca lo spostamento di mezza
+  battuta della rete). Aiutava SPLENDIDA ma LET ME LOVE YOU 44k 70 → 152 s fuori
+  dall'1: a metà brano l'armonia può essere netta e sbagliata.
+- [ ] Ascolto su iPad (FEEL, INFINITO, SPLENDIDA GIORNATA).
+
+### 62. `07 1000 GIORNI`: perché fatica (2026-09-29, diagnosi — nessuna modifica specifica)
+
+- **Inizio sbagliato per ~12 s.** L'intro apre con colpi irregolari (0.4–1.9 s);
+  l'aggancio veloce li prende come tempo (147.6 a 1 s) e la parte entra a 2.5 s
+  su 145–150. Dagli onset la griglia vera è netta da ~3 s (forti ogni 0.372 s =
+  161 BPM). Il pettine legge 161–162 da 8 s ma si assesta a 9.5 s, e lo scarto
+  (7–10%) cade fra la spinta del pettine (3%) e il controllo griglia vecchia
+  (8.7%): corretto solo a 12–15 s. Stessa classe dell'item 59 (entrare subito su
+  una lettura provvisoria); una correzione va provata sul banco, non su questo brano.
+- **Ottava.** Tempogramma indipendente: alterna 81–86 e 162–172 (ambiguo). L'app
+  lo suona a 161–172, dentro la fascia 49–168. Se si conta a ~84, ÷2: a 20 s porta
+  la parte a 83–88 e la segue con gli stessi scatti del livello normale (0.93%
+  contro 0.78%). Nota di metodo: la metrica "scatti" di `bench_songs.py` conta il
+  salto della pressione di ÷2 come oscillazione (EVERYTIME 8.56% invece di 0.84%);
+  misurare dopo 10 s dalla pressione.
+- La band cambia davvero tempo (≈81 all'inizio, 85–86 al centro, 83 verso la fine):
+  l'app segue, 0 slittamenti, scatti 0.79% (media banco 0.94%).
+- Battuta: rete e armonia non concordano sull'1 a fine brano (1 contro 0);
+  l'item 61 non cambia nulla qui.
+- [ ] Dall'utente: a che tempo lo conta (81 o 162) e cosa sente di sbagliato.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4254,6 +4357,9 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Assestamento a volte lentissimo (fino a 30 s) sullo stesso materiale che di solito prende 2 s: item 18, aperto, **non** inseguirlo prima di sapere se esiste fuori dal banco (`VPProbe --sync`).
 - Chiusura Codex PATTERN: parte tecnica completata; resta l'ascolto umano in **Standby A**. Loop WAV registrati: **Standby B** + `HANDOFF_LOOP_DEBUG.md`
 - Guadagno automatico analisi (item 16): `kMakeupClipGuardPeak` in `VirtualPercussionEngine.cpp`, attenua solo sopra 0.90 di picco. Test veloce dedicato: `VPTests --octave` (non lanciare la suite intera per iterare qui). Full-suite gate e ascolto ancora da fare.
+- Item 60 (2026-09-29): regressione item 59 (`probe_tempo_step` 120→160 → 53.3) chiusa escludendo i sottomultipli in `combOtherSlower`; griglia mai confermata + affamata + parte che suona: il pettine corregge senza aspettare `levelSettled`. Banco: solo LET ME LOVE YOU 44k cambia (aggancio 27.9 → 20.3 s). Lanciare `bench_songs` senza altri processi pesanti: sotto carico non è deterministico.
+- Item 61 (2026-09-29): primo quarto — sul conteggio fidato un quarto si sposta solo se rete e armonia concordano (`BeatTracker::tryAlignFrom`); fuori dall'1 1370 → 914 s sul banco. Anticipare la decisione d'ingresso è peggio (4 giuste / 6 sbagliate); il veto armonico sulla mezza battuta è respinto.
+- Item 62 (2026-09-29): 1000 GIORNI — pickup irregolare all'inizio (147 invece di 161 per ~12 s) e brano sul bordo d'ottava 81/162; ÷2 lo segue bene.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

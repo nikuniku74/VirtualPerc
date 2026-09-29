@@ -3635,6 +3635,23 @@ crossed by the eighth accepted beat, so a clear winner places the one within two
 bars at every tempo. The confidence margin is unchanged; ambiguous evidence
 still does not rotate the bar merely because the deadline arrived.
 
+**But the part now enters on the next quarter (~2 s), before the coming-in
+count exists (item 61, 2026-09-29).** From then on only the playing path
+applies, and once `barTrustEstablished` (eight beats of votes agreeing with the
+current count) a trusted count may move only by half a bar. Measured on the
+22-run song bench against the quarter the network *and* the harmony name at
+the end of the song: applying the coming-in rule right after entry is right
+4 times and wrong 6 (early votes are poor), so "decide sooner" is not the fix.
+What was wrong is that a count trusted on those early votes could never be
+moved by a quarter: in 5 of 22 runs both sources ended a quarter away. A
+quarter move on a trusted count is now allowed when the other source names the
+same quarter, each at its own ordinary margin (network: playing margin over
+>= 32 beats; harmony: plain margin over >= 8 changes on tonal material).
+Seconds played off the one 1370 -> 914 on the 15 runs with a reference, no run
+worse, no extra rotation on the other 7; `VPBar` identical. The converse (a
+clear harmony vetoing the network's half-bar move) was rejected: LET ME LOVE
+YOU 44.1k went 70 -> 152 s off the one.
+
 `barLocked` (SPOSTA L'1, or a tap that declares the one) stops all automatic
 rotation. It does **not** freeze the count against the grid: a `snapPhase` with
 `keepBarInStep` still carries it, which is what keeps a locked bar on the beat
@@ -4997,6 +5014,38 @@ slower-comb veto gains a 16-beat steady-level proof for non-octave ratios.
 Synthetic banks, fixture D and VPAlign identical; song bench: ASPETTANDO 44.1k
 acquisition 46.4 -> 25.4 s, all else identical. `holdSoundingLevel` acts only
 in AUTO: a manual ÷2/×2 is the listener's (it had been undone).
+
+**Fixed (2026-09-29), the 16-beat slower-level proof must not reach a
+subharmonic (docs/TODO.md item 60).** Item 59 was committed without
+`probe_tempo_step`, and it was red: 120 -> 160 finished at 53.3 BPM. After the
+step the stale fold settled on a third of the new grid, steady for sixteen
+beats once the transition quarantine had ended, and the new proof lifted the
+veto. `combOtherSlower` now excludes a grid/fold ratio within `kSteadyFold` of
+a whole number >= 3; 3:2 and 5:3 lattices are unaffected. `probe_tempo_step`
+PASS with the pre-59 table; every other gate identical. **Always run
+`probe_tempo_step` with the synthetic banks.**
+
+**Kept (2026-09-29), an unconfirmed, starving grid under a sounding part is
+still a guess (item 60).** `nonOctaveDisagreement` now also applies when the
+fold has never corroborated any grid since the input began
+(`combAgreedBpm < kMinBpm`), the accepted beat closed a gap of more than
+`kGridStaleBeats` periods, and the part is sounding - so a non-octave fold
+votes on refreshes where `levelSettled` flickers off. LET ME LOVE YOU 44.1k:
+the grid lost `provisional` to a passing fold (144 on its way to 196), then
+played 153 over a 98 song while a sounding part let one beat in four onto it
+and every unsettled refresh took a vote back; acquisition 27.9 -> 20.3 s,
+wrong-in-first-40 s 19.5 -> 10.4 s, other 21 bench cases identical. Each
+condition was measured: "not confirmed at this tempo" instead of "never"
+lets the stale fold after a real step vote (step family offset 16
+34.05/154.2 -> 34.45/157.5); dropping "starving" snaps a swung 132 onto the
+fold's 88 (seed 321349); dropping "sounding" moves the 12 s ramp of
+`VPAlign --ramps` (MIXER 35.5 -> 37.2). With all three: `probe_matrix`,
+`probe_motion_matrix` (four offsets, both lanes, per seed) and `VPAlign`
+byte-identical. Blocking `provisional -> established` on a fold off the
+grid's pulse also fixed LET ME LOVE YOU but kept grids provisional for longer
+(`observeGridStep`, kit-body and hat holds, confidence) and delayed THE REASON
+48k's entry by half a second: rejected. The song bench is not deterministic
+under heavy concurrent load (I WANNA DANCE 44k); run it alone.
 
 ## 9. Map: "I want to change X"
 

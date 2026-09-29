@@ -966,7 +966,52 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         // forbidden to make that same move. A half-bar correction still has
         // to clear the playing margin; the listener can place any quarter
         // explicitly with the bar button.
+        //
+        // Unless the other source names the same quarter, each clearing its
+        // own ordinary line: the network with a playing margin over a full
+        // count of beats, the harmony with the plain margin over eight chord
+        // changes on tonal material. Trust is established on eight beats, and
+        // the first eight beats are the least reliable of the song (placing
+        // the one from them right after the part came in was right 4 times and
+        // wrong 6 on the song bench), so a count trusted on the wrong quarter
+        // used to stay there for the whole song: at the end of FEEL, INFINITO
+        // and SPLENDIDA GIORNATA both sources agreed the one was a quarter away
+        // and nothing could move it. A fill or a pause moves one source, not
+        // two independent ones. docs/TODO.md item 61. The converse - a clear
+        // harmony vetoing the network's half-bar move - was measured and
+        // rejected: mid-song harmony can be clear and wrong (LET ME LOVE YOU
+        // 44.1k, 70 -> 152 s off the one).
+        bool corroborated = false;
         if (barTrustEstablished && best != 2)
+        {
+            auto winner = [] (const float* v, float& margin) noexcept
+            {
+                float total = 0.0f;
+                for (int i = 0; i < 4; ++i)
+                    total += v[i];
+                int b = 0;
+                float first = 0.0f, second = 0.0f;
+                for (int i = 0; i < 4; ++i)
+                {
+                    const float s = total > 1.0e-6f ? v[i] / total : 0.25f;
+                    if (s > first) { second = first; first = s; b = i; }
+                    else if (s > second) second = s;
+                }
+                margin = first - second;
+                return b;
+            };
+            float margin = 0.0f;
+            if (votes == downbeatVotes)
+                corroborated = harmonicShare > kHarmonicShareToTrust
+                               && harmonyVoteCount >= kChangesToTrustTheBar
+                               && winner (harmonyVotes, margin) == best
+                               && margin >= kBarWinMargin;
+            else
+                corroborated = ! speakerFollow && voteBeats >= kBeatsToMoveTheBar
+                               && winner (downbeatVotes, margin) == best
+                               && margin >= kBarWinMarginPlaying;
+        }
+        if (barTrustEstablished && best != 2 && ! corroborated)
             return false;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
