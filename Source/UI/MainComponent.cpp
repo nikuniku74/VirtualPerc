@@ -1334,7 +1334,7 @@ void MainComponent::handleAppResumed()
     {
         audioPoweredDownForBackground = false;
         vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
-                                   inputProcessing, true });
+                                   inputProcessing, true, ! internalTrackSelected() });
         deviceManager.restartLastAudioDevice();
 
         if (deviceManager.getCurrentAudioDevice() == nullptr)
@@ -1736,7 +1736,7 @@ void MainComponent::openAudioDevice (bool granted)
         return;
     }
 
-    const int ins = granted ? 2 : 0;
+    const int ins = granted && ! internalTrackSelected() ? 2 : 0;
 
     if (! audioOpened)
     {
@@ -1752,7 +1752,7 @@ void MainComponent::openAudioDevice (bool granted)
         // callback. finishInitialDeviceStart opens once more only when that
         // first open did not land on the rate just read.
         vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
-                                   inputProcessing });
+                                   inputProcessing, false, ! internalTrackSelected() });
         if (clockHz == 0)
         {
             const double hw = vp::sessionSampleRate();
@@ -1766,7 +1766,7 @@ void MainComponent::openAudioDevice (bool granted)
 
     auto* dev = deviceManager.getCurrentAudioDevice();
     const int nIn = dev != nullptr ? dev->getActiveInputChannels().countNumberOfSetBits() : 0;
-    if (ins > 0 && nIn <= 0)
+    if ((ins > 0 && nIn <= 0) || (ins == 0 && nIn > 0))
         applyAudioSetup (true);
 }
 
@@ -1780,7 +1780,7 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
                                    ? deviceSampleRate()
                                    : requestedSampleRate();
     vp::prepareAudioSession ({ sessionRate, requestedBufferFrames(),
-                               inputProcessing });
+                               inputProcessing, false, ! internalTrackSelected() });
 
     auto setup = deviceManager.getAudioDeviceSetup();
     if (const double sr = deviceSampleRate(); sr > 0.0)
@@ -1788,14 +1788,20 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
     if (const int buf = deviceBufferFrames(); buf > 0)
         setup.bufferSize = buf;
 
-    // The channel fields are left exactly as the device manager has them unless
-    // the microphone has just been granted and the open device has none. That is
-    // what opening once rests on: JUCE compares the setup it is handed against
+    // Outside BRANO, leave channels as they are unless an input is being
+    // claimed. JUCE compares the setup it is handed against
     // the one it is on and returns without touching the device when they are
     // equal, so on a rig already at the right clock this call costs nothing.
     // Rewriting the channels unconditionally - even to the same two - flips
     // useDefaultInputChannels and reopens the device for nothing.
-    if (claimInputChannels)
+    if (internalTrackSelected())
+    {
+        // The file supplies the analysis input. The iPad mic was still being
+        // pulled in the AirPods/resize log although BRANO never reads it.
+        setup.inputChannels.clear();
+        setup.useDefaultInputChannels = false;
+    }
+    else if (claimInputChannels && micGranted)
     {
         // Two is what the app has always asked for and is all a microphone or a
         // stereo line feed needs. A kick send lives on a channel of its own, so
@@ -1895,7 +1901,7 @@ void MainComponent::rebuildAudioDevice (const char* why)
     // what was set on it - category, mode, rate, buffer, all back to defaults.
     forceEnginePrepare = true;
     vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
-                               inputProcessing, true });
+                               inputProcessing, true, ! internalTrackSelected() });
 
     // Close, not reopen. setAudioDeviceSetup keeps the device object and its
     // audio unit; after a reset that unit is a handle to something that no
@@ -1978,7 +1984,7 @@ void MainComponent::applyInputProcessingChoice (bool on)
     if (audioOpened)
     {
         vp::prepareAudioSession ({ requestedSampleRate(), requestedBufferFrames(),
-                                   inputProcessing });
+                                   inputProcessing, false, ! internalTrackSelected() });
         applyInputProcessing();
     }
     repaint();
@@ -2119,6 +2125,9 @@ void MainComponent::selectFollowSource (vp::FollowSource source, bool restartInp
 
     engine.settings().followSource.store (static_cast<int> (source),
                                           std::memory_order_relaxed);
+    if (audioOpened && (source == vp::FollowSource::internalPlayer)
+                       != (previous == vp::FollowSource::internalPlayer))
+        applyAudioSetup (true);
     // A mixer, the iPad speaker and the internal player are different inputs.
     // Reusing the preceding source's grid makes the new one defend its BPM.
     // File loading requests its own restart after the reader is installed.
@@ -3283,6 +3292,39 @@ void MainComponent::timerCallback()
                                                : "no audio device");
         }
     }
+   #if JUCE_IOS
+    if (resizeSettleTicks > 0 && --resizeSettleTicks == 0)
+    {
+        auto* device = deviceManager.getCurrentAudioDevice();
+       #if JUCE_DEBUG
+        juce::Logger::outputDebugString ("VPDIAG resize xruns "
+            + juce::String (resizeXrunsBefore) + " -> "
+            + juce::String (device != nullptr ? device->getXRunCount() : -1));
+       #endif
+        if (! a2dpResizeRecovered && rebuildCooldownTicks == 0
+            && device != nullptr && audioReady
+            && internalTrackSelected() && trackTransport.isPlaying()
+            && vp::sessionOutputIsA2DP()
+            && device->getXRunCount() > resizeXrunsBefore)
+        {
+            // iPadOS can keep calling a RemoteIO unit that plays distorted
+            // A2DP audio after resize xruns. CLOCK/BUFFER fixes it by opening
+            // a fresh unit; do that once after the gesture settles, keeping
+            // the same rate so the percussion clock is not prepared again.
+            lastRebuildWhy = "AirPods resize xrun";
+            ++deviceRebuilds;
+            rebuildCooldownTicks = 30;
+            a2dpResizeRecovered = true;
+            // Rate 0 makes JUCE reopen the existing device, then choose its
+            // current rate again. No second device probe or tempo reset.
+            auto setup = deviceManager.getAudioDeviceSetup();
+            setup.sampleRate = 0.0;
+            const auto err = deviceManager.setAudioDeviceSetup (setup, false);
+            juce::ignoreUnused (err);
+            seenAudioBlocks = audioBlocks.load (std::memory_order_relaxed);
+        }
+    }
+   #endif
     // Hidden controls and a full-window paint at 15 Hz buy nothing in the
     // background. The timer remains alive only as the audio-device watchdog
     // while a performance is intentionally continuing.
@@ -3838,6 +3880,22 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
 
 void MainComponent::resized()
 {
+   #if JUCE_IOS
+    const juce::Point<int> windowSize { getWidth(), getHeight() };
+    if (windowSize != laidOutWindowSize)
+    {
+        laidOutWindowSize = windowSize;
+        if (! a2dpResizeRecovered && audioOpened && internalTrackSelected()
+            && trackTransport.isPlaying()
+            && vp::sessionOutputIsA2DP())
+        {
+            if (resizeSettleTicks == 0)
+                if (auto* device = deviceManager.getCurrentAudioDevice())
+                    resizeXrunsBefore = device->getXRunCount();
+            resizeSettleTicks = 6; // 0.4 s at 15 Hz, after the drag stops.
+        }
+    }
+   #endif
     updateCompactLayout();
     laidOutSafeArea = effectiveSafeArea();
     settingsOverlay.setBounds (getLocalBounds());

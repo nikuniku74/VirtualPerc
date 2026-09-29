@@ -202,7 +202,7 @@ public:
     void declarePulseHere() noexcept;
 
     void setUserOctave (int octaves) noexcept;
-    int  userOctave() const noexcept { return octaveShift; }
+    int  userOctave() const noexcept { return octaveShift + outputShift; }
 
 private:
     float applyUserOctave (float bpmValue) const noexcept;
@@ -416,6 +416,8 @@ private:
     int    beatWrite = 0;
     int    beatFilled = 0;
     uint32_t beatSerial = 0;
+    /** The serial the audio thread sees: only beats on the published parity. */
+    uint32_t publishedBeatSerial = 0;
     uint32_t downbeatSerial = 0;
     uint32_t gridSerial = 0;
 
@@ -459,7 +461,51 @@ private:
     /** The comb level this staleness vote is for, same reason as
         `octaveVoteBpm`: a comb changing its own mind is not evidence. */
     float staleGridBpm = 0.0f;
+    /** The listener's octave, split in two. A request to go faster (x2) still
+        decodes at the shifted level: the network has beats on the eighths and
+        the grid can use them. A request to go slower (/2, /4) does not, because
+        it would decode at the slow level a grid that rejects every other beat
+        as a subdivision, on half the evidence, and it measured worse: at /2
+        the beats played drifted up to 130 ms from what the same song gives at
+        its natural level, for stretches of 10-20 s (docs/TODO.md item 63).
+        The decoder keeps the natural level for those and only *publishes*
+        divided: tempo, period and phase are divided by `outputDivisor()` and
+        the beat events are the ones on the chosen parity. Nothing is looked
+        at ahead of time: the parity is a count of natural beats already
+        passed. `octaveShift` is the internal (>= 0) half, `outputShift` the
+        published (<= 0) half. */
     int   octaveShift = 0;
+    int   outputShift = 0;
+    /** Whether the division is in force now: off while the divided tempo would
+        be under the reportable minimum, with a little hysteresis. */
+    bool  outputEngaged = false;
+    /** Unwrapped natural beat count: whole beats completed by the natural
+        phase, so a wrap of the grid phase advances it and a grid moved back
+        takes one off. Parity is taken from it against `parityOffset`. */
+    long  naturalBeat = 0;
+    float prevNaturalPhase = 0.0f;
+    /** The class (natural beat index modulo the divisor) that is published,\n        and how much accepted-beat weight each class has gathered lately. The\n        class follows the beats the network actually accepts, so a song whose\n        detected beats all fall on one of the two (the kick on 1 and 3) keeps\n        its beat events: a class chosen by chance would never see one. */
+    long  parityOffset = 0;
+    float classWeight[4] {};
+    /** The beat just registered was on the published parity. */
+    bool  lastBeatOnParity = true;
+    int   outputDivisor() const noexcept
+    {
+        return outputEngaged ? (1 << (-outputShift)) : 1;
+    }
+    bool  beatOnParity (double beatTimeSec) noexcept;
+    /** Natural beat index of an accepted beat, or -1 when none can be told. */
+    bool  naturalIndexOf (double beatTimeSec, long& index) const noexcept;
+    long  lastAcceptedIndex = 0;
+    /** A request just came in: the division may engage right at the minimum. */
+    bool  pressPending = false;
+    /** The class is decided by the next accepted beat: set when the division
+        engages and whenever the decoder's grid is rebuilt, because a new grid
+        has no relation to the old count of beats. */
+    bool  classPending = false;
+    uint32_t seenGridSerial = 0;
+    bool  haveAcceptedIndex = false;
+    void  publishDivided (float naturalPhase) noexcept;
     bool  useAnchor = false;
     bool  lineFeed = false;
     bool  sounding = false;

@@ -21,6 +21,7 @@ int    sessionBufferFrames() { return 0; }
 int    sessionInputChannels()  { return 0; }
 int    sessionOutputChannels() { return 0; }
 std::string sessionRouteName() { return {}; }
+bool sessionOutputIsA2DP() { return false; }
 bool   otherAudioPlaying()   { return false; }
 bool   sessionInputProcessing() { return true; }
 void   setMediaServicesResetHandler (std::function<void()>) {}

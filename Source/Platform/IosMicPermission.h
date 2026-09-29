@@ -27,6 +27,8 @@ struct AudioSessionRequest
         Resume after an interruption and a media-server rebuild need it;
         a Split View resize does not, and a redundant activate is a click. */
     bool   forceActivate = false;
+    /** BRANO needs playback only; its analysis input is the file. */
+    bool   needsInput = true;
 };
 
 /** Category, options, mode, rate and buffer, applied before the audio device
@@ -43,6 +45,7 @@ int    sessionInputChannels();
 int    sessionOutputChannels();
 /** The route, as something to show a player: "X-AIR" rather than a port UID. */
 std::string sessionRouteName();
+bool sessionOutputIsA2DP();
 /** True while another app - the track being played along to - holds audio. */
 bool   otherAudioPlaying();
 /** Whether iOS is currently doing its own processing on the input. */

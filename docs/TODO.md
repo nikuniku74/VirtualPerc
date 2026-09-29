@@ -3870,7 +3870,7 @@ uno STOP di 1 s a 8.5 s dal cambio non aggancia subito (16 -> 11, 14 -> 10.5,
 ~20 s (stessa acquisizione sbagliata di FEEL). Un avviso "premi STOP"
 prometterebbe un rimedio che il probe non mostra.
 
-### 56. iPad: al primo ridimensionamento/spostamento della finestra crack e silenzio 🟡 (2026-09-28, causa misurata sul device — resta conferma dell'utente)
+### 56. iPad: al primo ridimensionamento/spostamento della finestra AirPods muti 🟡 (2026-09-29, nuova correzione da ascoltare)
 
 Sintomo: solo la prima volta dopo l'avvio (e dopo ogni rebuild), ridimensionare
 o spostare la finestra fa un crack e poi niente audio; cambiare CLOCK o BUFFER
@@ -3887,7 +3887,7 @@ Misura (build con `JUCE_IOS_AUDIO_LOGGING=1` + riga `VPDIAG` al secondo in
 cambio di route e nessun `restart()`; callback regolari (~195/s), l'app scrive
 il brano (picco in uscita 0.4), solo **xrun 20 → 26**. Lanciata da `devicectl`
 (senza debugger) gli xrun restano a 1 e il difetto non compare.
-Causa: `process()` restituiva a RemoteIO l'errore di `AudioUnitRender`
+Un possibile guasto era che `process()` restituiva a RemoteIO l'errore di `AudioUnitRender`
 dell'**ingresso**; dopo una raffica di xrun (microfono iPad e AirPods hanno due
 clock) quella lettura può restare in errore, e un render callback che ritorna
 errore fa suonare silenzio all'uscita finché il device non viene riaperto.
@@ -3895,10 +3895,32 @@ Fix in `juce_Audio_ios.cpp` (`process`): se la lettura del microfono fallisce,
 quel ciclo ha ingresso muto e ritorna `noErr`. Contatore
 `inputRenderFailures` (per ora sommato ×1000 a `getXRunCount`, solo diagnosi).
 
-- [x] Log sul device: causa localizzata (18:03, vp_log sul Desktop).
-- [ ] Conferma dell'utente da Xcode (brano in play, primo ridimensionamento).
+Conferma dell'utente (2026-09-29): il problema persiste in **BRANO**. Nel log
+con AirPods muti: 192–197 callback/s, `play=1`, `ready=1`, `outpk` fino a 0.5,
+`rebuild=0`, `xrun=1`. Il buffer RemoteIO era già 4096 frame: l'ipotesi di una
+prima allocazione nel callback è stata provata e scartata. L'errore della
+lettura microfono non compare in questo log (`xrun` non supera 1000); il file
+produce audio, ma RemoteIO non lo consegna agli AirPods. BRANO ora apre
+Playback con zero ingressi; MIXER conserva PlayAndRecord. Resta la prova sul
+primo resize della nuova build.
+
+Nuova prova (2026-09-29): BRANO apre davvero con `inputChannelsWanted: 0`.
+Al primo allargamento il suono fa crack, poi torna distorto; nessun cambio di
+route, callback ~195/s e `outpk` 0.2–0.45, ma gli xrun salgono da 1 a 7.
+L'uscita senza microfono ha tolto il silenzio permanente, non il guasto
+dell'unità dopo lo xrun. Ora un resize di BRANO su A2DP che aggiunge xrun fa
+riaprire **una volta** la stessa unità alla stessa frequenza, dopo 0.4 s senza
+altri cambi di dimensione. Non richiama `engine.prepare()`. Da verificare sul
+device: che la distorsione sparisca dopo il recupero e che la riapertura non
+introduca una pausa peggiore.
+
+- [x] Log sul device: callback e uscita software attivi anche durante il silenzio.
+- [ ] Ascolto della build con recupero: BRANO in play, primo ridimensionamento;
+      `VPDIAG resize xruns` e `riavvii 1 AirPods resize xrun` devono coincidere
+      con il gesto. Verificare anche BRANO ↔ MIXER per il ritorno dell'ingresso.
 - [ ] Dopo la conferma: togliere `VPDIAG` (MainComponent, JUCE log a 0, ×1000 in `getXRunCount`).
-- Nota: gli xrun sotto debugger sono il fattore scatenante; dal vivo un carico alto può fare lo stesso, il fix vale comunque.
+- Nota: gli xrun sotto debugger possono contribuire, ma il nuovo log mostra
+  silenzio con `xrun=1`: non sono condizione necessaria.
 
 ### 57. Ottava sbagliata a brano avviato (THE REASON 85 → 170; LET ME LOVE YOU, FEEL 48k, UNA CANZONE sul doppio) 🟢 (2026-09-28, corretto e misurato — resta ascolto)
 
@@ -4105,7 +4127,23 @@ fonti indipendenti) concordano a fine brano; 15 dei 22 casi ne hanno uno.
   l'app segue, 0 slittamenti, scatti 0.79% (media banco 0.94%).
 - Battuta: rete e armonia non concordano sull'1 a fine brano (1 contro 0);
   l'item 61 non cambia nulla qui.
-- [ ] Dall'utente: a che tempo lo conta (81 o 162) e cosa sente di sbagliato.
+- [x] Dall'utente: lo suona a ÷2 (~80); il tempo "a volte sfasa parecchio".
+- **Misura della fase a ÷2** (solo analisi offline come righello; nell'app niente
+  lookahead, richiesta esplicita dell'utente). Con ÷2 il decoder lavora tutto al
+  livello dimezzato (`setUserOctave`): griglia, fit e filtro sui colpi a 80, così i
+  battiti della rete a 161 che cadono a metà vengono scartati come suddivisioni e la
+  griglia si regge su metà delle prove. Stesso codice, stesso brano: i battiti
+  suonati a ÷2 si scostano dalla griglia dell'app a livello normale fino a 130 ms
+  per tratti di 10-20 s (1000 GIORNI 20-40, 130-145, 165-175, 215-240 s). Sul banco,
+  dove il ÷2 agisce davvero: oltre 60 ms il 17-37% dei battiti (EVERYTIME,
+  SPLENDIDA, I WANNA DANCE). Sotto i 100 BPM il ÷2 è ignorato (scenderebbe sotto
+  `kMinBpm`).
+- Proposta (non fatta, da confermare): decodificare sempre al livello naturale e
+  applicare ÷2/×2 solo all'uscita (tempo e fase pubblicati, parità del battito
+  fissata alla pressione). Cambiamento profondo: tocca anche l'ottava AUTO.
+- Riferimenti tentati e scartati come verità: DP sugli onset (si aggancia al
+  contrattempo in 20-50 s, dove il pettine dà ragione all'app), cassa sotto 150 Hz
+  (non regolare su questo brano, coerenza 0.02-0.29).
 
 ## Standby
 

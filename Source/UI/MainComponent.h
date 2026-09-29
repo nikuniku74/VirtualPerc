@@ -142,6 +142,10 @@ private:
         no notch and the painting, which reads them later, lands somewhere
         else entirely. */
     juce::BorderSize<int> laidOutSafeArea { -1, -1, -1, -1 };
+    juce::Point<int> laidOutWindowSize { -1, -1 };
+    int resizeSettleTicks = 0;
+    int resizeXrunsBefore = 0;
+    bool a2dpResizeRecovered = false;
     juce::Rectangle<int> safePadded (juce::Rectangle<int> area) const;
     juce::Rectangle<int> layoutColumn() const;
 

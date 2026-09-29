@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace vp
 {
@@ -701,6 +703,16 @@ void BeatDecoder::reset() noexcept
     beatFilled = 0;
     beatSerial = 0;
     downbeatSerial = 0;
+    publishedBeatSerial = 0;
+    naturalBeat = 0;
+    prevNaturalPhase = 0.0f;
+    parityOffset = 0;
+    for (float& w : classWeight)
+        w = 0.0f;
+    outputEngaged = false;
+    lastBeatOnParity = true;
+    haveAcceptedIndex = false;
+    lastAcceptedIndex = 0;
     gridSerial = 0;
     resetMotionShadow (true, TempoMotionVeto::inputEpoch);
     tempoRegime = TempoRegime::unknown;
@@ -756,7 +768,23 @@ void BeatDecoder::reset() noexcept
 
 void BeatDecoder::setUserOctave (int octaves) noexcept
 {
-    const int wanted = std::clamp (octaves, -2, 2);
+    const int request = std::clamp (octaves, -2, 2);
+    { static int lastReq = 99; if (request != lastReq && std::getenv ("VP_DBG_OCT2")) std::fprintf (stderr, "SETOCT t=%.2f req=%d\n", timeSec, request); lastReq = request; }
+    // Slower is published, faster is decoded (see `outputShift`). Going between
+    // two slower levels, or to the natural one, moves nothing that was
+    // measured: the tempo is the same, only what is announced changes, so no
+    // grid is thrown away. The count and the tempo the tracker holds do change
+    // at once, which `gridSerial` tells it.
+    const int newOutput = std::min (request, 0);
+    const int wanted = std::max (request, 0);
+    if (newOutput != outputShift)
+    {
+        outputShift = newOutput;
+        outputEngaged = false;   // re-decided, and the parity re-anchored, on the next frame
+        pressPending = true;
+        ++gridSerial;
+        seenGridSerial = gridSerial;   // a request is not a rebuilt grid
+    }
     if (wanted == octaveShift)
         return;
 
@@ -1731,6 +1759,158 @@ void BeatDecoder::registerBeat (double beatTimeSec, float strength,
 {
     storeBeatForFit (beatTimeSec, strength, lowBand, highBand);
     ++beatSerial;
+    lastBeatOnParity = beatOnParity (beatTimeSec);
+    if (lastBeatOnParity)
+        ++publishedBeatSerial;
+}
+
+bool BeatDecoder::naturalIndexOf (double beatTimeSec, long& index) const noexcept
+{
+    if (bpm < kMinBpm || fps <= 0.0)
+        return false;
+    // Where the beat sits on the natural count, from what has already been
+    // counted: the count and phase as of the previous frame, brought forward
+    // one frame, less the age of the beat.
+    const double period = 60.0 / static_cast<double> (bpm);
+    const double u = static_cast<double> (naturalBeat)
+                     + static_cast<double> (prevNaturalPhase)
+                     + (1.0 / fps - (timeSec - beatTimeSec)) / period;
+    index = std::lround (u);
+    return true;
+}
+
+bool BeatDecoder::beatOnParity (double beatTimeSec) noexcept
+{
+    long idx = 0;
+    const bool known = naturalIndexOf (beatTimeSec, idx);
+    if (known)
+    {
+        lastAcceptedIndex = idx;
+        haveAcceptedIndex = true;
+    }
+    const int divisor = outputDivisor();
+    if (divisor <= 1 || ! known)
+        return true;
+    long cls = idx % divisor;
+    if (cls < 0)
+        cls += divisor;
+
+    // The class published was chosen from the beats accepted when the division
+    // came into force, and it is kept: which of the natural beats a part at
+    // half speed plays on is the same question as which quarter is the one, and
+    // a change of mind mid-song moves the part by half a beat. It is given up
+    // only when its beats have stopped for good and another class has been the
+    // only one accepted for a long run, and then through a new grid serial so
+    // the tracker rejoins instead of leaning.
+    if (classPending)
+    {
+        classPending = false;
+        const long provisional = ((parityOffset % divisor) + divisor) % divisor;
+        parityOffset = cls;
+        for (int c = 0; c < divisor; ++c)
+            classWeight[c] = 0.0f;
+        classWeight[cls] = 1.0f;
+        if (cls != provisional)
+        {
+            // The count published so far was a guess and it moves by half a
+            // beat: announce it as the new grid it is.
+            ++gridSerial;
+            seenGridSerial = gridSerial;
+        }
+        return true;
+    }
+    for (int c = 0; c < divisor; ++c)
+        classWeight[c] *= 0.92f;
+    classWeight[cls] += 1.0f;
+    const long current = ((parityOffset % divisor) + divisor) % divisor;
+    if (cls != current && classWeight[cls] > 4.0f * classWeight[current] + 5.0f)
+    {
+        parityOffset = cls;
+        ++gridSerial;
+        seenGridSerial = gridSerial;
+    }
+    return cls == ((parityOffset % divisor) + divisor) % divisor;
+}
+
+void BeatDecoder::publishDivided (float naturalPhase) noexcept
+{
+    // The natural count follows the grid phase: a wrap is a beat passed, a
+    // grid moved back by more than half a beat takes one off.
+    const float d = naturalPhase - prevNaturalPhase;
+    if (d < -0.5f)
+        ++naturalBeat;
+    else if (d > 0.5f)
+        --naturalBeat;
+    prevNaturalPhase = naturalPhase;
+
+    // A rebuilt grid has no relation to the count of beats kept for the old
+    // one: the class is decided again by the next accepted beat.
+    if (gridSerial != seenGridSerial)
+    {
+        seenGridSerial = gridSerial;
+        haveAcceptedIndex = false;
+        if (outputEngaged)
+        {
+            classPending = true;
+            for (float& w : classWeight)
+                w = 0.0f;
+        }
+    }
+
+    // In force only while the divided tempo stays reportable.
+    if (outputShift < 0)
+    {
+        const float out = bpm / static_cast<float> (1 << (-outputShift));
+        // Engaged at the reportable minimum when the listener has just asked
+        // for it, a little above it otherwise, and released under it, so a
+        // tempo hovering there does not flip the division on and off; under
+        // the minimum the request cannot be honoured and is not (as it was not
+        // before).
+        if (! outputEngaged
+            && out >= kMinBpm * (pressPending ? 1.0f : 1.06f))
+        {
+            outputEngaged = true;
+            const long div = 1 << (-outputShift);
+            // The class of the beat last accepted on this grid, else of the
+            // beat now running until one is.
+            const long base = haveAcceptedIndex ? lastAcceptedIndex : naturalBeat;
+            parityOffset = ((base % div) + div) % div;
+            classPending = ! haveAcceptedIndex;
+            for (float& w : classWeight)
+                w = 0.0f;
+            classWeight[parityOffset] = haveAcceptedIndex ? 1.0f : 0.0f;
+            lastBeatOnParity = true;
+        }
+        else if (outputEngaged && out < kMinBpm * 0.98f)
+        {
+            outputEngaged = false;
+        }
+        pressPending = false;
+    }
+    else
+    {
+        outputEngaged = false;
+    }
+
+    const int divisor = outputDivisor();
+    if (divisor <= 1)
+        return;
+
+    long m = (naturalBeat - parityOffset) % divisor;
+    if (m < 0)
+        m += divisor;
+    const float inv = 1.0f / static_cast<float> (divisor);
+    hyp.bpm *= inv;
+    hyp.combBpm *= inv;
+    hyp.shortFitBpm *= inv;
+    hyp.longFitBpm *= inv;
+    hyp.motionFitBpm *= inv;
+    hyp.motionShadowBpm *= inv;
+    hyp.motionShapeBpm *= inv;
+    hyp.transitionBpm *= inv;
+    hyp.periodSec *= static_cast<float> (divisor);
+    hyp.beatPhase = (static_cast<float> (m) + naturalPhase) * inv;
+    hyp.barPhase = wrap01 ((static_cast<float> (beatsInBar) + hyp.beatPhase) * 0.25f);
 }
 
 void BeatDecoder::storeBeatForFit (double beatTimeSec, float strength,
@@ -6154,7 +6334,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
             lastBeatSec = snapped;
             lastAcceptedLowBand = beatLowBandNow;
             refractoryFrames = minRefr;
-            beatsInBar = (beatsInBar + 1) % 4;
+            if (lastBeatOnParity)
+                beatsInBar = (beatsInBar + 1) % 4;
         }
         else
         {
@@ -6162,7 +6343,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         lastBeatSec = eventTimeSec;
         lastAcceptedLowBand = beatLowBandNow;
         refractoryFrames = minRefr;
-        beatsInBar = (beatsInBar + 1) % 4;
+        if (lastBeatOnParity)
+            beatsInBar = (beatsInBar + 1) % 4;
 
         // What the network thought of *this* beat as a candidate for the one,
         // gate or no gate. The peak is picked on max(pBeat, pDownbeat) and the
@@ -6176,7 +6358,8 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
         {
             lastDownbeatStrength = prevDownbeat;
             lastDownbeatSec = eventTimeSec;
-            beatsInBar = 0;
+            if (lastBeatOnParity)
+                beatsInBar = 0;
             ++downbeatSerial;
         }
         observeGridStep();
@@ -6249,7 +6432,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.frameIndex = frame;
     hyp.peak = peak;
     hyp.downbeat = peak && prevDownbeat > downThresh;
-    hyp.beatSerial = beatSerial;
+    hyp.beatSerial = publishedBeatSerial;
     hyp.downbeatSerial = downbeatSerial;
     hyp.gridSerial = gridSerial;
     hyp.downbeatStrength = lastDownbeatStrength;
@@ -6326,6 +6509,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.transitionSerial = transitionSerial;
     hyp.confidence = scoreConfidence();
     hyp.valid = established;
+    publishDivided (phase);
 
     prevPrevPulse = prevPulse;
     prevPulse = pulseActivation;

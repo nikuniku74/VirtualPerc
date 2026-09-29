@@ -70,22 +70,25 @@ void prepareAudioSession (const AudioSessionRequest& request)
     NSError* err = nil;
 
     // MixWithOthers is the whole reason the track being played along to keeps
-    // playing: without it, activating a PlayAndRecord session takes the hardware
+    // playing: without it, activating our session takes the hardware
     // for this app alone and everything else is interrupted.
     // No HFP Bluetooth: that route is 8-16 kHz and makes the mix sound slow and
-    // crushed. A2DP and AirPlay are fine.
-    const AVAudioSessionCategoryOptions opts =
-        AVAudioSessionCategoryOptionMixWithOthers
-        | AVAudioSessionCategoryOptionDefaultToSpeaker
-        | AVAudioSessionCategoryOptionAllowBluetoothA2DP
-        | AVAudioSessionCategoryOptionAllowAirPlay;
+    // crushed. BRANO uses Playback, where A2DP is available without an option.
+    const AVAudioSessionCategoryOptions opts = request.needsInput
+        ? (AVAudioSessionCategoryOptionMixWithOthers
+           | AVAudioSessionCategoryOptionDefaultToSpeaker
+           | AVAudioSessionCategoryOptionAllowBluetoothA2DP
+           | AVAudioSessionCategoryOptionAllowAirPlay)
+        : AVAudioSessionCategoryOptionMixWithOthers;
+    NSString* const category = request.needsInput ? AVAudioSessionCategoryPlayAndRecord
+                                                   : AVAudioSessionCategoryPlayback;
 
     bool changed = false;
 
-    if (! [s.category isEqualToString: AVAudioSessionCategoryPlayAndRecord]
+    if (! [s.category isEqualToString: category]
         || s.categoryOptions != opts)
     {
-        [s setCategory: AVAudioSessionCategoryPlayAndRecord withOptions: opts error: &err];
+        [s setCategory: category withOptions: opts error: &err];
         err = nil;
         changed = true;
     }
@@ -164,6 +167,14 @@ std::string sessionRouteName()
     if (out.empty() || in == out)
         return in;
     return in + " / " + out;
+}
+
+bool sessionOutputIsA2DP()
+{
+    for (AVAudioSessionPortDescription* port in session().currentRoute.outputs)
+        if ([port.portType isEqualToString: AVAudioSessionPortBluetoothA2DP])
+            return true;
+    return false;
 }
 
 bool otherAudioPlaying()

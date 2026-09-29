@@ -223,7 +223,7 @@ iPadOS Debug target compiles; AirPods/resize behaviour still needs a device
 check before this can be called fixed. A brief OS route-transition gap may
 remain even if the persistent silence is gone.
 
-The category is `AVAudioSessionCategoryPlayAndRecord` with `MixWithOthers`, `DefaultToSpeaker`, `AllowBluetoothA2DP` and `AllowAirPlay`. `MixWithOthers` is what lets the track being played along to keep playing; HFP Bluetooth is deliberately absent, because that route is 8-16 kHz and makes everything mixed through it sound slow and crushed.
+MIXER uses `AVAudioSessionCategoryPlayAndRecord` with `MixWithOthers`, `DefaultToSpeaker`, `AllowBluetoothA2DP` and `AllowAirPlay`. BRANO uses output-only `Playback` with `MixWithOthers`; iOS supports A2DP there without an option. `MixWithOthers` lets the track being played along to keep playing; HFP Bluetooth is deliberately absent, because that route is 8-16 kHz and makes everything mixed through it sound slow and crushed.
 
 The background-audio entitlement is for an armed live performance, not for idle
 listening forever. If iOS backgrounds the app while it is STOPped and the
