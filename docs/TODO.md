@@ -3870,24 +3870,86 @@ uno STOP di 1 s a 8.5 s dal cambio non aggancia subito (16 -> 11, 14 -> 10.5,
 ~20 s (stessa acquisizione sbagliata di FEEL). Un avviso "premi STOP"
 prometterebbe un rimedio che il probe non mostra.
 
-### 56. iPad: al primo ridimensionamento/spostamento della finestra crack e silenzio 🟡 (2026-09-28, corretto in JUCE — resta prova su iPad)
+### 56. iPad: al primo ridimensionamento/spostamento della finestra crack e silenzio 🟡 (2026-09-28, causa misurata sul device — resta conferma dell'utente)
 
 Sintomo: solo la prima volta dopo l'avvio (e dopo ogni rebuild), ridimensionare
 o spostare la finestra fa un crack e poi niente audio; cambiare CLOCK o BUFFER
-lo fa tornare, e dopo non succede più.
-Causa (lettura del codice, non ancora misurata sul device): la prima apertura
-passa rate 0, `AudioDeviceManager::chooseBestSampleRate` prende la frequenza
-"attuale" del device appena costruito, cioè 44100, e il Pimpl iOS la tiene come
-`targetSampleRate` anche se la route resta a 48000. Ogni cambio di route
-(ridimensionare/spostare la finestra lo è) passa da `restart()`, che richiede di
-nuovo 44100 alla sessione sotto l'unità in corsa. CLOCK o BUFFER riaprono il
-device con 48000 come obiettivo: da lì `restart()` non scrive più la sessione.
-Fix in `third_party/JUCE/.../juce_Audio_ios.cpp` (`open`): dopo
-`setTargetSampleRateAndBufferSize`, `targetSampleRate = sampleRate` (si chiede
-quello che iOS ha concesso). Il file è tornato tutto CRLF come in HEAD di JUCE.
+lo fa tornare, e dopo non succede più. Uscita AirPods, ingresso microfono iPad.
 
-- [x] Build Debug iPad riuscita e installata (2026-09-28 17:02).
-- [ ] Prova su iPad: app appena avviata, brano in play, ridimensionare e spostare la finestra più volte (anche con AirPods). Se si ripete: build con `JUCE_IOS_AUDIO_LOGGING=1` e log da `devicectl ... --console`.
+Prima ipotesi (solo lettura del codice): la prima apertura passa rate 0,
+`chooseBestSampleRate` la trasforma nei 44100 del device appena costruito e il
+Pimpl la teneva come `targetSampleRate`, poi `restart()` la richiedeva a ogni
+cambio di route. Il log la conferma a metà (apertura 44100 → concessi 48000), e
+`open()` ora fissa `targetSampleRate = sampleRate`; ma **non era il silenzio**.
+
+Misura (build con `JUCE_IOS_AUDIO_LOGGING=1` + riga `VPDIAG` al secondo in
+`MainComponent::timerCallback`, avviata da Xcode): al ridimensionamento nessun
+cambio di route e nessun `restart()`; callback regolari (~195/s), l'app scrive
+il brano (picco in uscita 0.4), solo **xrun 20 → 26**. Lanciata da `devicectl`
+(senza debugger) gli xrun restano a 1 e il difetto non compare.
+Causa: `process()` restituiva a RemoteIO l'errore di `AudioUnitRender`
+dell'**ingresso**; dopo una raffica di xrun (microfono iPad e AirPods hanno due
+clock) quella lettura può restare in errore, e un render callback che ritorna
+errore fa suonare silenzio all'uscita finché il device non viene riaperto.
+Fix in `juce_Audio_ios.cpp` (`process`): se la lettura del microfono fallisce,
+quel ciclo ha ingresso muto e ritorna `noErr`. Contatore
+`inputRenderFailures` (per ora sommato ×1000 a `getXRunCount`, solo diagnosi).
+
+- [x] Log sul device: causa localizzata (18:03, vp_log sul Desktop).
+- [ ] Conferma dell'utente da Xcode (brano in play, primo ridimensionamento).
+- [ ] Dopo la conferma: togliere `VPDIAG` (MainComponent, JUCE log a 0, ×1000 in `getXRunCount`).
+- Nota: gli xrun sotto debugger sono il fattore scatenante; dal vivo un carico alto può fare lo stesso, il fix vale comunque.
+
+### 57. Ottava sbagliata a brano avviato (THE REASON 85 → 170; LET ME LOVE YOU, FEEL 48k, UNA CANZONE sul doppio) 🟢 (2026-09-28, corretto e misurato — resta ascolto)
+
+Due strade, una regola: l'ottava cambia solo a mano, con un file nuovo o un
+salto, mai da sola sotto la parte che suona — tranne quando è l'analisi stessa
+a cambiare tempo in quel momento.
+- THE REASON: un ingresso di arrangiamento a 167.7 s butta la griglia e il nuovo
+  aggancio sceglie 170; il clock la prendeva in un blocco. `BeatTracker::
+  holdSoundingLevel`: con la parte che suona un'ipotesi al doppio/metà esatti
+  (±7%) del tempo suonato non va al clock e il livello viene riportato.
+- LET ME LOVE YOU (entra a 165 = 5:3 di 99, poi salta a 190), FEEL 48k (158 =
+  3:2 di 104 → 205), UNA CANZONE PER TE (114 → 180): la parte entra su una
+  lettura provvisoria sbagliata e poi l'analisi salta da sola sul doppio, che
+  resta per tutto il brano. Nello stesso metodo: se l'analisi salta di oltre
+  ~11% (non un'ottava) mentre la parte suona, in AUTO il nuovo tempo viene messo
+  nella fascia 49–168 come prima dell'entrata.
+
+- [x] Banco (item 58), solo questa regola contro la base: LET ME LOVE YOU 198 → **99** (44.1 e 48k), UNA CANZONE 172 → **86** (entrambe), FEEL 48k 209 → **104**; altri 17 casi identici (INFINITO 48k fase 42.7 → 41.2 ms); slittamenti 1 → 0. THE REASON: 0 campioni sopra 110 BPM a 44.1 e 48k (prima 128).
+- [x] `VPTests --tempo-step` 14/0, `--tempo-slow` 10/0, `--state-timing` 15/0, `--new-input` 16/0, `--bar` 10/0; `--octave` 2/9 **identico** a HEAD (rosso preesistente).
+- [ ] Ascolto su iPad (THE REASON, LET ME LOVE YOU, FEEL, UNA CANZONE).
+
+### 58. Banco globale sui brani veri e correzione di fase adattiva 🟢 (2026-09-28, misurato — resta ascolto)
+
+`scripts/analysis/bench_songs.py run TAG mp3...` suona 11 brani dell'utente a
+44.1 e 48 kHz nell'app intera (`VPTrack --player --pulses`, cache in
+`/tmp/vp-bench`, elenco in `/tmp/vp-bench/songs.txt`); `show TAG [TAG2]` confronta.
+Misure: **scatti** (rms % della velocità sentita contro la sua mediana su 8 s:
+il "corre/trascina"), **fuori** (% oltre il 3% dal tempogramma; secondo parere
+rumoroso), secondi all'ottava, fase `line_scan.py`. Regola: una modifica passa se
+migliora l'insieme e non peggiora nessun brano.
+
+Correzione di fase (`TempoFollower`, HIGH): con ingresso diretto il clock
+chiudeva la fase piegando la velocità fino al 7.5% anche su un tempo fermo.
+- Scartata A (binario diretto al 3%): scatti 0.88 → 0.79, fase peggiore 49 → 44 ms.
+- Scartata B (A + tetto ordinario 25% → 10%): scatti **0.88 → 0.75**, ma matrice
+  a fase nota con ingresso diretto: continuo 40.2/115.0 → **46.9/123.3** ms,
+  gradino 34.9/145.3 → 36.1/157.8. Segue peggio le inflessioni vere.
+- **Tenuta C**: 3% solo se nulla dice che la band si muove (glide veloce, piega
+  tenuta, curva provata, transizione, suggerimento di moto) **e** l'errore è
+  entro `kOpenAbove` (0.06 battito); altrimenti il 7.5% pieno. Matrice: corsia
+  normale identica; ingresso diretto fisso 22.4/72.1 → 22.1/72.8, continuo
+  40.2/115.0/279.9 → 40.6/113.7/**237.2**, gradino 34.9/145.3 → 34.6/145.7.
+  `probe_recovery` 0 FAIL (20 ms diretto 0.437 s invariato; 50 ms: piega 6.24 →
+  3.60 BPM). `VPAlign --ramps/--steps` identici a HEAD byte per byte.
+  Banco (contro la sola regola d'ottava): scatti 0.97 → **0.93**; THE REASON 44k
+  0.96 → 0.81, ASPETTANDO 1.29 → 1.18 e 0.88 → 0.71, UNA CANZONE 1.22 → 1.08,
+  BLUE SKY 1.27 → 1.14; +0.01 su tre brani (rumore).
+- [ ] Ascolto su iPad.
+- Osservazione: il banco segna **fuori ~25%** su quasi tutti i brani: il
+  tempogramma a 12 s è troppo rumoroso per fare da verità; serve una griglia
+  migliore (strada 5 del piano: annotazioni offline).
 
 ## Standby
 

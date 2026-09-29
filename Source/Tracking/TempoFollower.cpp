@@ -874,6 +874,11 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         smallFlexSamples = 0;
         smallFlexSign = 0;
     }
+    // Is the band actually moving? The same evidence that chose a fast glide
+    // above (a move past 2 BPM, a held bend, a proved curve, a transition),
+    // or the decoder's own motion hint. Only then may phase be closed with
+    // the full HIGH lean; on a steady tempo the lean stays small (see below).
+    const bool bandMoving = tempoMotionHint || (locked && glide < 1.0f);
 
     // Floored while the beats the tempo was fitted through are worse placed
     // than this song's own - which is what a passage with the drummer out looks
@@ -1083,6 +1088,22 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // grid is still monotonic and no stroke can be doubled or dropped.
         constexpr float kOpenAbove = 0.06f;
         constexpr float kOpenAt = 0.30f;
+        // On a steady tempo a small phase error is mostly the analysis's own
+        // scatter, and spending it at the 7.5% HIGH rail is what a listener
+        // hears as the part rushing and dragging on a band that never moved.
+        // Measured on the song bench (docs/TODO.md item 58): the whole rail
+        // at 3% cut that jerk 0.88 -> 0.75% but let real motion lag (known-
+        // phase continuous 40.2 -> 46.9 ms). So the small lean applies only
+        // while nothing says the band is moving and the error is small; a
+        // move, a held bend, a proved curve or an error past kOpenAbove keeps
+        // the full rail.
+        constexpr float kSteadyDirectLean = 0.030f;
+        if (directLivePhaseFollow && ! rapidTransition && ! bandMoving
+            && std::fabs (e) <= kOpenAbove)
+        {
+            steerLim = std::min (steerLim, kSteadyDirectLean);
+            steerCeil = steerLim;
+        }
         const float open = std::max (0.0f, std::fabs (e) - kOpenAbove)
                            * (steerCeil - steerLim) / (kOpenAt - kOpenAbove);
         const float lim = std::min (steerCeil, steerLim + open);

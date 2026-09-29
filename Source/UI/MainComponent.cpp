@@ -3096,12 +3096,44 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         done += chunk;
     }
 
+   #if JUCE_DEBUG && JUCE_IOS // VPDIAG
+    {
+        float pk = 0.0f;
+        for (int c = 0; c < nCh; ++c)
+            pk = juce::jmax (pk, buffer->getMagnitude (c, start, n));
+        if (pk > diagOutPeak.load (std::memory_order_relaxed))
+            diagOutPeak.store (pk, std::memory_order_relaxed);
+    }
+   #endif
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
 }
 
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+   #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)
+    {
+        static int diagTicks = 0;
+        static uint32_t diagBlocks = 0;
+        if (++diagTicks >= 15)
+        {
+            diagTicks = 0;
+            auto* d = deviceManager.getCurrentAudioDevice();
+            const uint32_t b = audioBlocks.load (std::memory_order_relaxed);
+            juce::Logger::outputDebugString ("VPDIAG sess " + juce::String (vp::sessionSampleRate())
+                 + " / " + juce::String (vp::sessionBufferFrames())
+                 + "  dev " + juce::String (d != nullptr ? d->getCurrentSampleRate() : 0.0)
+                 + " / " + juce::String (d != nullptr ? d->getCurrentBufferSizeSamples() : 0)
+                 + "  xrun " + juce::String (d != nullptr ? d->getXRunCount() : -1)
+                 + "  play " + juce::String (d != nullptr && d->isPlaying() ? 1 : 0)
+                 + "  ready " + juce::String (audioReady ? 1 : 0)
+                 + "  blocchi/s " + juce::String ((int) (b - diagBlocks))
+                 + "  outpk " + juce::String (diagOutPeak.exchange (0.0f), 4)
+                 + "  rebuild " + juce::String (deviceRebuilds));
+            diagBlocks = b;
+        }
+    }
+   #endif
 
     // Both directions ease, and at the same rate: the orb is a position,
     // so rushing it one way and lagging the other would read as a bias.

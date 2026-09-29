@@ -700,8 +700,19 @@ bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept
 
     constexpr float kOctaveMatch = 0.10f;   // log2, about 7%
     const float r = std::log2 (bpm / heldBpm);
-    const int jump = std::fabs (r - 1.0f) < kOctaveMatch ? 1
-                   : (std::fabs (r + 1.0f) < kOctaveMatch ? -1 : 0);
+    int jump = std::fabs (r - 1.0f) < kOctaveMatch ? 1
+             : (std::fabs (r + 1.0f) < kOctaveMatch ? -1 : 0);
+    // The analysis can also jump by itself from one wrong lattice to another
+    // after the part came in on a provisional reading: LET ME LOVE YOU 165
+    // (5:3 of 99) -> 190, FEEL at 48 kHz 158 (3:2 of 104) -> 205, UNA
+    // CANZONE PER TE 114 -> 180. The part changes tempo at that moment
+    // anyway, so AUTO places the new reading with the same range rule it uses
+    // before the part enters, instead of leaving it on the double for the
+    // rest of the song. Not an extra octave change on a steady song: only
+    // where the analysis itself moved by more than ~11%. docs/TODO.md item 57.
+    constexpr float kAnalysisJump = 0.15f;  // log2, about 11%
+    if (jump == 0 && octaveAuto && std::fabs (r) > kAnalysisJump)
+        jump = bpm > kOctaveTooFast ? 1 : (bpm < kOctaveTooSlow ? -1 : 0);
     if (jump == 0)
         return false;
     if (levelHoldPending && gridSerial == levelHoldSerial)

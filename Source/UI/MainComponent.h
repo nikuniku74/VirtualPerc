@@ -584,6 +584,7 @@ private:
     int  stalledTicks = 0;
     int  rebuildCooldownTicks = 0;
     int  deviceRebuilds = 0;
+    std::atomic<float> diagOutPeak { 0.0f }; // VPDIAG temporaneo
     /** Why the last one happened, for the diagnostics page. */
     juce::String lastRebuildWhy;
 

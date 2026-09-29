@@ -4967,6 +4967,26 @@ tried first and rejected: it released on the old decoder's stale publication,
 then on the first post-restart guess that happened to be near, and made a
 111 BPM clock spike on VITA.
 
+**Kept (2026-09-28), a sounding part keeps its octave; an analysis jump is
+placed in range (docs/TODO.md item 57).** `BeatTracker::holdSoundingLevel`:
+while the part sounds, a hypothesis at an exact double/half (±7%) of the tempo
+being played never reaches the clock and the level is shifted back (THE
+REASON 85 -> 170 after a rhythm-entrance epoch). If the analysis itself jumps by
+more than ~11% (not an octave) while sounding, AUTO places the new reading in
+49-168 as before entry (LET ME LOVE YOU 165 -> 190, FEEL 48k 158 -> 205, UNA
+CANZONE 114 -> 180 now end on 99/104/86). Song bench: those five runs fixed, the
+other 17 identical; `--octave` 2/9 identical to HEAD.
+
+**Kept (2026-09-28), steady-tempo phase lean capped at 3% (item 58).** With
+`directLivePhaseFollow` at HIGH the phase servo could bend the rate 7.5% on a
+tempo that was not moving: heard as rushing/dragging. Now 3% unless the band is
+moving (`tempoMotionHint`, or a locked glide under 1 s: fast/held bend/proved
+curve/transition) or the error exceeds `kOpenAbove`. A flat 3% was rejected: it
+let real motion lag (known-phase continuous 40.2 -> 46.9 ms). Song bench
+(`scripts/analysis/bench_songs.py`, 11 songs x 44.1/48k): jerk 0.97 -> 0.93%;
+matrix default lane identical, product-direct lane neutral with p99.5
+continuous 280 -> 237 ms; VPAlign byte-identical; probe_recovery 0 FAIL.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
