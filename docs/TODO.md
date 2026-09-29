@@ -3951,6 +3951,59 @@ chiudeva la fase piegando la velocità fino al 7.5% anche su un tempo fermo.
   tempogramma a 12 s è troppo rumoroso per fare da verità; serve una griglia
   migliore (strada 5 del piano: annotazioni offline).
 
+### 59. Aggancio iniziale: il pettine giusto non riusciva a correggere una griglia 3:2 🟡 (2026-09-29, un meccanismo corretto — resta il resto dell'aggancio)
+
+Banco (item 58) con due misure nuove: **aggancio** (secondi dall'inizio del file
+al primo tratto di 8 s entro il 3% del tempo del brano) e **sbagl s** (secondi
+con la parte che suona su un tempo sbagliato). Il tempo di riferimento è la
+mediana del clock a 60-100 s, solo nello script: l'app non lo vede. Base (dopo
+item 57/58): aggancio medio 14.4 s; peggiori ASPETTANDO 46/28 s, LET ME LOVE
+YOU 28/24 s, FEEL 27/19 s. Nota: su brani che accelerano (LET ME LOVE YOU 96 →
+100) la misura penalizza un aggancio già giusto; serve una griglia di
+riferimento migliore (item 58, strada 5).
+
+ASPETTANDO 44.1k: pubblicato 131-133 (3:2) per 46 s, pettine a 88 con livello
+assestato già da 14 s. Due ostacoli, entrambi nel voto d'ottava del decoder:
+- la lettura grezza del pettine oscillava fra due ottave dello **stesso** battito
+  (87 ↔ 176): ogni cambio ricominciava il voto. Ora, se il disaccordo con la
+  griglia non è un'ottava, i voti per qualunque ottava di quel battito sono lo
+  stesso voto; una discussione d'ottava vota ancora per livello;
+- il rifiuto "dopo un buco" (fixture D) difendeva 132 perché il pettine l'aveva
+  "confermato" a 6-8 s, prima di assestarsi. Ora conferma una griglia solo un
+  pettine con livello assestato.
+- In più il veto `unprovenSlowerOctave` (pettine più lento su griglia sana e
+  fitta) ha una via d'uscita per letture non d'ottava: 16 battiti di pettine
+  fermo sullo stesso livello, assestato e saliente, senza transizioni.
+
+- [x] Banco: ASPETTANDO 44.1k aggancio **46.4 → 25.4 s**, sbagliato 37.9 → 15.8 s; gli altri 21 casi identici. Esecuzioni deterministiche (stessi numeri da sole o in parallelo).
+- [x] `probe_matrix --quick` identico (7.15 s, 19 uscite, 6 mai agganciati); `probe_motion_matrix --quick` identico in entrambe le corsie; fixture D ricostruita (100 → buco 1.8/2.4/3.6/4 s → reticolo 150): suonando resta **100**, senza parte **150**, identico a prima; `VPTests --tempo-step` 14/0, `--tempo-slow` 10/0, `--state-timing` 15/0, `--new-input` 16/0, `--bar` 10/0, `--octave` identico a HEAD; `VPAlign --ramps/--steps` identici.
+- [ ] Resto dell'aggancio (FEEL, UNA CANZONE, THE REASON, EVERYTIME ~12-27 s): la parte entra su una lettura provvisoria prima che il pettine si assesti (~10-16 s). Decisione di prodotto aperta: entrare subito rischiando il tempo sbagliato, o aspettare la conferma del pettine.
+
+**Respinta (2026-09-29): entrata della parte confermata dal pettine ("via di
+mezzo").** Entrare sul primo quarto utile solo se griglia e pettine concordano
+(entro il 4%), altrimenti aspettare al massimo 8 s. Banco con due colonne nuove
+(`entra`, `sb<40` = secondi sul tempo sbagliato nei primi 40 s):
+- accordo a meno di un'ottava: sb<40 totale **119 → 158**, sbagliato su tutto
+  il brano 472 → 884; LET ME LOVE YOU 48k tutto a **198**, EVERYTIME 44.1k
+  tutto a **62**. Migliorano FEEL 44.1k (18.9 → 4.1), ASPETTANDO, EVERYTIME 48k.
+- accordo sullo stesso livello e dentro 49-168: sb<40 **119 → 131**, totale
+  472 → 664; EVERYTIME 44.1k ancora a 62 per tutto il brano, THE REASON 44.1k
+  2.8 → 15.0, UNA CANZONE peggio; migliorano LET ME LOVE YOU 48k (8.7 → 1.4) e
+  FEEL.
+Motivo: spostare l'istante di entrata cambia quale ottava resta tenuta dalla
+regola che tiene il livello sotto la parte (item 57). Su EVERYTIME griglia e
+pettine concordavano sulla metà, dentro la fascia normale. Tolta; non
+riproporla senza separare la scelta dell'ottava dall'istante di entrata.
+
+**Correzione dell'item 57 (2026-09-29): ÷2/×2 non cambiavano il tempo.** La
+regola che tiene l'ottava sotto la parte che suona riportava indietro anche la
+pressione manuale (EVERYTIME ×2: 194 → 123 in 4 s), e in modalità manuale
+modificava `userOctave`, che il blocco dopo veniva reimpostato da
+`cfg.tempoOctave`: le due cose si rincorrevano. Ora la regola agisce solo in
+AUTO; un livello manuale è dell'ascoltatore. `VPTrack --octave-at T --octave N`
+simula la pressione: EVERYTIME ÷2 128 → 61, VITA ×2 96 → 192, stabili. ÷2 resta
+senza effetto se la metà scende sotto 50 BPM (`kMinBpm`, voluto: VITA 96 → 48).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

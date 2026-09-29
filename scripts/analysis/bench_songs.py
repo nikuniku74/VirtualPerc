@@ -10,7 +10,12 @@ BRANO). Per ciascuno, solo mentre la parte suona e dopo i primi 20 s:
   scatti   rms % della velocita' SENTITA del clock (clockBpm, la velocita'
            effettiva della griglia) contro la sua mediana su 8 s. E' il
            "corre / trascina": un clock fermo su un brano fermo da' ~0.
-  fuori    % del tempo in cui il clock e' oltre il 3% dal tempo del brano
+  aggancio secondi dall'inizio del file al primo tratto di 8 s con il clock
+           entro il 3% del tempo del brano (REF, al livello giusto).
+  entra    secondo in cui la parte suona per la prima volta.
+  sb<40    secondi sul tempo sbagliato nei primi 40 s (l'entrata).
+  sbagl s  secondi in cui la parte suonava su un tempo sbagliato (>3%).
+  fuori    (non stampato) % del tempo in cui il clock e' oltre il 3% dal tempo del brano
            stimato da un tempogramma indipendente (finestra 12 s, solo punti
            nitidi, ottava allineata al clock). Secondo parere, non verita'.
   ottava   secondi passati a ~doppio o ~meta' della mediana del brano.
@@ -31,6 +36,14 @@ import line_scan  # noqa: E402
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 VPTRACK = os.environ.get('VPTRACK', os.path.join(ROOT, 'build-host/VPTrack_artefacts/Release/VPTrack'))
 CACHE = '/tmp/vp-bench'
+# Tempo of each song at the level a percussionist plays it, over 60-100 s
+# (docs/TODO.md item 59). Used only to score the bench afterwards; the app
+# never sees it and no threshold is tuned on it.
+REF = {'01_BLUE_SKY': 86.4, '03_FEEL': 104.0, '10_LET_ME_LOVE_YOU': 99.9,
+       '13_VITA': 96.0, '15_EVERYTIME': 123.0, '1_THE_REASON': 84.4,
+       '26_SPLENDIDA_GIORNATA': 107.8, '39_I_WANNA_DANCE': 123.7,
+       '3_INFINITO': 91.0, '5_UNA_CANZONE_PER_TE': 84.8,
+       '6_ASPETTANDO_IL_SOLE': 88.4}
 RATES = (44100, 48000)
 
 
@@ -95,6 +108,24 @@ def metrics(pul):
     wav = f'{CACHE}/wav/{os.path.basename(pul)[:-4]}.wav'
     P = np.loadtxt(pul, comments='#')
     t, clk, snd = P[:, 0], P[:, 4], P[:, 5]
+    # Acquisition, from the first sample of the file: when the heard clock is
+    # within 3% of the song's tempo and stays there 8 s ("aggancio"), and how
+    # many seconds the part sounded on a wrong tempo ("sbagl s").
+    ref = REF.get(os.path.basename(pul)[:-4].rsplit('_', 1)[0], 0.0)
+    lock_s, wrong_s, wrong40 = float('nan'), float('nan'), float('nan')
+    on = np.nonzero(snd > 0.5)[0]
+    entry_s = float(t[on[0]]) if len(on) else float('nan')
+    if ref > 0:
+        dt0 = np.median(np.diff(t))
+        ok = np.abs(clk / ref - 1) < 0.03
+        wrong_s = float(np.sum((snd > 0.5) & ~ok) * dt0)
+        wrong40 = float(np.sum((snd > 0.5) & ~ok & (t < 40.0)) * dt0)
+        run = 0.0
+        for i in range(len(t)):
+            run = run + dt0 if ok[i] else 0.0
+            if run >= 8.0:
+                lock_s = float(t[i] - 8.0)
+                break
     m = (snd > 0.5) & (t > 20) & (clk > 30)
     t, clk = t[m], clk[m]
     if len(t) < 100:
@@ -119,7 +150,7 @@ def metrics(pul):
         if near.sum() > 10:
             out_frac = float(np.mean(np.abs(cd[near] / ref[near] - 1) > 0.03) * 100)
     ls = line_scan.scan(pul) or (0, 0.0, 0.0, 0, 0.0)
-    return dict(jerk=jerk, out=out_frac, octave=octave, bpm=song,
+    return dict(jerk=jerk, out=out_frac, octave=octave, bpm=song, lock=lock_s, wrong=wrong_s, entry=entry_s, wrong40=wrong40,
                 ver=ls[0], mean=ls[1], worst=ls[2], slips=ls[3])
 
 
@@ -130,8 +161,8 @@ def show(tags):
         for f in sorted(os.listdir(d)):
             if f.endswith('.pul'):
                 rows.setdefault(f[:-4], {})[tag] = metrics(f'{d}/{f}')
-    keys = ('jerk', 'out', 'octave', 'mean', 'worst', 'slips')
-    head = f"{'brano':34s} {'bpm':>6s} {'scatti%':>8s} {'fuori%':>7s} {'ottava s':>8s} {'verif s':>7s} {'fase ms':>8s} {'peggio':>7s} {'slitt':>5s}"
+    keys = ('jerk', 'entry', 'lock', 'wrong40', 'wrong', 'mean', 'worst', 'slips')
+    head = f"{'brano':34s} {'bpm':>6s} {'scatti%':>8s} {'entra':>6s} {'aggancio':>8s} {'sb<40':>6s} {'sbagl s':>7s} {'verif s':>7s} {'fase ms':>8s} {'peggio':>7s} {'slitt':>5s}"
     print(head)
     tot = {tag: {k: [] for k in keys} for tag in tags}
     for name, per in rows.items():
@@ -143,13 +174,13 @@ def show(tags):
                 if not np.isnan(r[k]):
                     tot[tag][k].append(r[k])
             lab = name[:34] if tag == tags[0] else f"  {tag}"[:34]
-            print(f"{lab:34s} {r['bpm']:6.1f} {r['jerk']:8.2f} {r['out']:7.1f} {r['octave']:8.1f} "
+            print(f"{lab:34s} {r['bpm']:6.1f} {r['jerk']:8.2f} {r['entry']:6.1f} {r['lock']:8.1f} {r['wrong40']:6.1f} {r['wrong']:7.1f} "
                   f"{r['ver']:7d} {r['mean']:8.1f} {r['worst']:7.1f} {r['slips']:5d}")
     print()
     for tag in tags:
         s = tot[tag]
-        print(f"{'MEDIA ' + tag:34s} {'':6s} {np.mean(s['jerk']):8.2f} {np.mean(s['out']):7.1f} "
-              f"{np.sum(s['octave']):8.1f} {'':7s} {np.mean(s['mean']):8.1f} {np.mean(s['worst']):7.1f} "
+        print(f"{'MEDIA ' + tag:34s} {'':6s} {np.mean(s['jerk']):8.2f} {np.mean(s['entry']):6.1f} {np.mean(s['lock']):8.1f} "
+              f"{np.sum(s['wrong40']):6.1f} {np.sum(s['wrong']):7.1f} {'':7s} {np.mean(s['mean']):8.1f} {np.mean(s['worst']):7.1f} "
               f"{int(np.sum(s['slips'])):5d}")
 
 

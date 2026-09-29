@@ -438,6 +438,8 @@ private:
         strength alternation that lifts the veto on synthetic kit material is
         washed out. See `unprovenSlowerOctave` in BeatDecoder.cpp. */
     int   combHalfBeats = 0;
+    int   combSlowerBeats = 0;    // beats the fold has named one steady slower, non-octave level
+    float combSlowerBpm = 0.0f;
     /** The level the comb was naming when the current re-anchor vote started.
         A comb that keeps changing its own mind is not evidence; only a comb
         that holds one answer while disagreeing with us gets to move the grid. */

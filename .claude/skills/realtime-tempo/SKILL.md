@@ -4987,6 +4987,17 @@ let real motion lag (known-phase continuous 40.2 -> 46.9 ms). Song bench
 matrix default lane identical, product-direct lane neutral with p99.5
 continuous 280 -> 237 ms; VPAlign byte-identical; probe_recovery 0 FAIL.
 
+**Kept (2026-09-29), octave vote by pulse class and settled-only
+corroboration (docs/TODO.md item 59).** When the grid is not on the fold's
+pulse by a non-octave ratio, votes for any octave of that pulse count as one
+(the raw fold alternated 87/176 against a 132 grid and restarted the vote each
+swap). `combAgreedBpm` is set only by a settled fold, so an early unsettled
+reading cannot make the post-hole refusal defend a wrong lattice. The
+slower-comb veto gains a 16-beat steady-level proof for non-octave ratios.
+Synthetic banks, fixture D and VPAlign identical; song bench: ASPETTANDO 44.1k
+acquisition 46.4 -> 25.4 s, all else identical. `holdSoundingLevel` acts only
+in AUTO: a manual ÷2/×2 is the listener's (it had been undone).
+
 ## 9. Map: "I want to change X"
 
 | X | file |

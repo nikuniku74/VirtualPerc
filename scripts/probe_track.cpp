@@ -46,6 +46,11 @@ int main (int argc, char** argv)
     // from the seek. --from T scores --bpm only from T seconds on (a long
     // file with several songs).
     double seekAt = -1.0, seekTo = 0.0, scoreFrom = 0.0;
+    // --octave-at T --octave N: a ÷2 (-1) or ×2 (+1) press at T seconds, as
+    // the buttons do (manual level, AUTO off).
+    double octaveAt = -1.0;
+    int octavePress = 0;
+    bool octavePressed = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -75,6 +80,8 @@ int main (int argc, char** argv)
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
         else if (a == "--from")       scoreFrom = std::atof (next());
+        else if (a == "--octave-at")  octaveAt = std::atof (next());
+        else if (a == "--octave")     octavePress = std::atoi (next());
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -188,6 +195,13 @@ int main (int argc, char** argv)
             readOffset = static_cast<long> (seekTo * sr) - pos;
             eng.notifyTrackSeek();
             std::printf ("# %.1f s: seek a %.1f s del file\n", pos / sr, seekTo);
+        }
+        if (octaveAt >= 0.0 && ! octavePressed && pos >= static_cast<int> (octaveAt * sr))
+        {
+            octavePressed = true;
+            eng.settings().tempoOctaveAuto.store (false);
+            eng.settings().tempoOctave.store (octavePress);
+            std::printf ("# %.1f s: ottava manuale %+d\n", pos / sr, octavePress);
         }
         const int take = std::min ({ block, n - pos, hop - inHop, switchAt > pos ? switchAt - pos : block });
         const float* ins[1] = { mono.data() + pos + readOffset };

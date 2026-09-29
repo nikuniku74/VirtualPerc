@@ -695,7 +695,13 @@ bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept
     // a new file or a seek change the octave while the part plays. Returns
     // true when this hypothesis is such an octave: the clock must not take it,
     // not even for the half second before the worker applies the shift.
-    if (! sounding || ! tempoFollow || tapEstablished || bpm < 40.0f || heldBpm < 40.0f)
+    // AUTO only. ÷2/×2 switch to a manual level, and that press is exactly an
+    // octave jump under a sounding part: holding it back undid the press, and
+    // the next block re-applied cfg.tempoOctave, so the two fought and the
+    // tempo did not change (listener report, 2026-09-29). A manual level is
+    // the listener's; this rule does not touch it.
+    if (! octaveAuto || ! sounding || ! tempoFollow || tapEstablished
+        || bpm < 40.0f || heldBpm < 40.0f)
         return false;
 
     constexpr float kOctaveMatch = 0.10f;   // log2, about 7%
@@ -711,14 +717,14 @@ bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept
     // rest of the song. Not an extra octave change on a steady song: only
     // where the analysis itself moved by more than ~11%. docs/TODO.md item 57.
     constexpr float kAnalysisJump = 0.15f;  // log2, about 11%
-    if (jump == 0 && octaveAuto && std::fabs (r) > kAnalysisJump)
+    if (jump == 0 && std::fabs (r) > kAnalysisJump)
         jump = bpm > kOctaveTooFast ? 1 : (bpm < kOctaveTooSlow ? -1 : 0);
     if (jump == 0)
         return false;
     if (levelHoldPending && gridSerial == levelHoldSerial)
         return true;
     levelHoldPending = false;
-    int& level = octaveAuto ? autoOctave : userOctave;
+    int& level = autoOctave;
     const int next = level - jump;
     if (next < -1 || next > 1)
         return true;

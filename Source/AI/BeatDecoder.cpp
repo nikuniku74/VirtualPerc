@@ -715,6 +715,8 @@ void BeatDecoder::reset() noexcept
     motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
+    combSlowerBeats = 0;
+    combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -779,6 +781,8 @@ void BeatDecoder::setUserOctave (int octaves) noexcept
     foldPhaseBeats = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
+    combSlowerBeats = 0;
+    combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -1050,6 +1054,8 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
+    combSlowerBeats = 0;
+    combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -1129,6 +1135,8 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     motionFitDirection = 0;
     octaveMismatchBeats = 0;
     combHalfBeats = 0;
+    combSlowerBeats = 0;
+    combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
@@ -3178,10 +3186,42 @@ void BeatDecoder::updateTempo() noexcept
     else
         combHalfBeats = std::max (0, combHalfBeats - 1);
     const bool halfProven = combHalfBeats >= kProvenSlowerOctaveBeats;
+    // The veto guards against the fold naming the half of a right grid, but
+    // `combSlower` also catches readings that are not a half at all: a grid
+    // acquired on a 3:2 or 5:3 lattice of the song (132 over 88, 165 over 99)
+    // is dense and healthy, and the fold naming the true tempo at salience
+    // ~1.0 was vetoed for 34 s on the song bench (docs/TODO.md item 59).
+    // Such a reading earns the same kind of proof as the half, only longer:
+    // the fold must name one steady level (within ~3%), settled and salient,
+    // for sixteen beats with no confirmed transition in between. A stale fold
+    // after a real step up is still rebuilding and drifts, so it does not
+    // collect them; the transition quarantine resets the count as well.
+    constexpr int kProvenSlowerLevelBeats = 16;
+    constexpr float kSteadyFold = 0.04f;    // log2, about 3%
+    const bool combOtherSlower = combSlower && ! combCleanHalf && tempo.levelSettled()
+                                 && ! transitionOwnsRate
+                                 && tempo.salience() > kOctaveSnapSalience;
+    if (combOtherSlower
+        && (combSlowerBpm < kMinBpm
+            || std::fabs (std::log2 (combRawBpm / combSlowerBpm)) < kSteadyFold))
+    {
+        if (combSlowerBpm < kMinBpm)
+            combSlowerBpm = combRawBpm;
+        combSlowerBeats = std::min (combSlowerBeats + 1, kProvenSlowerLevelBeats);
+    }
+    else
+    {
+        combSlowerBeats = 0;
+        combSlowerBpm = combOtherSlower ? combRawBpm : 0.0f;
+        if (combOtherSlower)
+            combSlowerBeats = 1;
+    }
+    const bool slowerLevelProven = combSlowerBeats >= kProvenSlowerLevelBeats;
     const bool unprovenSlowerOctave = intervalAcquired && gridHealthy && gridIsDense
                                       && ! gridLooksLikeSubdivision
                                       && combSlower
-                                      && ! halfProven;
+                                      && ! halfProven
+                                      && ! slowerLevelProven;
     // Against the fold's *raw* answer, not the one already folded onto the
     // anchor - and this is the whole of why a doubled grid at slow tempo was
     // permanent.
@@ -3315,8 +3355,20 @@ void BeatDecoder::updateTempo() noexcept
         // reason the disagreement above is: `combBpm` has already been folded
         // onto the level under suspicion, so voting on it is voting for the
         // thing being argued against.
-        if (octaveVoteBpm < kMinBpm
-            || std::fabs (std::log2 (combRawBpm / octaveVoteBpm)) > kOctaveVoteHold)
+        // Except when the grid is not on the fold's pulse at all. Against a
+        // 132 grid over an 88 song the fold's raw reading alternates between
+        // two octaves of the *same* pulse, 87 and 176 (docs/TODO.md item 59);
+        // counting those as different levels restarted the vote on every
+        // swap and held the wrong grid for 34 s. When the disagreement is not
+        // an octave argument, votes for any octave of that pulse are one vote.
+        // An argument about the octave itself still votes per level.
+        const float voteSpan = octaveVoteBpm >= kMinBpm
+                                   ? std::log2 (combRawBpm / octaveVoteBpm) : 1.0f;
+        const bool samePulse = ! octaveArgument && octaveVoteBpm >= kMinBpm
+                               && std::fabs (voteSpan - std::round (voteSpan)) <= kOctaveVoteHold;
+        if (! samePulse
+            && (octaveVoteBpm < kMinBpm
+                || std::fabs (std::log2 (combRawBpm / octaveVoteBpm)) > kOctaveVoteHold))
         {
             octaveVoteBpm = combRawBpm;
             octaveMismatchBeats = 1;
@@ -3334,7 +3386,12 @@ void BeatDecoder::updateTempo() noexcept
     if (octaveMismatchBeats == 0)
         octaveVoteBpm = 0.0f;
 
-    if (combReady && tempo.salience() > kOctaveSnapSalience && bpm > kMinBpm && combRawBpm > kMinBpm
+    // Only a settled fold may certify a lattice. On the song bench the fold
+    // read 131 for two seconds before it settled on the song's 88, that early
+    // reading "corroborated" the 3:2 grid, and the post-hole refusal below then
+    // defended it for 34 s under a sounding part (docs/TODO.md item 59).
+    if (combReady && tempo.levelSettled()
+        && tempo.salience() > kOctaveSnapSalience && bpm > kMinBpm && combRawBpm > kMinBpm
         && std::fabs (disagreement - std::round (disagreement)) < kStaleGridRelease)
         combAgreedBpm = bpm;
 
@@ -3418,6 +3475,8 @@ void BeatDecoder::updateTempo() noexcept
         foldPhaseBeats = 0;
         octaveMismatchBeats = 0;
         combHalfBeats = 0;
+        combSlowerBeats = 0;
+        combSlowerBpm = 0.0f;
         octaveVoteBpm = 0.0f;
         beatsOnLevel = 0;
         enterRegime (TempoRegime::unknown);
@@ -3512,6 +3571,8 @@ void BeatDecoder::updateTempo() noexcept
             provisionalStrength = 0.0f;
             octaveMismatchBeats = 0;
             combHalfBeats = 0;
+            combSlowerBeats = 0;
+            combSlowerBpm = 0.0f;
             octaveVoteBpm = 0.0f;
             beatsOnLevel = 0;
             fastDriftBeats = 0;
