@@ -4,8 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 
 namespace vp
 {
@@ -766,22 +764,23 @@ void BeatDecoder::reset() noexcept
     hyp = {};
 }
 
-void BeatDecoder::setUserOctave (int octaves) noexcept
+void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
 {
     const int request = std::clamp (octaves, -2, 2);
-    { static int lastReq = 99; if (request != lastReq && std::getenv ("VP_DBG_OCT2")) std::fprintf (stderr, "SETOCT t=%.2f req=%d\n", timeSec, request); lastReq = request; }
-    // Slower is published, faster is decoded (see `outputShift`). Going between
-    // two slower levels, or to the natural one, moves nothing that was
-    // measured: the tempo is the same, only what is announced changes, so no
-    // grid is thrown away. The count and the tempo the tracker holds do change
-    // at once, which `gridSerial` tells it.
-    const int newOutput = std::min (request, 0);
-    const int wanted = std::max (request, 0);
+    // A slower level the listener asked for is published, everything else is
+    // decoded (see `outputShift`). Going between two published levels, or to
+    // the natural one, moves nothing that was measured: the tempo is the same,
+    // only what is announced changes, so no grid is thrown away. The count and
+    // the tempo the tracker holds do change at once, which `gridSerial` tells
+    // it.
+    const bool published = manual && request < 0;
+    const int newOutput = published ? request : 0;
+    const int wanted = published ? 0 : request;
     if (newOutput != outputShift)
     {
         outputShift = newOutput;
-        outputEngaged = false;   // re-decided, and the parity re-anchored, on the next frame
-        pressPending = true;
+        outputEngaged = false;   // re-decided, and the class re-anchored, on the next frame
+        pressPending = newOutput < 0;
         ++gridSerial;
         seenGridSerial = gridSerial;   // a request is not a rebuilt grid
     }

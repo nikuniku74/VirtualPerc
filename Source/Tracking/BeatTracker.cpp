@@ -235,7 +235,7 @@ void BeatTracker::reset() noexcept
     autoOctave = octaveAuto ? 0 : userOctave;
     autoWant = autoOctave;
     autoHoldSamples = 0;
-    neural.setUserOctave (autoOctave);
+    neural.setUserOctave (autoOctave, ! octaveAuto);
     tapHoldSamples = 0;
     downbeatHoldSamples = 0;
     barLocked = false;
@@ -600,7 +600,7 @@ void BeatTracker::setTempoOctave (int octaves) noexcept
 {
     userOctave = octaves < -1 ? -1 : (octaves > 1 ? 1 : octaves);
     if (! octaveAuto)
-        neural.setUserOctave (userOctave);
+        neural.setUserOctave (userOctave, true);
 }
 
 void BeatTracker::setTempoOctaveAuto (bool on) noexcept
@@ -616,7 +616,7 @@ void BeatTracker::setTempoOctaveAuto (bool on) noexcept
     autoOctave = userOctave;
     autoWant = userOctave;
     autoHoldSamples = 0;
-    neural.setUserOctave (octaveAuto ? autoOctave : userOctave);
+    neural.setUserOctave (octaveAuto ? autoOctave : userOctave, ! octaveAuto);
 }
 
 void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,

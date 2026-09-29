@@ -19,6 +19,16 @@
 namespace
 {
     bool gDarkMode = true;
+    constexpr const char* kHitNames[] = {
+        "ABSORB", "HORN", "UPLIFTER FX", "RISER 2", "WINDCHIMES", "RISER BOOM"
+    };
+    constexpr const char* kHitResources[] = {
+        "absorb_wav", "reggae_horn_wav", "uplifter_fx_wav", "riser_2_wav",
+        "windchimes_wav", "cinematic_riser_boom_wav"
+    };
+    constexpr const char* kHitPrefKeys[] = {
+        "absorbSample", "hornSample", "uplifterSample", "riserSample"
+    };
 
 #if defined (VP_HAS_LOOP_BANK) && VP_HAS_LOOP_BANK
     const char* embeddedLoopResource (const std::string& originalName, int& size)
@@ -133,6 +143,13 @@ namespace
     juce::Colour voiceCembaloOn()  { return juce::Colour (0xffe6c43c); } // dorato
     juce::Colour voiceClapOn()     { return juce::Colour (0xff62b8e4); } // azzurrino
     juce::Colour voiceTriangleOn() { return juce::Colour (0xff2ee8d0); } // turchese
+    juce::Colour colourForHit (int sample) noexcept
+    {
+        constexpr uint32_t colours[] = {
+            0xffff8a1a, 0xffff2a4a, 0xffff2ec8, 0xff9b6bff, 0xff2ee8d0, 0xffffc857
+        };
+        return juce::Colour (colours[juce::jlimit (0, 5, sample)]);
+    }
     juce::Colour colourForKitSound (vp::KitSound s) noexcept
     {
         switch (s)
@@ -629,8 +646,8 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
     const bool voiceKnob = (bool) slider.getProperties().getWithDefault ("voiceOnFill", false);
     const bool voiceOff = voiceKnob
                           && ! (bool) slider.getProperties().getWithDefault ("voiceEnabled", true);
-    // Sample knobs carry hitLit. Off is the same disc as a muted voice, in
-    // their own colour at 0.40. Full colour only while that sample is playing.
+    // Sample knobs carry hitLit. Their accents dim to 0.40 when idle;
+    // the centre stays black whether the sample is playing or not.
     const bool hitKnob = slider.getProperties().contains ("hitLit");
     const bool hitLit = (bool) slider.getProperties().getWithDefault ("hitLit", false);
     const bool hitDark = hitKnob && ! hitLit;
@@ -730,8 +747,9 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         }
 
         paintRadial (g, centre, innerR * 1.7f, accent, (voiceKnob ? 0.28f : 0.14f) * alpha);
-        const auto disc = voiceKnob ? knobInterior (accent) : juce::Colour (0xff0a0a0c);
-        g.setColour (disc.withMultipliedAlpha (alpha));
+        const auto disc = hitKnob ? juce::Colours::black
+                                  : (voiceKnob ? knobInterior (accent) : juce::Colour (0xff0a0a0c));
+        g.setColour (hitKnob ? disc : disc.withMultipliedAlpha (alpha));
         g.fillEllipse (centre.x - innerR, centre.y - innerR, innerR * 2.0f, innerR * 2.0f);
         g.setColour ((voiceKnob ? accent : juce::Colour (0xff2a2a30))
                          .withMultipliedAlpha (alpha));
@@ -1102,20 +1120,28 @@ MainComponent::MainComponent()
                 [this] (float v) { hitVoices[3].gain.store (v, std::memory_order_relaxed); });
     absorbVolSlider.getProperties().set ("voiceOnFill", true);
     absorbVolSlider.getProperties().set ("hitLit", false);
-    absorbVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff8a1a));
     hornVolSlider.getProperties().set ("voiceOnFill", true);
     hornVolSlider.getProperties().set ("hitLit", false);
-    hornVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffff2a4a));
     uplifterVolSlider.getProperties().set ("voiceOnFill", true);
     uplifterVolSlider.getProperties().set ("hitLit", false);
-    uplifterVolSlider.setColour (juce::Slider::rotarySliderFillColourId, fuchsia());
     riserVolSlider.getProperties().set ("voiceOnFill", true);
     riserVolSlider.getProperties().set ("hitLit", false);
-    riserVolSlider.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xff9b6bff));
+    for (int i = 0; i < 4; ++i)
+        hitVoices[i].selected.store (i, std::memory_order_relaxed);
+    refreshHitKnobs();
     absorbVolSlider.onTap = [this] { hitVoices[0].request.fetch_add (1, std::memory_order_release); };
     hornVolSlider.onTap = [this] { hitVoices[1].request.fetch_add (1, std::memory_order_release); };
     uplifterVolSlider.onTap = [this] { hitVoices[2].request.fetch_add (1, std::memory_order_release); };
     riserVolSlider.onTap = [this] { hitVoices[3].request.fetch_add (1, std::memory_order_release); };
+    auto holdHit = [this] (int slot)
+    {
+        styleMenu.dismiss();
+        soundMenu.showFor (slot, true);
+    };
+    absorbVolSlider.onHold = [holdHit] { holdHit (0); };
+    hornVolSlider.onHold = [holdHit] { holdHit (1); };
+    uplifterVolSlider.onHold = [holdHit] { holdHit (2); };
+    riserVolSlider.onHold = [holdHit] { holdHit (3); };
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -1437,6 +1463,7 @@ void MainComponent::refreshThemeColours()
     refreshProcButton();
     refreshLoopModeButton();
     refreshVoiceKnobs();
+    refreshHitKnobs();
 }
 
 std::atomic<int>& MainComponent::kitSoundAtomic (int slot) noexcept
@@ -1505,6 +1532,39 @@ void MainComponent::refreshVoiceKnobs()
            assigned (cfg.cembaloSound, vp::KitSound::cembalo));
     paint (clapVolSlider,    clapVolLabel,    cfg.clapEnabled.load(),
            assigned (cfg.clapSound, vp::KitSound::clap));
+}
+
+void MainComponent::assignHitSample (int slot, int sample)
+{
+    if (slot < 0 || slot >= 4 || sample < 0 || sample >= kHitSampleCount)
+        return;
+    for (int i = 0; i < 4; ++i)
+        if (i != slot && hitVoices[i].selected.load (std::memory_order_relaxed) == sample)
+            return;
+    hitVoices[slot].selected.store (sample, std::memory_order_release);
+    refreshHitKnobs();
+    savePrefs();
+}
+
+void MainComponent::refreshHitKnobs()
+{
+    juce::Slider* knobs[] = {
+        &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider
+    };
+    juce::Label* labels[] = {
+        &absorbHitLabel, &hornHitLabel, &uplifterHitLabel, &riserHitLabel
+    };
+    for (int i = 0; i < 4; ++i)
+    {
+        const int sample = juce::jlimit (0, kHitSampleCount - 1,
+                                         hitVoices[i].selected.load (std::memory_order_relaxed));
+        const auto colour = colourForHit (sample);
+        knobs[i]->setColour (juce::Slider::rotarySliderFillColourId, colour);
+        knobs[i]->getProperties().set ("knobName", kHitNames[sample]);
+        labels[i]->setColour (juce::Label::textColourId, colour);
+        labels[i]->setText (kHitNames[sample], juce::dontSendNotification);
+        knobs[i]->repaint();
+    }
 }
 
 void MainComponent::startPressed()
@@ -2590,6 +2650,21 @@ void MainComponent::loadPrefs()
     hitVoices[3].gain.store (riserVol, std::memory_order_relaxed);
     setFader (riserVolSlider, riserHitValue, riserVol);
 
+    bool usedHits[kHitSampleCount] = {};
+    for (int i = 0; i < 4; ++i)
+    {
+        int sample = prefs->getIntValue (kHitPrefKeys[i], i);
+        if (sample < 0 || sample >= kHitSampleCount || usedHits[sample])
+        {
+            sample = i;
+            if (usedHits[sample])
+                for (int k = 0; k < kHitSampleCount; ++k)
+                    if (! usedHits[k]) { sample = k; break; }
+        }
+        usedHits[sample] = true;
+        hitVoices[i].selected.store (sample, std::memory_order_relaxed);
+    }
+
     const float inGain = juce::jlimit (0.0, 4.0, prefs->getDoubleValue ("inputGain", 1.0));
     engine.settings().inputGain.store (static_cast<float> (inGain));
     inputGainSlider.setValue (inGain, juce::dontSendNotification);
@@ -2718,6 +2793,8 @@ void MainComponent::savePrefs (bool flush)
                      static_cast<double> (hitVoices[2].gain.load (std::memory_order_relaxed)));
     prefs->setValue ("riserVolume",
                      static_cast<double> (hitVoices[3].gain.load (std::memory_order_relaxed)));
+    for (int i = 0; i < 4; ++i)
+        prefs->setValue (kHitPrefKeys[i], hitVoices[i].selected.load (std::memory_order_relaxed));
     prefs->setValue ("inputGain",
                      static_cast<double> (engine.settings().inputGain.load()));
     prefs->setValue ("reverbAmount",
@@ -2943,14 +3020,14 @@ void MainComponent::prepareHits (double sampleRate)
 {
     if (sampleRate < 8000.0)
         return;
-    if (std::abs (hitRate - sampleRate) < 1.0 && hitVoices[0].pcm.getNumSamples() > 0)
+    if (std::abs (hitRate - sampleRate) < 1.0 && hitSamples[0].getNumSamples() > 0)
         return;
     hitRate = sampleRate;
 
    #if defined (VP_HAS_HIT_SAMPLES) && VP_HAS_HIT_SAMPLES
-    auto load = [sampleRate] (HitVoice& voice, const char* data, int size)
+    auto load = [sampleRate] (juce::AudioBuffer<float>& pcm, const char* data, int size)
     {
-        voice.pcm.setSize (0, 0);
+        pcm.setSize (0, 0);
         if (data == nullptr || size <= 0)
             return;
         auto* stream = new juce::MemoryInputStream (data, static_cast<size_t> (size), false);
@@ -2959,30 +3036,29 @@ void MainComponent::prepareHits (double sampleRate)
         if (reader == nullptr || reader->lengthInSamples <= 0)
             return;
 
-        juce::AudioBuffer<float> src (static_cast<int> (reader->numChannels),
-                                      static_cast<int> (reader->lengthInSamples));
-        reader->read (&src, 0, src.getNumSamples(), 0, true, true);
+        const int srcN = static_cast<int> (reader->lengthInSamples);
+        juce::AudioBuffer<float> src (static_cast<int> (reader->numChannels), srcN + 4);
+        src.clear();
+        reader->read (&src, 0, srcN, 0, true, true);
         const double step = reader->sampleRate / sampleRate;
-        const int outN = juce::jmax (1, static_cast<int> (std::ceil (src.getNumSamples() / step)));
-        voice.pcm.setSize (src.getNumChannels(), outN);
+        const int outN = juce::jmax (1, static_cast<int> (std::ceil (srcN / step)));
+        pcm.setSize (src.getNumChannels(), outN);
         for (int c = 0; c < src.getNumChannels(); ++c)
         {
             juce::LagrangeInterpolator interp;
             interp.reset();
-            interp.process (step, src.getReadPointer (c), voice.pcm.getWritePointer (c), outN);
+            interp.process (step, src.getReadPointer (c), pcm.getWritePointer (c), outN);
         }
-        voice.pos = 0;
     };
 
-    int absorbSize = 0, hornSize = 0, uplifterSize = 0, riserSize = 0;
-    const char* absorb = VpHitData::getNamedResource ("absorb_wav", absorbSize);
-    const char* horn = VpHitData::getNamedResource ("reggae_horn_wav", hornSize);
-    const char* uplifter = VpHitData::getNamedResource ("uplifter_fx_wav", uplifterSize);
-    const char* riser = VpHitData::getNamedResource ("riser_2_wav", riserSize);
-    load (hitVoices[0], absorb, absorbSize);
-    load (hitVoices[1], horn, hornSize);
-    load (hitVoices[2], uplifter, uplifterSize);
-    load (hitVoices[3], riser, riserSize);
+    for (int i = 0; i < kHitSampleCount; ++i)
+    {
+        int size = 0;
+        const char* data = VpHitData::getNamedResource (kHitResources[i], size);
+        load (hitSamples[i], data, size);
+    }
+    for (auto& voice : hitVoices)
+        voice.pos = 0;
    #else
     juce::ignoreUnused (sampleRate);
    #endif
@@ -3000,8 +3076,11 @@ void MainComponent::mixHits (float* const* outs, int numChannels, int numSamples
         {
             voice.playing = req;
             voice.pos = 0;
+            voice.playingSample = juce::jlimit (0, kHitSampleCount - 1,
+                voice.selected.load (std::memory_order_acquire));
         }
-        const int total = voice.pcm.getNumSamples();
+        const auto& pcm = hitSamples[voice.playingSample];
+        const int total = pcm.getNumSamples();
         if (voice.playing == 0 || total <= 0 || voice.pos >= total)
         {
             voice.sounding.store (false, std::memory_order_relaxed);
@@ -3010,12 +3089,12 @@ void MainComponent::mixHits (float* const* outs, int numChannels, int numSamples
         voice.sounding.store (true, std::memory_order_relaxed);
 
         const int n = juce::jmin (numSamples, total - voice.pos);
-        const int srcCh = voice.pcm.getNumChannels();
+        const int srcCh = pcm.getNumChannels();
         for (int c = 0; c < numChannels; ++c)
         {
             if (outs[c] == nullptr)
                 continue;
-            const float* src = voice.pcm.getReadPointer (juce::jmin (c, srcCh - 1), voice.pos);
+            const float* src = pcm.getReadPointer (juce::jmin (c, srcCh - 1), voice.pos);
             juce::FloatVectorOperations::addWithMultiply (
                 outs[c], src, voice.gain.load (std::memory_order_relaxed), n);
         }
@@ -4960,18 +5039,21 @@ MainComponent::SoundMenuOverlay::SoundMenuOverlay (MainComponent& o)
     for (int i = 0; i < kCount; ++i)
     {
         list.addAndMakeVisible (items[i]);
-        items[i].setButtonText (vp::toString (static_cast<vp::KitSound> (i)));
         items[i].onClick = [this, i]
         {
-            owner.assignKitSound (slot, static_cast<vp::KitSound> (i));
+            if (hitMode)
+                owner.assignHitSample (slot, i);
+            else
+                owner.assignKitSound (slot, static_cast<vp::KitSound> (i));
             dismiss();
         };
     }
 }
 
-void MainComponent::SoundMenuOverlay::showFor (int s)
+void MainComponent::SoundMenuOverlay::showFor (int s, bool hits)
 {
     slot = s;
+    hitMode = hits;
     setBounds (owner.getLocalBounds());
     setVisible (true);
     toFront (false);
@@ -5014,25 +5096,32 @@ void MainComponent::SoundMenuOverlay::resized()
     if (! isVisible())
         return;
 
-    juce::Slider* knobs[] = {
+    juce::Slider* kitKnobs[] = {
         &owner.shakerVolSlider, &owner.congaVolSlider,
         &owner.cembaloVolSlider, &owner.clapVolSlider
     };
+    juce::Slider* hitKnobs[] = {
+        &owner.absorbVolSlider, &owner.hornVolSlider,
+        &owner.uplifterVolSlider, &owner.riserVolSlider
+    };
     const int idx = juce::jlimit (0, 3, slot);
-    auto anchor = getLocalArea (knobs[idx], knobs[idx]->getLocalBounds());
+    auto* knob = hitMode ? hitKnobs[idx] : kitKnobs[idx];
+    auto anchor = getLocalArea (knob, knob->getLocalBounds());
 
-    // Only ids not already in the four-map. This knob's current family is
-    // omitted too: tap outside keeps the assignment. No selected cell.
+    // Offer only sounds not assigned to another knob. The current assignment
+    // is omitted too; tapping outside keeps it.
+    const int count = hitMode ? kHitSampleCount : static_cast<int> (vp::KitSound::count);
     bool taken[kCount] = {};
     for (int s = 0; s < 4; ++s)
     {
-        const int v = owner.kitSoundAtomic (s).load();
-        if (v >= 0 && v < kCount)
+        const int v = hitMode ? owner.hitVoices[s].selected.load (std::memory_order_relaxed)
+                              : owner.kitSoundAtomic (s).load();
+        if (v >= 0 && v < count)
             taken[v] = true;
     }
     int vis[kCount];
     int n = 0;
-    for (int i = 0; i < kCount; ++i)
+    for (int i = 0; i < count; ++i)
         if (! taken[i])
             vis[n++] = i;
     for (int i = 0; i < kCount; ++i)
@@ -5049,7 +5138,8 @@ void MainComponent::SoundMenuOverlay::resized()
     int labelW = 0;
     for (int k = 0; k < n; ++k)
     {
-        const auto name = juce::String (vp::toString (static_cast<vp::KitSound> (vis[k])));
+        const auto name = juce::String (hitMode ? kHitNames[vis[k]]
+            : vp::toString (static_cast<vp::KitSound> (vis[k])));
         labelW = juce::jmax (labelW, juce::GlyphArrangement::getStringWidthInt (measureFont, name));
     }
     const int cellW = juce::jmax (1, 2 * (labelW + sidePad * 2));
@@ -5087,7 +5177,10 @@ void MainComponent::SoundMenuOverlay::resized()
             row.removeFromTop (btnGap);
         items[i].setVisible (true);
         items[i].setBounds (cell);
-        const auto fill = knobInteriorForKitSound (static_cast<vp::KitSound> (i));
+        items[i].setButtonText (hitMode ? kHitNames[i]
+            : vp::toString (static_cast<vp::KitSound> (i)));
+        const auto fill = hitMode ? knobInterior (colourForHit (i))
+                                  : knobInteriorForKitSound (static_cast<vp::KitSound> (i));
         items[i].setToggleState (false, juce::dontSendNotification);
         items[i].getProperties().set ("chipFill", true);
         items[i].setColour (juce::TextButton::buttonColourId, fill);

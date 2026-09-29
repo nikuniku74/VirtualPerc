@@ -146,7 +146,8 @@ void NeuralBeatTracker::workerLoop()
 
     while (! stopFlag.load (std::memory_order_relaxed))
     {
-        decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed));
+        decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed),
+                               wantedManual.load (std::memory_order_relaxed));
         decoder.setLineFeed (wantedLineFeed.load (std::memory_order_relaxed));
         decoder.setSounding (wantedSounding.load (std::memory_order_relaxed));
 

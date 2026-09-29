@@ -201,7 +201,10 @@ public:
         Hats after a hole still cannot steal lastBeat. */
     void declarePulseHere() noexcept;
 
-    void setUserOctave (int octaves) noexcept;
+    /** `manual`: the listener's own ÷2/×2, as opposed to AUTO's choice of level
+        before the part comes in. Only a manual slower level is published
+        divided; everything else decodes at the shifted level as it always did. */
+    void setUserOctave (int octaves, bool manual = false) noexcept;
     int  userOctave() const noexcept { return octaveShift + outputShift; }
 
 private:
@@ -461,19 +464,20 @@ private:
     /** The comb level this staleness vote is for, same reason as
         `octaveVoteBpm`: a comb changing its own mind is not evidence. */
     float staleGridBpm = 0.0f;
-    /** The listener's octave, split in two. A request to go faster (x2) still
-        decodes at the shifted level: the network has beats on the eighths and
-        the grid can use them. A request to go slower (/2, /4) does not, because
-        it would decode at the slow level a grid that rejects every other beat
-        as a subdivision, on half the evidence, and it measured worse: at /2
-        the beats played drifted up to 130 ms from what the same song gives at
-        its natural level, for stretches of 10-20 s (docs/TODO.md item 63).
-        The decoder keeps the natural level for those and only *publishes*
-        divided: tempo, period and phase are divided by `outputDivisor()` and
-        the beat events are the ones on the chosen parity. Nothing is looked
-        at ahead of time: the parity is a count of natural beats already
-        passed. `octaveShift` is the internal (>= 0) half, `outputShift` the
-        published (<= 0) half. */
+    /** The listener's octave, split in two. A request to go faster (x2), and
+        every level AUTO chooses, still decodes at the shifted level: the
+        network has beats on the eighths and the grid can use them, and AUTO
+        acts before the part comes in. A slower level asked for by the
+        listener (/2, /4) does not: decoded at the slow level the grid rejects
+        every other beat as a subdivision, on half the evidence, and it
+        measured worse: the beats played drifted up to 130 ms from what the
+        same song gives at its natural level, for stretches of 10-20 s
+        (docs/TODO.md item 63). The decoder keeps the natural level for those
+        and only *publishes* divided: tempo, period and phase are divided by
+        `outputDivisor()` and the beat events are the ones of the chosen
+        class. Nothing is looked at ahead of time: the class is a count of
+        natural beats already passed. `octaveShift` is the level decoded,
+        `outputShift` the (<= 0) division published. */
     int   octaveShift = 0;
     int   outputShift = 0;
     /** Whether the division is in force now: off while the divided tempo would

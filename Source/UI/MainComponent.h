@@ -126,6 +126,8 @@ private:
     void refreshVoiceKnobs();
     void assignKitSound (int slot, vp::KitSound sound);
     std::atomic<int>& kitSoundAtomic (int slot) noexcept;
+    void assignHitSample (int slot, int sample);
+    void refreshHitKnobs();
 
     /** The margin every full-screen page starts from: what the design wants,
         widened per side to whatever the system says is unusable. On a phone
@@ -382,21 +384,22 @@ private:
     StyleSelect styleSelect { *this };
     StyleMenuOverlay styleMenu { *this };
 
-    /** Vertical stack of unused-instrument cells, anchored to the held
-        FEEL knob. Full-screen overlay, tap outside keeps the assignment.
-        Not a second picker engine. */
+    static constexpr int kHitSampleCount = 6;
+    /** Vertical stack of unused sounds, anchored to the held knob. */
     struct SoundMenuOverlay final : juce::Component
     {
         explicit SoundMenuOverlay (MainComponent& o);
         void paint (juce::Graphics&) override;
         void resized() override;
         void mouseDown (const juce::MouseEvent& e) override;
-        void showFor (int slot);
+        void showFor (int slot, bool hits = false);
         void dismiss();
         bool isOpen() const noexcept { return isVisible(); }
-        static constexpr int kCount = static_cast<int> (vp::KitSound::count);
+        static constexpr int kCount = kHitSampleCount > static_cast<int> (vp::KitSound::count)
+                                          ? kHitSampleCount : static_cast<int> (vp::KitSound::count);
         MainComponent& owner;
         int slot = 0;
+        bool hitMode = false;
         juce::Component list;
         juce::TextButton items[kCount];
     };
@@ -482,8 +485,7 @@ private:
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
-    /** One-shot hits. Same cell as a FEEL knob; a press starts the sample,
-        a press while it is sounding cuts it and starts it again. */
+    /** One-shot samples. Tap starts or restarts; hold assigns an unused sample. */
     VoiceKnob absorbVolSlider;
     juce::Label absorbHitLabel { {}, "ABSORB" };
     juce::Label absorbHitValue { {}, "100%" };
@@ -498,14 +500,16 @@ private:
     juce::Label riserHitValue { {}, "100%" };
     struct HitVoice
     {
-        juce::AudioBuffer<float> pcm;
         std::atomic<uint32_t> request { 0 };
         std::atomic<float> gain { 1.0f };
         std::atomic<bool> sounding { false };
+        std::atomic<int> selected { 0 };
         uint32_t playing = 0;
+        int playingSample = 0;
         int pos = 0;
     };
     HitVoice hitVoices[4];
+    juce::AudioBuffer<float> hitSamples[kHitSampleCount];
     double hitRate = 0.0;
 
     juce::AudioBuffer<float> inputScratch;

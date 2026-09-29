@@ -33,8 +33,9 @@ public:
     /** The metrical level the listener asked for, in octaves. Set from the
         audio thread, read by the worker: the decoder is not ours to touch from
         here, so the value is handed over rather than the call. */
-    void setUserOctave (int octaves) noexcept
+    void setUserOctave (int octaves, bool manual = false) noexcept
     {
+        wantedManual.store (manual, std::memory_order_relaxed);
         wantedOctave.store (octaves, std::memory_order_relaxed);
     }
 
@@ -169,6 +170,9 @@ private:
     std::atomic<int64_t> gapCount { 0 };
     std::atomic<int64_t> wakeCount { 0 };
     std::atomic<int> wantedOctave { 0 };
+    /** The level is the listener's own request (not AUTO's): a slower one is
+        then published rather than decoded, see BeatDecoder::setUserOctave. */
+    std::atomic<bool> wantedManual { false };
     std::atomic<bool> wantedLineFeed { false };
     std::atomic<bool> wantedSounding { false };
     std::atomic<uint32_t> wantedDeclarePulse { 0 };
