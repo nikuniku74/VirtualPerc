@@ -180,6 +180,10 @@ namespace
         half, which no ramp finishes inside and no run of noise reaches often. */
     constexpr int kDriftAgreeing = 3;
 
+    /** How far off the clock has to be, in beats, before a trim pointing the
+        same way as the error is called wrong and halved. Direct feed only. */
+    constexpr float kTrimFightsPhaseBeats = 0.080f;
+
     /** 0 below that line, 1 where the analysis is fitting as well as this song
         has been fitting all along. */
     inline float rateTrustScale (float trust) noexcept
@@ -639,6 +643,26 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
     const float scaled = beatPhaseOfOnset * grid;
     const float nearest = std::round (scaled);
     float err = wrapCentered ((scaled - nearest) / grid);
+
+    // A trim that pushes the way the phase error already points is making
+    // the error, not closing it: the clock is ahead and the trim is still
+    // speeding it up, or the reverse. Halved on every such observation, and
+    // before anything below can reject the observation. Direct feed only.
+    //
+    // UNA CANZONE PER TE at 67 s: one displaced stroke moved the phase 7% of a
+    // beat in one beat, the motion gain put +2.5 BPM into the trim, the part
+    // was 85 ms early two beats later, and the trim was still +1.1 BPM eight
+    // seconds on - an opposite drift counts for nothing until three agree.
+    // With this it is +0.95, +0.48, +0.11 over the next three beats.
+    // Song bench: drum offset 11.50/24.13 -> 11.33/23.70 ms, lock times and
+    // slips identical. VPAlign --ramps identical within 0.3 ms at 0.08 of a
+    // beat; at 0.04 and 0.06 the 128 -> 120 rallentando fails its mean.
+    // Capping what one observation may report (2-4% of the tempo) was tried
+    // with it and costs the 12 s ramp 35.5 -> 37.7/39.2 ms (docs/TODO.md
+    // item 67).
+    if (directTempoDirectionGuard && tempoTrimEnabled
+        && std::fabs (err) > kTrimFightsPhaseBeats && tempoTrim * err > 0.0f)
+        tempoTrim *= 0.5f;
 
     if (std::fabs (err) > 0.22f)
         return;

@@ -40,7 +40,7 @@ int main (int argc, char** argv)
     // seconds after the load (default at the load) and START again G seconds
     // later. --bpm then refers to the second file. docs/TODO.md item 48.
     std::string thenPath;
-    double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0;
+    double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0, stopAt = -1.0;
     // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
     // and the engine is told, as MainComponent does. --stop-gap then counts
     // from the seek. --from T scores --bpm only from T seconds on (a long
@@ -77,6 +77,7 @@ int main (int argc, char** argv)
         else if (a == "--at")         thenAt = std::atof (next());
         else if (a == "--stop-gap")   stopGap = std::atof (next());
         else if (a == "--stop-after") stopAfter = std::atof (next());
+        else if (a == "--stop-at")    stopAt = std::atof (next());
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
         else if (a == "--from")       scoreFrom = std::atof (next());
@@ -174,9 +175,16 @@ int main (int argc, char** argv)
             std::printf ("# %.1f s: carico %s%s\n", pos / sr, thenPath.c_str(),
                          stopGap >= 0.0 ? " con STOP" : " (START resta acceso)");
         }
-        const int stopSample = (switchAt >= 0 ? switchAt : static_cast<int> (seekAt * sr))
-                             + static_cast<int> (stopAfter * sr);
-        if ((switched || seeked) && stopGap >= 0.0 && ! stoppedAfter && pos >= stopSample)
+        // --stop-at T: the listener's own gesture, STOP at T and START
+        // --stop-gap seconds later (1 s if not given), with no switch or seek.
+        const int stopSample = stopAt >= 0.0
+                                   ? static_cast<int> (stopAt * sr)
+                                   : (switchAt >= 0 ? switchAt : static_cast<int> (seekAt * sr))
+                                         + static_cast<int> (stopAfter * sr);
+        if (stopAt >= 0.0 && stopGap < 0.0)
+            stopGap = 1.0;
+        if ((switched || seeked || stopAt >= 0.0) && stopGap >= 0.0 && ! stoppedAfter
+            && pos >= stopSample)
         {
             stoppedAfter = true;
             eng.stop();

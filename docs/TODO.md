@@ -4307,6 +4307,45 @@ o frena troppo rispetto all'andamento del brano, anche su un'inflessione leggera
 - [ ] Ascolto su iPad: i punti dove prima scattava (es. THE REASON 0:59,
   FEEL 1:01, I WANNA DANCE 3:09, UNA CANZONE 1:42).
 
+### 67. Il trim che spinge contro la fase; brani lenti; STOP/START automatico 🟡 (2026-09-30, T2 tenuto e misurato — il caso "incastrato" non è ancora riprodotto)
+
+L'utente: il problema è soprattutto nei brani lenti (UNA CANZONE PER TE, Sally,
+cassa sull'1 e rullante sul 3); quando la parte resta "incastrata" su un altro
+pettine, STOP e START la rimettono a posto: si può fare da soli?
+- [x] UNA CANZONE PER TE 48k, 67 s: il decoder è quasi fermo (86.0 → 87.1 → 85.0)
+  ma un colpo spostato muove la fase di 0.07 battiti in un battito; il trim prende
+  +2.46 BPM in una osservazione (guadagno di moto, `ioiLead`) e resta +2.2/+1.1
+  per 8 s mentre la parte è già 85 ms in anticipo: una deriva di segno opposto
+  vale zero finché tre non concordano. È "accelera troppo e fatica a rientrare".
+- [x] **Tenuto T2** (`TempoFollower::observeOnsetPhase`, solo ingresso diretto):
+  se il trim spinge nel verso dell'errore di fase (oltre 0.08 battiti) viene
+  dimezzato a ogni osservazione. Episodio: trim +2.46 → +0.95 → +0.48 → +0.11.
+  Banco: scarto colpi/batteria 11.50/24.13 → **11.33/23.70 ms**, usc/min 3.50 →
+  3.41, >25% 9.1 → 8.7, scatti 62 → 63 (FEEL 48k e SPLENDIDA 44k +1), aggancio
+  e slittamenti identici. `VPAlign --ramps` PASS e pari entro 0.3 ms (a 0.04 e
+  0.06 battiti fallisce la media del 128 → 120). Matrice identica in entrambe
+  le corsie (non usano la guardia di direzione). `VPTests` `--phase-lock` 20/0,
+  `--tempo-step` 14/0, `--tempo-slow` 13/0, `--tempo-motion` 293/0, `--bar`,
+  `--new-input`, `--transport`; `probe_recovery` 0 FAIL.
+- [x] Respinto T1 (tetto a quanto una osservazione può dire al trim): 2% e 3%
+  fanno fallire la rampa di 12 s (35.5 → 39.2/38.3); 4% passa a 37.7 ma FEEL 44k
+  aggancia a 36.0 s invece di 27.3.
+- [x] Respinto G1 (sciogliere la tenuta della Door D quando l'intervallo torna
+  indietro): non tocca l'episodio (non era la porta) e il continuo sintetico
+  sale 44.17 → 44.45.
+- [x] Silenziare o fermare quando l'app si crede fuori sync: no con i segnali di
+  oggi. Errore clock/decoder oltre 0.15 battiti per due battiti: 42 volte l'ora,
+  confermato dalla batteria 8 volte su 66. Sally 2:00-2:22: clock entro ±25 ms
+  dalla batteria mentre i battiti accettati stanno a +80/+116 ms dal clock.
+- [x] STOP/START simulato (`VPTrack --stop-at T`, nuovo): BLUE SKY 48k a 74 s e
+  Sally a 130 s non migliorano (Sally peggiora di ~30 ms per 6 s). I tratti
+  trovati dalle misure non sono il caso che l'utente corregge a mano.
+- [ ] Serve un caso vero: brano e minuto in cui l'utente fa STOP/START e rientra,
+  oppure un registro nell'app di ogni STOP → START ravvicinato (posizione nel
+  file, BPM e fase prima e dopo) per vedere in che stato era il clock.
+- Sally (Flamingo 10:10-14:50, `extract_live.swift ... 610 280`) è ora in
+  `/tmp/vp-bench/wav/99_SALLY_LIVE_48k.wav`: 3 scatti in 4.7 minuti.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4564,6 +4603,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 64 (2026-09-29): non regressione — tutto verde tranne `--phase-lock` 156 → 78, introdotto da `4389cca` (item 57, regola d'ottava); test adeguato alla regola (fase sul livello tenuto), 20/0 con margine stretto sul 156 (-7.3 ms su 8).
 - Item 65 (2026-09-30): fedeltà colpi/batteria — misura nuova `onset_fit.py` (3.48 uscite/min, 8.9% oltre 25 ms; griglia del decoder 1.84/min); C1 (fiducia di fase), C2 (trim più rapido), D1 (ancora FISSO più rapida) ed E1 (cassa dal mix datata al campione) respinti: lo scarto medio resta 11.5 ms, il clock è a ~3 ms dalla griglia lisciata del decoder. Motore invariato; serve l'ascolto dei punti indicati.
 - Item 66 (2026-09-30): scatti di velocità — in direct-live la piega piena (7.5%) solo con moto provato dal decoder, altrimenti 3% fino a 0.15 battiti; scatti oltre il 3% 91 → 62 sul banco, scarto dalla batteria invariato; costo sulle rampe sintetiche grandi (continuo product-direct 45.7 → 49.7 ms).
+- Item 67 (2026-09-30): trim che spinge contro la fase dimezzato a ogni osservazione (T2): dopo un colpo spostato il clock rientra in 3 battiti invece di 8 s; scarto dalla batteria 11.50 → 11.33 ms. Silenzio/STOP automatico: i segnali attuali sbagliano 9 volte su 10 e il caso "incastrato" non è riprodotto; serve un caso vero.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

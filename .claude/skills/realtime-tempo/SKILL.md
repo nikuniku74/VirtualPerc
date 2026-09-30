@@ -5087,6 +5087,22 @@ or five same-sign drifts (VPAlign flats FAIL), `kFixedAnchorFloor` 0.10 on a
 line feed, and the mix's low band through `KickOnsetDetector`. Do not judge a
 follower change on the drum offset alone: it does not move; judge it on surges.
 
+**Kept (2026-09-30), a trim that fights the phase is halved (docs/TODO.md
+item 67).** `observeOnsetPhase`, direct feed only (`directTempoDirectionGuard`):
+when the clock is more than 0.08 of a beat off and the trim points the same way
+as that error, the trim is halved on each observation. One displaced stroke
+under a motion hint could put +2.5 BPM into the trim in a single observation
+(UNA CANZONE PER TE, 67 s) and an opposite drift then counted for nothing until
+three agreed, so the part ran 3% fast for seconds on a decoder that had not
+moved. Drum offset on the song bench 11.50/24.13 -> 11.33/23.70 ms, lock times
+identical, VPAlign ramps within 0.3 ms. 0.04 and 0.06 fail the 128 -> 120 mean.
+Capping what one observation may report to the trim (2-4%) costs the 12 s ramp
+and FEEL's lock: rejected. Two signals that do **not** mean "out of sync":
+clock-versus-decoder error over 0.15 beat held two beats is confirmed by the
+drums 8 times in 66, and on Sally the clock sits within 25 ms of the kit while
+the accepted beats read +100 ms from it for twenty seconds. Do not mute or
+re-anchor on either. `VPTrack --stop-at T` simulates the listener's STOP/START.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
