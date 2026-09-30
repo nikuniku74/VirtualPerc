@@ -874,12 +874,6 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         smallFlexSamples = 0;
         smallFlexSign = 0;
     }
-    // Is the band actually moving? The same evidence that chose a fast glide
-    // above (a move past 2 BPM, a held bend, a proved curve, a transition),
-    // or the decoder's own motion hint. Only then may phase be closed with
-    // the full HIGH lean; on a steady tempo the lean stays small (see below).
-    const bool bandMoving = tempoMotionHint || (locked && glide < 1.0f);
-
     // Floored while the beats the tempo was fitted through are worse placed
     // than this song's own - which is what a passage with the drummer out looks
     // like from inside the fit, and is measured in Tracking/PhaseTrust.h. At
@@ -1093,13 +1087,24 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // hears as the part rushing and dragging on a band that never moved.
         // Measured on the song bench (docs/TODO.md item 58): the whole rail
         // at 3% cut that jerk 0.88 -> 0.75% but let real motion lag (known-
-        // phase continuous 40.2 -> 46.9 ms). So the small lean applies only
-        // while nothing says the band is moving and the error is small; a
-        // move, a held bend, a proved curve or an error past kOpenAbove keeps
-        // the full rail.
+        // phase continuous 40.2 -> 46.9 ms). So the small lean applied only
+        // while nothing said the band was moving and the error was small.
+        //
+        // That left the rail open most of the time in VIVO, where the target
+        // is retouched on every beat and the glide therefore read as motion.
+        // Measured on the 24-run song bench against the kick and snare of each
+        // song (docs/TODO.md item 66): 47 of 83 clock surges over 3% had no
+        // drum offset behind them (12.7 ms before, 13.9 after) - the decoder's
+        // grid had stepped and the rail spent it. Now only the decoder's own
+        // motion hint opens the rail, and the small lean holds up to where the
+        // error is another grid (kLeanIsElsewhere): surges 91 -> 62, surge
+        // seconds 104 -> 67, rate jerk 0.92 -> 0.85%, drum offset unchanged
+        // (11.46 -> 11.50 ms mean), no run with more surges. The cost is the
+        // large synthetic ramps of the product-direct lane, 45.7/116.0 ->
+        // 49.7/124.2 ms: a drastic change may align more slowly.
         constexpr float kSteadyDirectLean = 0.030f;
-        if (directLivePhaseFollow && ! rapidTransition && ! bandMoving
-            && std::fabs (e) <= kOpenAbove)
+        if (directLivePhaseFollow && ! rapidTransition && ! tempoMotionHint
+            && std::fabs (e) <= kLeanIsElsewhere)
         {
             steerLim = std::min (steerLim, kSteadyDirectLean);
             steerCeil = steerLim;

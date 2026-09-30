@@ -4216,7 +4216,7 @@ Stato del tree a `79d2de4` + test item 63. Build `VPTests` e app macOS pulite.
 - [ ] Margine stretto sul 156 tenuto: se torna rosso a caso è questo caso, non
   una regressione nuova; guardare `offLevel` e l'errore tardo.
 
-### 65. Fedeltà dei colpi alla batteria (senza click): misura nuova, due candidati respinti 🔴 (2026-09-30, misurato — nessuna modifica al motore)
+### 65. Fedeltà dei colpi alla batteria (senza click): misura nuova, quattro candidati respinti 🔴 (2026-09-30, misurato — nessuna modifica al motore)
 
 Richiesta dell'utente: i colpi a volte escono di poco da cassa/rullante e sui
 sedicesimi dà fastidio finché non rientrano.
@@ -4244,10 +4244,68 @@ sedicesimi dà fastidio finché non rientrano.
   490; `VPAlign --ramps` MIXER FAIL (piatti 100/130 8.2/28.1 → 9.1/31.5 e
   7.1/22.5 → 8.2/25.4, 12 s 35.5 → 27.8). C2b a 5 battiti: piatti rientrano ma
   30 s e 128→120 in FAIL. Il trim non è la leva.
-- [ ] Prossimo passo, se si continua: lato decoder (FISSO troppo fermo su
-  inflessioni sotto il 2%, VIVO che sovrastima la curva), sul banco sintetico con
-  i brani come controllo; molte varianti sono già respinte nella skill
-  realtime-tempo.
+- [x] Misura continua (scarto medio / p90 in ms, stesso banco): clock
+  **11.46 / 24.06**, griglia del decoder lisciata 8.75 / 18.44. C1 11.47/24.04,
+  C2 11.53/24.17, D1 11.48/24.21: indistinguibili. Il rumore della misura è
+  ~8 ms (attacchi dispersi 26 ms, ~20 per finestra), quindi la griglia del
+  decoder è già al fondo e il clock ne sta a ~3 ms di media. `|clock − decoder|`
+  grezzo è 21.6 ms di media / 49.7 p90: è la dispersione per battito della rete
+  (frame da 20 ms), che il clock sta già lisciando quasi quanto una mediana
+  centrata su 2 s.
+- [x] Respinto D1 (decoder: `kFixedAnchorFloor` 0.02 → 0.10 su ingresso diretto,
+  l'ancora del FISSO segue il fit lungo in ~10 battiti invece di 50): usc/min
+  3.48 → 3.61, >25% 8.9 → 9.1, scatti 0.92 → 0.86. EVERYTIME 44k scatti 0.90 →
+  0.27 e >25% 6.4 → 2.3, ma 48k usc/min 2.84 → 3.90 e VITA scatti 0.37 → 0.46.
+  Matrice (4 offset): fisso 22.2 → 22.5, gradino 34.7 → 36.7 ms.
+  `probe_tempo_step` PASS.
+- [x] Respinto E1 (brano caricato: il mix grezzo dentro `KickOnsetDetector`, colpi
+  datati al campione passati al clock tramite `notifyKickOnset`): su THE REASON
+  44k il rilevatore è creduto il 97% del tempo, scarto 13.8/28.2 → 14.1/28.6.
+- [x] Dove cadono le uscite: 33% del tempo entro 6 s da un cambio di regime
+  (quei momenti sono il 24% del totale), 27% con BPM pubblicato che si muove
+  oltre l'1%, 41% a regime stabile e BPM fermo. Nessuna classe domina.
+- [ ] Prima di altri tentativi: l'utente ascolta alcuni punti indicati da
+  `onset_fit.py` (minuto:secondo delle uscite) per dire se sono i momenti che
+  dà fastidio sentire. Se sì, si lavora su quella classe; se no, la misura vede
+  il feel del brano e non un errore.
+- Nota di metodo: `VirtualPercussionEngine.cpp` è CRLF misto: modificarlo a
+  byte, mai in modalità testo.
+
+### 66. Scatti di velocità della parte: la piega piena solo su moto provato 🟢 (2026-09-30, misurato — resta ascolto su iPad)
+
+L'utente: i brani sono quasi tutti stabili, ma in certi punti la parte accelera
+o frena troppo rispetto all'andamento del brano, anche su un'inflessione leggera
+(batterista senza click), e a volte fatica a rientrare.
+- [x] Misura: `scripts/analysis/surge_scan.py TAG`, colonna `sc/min` del banco.
+  Scatto = clock sentito oltre il 3% dalla sua mediana su 8 s. Base: **91 scatti
+  in 85 minuti (1.07/min), 104 s**, 80 in VIVO. Tipico: BPM pubblicato fermo
+  (±1-2%), clock a ±6-18% per 1-3 s per chiudere 45-105 ms di fase.
+- [x] Erano giustificati? Con gli attacchi di cassa/rullante (`onset_fit.py`)
+  prima e dopo: 36 su 83 sì (scarto 26.7 → 11.0 ms), **47 no** (12.7 → 13.9 ms).
+  In quei 47 la griglia del decoder si era spostata di colpo e il clock l'ha
+  rincorsa.
+- [x] Causa: in VIVO il binario piccolo (3%, item 58) valeva solo con errore
+  entro 0.06 battiti e "band ferma"; ma in VIVO il target è ritoccato a ogni
+  battito e il glide passava per moto, quindi il binario restava al 7.5%.
+- [x] Respinto F1 (3% fino a 0.15 battiti, ma ancora con `bandMoving`): scatti
+  91 → 85.
+- [x] **Tenuto F2** (`TempoFollower::advanceSegment`): in direct-live il binario
+  pieno si apre solo con `tempoMotionHint` (moto provato dal decoder); altrimenti
+  3% fino a `kLeanIsElsewhere` (0.15 battiti). Banco (24 esecuzioni): scatti
+  **91 → 62**, secondi in scatto 104 → 67, scatti% 0.92 → 0.85, nessuna
+  esecuzione con più scatti; scarto colpi/batteria 11.46 → 11.50 ms, usc/min
+  3.48 → 3.50; aggancio e slittamenti identici; THE REASON 48k fase peggiore
+  117.6 → 49.5 ms. Matrice (4 offset): corsia normale identica; product-direct
+  fisso 21.51/58.2 → 21.37/58.2, gradino 38.38/168.6 → 38.18/169.6, **continuo
+  45.74/116.0 → 49.71/124.2** (il costo: le rampe grandi). `probe_recovery`
+  0 FAIL, `probe_tempo_step` PASS, `VPAlign --ramps/--steps` PASS, `VPTests`
+  `--phase-lock` 20/0, `--tempo-step` 14/0, `--tempo-slow` 13/0,
+  `--tempo-motion` 293/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0.
+- [ ] Restano i picchi oltre il 10% (una decina nel banco): errori di fase di
+  85-124 ms (oltre 0.15 battiti, quindi "altra griglia") o l'entrata nei primi
+  25 s; 6 in FISSO e 5 in CERCO, percorsi non direct-live.
+- [ ] Ascolto su iPad: i punti dove prima scattava (es. THE REASON 0:59,
+  FEEL 1:01, I WANNA DANCE 3:09, UNA CANZONE 1:42).
 
 ## Standby
 
@@ -4504,7 +4562,8 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 62 (2026-09-29): 1000 GIORNI — pickup irregolare all'inizio (147 invece di 161 per ~12 s) e brano sul bordo d'ottava 81/162; ÷2 lo segue bene.
 - Item 63 (2026-09-29): ÷2 manuale pubblicato dal decoder naturale (`setUserOctave (n, manual)`); AUTO e ×2 invariati. Scatti a ÷2 1.08 → 0.76; percorso naturale byte per byte uguale a HEAD.
 - Item 64 (2026-09-29): non regressione — tutto verde tranne `--phase-lock` 156 → 78, introdotto da `4389cca` (item 57, regola d'ottava); test adeguato alla regola (fase sul livello tenuto), 20/0 con margine stretto sul 156 (-7.3 ms su 8).
-- Item 65 (2026-09-30): fedeltà colpi/batteria — misura nuova `onset_fit.py` (3.48 uscite/min, 8.9% oltre 25 ms; griglia del decoder 1.84/min); C1 (fiducia di fase) e C2 (trim più rapido) respinti, motore invariato.
+- Item 65 (2026-09-30): fedeltà colpi/batteria — misura nuova `onset_fit.py` (3.48 uscite/min, 8.9% oltre 25 ms; griglia del decoder 1.84/min); C1 (fiducia di fase), C2 (trim più rapido), D1 (ancora FISSO più rapida) ed E1 (cassa dal mix datata al campione) respinti: lo scarto medio resta 11.5 ms, il clock è a ~3 ms dalla griglia lisciata del decoder. Motore invariato; serve l'ascolto dei punti indicati.
+- Item 66 (2026-09-30): scatti di velocità — in direct-live la piega piena (7.5%) solo con moto provato dal decoder, altrimenti 3% fino a 0.15 battiti; scatti oltre il 3% 91 → 62 sul banco, scarto dalla batteria invariato; costo sulle rampe sintetiche grandi (continuo product-direct 45.7 → 49.7 ms).
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

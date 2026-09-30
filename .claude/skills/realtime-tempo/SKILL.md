@@ -5066,6 +5066,27 @@ exactly as before: publishing AUTO's /2 too changed UNA CANZONE's path at 10 s
 version before. Song bench with /2 at 5 s: rate jerk 1.08 -> 0.76 %. Nothing
 looks ahead: the class is a count of beats already passed.
 
+**Kept (2026-09-30), the direct-live rail opens only on the decoder's motion
+hint (docs/TODO.md item 66).** What a listener reports is not the offset from
+the drums but the part's *rate* surging and then taking time to settle.
+`scripts/analysis/surge_scan.py` counts stretches where `clockBpm` is more than
+3% from its own 8 s median: 91 in 85 minutes of the song bench, 80 in VIVO, the
+published BPM still within 1-2%. Scored against each song's kick and snare
+onsets (`onset_fit.py`), 47 of 83 had no drum offset behind them (12.7 ms before,
+13.9 after): the decoder's grid had stepped and the clock chased it at 7.5%. The
+item-58 small lean was gated on `bandMoving`, and in VIVO the target is retouched
+every beat, so the glide read as motion almost always. Now `tempoMotionHint`
+alone opens the rail, and the 3% lean holds up to `kLeanIsElsewhere`. Surges 91
+-> 62, surge seconds 104 -> 67, jerk 0.92 -> 0.85%, drum offset 11.46 -> 11.50 ms
+(unchanged), no run with more surges. Default matrix lane identical;
+product-direct continuo 45.7/116.0 -> 49.7/124.2 (large ramps pay), fisso and
+gradino level. Same cycle, all rejected with the drum offset unmoved at 11.5 ms
+mean (its noise floor is ~8 ms, the smoothed decoder grid reads 8.75): full
+phase trust for small errors in FISSO/CERCO, the motion trim gain after three
+or five same-sign drifts (VPAlign flats FAIL), `kFixedAnchorFloor` 0.10 on a
+line feed, and the mix's low band through `KickOnsetDetector`. Do not judge a
+follower change on the drum offset alone: it does not move; judge it on surges.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
