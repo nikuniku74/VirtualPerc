@@ -1399,7 +1399,21 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f || hyp.ioiLead);
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
-        follower.beginTempoTransition (hyp.transitionBpm);
+    {
+        // The jump - tempo set at once, phase spent inside a beat - is for a
+        // step the decoder is sure of. On a direct feed a step confirmed on
+        // intervals that barely agree is wrong too often to be played as
+        // one: on the song bench INFINITO (91, steady) was handed 84.9 at
+        // confidence 0.42, FEEL (104.5) 100.9 at 0.54, BLUE SKY 84.3 at 0.42,
+        // and each set the clock there and lurched 10-13%. Under the line the
+        // new tempo is an ordinary target: the glide takes it in a few tenths
+        // and the phase closes on the ordinary lean. Treating every step
+        // under 9.5% that way instead failed VPAlign's five protected steps
+        // (47-87 ms at the third beat); by confidence they are unchanged
+        // (docs/TODO.md item 69).
+        if (speakerFollow || hyp.transitionConfidence >= kTransitionJumpConfidence)
+            follower.beginTempoTransition (hyp.transitionBpm);
+    }
 
     // An exact octave of the tempo being played is not a tempo for the clock.
     const bool octaveAway = haveHyp && periodic && ! harmonicSourceActive

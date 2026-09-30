@@ -28,6 +28,13 @@ constexpr float kGridTauIoiLead = 0.01f;
     clock motion. */
 constexpr float kGridTauMotion = 0.30f;
 
+/** On a direct feed, a confirmed tempo step whose own confidence is under this
+    is handed to the clock as an ordinary target and not as a jump. The
+    confidence is how well the intervals that confirmed the step agree. VPAlign's
+    25 true steps read 0.89-1.00; the false ones on the song bench read 0.42,
+    0.42 and 0.54. See BeatTracker::process and docs/TODO.md item 69. */
+constexpr float kTransitionJumpConfidence = 0.75f;
+
 /** Once the residual shape has proved continuous motion twice, the clock may
     see phase sooner. A first strong verdict uses kGridTauMotion instead. This
     still averages several 6 Hz publications and never snaps or rewinds the

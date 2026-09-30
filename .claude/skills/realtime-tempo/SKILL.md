@@ -5118,6 +5118,23 @@ the one" two runs in eight, because after a seek the stale hypothesis still says
 fixed. The same wait on the direct-live rail past `kLeanIsElsewhere` (VIVO) was
 rejected: surges 63 -> 62 and the product-direct lane pays on every family.
 
+**Kept (2026-09-30), a step confirmed at low confidence does not jump the clock
+(docs/TODO.md item 69).** `scripts/analysis/surge_sources.py` splits each clock
+surge into decoder tempo, trim and phase lean, and flags transitions: the peaks
+over 6% on the song bench were almost all confirmed transitions on songs that
+had not stepped (INFINITO, steady at 91, handed 84.9; FEEL 100.9; BLUE SKY 84.3).
+The damage is `beginTempoTransition` itself - the tempo set at once - not the
+phase spend, so scaling the rapid rail by the step changed nothing. The
+hypothesis already carries `transitionConfidence` (how well the confirming
+intervals agree): 0.42, 0.42 and 0.54 on those three, 0.89-1.00 on VPAlign's 25
+true steps. On a direct feed the tracker now calls `beginTempoTransition` only at
+0.75 or more; below it the new tempo is an ordinary target. `VPAlign --steps`
+identical line for line; rate jerk 0.83 -> 0.79%, INFINITO's surges gone.
+Treating every step under 9.5% as ordinary instead fails the five protected
+steps (47-87 ms at the third beat). Still open: a false step at confidence 1.00
+(SPLENDIDA 0:47), and a grid that jumps during a transition state without a
+consumed transition (EVERYTIME 44.1k 2:41).
+
 ## 9. Map: "I want to change X"
 
 | X | file |

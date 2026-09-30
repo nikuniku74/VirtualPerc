@@ -783,7 +783,9 @@ TempoStep tempoChange (float fromBpm, float toBpm, double atSec, double rampSec,
                 && (! seenTransitionSerial
                     || hy.transitionSerial != lastTransitionSerial))
             {
-                clock.beginTempoTransition (hy.transitionBpm);
+                // As BeatTracker: a step confirmed at low confidence is a target, not a jump.
+                if (hy.transitionConfidence >= vp::kTransitionJumpConfidence)
+                    clock.beginTempoTransition (hy.transitionBpm);
                 lastTransitionSerial = hy.transitionSerial;
                 seenTransitionSerial = true;
                 ++r.rapidTransitions;

@@ -4379,6 +4379,47 @@ Prova chiesta dall'utente: far ignorare al clock i salti grandi non confermati.
   EVERYTIME 44k 2:41) e all'entrata: meccanismo non ancora individuato.
 - [ ] Ascolto su iPad: EVERYTIME a 1:53.
 
+### 69. Da dove vengono gli scatti rimasti; un gradino poco sicuro non fa saltare il clock 🟢 (2026-09-30, misurato — resta ascolto su iPad)
+
+Richiesta: vedere se si può stabilizzare ancora il tempo in generale.
+- [x] Strumento: `VPTrack --pulses` scrive anche `rete target trim trans recover
+  bridge`; `scripts/analysis/surge_sources.py TAG` scompone ogni scatto. Banco
+  (24 esecuzioni + Sally), 65 scatti: piega di fase 43 (45.8 s, quasi tutti
+  3.9–5%: il 3% dell'item 66 più trim e decoder), **transizione 12 (12.5 s, i
+  picchi dal 6 al 26%)**, decoder 8 (12.7 s), trim 2.
+- [x] Respinto R1 (binario della finestra rapida proporzionale al gradino, 3×):
+  byte per byte identico. Lo scatto non è la spesa di fase: è il tempo messo
+  subito sul valore dichiarato.
+- [x] Registro delle transizioni passate al clock: INFINITO (91 fermo) 90.9 →
+  84.9 confidenza 0.42; FEEL (104.5) 108.3 → 100.9 conf 0.54; BLUE SKY 87.5 →
+  84.3 conf 0.42; SPLENDIDA (108) 105.8 → 115.2 conf 1.00. Gradini falsi
+  confermati dal decoder su intervalli che concordano poco.
+- [x] Respinto S1 (ogni gradino sotto il 9.5% come obiettivo ordinario):
+  `VPAlign --steps` 5 FAIL (118→124, 118→128, 128→120, 76→82, 168→156: ±1 BPM in
+  1.46–1.97 s invece di 0.78–1.47, 47–87 ms al terzo battito invece di 24).
+- [x] **Tenuto S2** (`BeatTracker::process`, `kTransitionJumpConfidence` 0.75 in
+  `PhaseTrust.h`, solo ingresso diretto): `beginTempoTransition` solo se la
+  confidenza della transizione è almeno 0.75; sotto, il tempo nuovo è un
+  obiettivo ordinario. I 25 gradini veri di `VPAlign` leggono 0.89–1.00:
+  `--steps` identico riga per riga, `--ramps` PASS. Banco: scatti 65 → 62,
+  transizioni 12 → 8 (12.5 → 5.7 s), scatti% 0.83 → **0.79**; INFINITO 44k/48k
+  scatti 1 → 0 e scatti% 0.52/0.57 → 0.31; FEEL 44k picco 12.5 → 6.1%; BLUE SKY
+  48k scatti% 1.12 → 0.91. Scarto colpi/batteria 11.35 → 11.36 ms, aggancio e
+  slittamenti identici. Piccoli costi: BLUE SKY 48k sbagl s 15.1 → 16.1, FEEL 44k
+  fase peggiore 40.2 → 42.5 ms.
+- [x] `VPTests` `--tempo-step` 14/0, `--tempo-slow` 13/0, `--tempo-motion` 293/0,
+  `--bar` 10/0 (6 volte su 6), `--new-input` 16/0, `--transport` 4/0.
+  `--phase-lock`: **19/1 una volta**, subito dopo il banco con la macchina
+  carica, poi 20/0 tre volte su tre con numeri identici; il controllo caduto
+  non è stato visto.
+- [ ] Restano: SPLENDIDA 0:47 (+12%, transizione a confidenza 1.00), BLUE SKY
+  2:35 (−11% per 0.2 s in FISSO), EVERYTIME 44k 2:41 (+19%: nessuna transizione
+  passata al clock, la griglia salta di 0.3 battiti durante lo stato di
+  transizione e il percorso non direct-live apre il tetto), l'entrata nei primi
+  25 s (ASPETTANDO +26%, LET ME LOVE YOU −24%), Sally 1:51 (decoder −13% in
+  CERCO).
+- [ ] Ascolto su iPad: INFINITO verso 4:43, FEEL verso 3:26.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4638,6 +4679,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 66 (2026-09-30): scatti di velocità — in direct-live la piega piena (7.5%) solo con moto provato dal decoder, altrimenti 3% fino a 0.15 battiti; scatti oltre il 3% 91 → 62 sul banco, scarto dalla batteria invariato; costo sulle rampe sintetiche grandi (continuo product-direct 45.7 → 49.7 ms).
 - Item 67 (2026-09-30): trim che spinge contro la fase dimezzato a ogni osservazione (T2): dopo un colpo spostato il clock rientra in 3 battiti invece di 8 s; scarto dalla batteria 11.50 → 11.33 ms. Silenzio/STOP automatico: i segnali attuali sbagliano 9 volte su 10 e il caso "incastrato" non è riprodotto; serve un caso vero.
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
+- Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti
