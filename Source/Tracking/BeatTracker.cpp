@@ -1298,6 +1298,23 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setDirectLivePhaseFollow (
         directLivePhaseFollow && ! tempoOwned && tempoFollow
         && ! harmonicSourceActive && periodic && ! tapHold);
+    // Only a FISSO that has stood on one grid for a while. Right after a seek,
+    // a new file or a rebuilt grid the target really is somewhere else and
+    // must be taken at once: with the regime alone `VPTests --bar` lost
+    // "seek re-aligns the one" two runs in eight on a stale hypothesis.
+    const bool fixedNow = stableDirectFeed && hyp.regime == TempoRegime::fixed
+                          && sounding && ! needsResync;
+    if (fixedNow && hyp.gridSerial == fixedGridSerial)
+        fixedGridSamples = std::min (fixedGridSamples + numSamples,
+                                     static_cast<int> (sampleRate * 60.0));
+    else
+    {
+        fixedGridSamples = 0;
+        fixedGridSerial = haveHyp ? hyp.gridSerial : 0;
+    }
+    follower.setFixedDirectFeed (
+        fixedNow && fixedGridSamples > static_cast<int> (sampleRate * 8.0)
+        && ! tempoOwned && tempoFollow && ! harmonicSourceActive && periodic && ! tapHold);
     follower.setBeatGapHold (haveHyp && hyp.valid && hyp.beatGap);
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();

@@ -4346,6 +4346,39 @@ pettine, STOP e START la rimettono a posto: si può fare da soli?
 - Sally (Flamingo 10:10-14:50, `extract_live.swift ... 610 280`) è ora in
   `/tmp/vp-bench/wav/99_SALLY_LIVE_48k.wav`: 3 scatti in 4.7 minuti.
 
+### 68. Salti falsi della griglia in FISSO: due battiti prima di crederci 🟢 (2026-09-30, misurato — resta ascolto su iPad)
+
+Prova chiesta dall'utente: far ignorare al clock i salti grandi non confermati.
+- [x] Respinto H1 (VIVO: oltre 0.15 battiti la piega piena solo dopo due battiti
+  dallo stesso lato): scatti 63 → 62, scarto 11.33 → 11.32 ms, Sally invariata;
+  matrice product-direct continuo 49.7 → 51.2, gradino 38.2 → 39.4. I picchi
+  rimasti non passano da lì.
+- [x] Causa vista su EVERYTIME 48k a 113.8 s: FISSO fermo a 123.4 BPM, la griglia
+  del decoder fa un passo falso di ~0.2 battiti per mezzo secondo; l'obiettivo
+  lontano viene adottato dopo 0.25 s e il tetto di sterzo si apre con l'errore: il
+  clock frena a 104 BPM (−16%), si trova 0.21 battiti indietro e corre a 131 per
+  1.5 s.
+- [x] **Tenuto** (`TempoFollower::setFixedDirectFeed`, `BeatTracker`): su ingresso
+  diretto, con il decoder in FISSO sulla stessa griglia da almeno 8 s e la parte
+  che suona, un obiettivo di fase lontano deve restare dallo stesso lato per due
+  battiti prima di (a) accorciare la media di fase e (b) aprire il tetto oltre il
+  limite ordinario. Episodio: clock 103.6–132.3 → **117.3–126.8 BPM**. Banco:
+  cambia solo EVERYTIME 48k (scatti 4 → 3, picco 17.0 → 5.8%, scatti% 1.28 →
+  0.80, sbagl s 32.4 → 31.2); le altre 23 esecuzioni e Sally senza differenze
+  nelle misure. Media scatti% 0.85 → 0.83.
+- [x] Senza l'anzianità di 8 s (solo "regime FISSO"): `VPTests --bar` perdeva
+  "seek re-aligns the one on the new downbeats" 2 volte su 8 (12/12 sul commit):
+  dopo un seek l'ipotesi vecchia dice ancora FISSO. Con l'anzianità 12/12.
+  Senza la restrizione al FISSO (guardia su tutto l'ingresso diretto): FEEL 44k
+  aggancio 27.3 → 35.8 s, LET ME LOVE YOU 48k 23.8 → 28.7 s.
+- [x] Gate: `VPAlign --ramps/--steps` PASS, matrice identica in entrambe le corsie
+  (le sonde non accendono la guardia), `probe_recovery` 0 FAIL, `probe_tempo_step`
+  PASS, `VPTests` `--phase-lock` 20/0, `--tempo-step` 14/0, `--tempo-slow` 13/0,
+  `--tempo-motion` 293/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0.
+- [ ] Restano i picchi oltre il 10% in VIVO (BLUE SKY, FEEL, INFINITO, SPLENDIDA,
+  EVERYTIME 44k 2:41) e all'entrata: meccanismo non ancora individuato.
+- [ ] Ascolto su iPad: EVERYTIME a 1:53.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4604,6 +4637,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 65 (2026-09-30): fedeltà colpi/batteria — misura nuova `onset_fit.py` (3.48 uscite/min, 8.9% oltre 25 ms; griglia del decoder 1.84/min); C1 (fiducia di fase), C2 (trim più rapido), D1 (ancora FISSO più rapida) ed E1 (cassa dal mix datata al campione) respinti: lo scarto medio resta 11.5 ms, il clock è a ~3 ms dalla griglia lisciata del decoder. Motore invariato; serve l'ascolto dei punti indicati.
 - Item 66 (2026-09-30): scatti di velocità — in direct-live la piega piena (7.5%) solo con moto provato dal decoder, altrimenti 3% fino a 0.15 battiti; scatti oltre il 3% 91 → 62 sul banco, scarto dalla batteria invariato; costo sulle rampe sintetiche grandi (continuo product-direct 45.7 → 49.7 ms).
 - Item 67 (2026-09-30): trim che spinge contro la fase dimezzato a ogni osservazione (T2): dopo un colpo spostato il clock rientra in 3 battiti invece di 8 s; scarto dalla batteria 11.50 → 11.33 ms. Silenzio/STOP automatico: i segnali attuali sbagliano 9 volte su 10 e il caso "incastrato" non è riprodotto; serve un caso vero.
+- Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

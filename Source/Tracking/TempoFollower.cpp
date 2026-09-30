@@ -202,6 +202,10 @@ namespace
         exactly what a song that has just changed produces. So the cap applies
         below this and not above it. */
     constexpr float kLeanIsElsewhere = 0.15f;
+
+    /** On a direct feed, how many beats a far phase target has to hold its
+        side before the slow average is shortened to adopt it. */
+    constexpr float kFarTargetBeats = 2.0f;
 }
 
 void TempoFollower::prepare (double sr) noexcept
@@ -226,6 +230,8 @@ void TempoFollower::reset() noexcept
     havePhaseTarget = false;
     farTargetSamples = 0;
     farTargetSign = 0;
+    farLeanSamples = 0;
+    farLeanSign = 0;
     tempoTrim = 0.0f;
     lastDrift = 0.0f;
     driftSameWay = 0;
@@ -240,6 +246,7 @@ void TempoFollower::reset() noexcept
     tempoTrimEnabled = false;
     directTempoDirectionGuard = false;
     directLivePhaseFollow = false;
+    fixedDirectFeed = false;
     directLiveSteer = 0.0f;
     tempoGlideFast = false;
     smallFlexSamples = 0;
@@ -259,6 +266,7 @@ void TempoFollower::resetClock() noexcept
 {
     cancelPhaseRecovery();
     directLivePhaseFollow = false;
+    fixedDirectFeed = false;
     directLiveSteer = 0.0f;
     tempoGlideFast = false;
     smallFlexSamples = 0;
@@ -274,6 +282,8 @@ void TempoFollower::resetClock() noexcept
     havePhaseTarget = false;
     farTargetSamples = 0;
     farTargetSign = 0;
+    farLeanSamples = 0;
+    farLeanSign = 0;
     tempoTrim = 0.0f;
     lastDrift = 0.0f;
     driftSameWay = 0;
@@ -604,6 +614,8 @@ void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
     havePhaseTarget = false;
     farTargetSamples = 0;
     farTargetSign = 0;
+    farLeanSamples = 0;
+    farLeanSign = 0;
     phaseCorrectionSinceObservation = 0.0f;
     samplesSinceObservation = 0;
     havePhaseObservation = false;
@@ -949,7 +961,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
             if (farTargetSign == 0)
                 farTargetSign = gap > 0.0f ? 1 : -1;
             farTargetSamples = std::min (farTargetSamples + numSamples,
-                                         static_cast<int> (sampleRate));
+                                         static_cast<int> (sampleRate * 4.0));
         }
         else
         {
@@ -973,7 +985,18 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // audio thread when the upper bound is below the lower one — that is
         // the EVERYTIME SIGABRT after the clock had already stepped. A tau
         // that is already at or under the floor has nothing to shorten.
-        if (farTargetSamples > static_cast<int> (sampleRate * 0.25)
+        //
+        // On a direct feed in FISSO under a playing part the wait is two
+        // beats, not a quarter of a second. A decoder grid that steps falsely holds its
+        // sign for longer than two refreshes: EVERYTIME at 113.8 s, FISSO at
+        // a steady 123.4, stepped 0.2 of a beat for about half a second; the
+        // far target was adopted, the clock braked to 104 BPM, found itself
+        // 0.21 of a beat behind and ran at 131 for a second and a half to
+        // come back (docs/TODO.md item 68).
+        const float farWaitSec = fixedDirectFeed && locked
+                                     ? std::max (0.25f, kFarTargetBeats * 60.0f / std::max (40.0f, tempo))
+                                     : 0.25f;
+        if (farTargetSamples > static_cast<int> (sampleRate * farWaitSec)
             && phaseTargetTau > 0.10f)
             tau = std::clamp (phaseTargetTau * kFarTarget / std::fabs (gap),
                               0.10f, phaseTargetTau);
@@ -1132,6 +1155,30 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         {
             steerLim = std::min (steerLim, kSteadyDirectLean);
             steerCeil = steerLim;
+        }
+        // The ceiling opens for an error that is really another grid, and the
+        // same false step that must not be adopted in two refreshes must not
+        // open it either: on a direct feed the error has to keep its side
+        // for kFarTargetBeats first. Until then the ordinary limit closes it.
+        {
+            const bool farLean = std::fabs (e) > kOpenAbove;
+            const int leanSign = e > 0.0f ? 1 : -1;
+            if (farLean && (farLeanSign == 0 || farLeanSign == leanSign))
+            {
+                farLeanSign = leanSign;
+                farLeanSamples = std::min (farLeanSamples + numSamples,
+                                           static_cast<int> (sampleRate * 4.0));
+            }
+            else
+            {
+                farLeanSamples = 0;
+                farLeanSign = farLean ? leanSign : 0;
+            }
+            const bool farLeanHeld = static_cast<float> (farLeanSamples)
+                > kFarTargetBeats * 60.0f / std::max (40.0f, tempo)
+                      * static_cast<float> (sampleRate);
+            if (fixedDirectFeed && ! rapidTransition && ! farLeanHeld)
+                steerCeil = steerLim;
         }
         const float open = std::max (0.0f, std::fabs (e) - kOpenAbove)
                            * (steerCeil - steerLim) / (kOpenAt - kOpenAbove);

@@ -60,6 +60,15 @@ public:
     {
         directLivePhaseFollow = on;
     }
+    /** A stable direct feed whose decoder holds a fixed tempo (FISSO). There
+        a phase target that is suddenly far away is a false step of the
+        decoder's grid far more often than the band: it has to keep its side
+        for two beats before it is adopted fast or opens the steering
+        ceiling. Acquisition and VIVO keep the quarter-second rule. */
+    void setFixedDirectFeed (bool on) noexcept
+    {
+        fixedDirectFeed = on;
+    }
     /** A rest while a part is already sounding. The counted tempo stays;
         phase debt is not spent as a rate bend until the next beat, and the
         beats just after the rest use the holding rail rather than the
@@ -182,6 +191,8 @@ private:
     // different grid; one that does not is the analysis's own noise.
     int   farTargetSamples = 0;
     int   farTargetSign = 0;
+    int   farLeanSamples = 0;
+    int   farLeanSign = 0;
     float lastObservedPhaseErr = 0.0f;
     float tempoTrim = 0.0f;
     float lastDrift = 0.0f;
@@ -200,6 +211,7 @@ private:
     bool tempoTrimEnabled = false;
     bool directTempoDirectionGuard = false;
     bool directLivePhaseFollow = false;
+    bool fixedDirectFeed = false;
     float directLiveSteer = 0.0f;
     /** Once a locked tempo error exceeds 2 BPM the fast glide stays until the
         error is back under half a BPM. The tail of a real step is not wobble.

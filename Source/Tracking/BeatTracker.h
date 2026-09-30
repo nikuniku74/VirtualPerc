@@ -568,6 +568,10 @@ private:
     double sampleRate = 48000.0;
     uint32_t lastBeatSerial = 0;
     uint32_t lastGridSerial = 0;
+    /** How long the decoder has held FISSO on one grid under a sounding part;
+        see TempoFollower::setFixedDirectFeed. */
+    uint32_t fixedGridSerial = 0;
+    int fixedGridSamples = 0;
     bool seenSerials = false;
     TempoTransitionConsumer transitionConsumer;
     float lastLeadMs = 0.0f;

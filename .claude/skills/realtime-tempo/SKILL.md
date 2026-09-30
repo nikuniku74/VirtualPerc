@@ -5103,6 +5103,21 @@ drums 8 times in 66, and on Sally the clock sits within 25 ms of the kit while
 the accepted beats read +100 ms from it for twenty seconds. Do not mute or
 re-anchor on either. `VPTrack --stop-at T` simulates the listener's STOP/START.
 
+**Kept (2026-09-30), a far phase target in a standing FISSO waits two beats
+(docs/TODO.md item 68).** `TempoFollower::setFixedDirectFeed`, set by
+`BeatTracker` only on a stable direct feed whose decoder has been `fixed` on one
+`gridSerial` for 8 s with the part sounding. There the far-target shortcut (slow
+average shortened after 0.25 s) and the steering ceiling that opens with the
+error both wait for the error to keep its side for two beats. EVERYTIME 48k at
+113.8 s: tempo steady at 123.4, the decoder's grid stepped ~0.2 beat for half a
+second, the clock braked to 104 and then ran at 131; now 117-127. Every other
+run of the song bench is unchanged. Two narrower-than-obvious conditions, both
+measured: without the FISSO restriction FEEL 44.1k locks at 35.8 s instead of
+27.3; with the regime alone and no tenure `VPTests --bar` loses "seek re-aligns
+the one" two runs in eight, because after a seek the stale hypothesis still says
+fixed. The same wait on the direct-live rail past `kLeanIsElsewhere` (VIVO) was
+rejected: surges 63 -> 62 and the product-direct lane pays on every family.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
