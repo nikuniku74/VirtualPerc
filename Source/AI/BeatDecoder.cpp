@@ -491,6 +491,13 @@ namespace
     // same hole a crest on the committed fold, and not a half-beat off
     // lastBeat, is still the pulse — see the sounding re-open in `observe`.
     constexpr double kGridStaleBeats = 2.5;
+    // A hole this long, in beats, before the sounding re-open accepts a crest
+    // as far as 0.40 of a beat from the last accepted one.
+    constexpr double kReopenFullBeats = 8.0;
+    // Consecutive refused crests, one period apart and with kick body, that
+    // are taken as the pulse while a part is sounding.
+    constexpr int kRefusedRunBeats = 4;
+    static_assert (kRefusedRunBeats == 4, "BeatDecoder::refusedRunSec holds four");
 
     // A grid that still lands on the beats being detected, and lands tightly, is
     // not the wrong grid - and the double of the true tempo always is one of
@@ -6141,7 +6148,36 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                     // lastBeat (fixture A, 2 hats, frac 0.467). Keep the
                     // committed origin: refuse a half-beat off lastBeat.
                     // A drifted true pulse sits inside 0.40 and on the fold.
-                    if (offLast < 0.40
+                    //
+                    // In VIVO an *early* crest has to be closer than that
+                    // until the hole is long. A crest a sixteenth early after
+                    // a two-beat hole is a push, not the pulse having drifted:
+                    // at 2% of tempo error the pulse is 0.05 of a beat out
+                    // after 2.5 beats. Live take without a click, Flamingo
+                    // 64:19: a strong anticipation every two beats at -0.20 to
+                    // -0.27 of a beat, loud enough to own the fold; two were
+                    // taken here (-0.198, -0.267), each moved lastBeat a fifth
+                    // of a beat early, the short fit read 129 over a band at
+                    // 125 and the part ran 2-4% fast for eight seconds - the
+                    // places the listener pressed STOP. The allowance for an
+                    // early crest in VIVO opens from the ordinary keep at
+                    // kGridStaleBeats to 0.40 at kReopenFullBeats.
+                    //
+                    // Every narrowing here was measured (docs/TODO.md item
+                    // 72). In CERCO the re-open is how a sparse song settles:
+                    // UNA CANZONE PER TE locked at 33 s instead of 15 without
+                    // it. In FISSO, and for late crests, it is how EVERYTIME
+                    // comes back after its fill: refused there, it slipped a
+                    // whole beat twice.
+                    const bool earlyCrest = beats - std::round (beats) < 0.0;
+                    const double reopen = (tempoRegime != TempoRegime::live || ! earlyCrest)
+                        ? 0.40
+                        : static_cast<double> (kOnGridTolerance)
+                              + (0.40 - static_cast<double> (kOnGridTolerance))
+                                    * std::clamp ((beats - static_cast<double> (kGridStaleBeats))
+                                                      / (kReopenFullBeats - static_cast<double> (kGridStaleBeats)),
+                                                  0.0, 1.0);
+                    if (offLast < reopen
                         && std::fabs (static_cast<double> (wrapCentered (eventPhase)))
                                <= keep)
                     {
@@ -6246,6 +6282,78 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
             if (nearest >= 1.0
                 && std::fabs (std::log2 (beats / nearest)) > kStaleGridThreshold)
                 acceptedByCurrentGrid = false;
+        }
+        // The grid itself displaced. Every rule above defends the committed
+        // pulse under a sounding part, and each refusal leaves lastBeat where
+        // it is - so a lastBeat parked on a weak syncopation, at a tempo a few
+        // per cent off, refuses the band for as long as the two lattices take
+        // to drift back together. I WANNA DANCE 44.1k, 179.4-189.6 s: VIVO
+        // had walked to 127.8 over a song at 123.7, lastBeat sat on a 0.65
+        // crest, and 21 consecutive quarters 0.485 s apart, every one with
+        // kick body and strength 0.85-1.00, were refused (the first by the
+        // roll bar at 1.111, then off keep, then off the fold of a tempo that
+        // was not the song's). Confidence 0 for eight seconds and the part
+        // 3% fast throughout.
+        //
+        // Refused crests that are a lattice of their own are the pulse: four
+        // in a row with kick body, each one committed period (inside the
+        // stale-grid bar) after the one before, no accepted beat between
+        // them, and not in the half-beat zone that belongs to hats and to the
+        // hat-to-kick steal. An anticipation every two beats, a roll, a 3:2
+        // leftover and off-beat hats all fail one of those. Low band 0 is
+        // mute, so the click bank and the fixtures do not take this.
+        if (sounding && eligiblePeak && bpm > kMinBpm)
+        {
+            const float eventLowBand = std::max (prevLowBand,
+                                                 std::max (prevPrevLowBand, lowBand));
+            if (acceptedByCurrentGrid || eventLowBand < kLowBandMute)
+                refusedRunCount = 0;
+            else
+            {
+                const double sinceRefused = (eventTimeSec - refusedRunLastSec)
+                                          / static_cast<double> (period);
+                const bool continues = refusedRunCount > 0 && sinceRefused > 0.0
+                    && std::fabs (std::log2 (sinceRefused)) < kStaleGridThreshold;
+                refusedRunCount = continues ? refusedRunCount + 1 : 1;
+                refusedRunLastSec = eventTimeSec;
+                for (int k = 0; k + 1 < kRefusedRunBeats; ++k)
+                {
+                    refusedRunSec[k] = refusedRunSec[k + 1];
+                    refusedRunStrength[k] = refusedRunStrength[k + 1];
+                    refusedRunLowBand[k] = refusedRunLowBand[k + 1];
+                }
+                refusedRunSec[kRefusedRunBeats - 1] = eventTimeSec;
+                refusedRunStrength[kRefusedRunBeats - 1] = prevPulse;
+                refusedRunLowBand[kRefusedRunBeats - 1] = eventLowBand;
+                if (refusedRunCount >= kRefusedRunBeats
+                    && std::fabs (beats - std::round (beats)) < 0.5 - kOnGridTolerance)
+                {
+                    acceptedByCurrentGrid = true;
+                    postHoleReopenSec = eventTimeSec;
+                    refusedRunCount = 0;
+                    // The history is the lattice just left. Fitted together
+                    // with these beats it reads a tempo that is neither
+                    // (127.8 -> 121.5 over a song at 123.7) and a placement
+                    // trust of 0.30, under which the clock may not close the
+                    // fifth of a beat it is out by: it sat 105 ms ahead for
+                    // six seconds. The run is the history, as after a
+                    // confirmed transition; this crest is registerBeat's.
+                    beatWrite = 0;
+                    beatFilled = 0;
+                    longWrite = 0;
+                    longFilled = 0;
+                    for (int k = 0; k + 1 < kRefusedRunBeats; ++k)
+                        storeBeatForFit (refusedRunSec[k], refusedRunStrength[k],
+                                         refusedRunLowBand[k]);
+                    bpm = std::clamp (static_cast<float> (
+                                          60.0 * (kRefusedRunBeats - 1)
+                                          / (eventTimeSec - refusedRunSec[0])),
+                                      kMinBpm, kMaxBpm);
+                    gridAnchorSec = eventTimeSec;
+                    // A displaced grid, and the tracker is told so.
+                    ++gridSerial;
+                }
+            }
         }
     }
 

@@ -4493,6 +4493,73 @@ e datazione dei battiti sull'attacco; poi, eventualmente, una rete migliore.
   La leva è forse l'accettazione dei picchi sotto una griglia che accelera,
   non il bersaglio.
 
+### 72. Anticipi presi per battiti: la riapertura dopo un buco, in VIVO, non accetta più un sedicesimo in anticipo 🟡 (2026-09-30, misurato — banchi finali fatti, manca la ricompilazione dopo il solo commento e l'ascolto)
+
+Seguito dell'item 71, sulla strada indicata lì (quali picchi vengono accettati).
+- [x] Causa, picco per picco (stampa temporanea, poi tolta): dal 64:17 del
+  Flamingo la band suona un colpo forte un sedicesimo prima del battito ogni due
+  battiti (−0.20/−0.27 battiti). Il decoder li scarta (fuori da 0.18), ma due
+  volte li accetta dalla **riapertura dopo un buco** (`observe`, ramo
+  `sounding && beats >= kGridStaleBeats`): dopo 2.5 battiti senza battiti
+  accettati prende un picco sul pettine fino a 0.40 battiti dall'ultimo. A
+  111.32 s (−0.198) e 115.49 s (−0.267): ogni volta `lastBeat` va un quinto di
+  battito indietro, il fit corto legge 129 e la parte corre.
+- [x] Le riaperture sono rare (2–9 per brano) ma ognuna sposta la griglia di
+  0.18–0.40 battiti. W1 (tolleranza da 0.18 a 2.5 battiti fino a 0.40 a 8
+  battiti, sempre): Flamingo e Sally meglio, ma UNA CANZONE 48k aggancia a 33.4 s
+  invece di 15.4 e 44k fa due scatti nuovi (picco 19.6%): le sue tre riaperture
+  sono tutte in CERCO e le servono.
+- [x] W2 (stretta solo con tempo stabilito, FISSO o VIVO): UNA e FEEL tornano
+  identici, Sally scatti% 1.26 → 0.95 e picco 13 → 5%; ma EVERYTIME 48k slitta
+  di un battito due volte (le riaperture a 98, 102, 140 s in FISSO le servono
+  dopo il fill).
+- [x] W3 (stretta solo in VIVO): niente slittamenti, Flamingo e Sally come W2,
+  ma EVERYTIME 48k scatti% 0.80 → 0.98 e 44k picco 18.8 → 22.9%.
+- [x] **Tenuto W4** (`BeatDecoder::observe`, `kReopenFullBeats` 8): stretta solo
+  in VIVO e solo per un picco **in anticipo**. Flamingo: tempo a 64:19–64:27
+  124.6–126.9 invece di 127–129, scatti% 1.28 → 1.19, >25 ms 20.5 → 17.0%,
+  usc/min 6.96 → 5.92, slittamenti 1 → 0. EVERYTIME, UNA CANZONE, FEEL e gli
+  altri identici nelle misure; Sally torna alla base (>25 ms 9.7 → 10.2): lì
+  il picco dannoso era in ritardo, e i ritardi servono a EVERYTIME. Media del
+  banco: scatti% 0.83 → 0.82, slittamenti 1 → 0, fase verificata 18.3/43.1 →
+  14.9/33.9 ms. Banchi sintetici identici (la matrice non accende `sounding`),
+  `VPAlign --ramps` PASS, `--steps` identico, `probe_tempo_step` PASS,
+  `VPTests` `--tempo-step` 14/0, `--tempo-slow` 13/0, `--tempo-motion` 293/0,
+  `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0, `--phase-lock` 20/0.
+- [ ] Dopo questi banchi è cambiato solo il commento nel codice: ricompilare e
+  ripetere un controllo rapido prima del commit.
+- [ ] Aperto: Sally con W3 migliorava molto; serve un criterio che distingua il
+  ritardo dannoso di Sally da quelli utili di EVERYTIME (il verso non basta).
+- [ ] Ascolto su iPad, sul live: il punto 64:19 del Flamingo; e continuare a
+  usare il registro degli STOP/START.
+
+### 73. Griglia spostata sotto la parte: 21 quarti buoni rifiutati di fila (I WANNA DANCE, finale) 🟡 (2026-09-30, misurato — manca l'ascolto)
+
+Segnalazione: "i brani seguono leggermente peggio forse… alla fine soprattutto esce molto" su I WANNA DANCE.
+- [x] Non è una regressione di oggi: su questo brano i banchi da `s2` (13:58) a `w4` sono uguali, e il tratto
+  c'era già in `fbase` (29/09). Il brano è fermo a ~124.4 (tempogramma indipendente).
+- [x] Causa, picco per picco (stampa temporanea, poi tolta), 44.1k: a 169.5 s FISSO→VIVO e il tempo sale a
+  127.8 (classe dell'item 71, aperta). A 178.88 s `lastBeat` resta su un picco debole (0.65). Da 179.41 a
+  189.61 s arrivano 21 quarti regolari (0.485 s, cassa, forza 0.85–1.00) e sono **tutti rifiutati**: il primo
+  dalla regola dei rulli (1.111), poi fuori da 0.18, poi fuori dal pettine di un tempo che non è quello del
+  brano. Confidenza 0 per 8 s, la parte al 3% in più per 10 s (~0.6 battiti).
+- [x] Stessa classe su altri brani: in VIVO con la parte che suona, 14 tratti ≥4 s senza battiti accettati
+  nel banco (117 s in tutto); non tutti sono questo caso (alcuni sono pause vere).
+- [x] **Tenuto** (`BeatDecoder::observe`, `kRefusedRunBeats` 4): quattro picchi rifiutati di fila, con cassa,
+  ognuno a un periodo (entro 8.7%) dal precedente, nessun battito accettato in mezzo e non nella zona del
+  mezzo battito (< 0.32) → il quarto viene accettato. Muto con banda bassa 0 (banchi sintetici, fixture).
+  I WANNA DANCE 44.1k: buco 10.2 → 1.5 s, secondi sul tempo sbagliato 35.8 → 23.4, >25 ms 5.5 → 4.6%.
+  Banco (26 esecuzioni, `w4` → `x1`): 21 identiche; sbagl s 464.9 → 450.5, usc/min 3.58 → 3.55, >25 ms
+  9.1 → 8.9%, slittamenti 0. Costo: I WANNA DANCE 48k scatti% 0.73 → 0.83 (media 0.82 → 0.83).
+  `VPAlign --ramps` PASS (stessi numeri), `--steps` 0 FAIL, `VPTests --tempo-step` 14/0, `--tempo-slow`
+  13/0, `--new-input` 16/0, `--transport` 4/0, `--bar` 10/0 in 12 esecuzioni su 13 (una 9/1, asserzione non
+  catturata: da rivedere se si ripete).
+- [ ] Non eseguiti dopo questa modifica: `probe_tempo_step`, `probe_motion_matrix` (per costruzione non
+  accendono `sounding` e passano banda bassa 0), fixture hats A/B, rulli e D.
+- [ ] Aperto: al rientro il clock frena fino a 117 per ~2 s (44.1k, 187 s) e il tempo scende a 122 prima di
+  tornare a 123.7; e la salita a 128 a 169 s che origina tutto resta (item 71).
+- [ ] Ascolto su iPad del finale di I WANNA DANCE.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

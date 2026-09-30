@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace vp
 {
@@ -1434,7 +1435,58 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         const bool useTransitionPayload =
             follower.tempoTransitionActive()
             && hyp.transitionState == TempoTransitionState::rapid;
-        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : nnBpm,
+        // HOLD-EXPERIMENT (temporary switches)
+        static const float hC = std::getenv ("VP_HOLD_C") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_C"))) : 0.0f;
+        static const float hT = std::getenv ("VP_HOLD_T") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_T"))) : 30.0f;
+        static const float hN = std::getenv ("VP_HOLD_N") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_N"))) : 10.0f;
+        float clockBpm = nnBpm;
+        bool held = false;
+        const bool holdApplies = hC > 0.0f && ! speakerFollow && sounding && ! needsResync
+                                 && ! tapHold && ! harmonicSourceActive
+                                 && ! useTransitionPayload && ! follower.tempoTransitionActive();
+        if (! holdApplies)
+        {
+            holdRefBpm = 0.0f;
+        }
+        else if (holdRefBpm < 50.0f
+                 || std::fabs (std::fabs (std::log2 (nnBpm / holdRefBpm)) - 1.0f) < 0.10f)
+        {
+            holdRefBpm = nnBpm;
+            holdSettleSamples = 0;
+            holdSide = 0;
+            holdSideSamples = 0;
+        }
+        else
+        {
+            const float dt = static_cast<float> (numSamples) / static_cast<float> (sampleRate);
+            holdSettleSamples += numSamples;
+            if (holdSettleSamples < static_cast<int> (sampleRate * 8.0))
+                holdRefBpm += (nnBpm - holdRefBpm) * std::min (1.0f, dt / 2.0f);
+            else
+            {
+                const float d = nnBpm / holdRefBpm - 1.0f;
+                const int side = std::fabs (d) <= hC ? 0 : (d > 0.0f ? 1 : -1);
+                if (side != 0 && side == holdSide)
+                    holdSideSamples += numSamples;
+                else
+                {
+                    holdSide = side;
+                    holdSideSamples = 0;
+                }
+                if (side != 0 && holdSideSamples >= static_cast<int> (sampleRate * hN))
+                {
+                    holdRefBpm = nnBpm;
+                    holdSide = 0;
+                    holdSideSamples = 0;
+                }
+                clockBpm = std::clamp (nnBpm, holdRefBpm * (1.0f - hC), holdRefBpm * (1.0f + hC));
+                held = clockBpm != nnBpm;
+                holdRefBpm += (clockBpm - holdRefBpm) * std::min (1.0f, dt / hT);
+            }
+        }
+        if (held)
+            follower.setBeatGapHold (true);
+        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : clockBpm,
                                  useTransitionPayload ? hyp.transitionConfidence : nnConf);
     }
 

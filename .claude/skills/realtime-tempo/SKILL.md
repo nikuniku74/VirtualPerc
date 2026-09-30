@@ -5155,6 +5155,23 @@ than `model_1` on the whole bench (drum offset 12.1/11.8 against 11.4 ms, lock
 17.3/19.0 against 13.1 s). `VP_BEAT_MODEL` now overrides the bundled model for
 such comparisons.
 
+**Kept (2026-09-30), refused crests that form their own lattice are the pulse
+(docs/TODO.md item 73).** Every sounding rule in `observe` defends `lastBeat`,
+and each refusal leaves it where it is. I WANNA DANCE 44.1k, 179-190 s: VIVO
+had walked to 127.8 over a song at 123.7, `lastBeat` sat on a weak crest, and
+21 consecutive kick quarters at strength 0.85-1.00 were refused (roll bar at
+1.111, then off keep, then off the fold of the wrong tempo); the part ran 3%
+fast for ten seconds at confidence 0. `kRefusedRunBeats` 4: four refused
+crests in a row with kick body, each one committed period (inside
+`kStaleGridThreshold`) after the last, no accepted beat between, and less than
+0.32 of a beat off the grid (the half-beat zone stays with hats and the steal)
+- the fourth is accepted. Low band 0 is mute. Hole 10.2 -> 1.5 s, wrong-tempo
+seconds 35.8 -> 23.4; song bench 21 of 26 runs identical, wrong seconds 464.9
+-> 450.5, no slips; I WANNA DANCE 48k jerk 0.73 -> 0.83. `VPAlign --ramps`
+and `--steps` pass with the same numbers. Not re-run: `probe_tempo_step`, the
+motion matrix, hats/rolls/D fixtures. Still open: the brake to 117 on rejoin,
+and the VIVO climb to 128 that starts it (item 71).
+
 ## 9. Map: "I want to change X"
 
 | X | file |

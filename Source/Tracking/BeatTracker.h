@@ -609,6 +609,10 @@ private:
     bool heardMusic = false;
     bool hadPlayed = false;
     bool needsResync = false;
+    float holdRefBpm = 0.0f;
+    int holdSettleSamples = 0;
+    int holdSide = 0;
+    int holdSideSamples = 0;
     bool resyncGridArmed = false;
     uint32_t resyncGridSerial = 0;
     bool waitForSongBeat = false;

@@ -588,6 +588,11 @@ private:
         moving the anchor there is a phase jump and the clock closes it by
         accelerating. -1 when no such hat is waiting. */
     double refusedHatAfterHoleSec = -1.0;
+    int refusedRunCount = 0;
+    double refusedRunLastSec = -1.0;
+    double refusedRunSec[4] {};
+    float refusedRunStrength[4] {};
+    float refusedRunLowBand[4] {};
     // Door D (live) and unknown Door B: keep aiming at that 4-beat
     // for kShortFit, including kit-gap !haveShort frames.
     float ioiTargetHoldBpm = 0.0f;
