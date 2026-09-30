@@ -1771,6 +1771,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // Nothing is playing, so the count goes over the boundary with the
             // grid: the bar the part will come in on has to be the song's bar,
             // and this is where that is decided.
+            lastSilentSnapBeats = gridErr;
+            ++silentSnapCount;
             follower.snapPhase (songPhase, true);
         }
         else
@@ -1932,6 +1934,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.tempoTrimBpm = follower.tempoTrimBpm();
     out.observedPhaseErrorBeats = follower.observedPhaseErrorBeats();
     out.phaseRecoveryEvents = follower.phaseRecoveryEvents();
+    out.silentSnapBeats = lastSilentSnapBeats;
+    out.silentSnapCount = silentSnapCount;
     out.confidence = smoothedConf;
     out.tempoOctave = octaveAuto ? autoOctave : userOctave;
     out.beatPhase = follower.beatPhase();

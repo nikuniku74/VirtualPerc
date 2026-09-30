@@ -4420,6 +4420,79 @@ Richiesta: vedere se si può stabilizzare ancora il tempo in generale.
   CERCO).
 - [ ] Ascolto su iPad: INFINITO verso 4:43, FEEL verso 3:26.
 
+### 70. Verso un salto di qualità: l'aggancio all'attacco non serve; registro degli STOP/START 🟡 (2026-09-30 — serve una prova dell'utente)
+
+Vincolo dell'utente: dal vivo all'iPad arriva solo il mix completo (un canale
+cassa separato è troppo macchinoso). Piano concordato: registro degli STOP/START
+e datazione dei battiti sull'attacco; poi, eventualmente, una rete migliore.
+- [x] **Respinto prima di toccare il motore: datare ogni battito sull'attacco più
+  vicino nel mix.** Battiti accettati dalla rete su sei brani a 48 kHz (stampa
+  temporanea, poi tolta), irregolarità degli intervalli (mediana/p90 ms): VITA
+  10.9/29.9, EVERYTIME 6.8/19.7, THE REASON 8.9/21.4, I WANNA DANCE 7.9/22.5,
+  UNA CANZONE 13.2/40.0, Sally live 20.1/55.4. Agganciati all'attacco entro
+  30 ms: 12.9/38.5, 7.7/26.5, 7.9/23.9, 10.2/31.1, 16.2/48.4, 18.1/67.1 —
+  peggio in cinque su sei. Anche a 12, 20, 45 ms e con i soli bassi (40–160 Hz)
+  o i soli medio-alti (1.5–8 kHz). Nel mix l'attacco più vicino a un battito
+  spesso non è la batteria; la rete è già più regolare.
+- [x] **Registro degli STOP/START** (diagnostica, il comportamento del motore è
+  identico byte per byte): `EngineSnapshot::silentSnapBeats/silentSnapCount`
+  (di quanto il clock è stato posato in silenzio, `BeatTracker`), e in
+  `MainComponent` a ogni STOP seguito da START entro 10 s una riga, 4 s dopo lo
+  START, in `Documents/VirtualPercussionist-stopstart.log`: brano e posizione,
+  durata della pausa, stato PRIMA e DOPO (bpm, clock, rete, pettine, regime,
+  errore di fase, fiducia, battuta) e di quanto è stato riallineato. La
+  cartella è visibile in File ("Su iPad") con `FILE_SHARING_ENABLED` e
+  `DOCUMENT_BROWSER_ENABLED`. `VPTrack` stampa i riallineamenti a fine corsa:
+  Sally con `--stop-at 130` 3 riallineamenti, ultimo +0.051 battiti; senza, 1.
+  Build iPadOS Debug senza firma riuscita; `VPTests` `--tempo-step` 14/0,
+  `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0.
+- [ ] L'utente prova sull'iPad: quando sente la parte "incastrata" fa STOP e
+  START come sempre, poi manda il file. Con i casi veri si costruisce il
+  riconoscimento per farlo da soli.
+- [ ] Prova al computer di una rete migliore (dispersione e falsi nei fill
+  sugli stessi brani) prima di qualunque integrazione.
+
+### 71. Altri pesi di BeatNet; il registro dell'utente: la parte corre sopra il pettine 🔴 (2026-09-30, diagnosi misurata — nessuna correzione pulita)
+
+- [x] **Pesi alternativi, respinti.** `model_1` (GTZAN) è il modello dell'app
+  (esportazione identica byte per byte). `model_2` (Ballroom) e `model_3` (Rock
+  Corpus) scaricati in `third_party/beatnet-weights`, esportati fuori
+  dall'albero e provati sul banco intero con `VP_BEAT_MODEL` (che ora ha la
+  precedenza sul modello incorporato, `ModelLocator.cpp`). GTZAN / Ballroom /
+  Rock: scarto colpi 11.36 / 12.13 / 11.76 ms, >25 ms 8.7 / 11.3 / 10.2 %,
+  aggancio 13.1 / 17.3 / 19.0 s, sbagl s 465 / 401 / 746, scatti 62 / 44 / 63,
+  scatti% 0.81 / 0.88 / 0.96, slittamenti 0 / 0 / 1. Nessuno dei due è meglio.
+- [x] **Registro dell'utente** (`VirtualPercussionist-stopstart.log`, Flamingo
+  64:24–66:07, cinque STOP/START): riallineamenti di soli 20–34 ms (la griglia
+  non era spostata); in quattro su cinque il tempo dell'app era 1–2% sopra il
+  pettine e dopo ci torna (128.1 → 126.1 con pettine 125.5; 126.2 → 124.5).
+- [x] Riprodotto (`/tmp/vp-bench/wav/98_FLAMINGO_3750_48k.wav`, estratto
+  3750–4000 s): a 108–122 s la band sale 121 → 125 e resta; fit corto 129,
+  rete 127–128.5, clock fino a 130, pettine 125 per tutto il tratto. Tempo
+  dagli attacchi (autocorrelazione su 6 s): 125–126. L'app va 2–4% più veloce
+  per ~8 s e rientra da sola. Sul tratto intero rete oltre l'1.5% dal pettine
+  7.2% del tempo, clock oltre il 3% 7.4%.
+- [x] Sei varianti della stessa idea (più autorità al pettine in VIVO su ingresso
+  diretto), **tutte respinte**:
+  - V1 niente lead quando punta lontano dal pettine (>1.5%): effetto piccolo.
+  - V2 tirata 60% da 1.5% sul target: Flamingo rete oltre 1.5% 7.2 → 1.8%, clock
+    max 21 → 4.4%; ma `VPAlign --ramps` FAIL (12 s 35.5 → 41.9), continuo
+    44.2 → 47.3.
+  - V3 come V2 solo con pettine fermo su 4 battiti (0.5%): rampe quasi a posto
+    ma beneficio sul Flamingo perso (4.0%, clock max 21%).
+  - V4 tirata 60% quando è il fit corto a stare >1.5% dal pettine, più V1:
+    Flamingo 2.0% / clock oltre 3% 4.5%; rampe 12 s 37.9 e 120→132 28.3 FAIL;
+    banco misto: BLUE SKY 48k scatti 6 → 2, ASPETTANDO aggancio 25.4 → 18.8 s,
+    ma I WANNA DANCE 44k scatti 0 → 2 (picco 11.9%), FEEL 44k aggancio 27.3 →
+    36.0 s, EVERYTIME 48k fase peggiore 119 → 243 ms; scarto 11.50 → 11.63.
+  - V5 come V4 al 35%: rampe FAIL uguali, Flamingo peggio della base (13.5%).
+  - V6 come V4 senza V1: una rampa FAIL (120→132 27.7), Flamingo peggio (12.4%).
+- [ ] Da capire prima di riprovare: perché il fit corto legge 129 con la band a
+  125 (i battiti accettati scivolano in avanti sotto una griglia che li
+  insegue: l'eccesso si autoalimenta, con V2 il fit corto torna a 124–126).
+  La leva è forse l'accettazione dei picchi sotto una griglia che accelera,
+  non il bersaglio.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4680,6 +4753,8 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 67 (2026-09-30): trim che spinge contro la fase dimezzato a ogni osservazione (T2): dopo un colpo spostato il clock rientra in 3 battiti invece di 8 s; scarto dalla batteria 11.50 → 11.33 ms. Silenzio/STOP automatico: i segnali attuali sbagliano 9 volte su 10 e il caso "incastrato" non è riprodotto; serve un caso vero.
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
+- Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
+- Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

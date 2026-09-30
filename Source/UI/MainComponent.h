@@ -558,6 +558,15 @@ private:
     bool audioOpened = false;
     bool micGranted = false;
     std::atomic<bool> userWantsArmed { false };
+    // STOP then START within ten seconds is the listener's own re-sync. What
+    // the clock was doing before it and where it landed after goes to a log in
+    // the Documents folder, so the cases can be studied (docs/TODO.md item 70).
+    vp::EngineSnapshot stopSnap;
+    double stopWallMs = 0.0;
+    double stopTrackSec = -1.0;
+    double restartWallMs = 0.0;
+    bool restartLogPending = false;
+    void writeRestartLog();
     int  inputChannels = 0;
     int  tapFlash = 0;
 

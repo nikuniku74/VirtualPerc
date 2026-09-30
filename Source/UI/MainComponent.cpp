@@ -1571,6 +1571,8 @@ void MainComponent::startPressed()
 {
     if (! internalTrackSelected())
         ensureMicrophone();
+    restartWallMs = juce::Time::getMillisecondCounterHiRes();
+    restartLogPending = stopWallMs > 0.0 && restartWallMs - stopWallMs < 10000.0;
     userWantsArmed = true;
     engine.requestStart();
     refreshStartButton();
@@ -1578,9 +1580,55 @@ void MainComponent::startPressed()
 
 void MainComponent::stopPressed()
 {
+    stopSnap = engine.snapshot();
+    stopWallMs = juce::Time::getMillisecondCounterHiRes();
+    stopTrackSec = internalTrackSelected() ? trackTransport.getCurrentPosition() : -1.0;
+    restartLogPending = false;
     userWantsArmed = false;
     engine.requestStop();
     refreshStartButton();
+}
+
+void MainComponent::writeRestartLog()
+{
+    // ASCII only: juce::String (const char*) asserts on anything else.
+    static const char* const regimes[] = { "CERCO", "FISSO", "VIVO" };
+    auto describe = [] (const vp::EngineSnapshot& s)
+    {
+        const float bpm = juce::jmax (40.0f, s.bpm);
+        return juce::String ("bpm ") + juce::String (s.bpm, 2)
+             + " clock " + juce::String (s.clockBpm, 2)
+             + " rete " + juce::String (s.neuralBpm, 2)
+             + " pettine " + juce::String (s.combBpm, 2)
+             + " " + regimes[juce::jlimit (0, 2, s.tempoRegime)]
+             + " stato " + juce::String (static_cast<int> (s.state))
+             + " erroreFase " + juce::String (s.phaseErrorBeats, 3) + " batt ("
+             + juce::String (s.phaseErrorBeats * 60000.0f / bpm, 0) + " ms)"
+             + " fiducia " + juce::String (s.evidenceTrust, 2)
+             + " battuta " + juce::String (s.barPhase, 3)
+             + (s.barTrusted ? " 1ok" : " 1?")
+             + (s.percussionAudible ? " suona" : " muto");
+    };
+    const bool snapped = snap.silentSnapCount != stopSnap.silentSnapCount;
+    const float bpmBefore = juce::jmax (40.0f, stopSnap.bpm);
+    juce::String line;
+    line << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M:%S")
+         << " | " << (internalTrackSelected() ? trackName : juce::String ("ingresso"))
+         << " @ " << juce::String (stopTrackSec, 1) << " s"
+         << " | pausa " << juce::String ((restartWallMs - stopWallMs) / 1000.0, 1) << " s"
+         << " | PRIMA " << describe (stopSnap)
+         << " | DOPO " << describe (snap)
+         << " | riallineato " << (snapped ? juce::String (snap.silentSnapBeats, 3) + " batt ("
+                                              + juce::String (snap.silentSnapBeats * 60000.0f / bpmBefore, 0)
+                                              + " ms) x" + juce::String (static_cast<int> (
+                                                    snap.silentSnapCount - stopSnap.silentSnapCount))
+                                          : juce::String ("no"))
+         << " | bpm " << juce::String ((snap.bpm / bpmBefore - 1.0f) * 100.0f, 1) << "%"
+         << "\n";
+    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+        .getChildFile ("VirtualPercussionist-stopstart.log")
+        .appendText (line);
+    juce::Logger::outputDebugString ("VPRESTART " + line);
 }
 
 void MainComponent::tapPressed()
@@ -3199,6 +3247,12 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+    if (restartLogPending
+        && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
+    {
+        restartLogPending = false;
+        writeRestartLog();
+    }
    #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)
     {
         static int diagTicks = 0;

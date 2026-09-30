@@ -57,6 +57,14 @@ bool loadDefaultBeatModel (OnnxBeatModel& model)
 {
     const auto cfg = defaultBeatOnnxConfig();
 
+    // A model named in VP_BEAT_MODEL wins over the bundled one, so a probe can
+    // compare weights without rebuilding (docs/TODO.md item 71). Nothing sets
+    // it in the app.
+    if (const char* env = std::getenv ("VP_BEAT_MODEL"))
+        if (env[0] != '\0' && std::filesystem::exists (env)
+            && model.loadFile (env, cfg))
+            return true;
+
 #if defined(VP_HAS_BEAT_MODEL)
     int sz = 0;
     const char* data = VpBeatModelData::getNamedResource ("beatnet_onnx", sz);

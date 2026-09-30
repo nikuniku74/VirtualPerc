@@ -139,6 +139,10 @@ juce_add_gui_app (VirtualPercussionist
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
+    # The STOP/START log is written to the app's Documents folder; this makes
+    # that folder visible in Files ("On My iPad") so it can be sent on.
+    FILE_SHARING_ENABLED TRUE
+    DOCUMENT_BROWSER_ENABLED TRUE
     # iPhone and iPad. 1 is iPhone, 2 is iPad. This is the one that actually
     # decides anything here: it becomes UIDeviceFamily in the Info.plist, which
     # is what makes an iPhone a device this app will install on.

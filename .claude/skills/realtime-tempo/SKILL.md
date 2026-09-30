@@ -5135,6 +5135,26 @@ steps (47-87 ms at the third beat). Still open: a false step at confidence 1.00
 (SPLENDIDA 0:47), and a grid that jumps during a transition state without a
 consumed transition (EVERYTIME 44.1k 2:41).
 
+**Measured, nothing kept (2026-09-30): the live overshoot above the fold, and the
+other BeatNet weights (docs/TODO.md item 71).** The listener's own STOP/START
+log (five presses on a live take without a click) shows the grid was *not*
+displaced - the silent re-placement was 20-34 ms - but the tempo was 1-2% above
+the fold, and came back onto it. Reproduced on the same passage: the band rises
+121 -> 125 and stays, the short fit reads 129, the committed tempo 127-128.5 and
+the clock 130 for about eight seconds, the fold on 125 throughout, and an
+onset autocorrelation of the audio agrees with the fold. The excess feeds
+itself: with the fold given more weight the short fit itself reads 124-126.
+Six variants of "more authority to the fold in VIVO" were rejected: on the led
+target it pulls every ramp back (VPAlign 12 s 35.5 -> 41.9 ms); gated on a fold
+that stands still it loses the case; gated on short-fit-versus-fold at 60% it
+fixes the passage and BLUE SKY/ASPETTANDO but adds surges on I WANNA DANCE,
+delays FEEL's lock and still fails two ramps; at 35% or without the lead veto
+the passage is worse than before. Do not retry a comb pull on the live target.
+BeatNet `model_2` (Ballroom) and `model_3` (Rock Corpus), same network: worse
+than `model_1` on the whole bench (drum offset 12.1/11.8 against 11.4 ms, lock
+17.3/19.0 against 13.1 s). `VP_BEAT_MODEL` now overrides the bundled model for
+such comparisons.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

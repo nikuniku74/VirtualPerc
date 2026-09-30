@@ -248,6 +248,12 @@ struct EngineSnapshot
     float tempoTrimBpm         = 0.0f;
     float phaseErrorBeats      = 0.0f;
     uint32_t phaseRecoveryEvents = 0;
+    /** Display-only: how far the clock was from the song's grid the last time
+        it was placed there in silence (after STOP, or while waiting to come
+        in), in beats, and how many times that has happened. The STOP/START
+        log in the UI reads these (docs/TODO.md item 70). */
+    float silentSnapBeats      = 0.0f;
+    uint32_t silentSnapCount   = 0;
     float confidence           = 0.0f;
     float beatPhase            = 0.0f;
     float barPhase             = 0.0f;

@@ -341,6 +341,8 @@ public:
         float         tempoTrimBpm = 0.0f;
         float         observedPhaseErrorBeats = 0.0f;
         uint32_t      phaseRecoveryEvents = 0;
+        float         silentSnapBeats = 0.0f;
+        uint32_t      silentSnapCount = 0;
         float         confidence = 0.0f;
         float         beatPhase = 0.0f;
         float         barPhase = 0.0f;
@@ -572,6 +574,9 @@ private:
         see TempoFollower::setFixedDirectFeed. */
     uint32_t fixedGridSerial = 0;
     int fixedGridSamples = 0;
+    /** Diagnostics for the STOP/START log: the last silent placement. */
+    float lastSilentSnapBeats = 0.0f;
+    uint32_t silentSnapCount = 0;
     bool seenSerials = false;
     TempoTransitionConsumer transitionConsumer;
     float lastLeadMs = 0.0f;

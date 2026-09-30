@@ -306,6 +306,8 @@ int main (int argc, char** argv)
                      tot > 0.0 ? rightSeconds / tot * 100.0 : 0.0, rightSeconds, tot);
     }
     std::printf ("bpm finale %.2f  restart %d\n", (double) s.bpm, s.analysisRestarts);
+    std::printf ("riallineamenti in silenzio %u, ultimo %+.3f battiti\n",
+                 s.silentSnapCount, (double) s.silentSnapBeats);
     if (pulseFile != nullptr)
         std::fclose (pulseFile);
     return 0;
