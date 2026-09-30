@@ -2255,6 +2255,7 @@ static void runHeardPhaseLockBench()
         float worstLate = 0.0f;
         float earlyHalf = 0.0f, lateHalf = 0.0f;
         int   earlyN = 0, lateN = 0;
+        int   offLevel = 0;
         int pos = 0, blocks = 0, samplesInHop = 0;
         bool workerDrained = true;
         vp::EngineSnapshot last;
@@ -2265,11 +2266,22 @@ static void runHeardPhaseLockBench()
             const float* ins[1] = { song.data() + pos };
             eng.process (ins, 1, outs, 2, numThisBlock);
             last = eng.snapshot();
-            if (last.state == vp::TrackingState::following && last.bpm > 40.0f)
+            // The level the part entered on is kept (docs/TODO.md items 57, 64):
+            // at 156 the first reading is 78 and stays 78, the part then plays
+            // on every other click. That is still on the pulse, so the phase is
+            // read in clicks: k beats of the click per heard beat.
+            const float octaves = last.bpm > 40.0f ? std::log2 (trackBpm / last.bpm) : 99.0f;
+            const bool onOctave = std::fabs (octaves - std::round (octaves)) < 0.03f
+                                  && octaves > -0.5f && octaves < 1.5f;
+            if (! onOctave && pos > static_cast<int> (sr * 14.0))
+                ++offLevel;
+            if (last.state == vp::TrackingState::following && onOctave)
             {
+                const float k = std::exp2 (std::round (octaves));
+                const float heard = last.beatPhase * k;
                 const double truePhase = static_cast<double> (pos) * beatsPerSample;
                 const float err = vp::wrapCentered (
-                    last.beatPhase - static_cast<float> (truePhase - std::floor (truePhase)));
+                    heard - std::floor (heard) - static_cast<float> (truePhase - std::floor (truePhase)));
                 const double t = static_cast<double> (pos) / sr;
                 if (t > 14.0)
                 {
@@ -2309,7 +2321,7 @@ static void runHeardPhaseLockBench()
         const float lateErrMs = meanLate * beatMs - lead;
         std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms attack=%5.1fms"
                      "  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
-                     "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d\n",
+                     "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d  offLevel=%d\n",
                      static_cast<double> (trackBpm), static_cast<double> (last.bpm),
                      static_cast<double> (last.leadMs),
                      static_cast<double> (lead),
@@ -2318,10 +2330,14 @@ static void runHeardPhaseLockBench()
                      static_cast<double> (meanLate * beatMs),
                      static_cast<double> (earlyErrMs),
                      static_cast<double> (lateErrMs),
-                     static_cast<double> (worstLate), last.tempoRegime);
+                     static_cast<double> (worstLate), last.tempoRegime, offLevel);
 
         expect (workerDrained,
                 "ONNX analysis worker kept up with real-time playback");
+        // From 14 s to the end every block is on the pulse or on its held
+        // half, never a 3:2, and both halves have been measured.
+        expect (offLevel == 0 && earlyN > 0 && lateN > 0,
+                "the part plays the click's tempo or the half it entered on");
         // The clock is deliberately early now, by the slowest attack in
         // the percussion bank: a shaker started exactly on the pulse is
         // *heard* after it, so the pulse is placed before. What has to sit
@@ -10571,6 +10587,54 @@ void vpRunSlowTempoRegressionTest (int& passed, int& failed)
                 && vp::stepTempoOctave (1, -1) == 0
                 && vp::stepTempoOctave (0, -1) == -1,
             "half and double move one octave from the effective displayed level");
+
+    // A manual /2 is published, not decoded (docs/TODO.md item 63): the tempo
+    // and the period are halved, every other beat is announced, and the phase
+    // of the halved beat is continuous, all on the natural grid, which is left
+    // as it was (the same grid answers in both modes).
+    {
+        vp::BeatDecoder natural, halved;
+        for (auto* d : { &natural, &halved })
+        {
+            d->prepare (fps);
+            d->setLevelAnchor (true);
+            d->setLineFeed (true);
+        }
+        constexpr float bpm = 120.0f;
+        const double framesPerBeat = 60.0 / bpm * fps;
+        vp::BeatHypothesis n {}, h {};
+        uint32_t serialAtPress = 0;
+        float prevPhase = 0.0f, worstStep = 0.0f;
+        for (int frame = 0; frame < static_cast<int> (40.0 * fps); ++frame)
+        {
+            const double beats = static_cast<double> (frame) / framesPerBeat;
+            const double distance = std::fabs (beats - std::round (beats)) * framesPerBeat;
+            const float pulse = 0.03f + 0.92f * static_cast<float> (
+                std::exp (-0.5 * (distance / 1.5) * (distance / 1.5)));
+            n = natural.observe (pulse, 0.03f, 0.0f);
+            if (frame == static_cast<int> (20.0 * fps))
+            {
+                halved.setUserOctave (-1, true);
+                serialAtPress = h.beatSerial;
+            }
+            h = halved.observe (pulse, 0.03f, 0.0f);
+            if (frame > static_cast<int> (24.0 * fps))
+            {
+                const float step = std::fmod (h.beatPhase - prevPhase + 1.0f, 1.0f);
+                worstStep = std::max (worstStep, std::min (step, 1.0f - step));
+            }
+            prevPhase = h.beatPhase;
+        }
+        const uint32_t halvedBeats = h.beatSerial - serialAtPress;
+        const uint32_t naturalBeats = 20u * 2u;   // 20 s of 120 BPM
+        expect (std::fabs (h.bpm - 0.5f * n.bpm) < 0.2f
+                    && std::fabs (h.periodSec - 2.0f * n.periodSec) < 0.004f,
+                "a manual /2 publishes half the tempo and twice the period");
+        expect (halvedBeats + 3 >= naturalBeats / 2 && halvedBeats <= naturalBeats / 2 + 3,
+                "and announces every other beat");
+        expect (worstStep < 0.05f,
+                "and the halved beat phase never jumps");
+    }
 
     // Missing alternate downbeats at a perfectly clear 100 BPM used to publish
     // an octave hint after two eight-beat gaps, even though every quarter was

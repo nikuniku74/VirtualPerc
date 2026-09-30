@@ -19,6 +19,10 @@ BRANO). Per ciascuno, solo mentre la parte suona e dopo i primi 20 s:
            stimato da un tempogramma indipendente (finestra 12 s, solo punti
            nitidi, ottava allineata al clock). Secondo parere, non verita'.
   ottava   secondi passati a ~doppio o ~meta' della mediana del brano.
+  usc/min  onset_fit.py: uscite al minuto, tratti di almeno un battito in cui
+           i colpi di cassa/rullante stanno oltre 25 ms dallo scarto tipico
+           del brano rispetto al sedicesimo del clock ("esce e poi rientra").
+  >25%     % degli attacchi oltre quei 25 ms.
   fase     line_scan.py: secondi verificati, errore medio/peggiore del clock
            in ms contro la griglia ricavata dal brano stesso, slittamenti.
 
@@ -32,6 +36,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import line_scan  # noqa: E402
+import onset_fit  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 VPTRACK = os.environ.get('VPTRACK', os.path.join(ROOT, 'build-host/VPTrack_artefacts/Release/VPTrack'))
@@ -150,7 +155,9 @@ def metrics(pul):
         if near.sum() > 10:
             out_frac = float(np.mean(np.abs(cd[near] / ref[near] - 1) > 0.03) * 100)
     ls = line_scan.scan(pul) or (0, 0.0, 0.0, 0, 0.0)
-    return dict(jerk=jerk, out=out_frac, octave=octave, bpm=song, lock=lock_s, wrong=wrong_s, entry=entry_s, wrong40=wrong40,
+    of = onset_fit.fit(wav, pul) or dict(per_min=float('nan'), p25=float('nan'))
+    return dict(exits=of['per_min'], p25=of['p25'],
+                jerk=jerk, out=out_frac, octave=octave, bpm=song, lock=lock_s, wrong=wrong_s, entry=entry_s, wrong40=wrong40,
                 ver=ls[0], mean=ls[1], worst=ls[2], slips=ls[3])
 
 
@@ -161,8 +168,8 @@ def show(tags):
         for f in sorted(os.listdir(d)):
             if f.endswith('.pul'):
                 rows.setdefault(f[:-4], {})[tag] = metrics(f'{d}/{f}')
-    keys = ('jerk', 'entry', 'lock', 'wrong40', 'wrong', 'mean', 'worst', 'slips')
-    head = f"{'brano':34s} {'bpm':>6s} {'scatti%':>8s} {'entra':>6s} {'aggancio':>8s} {'sb<40':>6s} {'sbagl s':>7s} {'verif s':>7s} {'fase ms':>8s} {'peggio':>7s} {'slitt':>5s}"
+    keys = ('jerk', 'exits', 'p25', 'entry', 'lock', 'wrong40', 'wrong', 'mean', 'worst', 'slips')
+    head = f"{'brano':34s} {'bpm':>6s} {'scatti%':>8s} {'usc/min':>7s} {'>25%':>5s} {'entra':>6s} {'aggancio':>8s} {'sb<40':>6s} {'sbagl s':>7s} {'verif s':>7s} {'fase ms':>8s} {'peggio':>7s} {'slitt':>5s}"
     print(head)
     tot = {tag: {k: [] for k in keys} for tag in tags}
     for name, per in rows.items():
@@ -174,12 +181,12 @@ def show(tags):
                 if not np.isnan(r[k]):
                     tot[tag][k].append(r[k])
             lab = name[:34] if tag == tags[0] else f"  {tag}"[:34]
-            print(f"{lab:34s} {r['bpm']:6.1f} {r['jerk']:8.2f} {r['entry']:6.1f} {r['lock']:8.1f} {r['wrong40']:6.1f} {r['wrong']:7.1f} "
+            print(f"{lab:34s} {r['bpm']:6.1f} {r['jerk']:8.2f} {r['exits']:7.2f} {r['p25']:5.1f} {r['entry']:6.1f} {r['lock']:8.1f} {r['wrong40']:6.1f} {r['wrong']:7.1f} "
                   f"{r['ver']:7d} {r['mean']:8.1f} {r['worst']:7.1f} {r['slips']:5d}")
     print()
     for tag in tags:
         s = tot[tag]
-        print(f"{'MEDIA ' + tag:34s} {'':6s} {np.mean(s['jerk']):8.2f} {np.mean(s['entry']):6.1f} {np.mean(s['lock']):8.1f} "
+        print(f"{'MEDIA ' + tag:34s} {'':6s} {np.mean(s['jerk']):8.2f} {np.mean(s['exits']):7.2f} {np.mean(s['p25']):5.1f} {np.mean(s['entry']):6.1f} {np.mean(s['lock']):8.1f} "
               f"{np.sum(s['wrong40']):6.1f} {np.sum(s['wrong']):7.1f} {'':7s} {np.mean(s['mean']):8.1f} {np.mean(s['worst']):7.1f} "
               f"{int(np.sum(s['slips'])):5d}")
 

@@ -5047,6 +5047,25 @@ grid's pulse also fixed LET ME LOVE YOU but kept grids provisional for longer
 48k's entry by half a second: rejected. The song bench is not deterministic
 under heavy concurrent load (I WANNA DANCE 44k); run it alone.
 
+**Kept (2026-09-29), a manual /2 is published, not decoded (docs/TODO.md
+item 63).** `BeatDecoder::setUserOctave (n, manual)`: a listener's slower level
+(/2, /4) leaves the decoder at the natural level and divides at publication
+(`publishDivided`): `bpm`, `periodSec`, the other BPM fields, `beatPhase =
+(m + naturalPhase) / D` and the beat events of one class only
+(`publishedBeatSerial`). Decoded at the slow level the grid rejects every other
+beat as a subdivision on half the evidence, and the played beats drifted up to
+130 ms from the natural-level ones for 10-20 s. The natural count is an unwrapped
+phase counter (`naturalBeat`), the class is the class of the beats the network
+accepts (`classWeight`), fixed at the press from the last accepted beat and
+decided again by the first accepted beat after a rebuilt grid; it changes only
+when the other class gathers > 4x + 5. Engaged from the reportable minimum at the
+press, from 1.06x otherwise, released under 0.98x: hovering at ~100 BPM must not
+flip it (VITA 96 did, 190 ms off). x2 and every level AUTO chooses are decoded
+exactly as before: publishing AUTO's /2 too changed UNA CANZONE's path at 10 s
+(wrong-tempo seconds 43 -> 69), so the natural/AUTO path is byte-identical to the
+version before. Song bench with /2 at 5 s: rate jerk 1.08 -> 0.76 %. Nothing
+looks ahead: the class is a count of beats already passed.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

@@ -4145,6 +4145,110 @@ fonti indipendenti) concordano a fine brano; 15 dei 22 casi ne hanno uno.
   contrattempo in 20-50 s, dove il pettine dà ragione all'app), cassa sotto 150 Hz
   (non regolare su questo brano, coerenza 0.02-0.29).
 
+### 63. ÷2 manuale: pubblicato, non decodificato 🟢 (2026-09-29, misurato — resta ascolto su iPad)
+
+Causa (item 62): con ÷2 il decoder lavorava tutto al livello dimezzato, con la
+griglia che scarta come suddivisione ogni secondo battito e metà delle prove.
+Sul brano stesso, a ÷2, i battiti suonati si scostavano fino a 130 ms da quelli
+del livello naturale per tratti di 10-20 s.
+
+Ora (`BeatDecoder::setUserOctave (n, manual)`, `NeuralBeatTracker`,
+`BeatTracker`): una richiesta MANUALE più lenta (÷2, ÷4) lascia il decoder al
+livello naturale e **pubblica** diviso: tempo, periodo e fase (`(m + fase)/D`),
+gli eventi di battito solo per la classe scelta. Tutto causale: la classe è un
+conteggio di battiti naturali già passati, niente lookahead.
+- La classe segue i battiti che la rete accetta (in 1000 GIORNI passano solo 1 su
+  2: una classe presa a caso non vedeva mai un evento); scelta alla pressione
+  dall'ultimo battito accettato, ridecisa dal primo battito accettato dopo una
+  ricostruzione della griglia; cambia solo se l'altra classe raccoglie molto di
+  più (peso > 4x + 5) e allora con un nuovo `gridSerial`.
+- Attivo solo se il tempo diviso resta segnalabile: alla pressione da 50 BPM,
+  poi da 53, rilascio sotto 49 (isteresi). Sotto, ÷2 è ignorato come prima.
+- ×2 e ogni livello scelto da AUTO restano decodificati al livello spostato,
+  esattamente come prima. Il primo tentativo pubblicava anche AUTO: UNA CANZONE
+  cambiava percorso a 10 s (sbagl s 43 → 69). Percorso naturale/AUTO ora
+  byte per byte uguale a HEAD (UNA, FEEL 48k, LET ME LOVE YOU 48k, 1000 GIORNI).
+- [x] Banco (22 brani + 1000 GIORNI, ÷2 premuto a 5 s), scatti % contro il vecchio
+  ÷2: media 1.08 → **0.76** (SPLENDIDA 2.17 → 0.79, I WANNA DANCE 1.43 → 0.57);
+  EVERYTIME 0.62/0.84 → 0.80/0.96 (leggermente peggio). Battiti a ÷2 contro il
+  clock naturale dello stesso binario: mediana 0.2 ms, oltre 120 ms il 2.7%
+  (prima, sui casi dove ÷2 agisce, 8.9-17%). Contro i battiti accettati (1000
+  GIORNI 44k, 60-210 s): oltre 100 ms 3.3% contro 9.5%, MAD 27 contro 34 ms.
+- Peggio o aperto: nei primi 30-60 s dopo la pressione il ÷2 nuovo resta 50-100 ms
+  fuori dai battiti accettati (transitorio del follower dopo il cambio di
+  numeratore); UNA CANZONE (pressione durante l'aggancio, il tempo naturale
+  scende sotto 98 e il ÷2 si disattiva: 41% oltre 60 ms).
+- [x] Gate: `probe_matrix`, `probe_motion_matrix` (offset 0/32) e
+  `probe_tempo_step` identici al riferimento; `VPAlign --ramps/--steps`, `VPBar`
+  identici; `VPTests --tempo-step` 14/0, `--tempo-slow` 13/0 (3 nuovi controlli:
+  metà tempo e doppio periodo, ogni altro battito, fase senza salti),
+  `--state-timing` 15/0, `--new-input` 16/0, `--bar` 10/0; `--octave` 4/7 come HEAD
+  (rosso preesistente, dipende dal timing).
+- [ ] Ascolto su iPad (1000 GIORNI a ÷2; poi ÷2 → normale e ritorno).
+- Metodo: righello offline (script nello scratchpad, non nel repo); nell'app
+  nessun lookahead.
+
+### 64. Controllo di non regressione: `--phase-lock` 156 BPM letto 78 dall'item 57 🟡 (2026-09-29, test adeguato alla regola — margine stretto)
+
+Stato del tree a `79d2de4` + test item 63. Build `VPTests` e app macOS pulite.
+- [x] Verdi: `--tempo-slow` 13/0, `--tempo-step` 14/0, `--state-timing`,
+  `--new-input` 16/0, `--bar` 10/0, `--tempo-motion` 293/0, `--evidence` 2/0,
+  `--loops` 58/0, `--percussion` 17/0, `--rhythm` 3/0, `--swing` 3/0,
+  `--pop-dance` 3/0, `--transport` 4/0.
+- [x] Rossi preesistenti, stessi FAIL ad `aac5a5b` (28/09): `--leak` 46/3
+  (righe microfono iPad, accettate nell'item 53), `--harmonic-audio` 8 FAIL.
+- [ ] Non girati (oltre 90 s): `--octave`, `--level`, suite completa.
+- [x] **`--phase-lock` 15/0 → 14/1**, bisect: verde ad `a25117c`, `6a87604`,
+  `29c381c`, `aac5a5b`; rosso da `4389cca` (item 57, `holdSoundingLevel`).
+  Trace (`VP_TRACE=1`): la parte entra a 2 s sulla lettura provvisoria 78, a ~5 s
+  l'analisi passa da sola a 156; prima il clock la seguiva (×2 automatico sotto
+  la parte), ora il livello resta a 78 per tutto il click. È la regola
+  dell'item 57 (ottava solo a mano) che fa il suo lavoro, lo stesso caso di
+  LET ME LOVE YOU dove però il doppio era sbagliato. Il gate dell'item 57 non
+  comprendeva `--phase-lock`.
+- [x] Scelta dell'utente: il test si adegua alla regola (non ritardare
+  l'ingresso, non tornare al ×2 automatico). `runHeardPhaseLockBench` misura la
+  fase sul livello tenuto, in click (a 78 su 156 la parte suona un click sì e
+  uno no: è sul pulso), e un controllo nuovo vuole ogni blocco dopo 14 s sul
+  pulso o sulla metà tenuta, mai 3:2 o perso. `--phase-lock` **20/0**. 156 a
+  78: err -1.5 → **-7.3 ms** (soglia 8; al livello 156 prima -2.8 → -0.6),
+  deriva 0.015 click (soglia 0.02). Gli altri quattro tempi invariati.
+- [ ] Margine stretto sul 156 tenuto: se torna rosso a caso è questo caso, non
+  una regressione nuova; guardare `offLevel` e l'errore tardo.
+
+### 65. Fedeltà dei colpi alla batteria (senza click): misura nuova, due candidati respinti 🔴 (2026-09-30, misurato — nessuna modifica al motore)
+
+Richiesta dell'utente: i colpi a volte escono di poco da cassa/rullante e sui
+sedicesimi dà fastidio finché non rientrano.
+- [x] Misura: `scripts/analysis/onset_fit.py WAV PULSES [--target]`, ora colonne
+  `usc/min` e `>25%` di `bench_songs.py`. Attacchi di cassa (40-160 Hz) e
+  rullante (160 Hz-4 kHz) contro il sedicesimo del clock più vicino, scarto
+  locale mediano su 2 s meno lo scarto tipico del brano; uscita = tratto oltre
+  25 ms lungo almeno un battito. `VPTrack --pulses` scrive ora anche `phaseErr`,
+  `regime`, `trust` (solo sonda). Onset in cache accanto al wav. Banco
+  deterministico: `natfin2`, `fbase`, `fbase2` identici riga per riga.
+- [x] Base (24 esecuzioni): **3.48 uscite/min, 8.9% dei colpi oltre 25 ms**.
+  Contro la griglia a cui il decoder porta il clock (`--target`): 1.84/min,
+  3.5%, meglio in 23 casi su 24. Il margine esiste, ma non è tutto nel follower.
+- [x] Attribuzione (secondi di uscita): VIVO fiducia ≥0.5 43%, FISSO fiducia ≥0.5
+  33%, fiducia <0.5 solo 15%, CERCO 8%. Due meccanismi visti su THE REASON:
+  in FISSO un rallentando lento (~1%) fa crescere l'errore +2 → +29 ms in 7 s
+  mentre il trim sale di 0.15 BPM a battito; in VIVO il decoder prolunga
+  un'inflessione già finita e la sua griglia anticipa la batteria di ~28 ms.
+- [x] Respinto C1 (piccoli errori a fiducia piena su ingresso diretto in ogni
+  regime, tau di griglia non allungato): usc/min 3.48 → 3.48, >25% 8.9 → 8.9,
+  FEEL 44k aggancio 27.3 → 36.0 s. Matrice product-direct un filo meglio,
+  `VPAlign --holes` neutro.
+- [x] Respinto C2 (trim al guadagno di moto dopo 3 battiti di deriva concorde su
+  ingresso diretto): usc/min 3.48 → **3.69**, scatti 0.92 → 0.96, sbagl s 463 →
+  490; `VPAlign --ramps` MIXER FAIL (piatti 100/130 8.2/28.1 → 9.1/31.5 e
+  7.1/22.5 → 8.2/25.4, 12 s 35.5 → 27.8). C2b a 5 battiti: piatti rientrano ma
+  30 s e 128→120 in FAIL. Il trim non è la leva.
+- [ ] Prossimo passo, se si continua: lato decoder (FISSO troppo fermo su
+  inflessioni sotto il 2%, VIVO che sovrastima la curva), sul banco sintetico con
+  i brani come controllo; molte varianti sono già respinte nella skill
+  realtime-tempo.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -4398,6 +4502,9 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 60 (2026-09-29): regressione item 59 (`probe_tempo_step` 120→160 → 53.3) chiusa escludendo i sottomultipli in `combOtherSlower`; griglia mai confermata + affamata + parte che suona: il pettine corregge senza aspettare `levelSettled`. Banco: solo LET ME LOVE YOU 44k cambia (aggancio 27.9 → 20.3 s). Lanciare `bench_songs` senza altri processi pesanti: sotto carico non è deterministico.
 - Item 61 (2026-09-29): primo quarto — sul conteggio fidato un quarto si sposta solo se rete e armonia concordano (`BeatTracker::tryAlignFrom`); fuori dall'1 1370 → 914 s sul banco. Anticipare la decisione d'ingresso è peggio (4 giuste / 6 sbagliate); il veto armonico sulla mezza battuta è respinto.
 - Item 62 (2026-09-29): 1000 GIORNI — pickup irregolare all'inizio (147 invece di 161 per ~12 s) e brano sul bordo d'ottava 81/162; ÷2 lo segue bene.
+- Item 63 (2026-09-29): ÷2 manuale pubblicato dal decoder naturale (`setUserOctave (n, manual)`); AUTO e ×2 invariati. Scatti a ÷2 1.08 → 0.76; percorso naturale byte per byte uguale a HEAD.
+- Item 64 (2026-09-29): non regressione — tutto verde tranne `--phase-lock` 156 → 78, introdotto da `4389cca` (item 57, regola d'ottava); test adeguato alla regola (fase sul livello tenuto), 20/0 con margine stretto sul 156 (-7.3 ms su 8).
+- Item 65 (2026-09-30): fedeltà colpi/batteria — misura nuova `onset_fit.py` (3.48 uscite/min, 8.9% oltre 25 ms; griglia del decoder 1.84/min); C1 (fiducia di fase) e C2 (trim più rapido) respinti, motore invariato.
 # Priorità recupero diretto — 09/09/2026
 
 Checkpoint credito limitato: rifinitura iniziale a due intervalli concordanti

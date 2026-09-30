@@ -157,7 +157,7 @@ int main (int argc, char** argv)
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     if (pulseFile != nullptr)
-        std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona\n");
+        std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust\n");
 
     double lastTrace = -1.0e9, rightSince = -1.0, firstRight = -1.0;
     double rightSeconds = 0.0, offSeconds = 0.0;
@@ -229,9 +229,11 @@ int main (int argc, char** argv)
         }
 
         if (pulseFile != nullptr)
-            std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d\n", t,
+            std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d %+.5f %d %.3f\n", t,
                           (double) s.beatPhase, (double) s.barPhase, (double) s.bpm,
-                          (double) s.clockBpm, s.percussionAudible ? 1 : 0);
+                          (double) s.clockBpm, s.percussionAudible ? 1 : 0,
+                          (double) s.phaseErrorBeats, s.tempoRegime,
+                          (double) s.evidenceTrust);
 
         if (trace && t >= lastTrace + traceStep)
         {
