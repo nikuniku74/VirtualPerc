@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 namespace vp
 {
@@ -1150,8 +1149,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         // (11.46 -> 11.50 ms mean), no run with more surges. The cost is the
         // large synthetic ramps of the product-direct lane, 45.7/116.0 ->
         // 49.7/124.2 ms: a drastic change may align more slowly.
-        // LEAN-EXPERIMENT (temporary switch)
-        static const float kSteadyDirectLean = std::getenv ("VP_LEAN") ? static_cast<float> (std::atof (std::getenv ("VP_LEAN"))) : 0.030f;
+        constexpr float kSteadyDirectLean = 0.030f;
         if (directLivePhaseFollow && ! rapidTransition && ! tempoMotionHint
             && std::fabs (e) <= kLeanIsElsewhere)
         {

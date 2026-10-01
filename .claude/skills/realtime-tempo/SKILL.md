@@ -5188,6 +5188,17 @@ stroke placement (>25 ms 9.9 -> 10.8-12.2%, Sally live 10.2 -> 15.7%): the
 clock held its rate while the decoder's grid moved. Holding has to happen in
 the decoder, not downstream of it.
 
+**Kept (2026-10-01), the first bar after a FISSO release catches up only if
+the fold agrees (docs/TODO.md item 79).** The `far` branch of `live` commits
+at `kRateAcquiring` toward a short fit that, right after a release, is often
+noise. Under a sounding part on a direct feed it now needs the comb nearer
+the target than the held tempo. Flamingo 62-66 min: 3 false jumps -> 1 (the
+one the comb backs). Song bench: strokes outside 25 ms 8.96 -> 8.92%, time
+over 4% off 146 -> 138 s, no run worse. Also kept (item 77): a sounding clock
+that stays 0.06 beat off the published grid for two beats is re-placed by at
+most 0.20 beat, as STOP/START does; against the drums the grid beats the
+clock 4.2 to 9.9% of strokes outside 25 ms.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

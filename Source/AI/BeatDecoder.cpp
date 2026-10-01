@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace vp
 {
@@ -3087,6 +3089,13 @@ float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
 
 void BeatDecoder::updateTempo() noexcept
 {
+    // DBGJUMP temporary
+    struct DbgJump { BeatDecoder& d; float b0; TempoRegime r0; int t0; ~DbgJump() {
+        if (std::getenv ("VP_DBGJUMP") && d.sounding && b0 > 40.0f && std::fabs (d.bpm / b0 - 1.0f) > 0.015f)
+            std::fprintf (stderr, "DBGJUMP t=%.2f %.2f->%.2f reg %d->%d trans=%d->%d refit=%d live[w=%.2f rate=%.2f flags=%d] hold=%d short=%.2f(res %.3f) long=%.2f comb=%.2f\n",
+                d.timeSec, b0, d.bpm, (int) r0, (int) d.tempoRegime, t0, (int) d.transitionState, d.transitionRefitBeats,
+                d.dbgWanted, d.dbgRate, d.dbgFlags, d.ioiTargetHoldBeats, d.shortFitBpm, d.shortFitResidual, d.longFitBpm, d.applyUserOctave (d.tempo.bpm()));
+        d.dbgFlags = -1; } } dbgJump { *this, bpm, tempoRegime, (int) transitionState };
     // "L'1 è QUI" no longer wipes the fits: the lattice stays, so there
     // is no new window to hold the tempo across. If a hold is still
     // armed, restore the tempo (and the fixed anchor the next beat
@@ -5546,8 +5555,24 @@ void BeatDecoder::updateTempo() noexcept
             // `shuffle 16mi`. The same 2% line the FISSO exit uses separates
             // them - a number left behind by a regime or a transition is four
             // to five per cent out, a fit wandering under a loose band is not.
-            const bool far = stale && bpm > kMinBpm
-                             && std::fabs ((wanted - bpm) / bpm) > kLeaveFixedError;
+            bool far = stale && bpm > kMinBpm
+                       && std::fabs ((wanted - bpm) / bpm) > kLeaveFixedError;
+            // Under a sounding part the catch-up is taken only when the fold
+            // agrees the held number is behind: it must sit nearer the target
+            // than the held tempo. On the 97-minute Flamingo set 43 jumps of
+            // 3% or more in a second came out of VIVO, about half of them
+            // false and back within seconds (61:04 121.8 -> 115.1 -> 121.0);
+            // on its 62-66 min stretch all three were this first bar after a
+            // FISSO release, chasing a noisy short fit at 0.70 with the comb
+            // nearer the held tempo (64:01: held 124.2, target 120.4, comb
+            // 122.7, drummer 122.8). Song bench: strokes outside 25 ms
+            // 8.96 -> 8.92%, exits 3.53 -> 3.48 /min, time over 4% off the
+            // song 146 -> 138 s, no run worse (docs/TODO.md item 79). The
+            // bank never sets `sounding`.
+            if (far && lineFeed && sounding && combReady && combBpm > kMinBpm
+                && transitionRefitBeats == 0
+                && std::fabs (combBpm - wanted) >= std::fabs (combBpm - bpm))
+                far = false;
             if (leftFixedBeats > 0)
                 --leftFixedBeats;
             const float motionTarget = bridgedMotionTarget (wanted);
@@ -5559,6 +5584,8 @@ void BeatDecoder::updateTempo() noexcept
                                   : (liveFourAim ? kRateLive
                                      : (far || slowIoiLeads ? kRateAcquiring
                                         : (doorHoldRate ? kRateDoorHold : kRateLive)))));
+            dbgWanted = motionTarget;
+            dbgFlags = (shapeLeads ? 1 : 0) | (doorATake ? 2 : 0) | (liveFourAim ? 4 : 0) | (far ? 8 : 0) | (slowIoiLeads ? 16 : 0) | (doorHoldRate ? 32 : 0);
             break;
         }
 

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 namespace vp
 {
@@ -1829,7 +1828,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // 9.9 -> 9.0%, exits 3.82 -> 3.53 /min, surges 0.84 -> 0.75 /min,
             // 443 re-placements in 30 runs (docs/TODO.md item 77). Listening
             // candidate: whether the re-placements are heard is the open part.
-            static const float nudgeAbove = std::getenv ("VP_NUDGE") ? static_cast<float> (std::atof (std::getenv ("VP_NUDGE"))) : 0.06f; // EXPERIMENT switch
+            constexpr float nudgeAbove = 0.06f;
             constexpr float nudgeBeats = 2.0f;
             if (sounding && ! speakerFollow && ! follower.tempoTransitionActive()
                 && std::fabs (gridErr) > nudgeAbove)

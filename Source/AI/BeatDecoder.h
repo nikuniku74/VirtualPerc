@@ -590,6 +590,7 @@ private:
     double refusedHatAfterHoleSec = -1.0;
     int refusedRunCount = 0;
     double refusedRunLastSec = -1.0;
+    float dbgWanted = 0.0f, dbgRate = 0.0f; int dbgFlags = -1; // DBGJUMP temporary
     double refusedRunSec[4] {};
     float refusedRunStrength[4] {};
     float refusedRunLowBand[4] {};

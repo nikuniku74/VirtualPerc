@@ -4655,6 +4655,27 @@ le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra su
   `internalPlayer`, `VirtualPercussionEngine.cpp`).
 - [ ] Verifica a occhio su iPad, con AirPods e con cavo/mixer.
 
+### 79. Falsi salti dopo l'uscita da FISSO: il recupero veloce solo se il pettine lo conferma ✅ (2026-10-01, misurato — manca l'ascolto)
+
+- [x] Flamingo intero: 43 salti del tempo pubblicato di almeno il 3% in un secondo con la parte che suona,
+  quasi tutti in VIVO; per circa metà i colpi degli 8 s dopo stanno meglio sul tempo vecchio, e spesso il
+  tempo torna indietro in pochi secondi (61:04 121.8 → 115.1 → 121.0).
+- [x] Traccia temporanea in `updateTempo` sull'estratto 62–66 min: i tre salti (64:01, 65:15, 65:45) sono la
+  prima battuta dopo un rilascio FISSO→VIVO, ramo `far` (`kRateAcquiring` 0.70) verso una retta corta rumorosa
+  con il pettine più vicino al tempo tenuto (64:01: tenuto 124.2, bersaglio 120.4, pettine 122.7, batterista
+  122.8).
+- [x] `BeatDecoder::updateTempo`, ramo `live`: con la parte che suona su ingresso diretto, `far` resta solo se il
+  pettine è più vicino al bersaglio che al tempo tenuto. Sull'estratto restano 1 salto su 3 (quello confermato
+  dal pettine). Banco (30 esecuzioni) contro la versione con i ricentri: >25 ms 8.96 → 8.92%, usc/min 3.53 →
+  3.48, oltre il 4% dal tempo del brano 146 → 138 s, oltre il 2% 744 → 742 s, nessun brano peggiore.
+  I banchi sintetici non accendono `sounding`. `VPTests` `--phase-lock` 20/0, `--bar` 10/0, `--new-input`
+  16/0, `--transport` 4/0, `--tempo-step` 14/0, `--tempo-slow` 13/0, `--state-timing` 0 FAIL.
+- [x] Inseguimento più morbido (lean costante 3% → 1.5%, con e senza ricentro a 0.05): scatti 0.75 → 0.60/0.50,
+  oscillazione del clock 0.93 → 0.86/0.84%, ma >25 ms 8.96 → 9.08/8.88 e 2/6 brani peggiori. Non tenuto.
+- [x] Tolti gli interruttori sperimentali `VP_NUDGE`/`VP_LEAN` finiti nel commit 8809a7d (getenv sul percorso
+  audio).
+- [ ] L'altra metà dei salti falsi non viene da questo ramo: da cercare allo stesso modo sul resto del set.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
