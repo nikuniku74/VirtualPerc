@@ -3253,6 +3253,33 @@ void MainComponent::timerCallback()
         restartLogPending = false;
         writeRestartLog();
     }
+    // VPLAG: once every 5 s while the part sounds - is the analysis keeping up
+    // over a long set (docs/TODO.md item 74)? lead = the projection actually
+    // applied, coda = audio still waiting for the worker. Both should stay
+    // flat; if they climb, the device is falling behind.
+    {
+        static int lagTicks = 0;
+        static const juce::uint32 lagStartMs = juce::Time::getMillisecondCounter();
+        if (snap.percussionAudible && ++lagTicks >= 75)
+        {
+            lagTicks = 0;
+            const double sr = snap.sampleRate > 0.0 ? snap.sampleRate : 48000.0;
+            const int up = static_cast<int> ((juce::Time::getMillisecondCounter() - lagStartMs) / 1000);
+            const float beatMs = 60000.0f / juce::jmax (40.0f, snap.bpm);
+            juce::Logger::outputDebugString ("VPLAG t " + juce::String (up / 60) + ":"
+                 + juce::String (up % 60).paddedLeft ('0', 2)
+                 + "  lead " + juce::String (snap.leadMs, 0) + " ms"
+                 + "  coda " + juce::String (snap.analysisBacklog * 1000.0 / sr, 0) + " ms"
+                 + "  callback " + juce::String (snap.callbackMs, 2) + " ms"
+                 + "  buchi " + juce::String (snap.analysisGaps)
+                 + "  restart " + juce::String (snap.analysisRestarts)
+                 + "  bpm " + juce::String (snap.bpm, 1)
+                 + "  clock " + juce::String (snap.clockBpm, 1)
+                 + "  conf " + juce::String (snap.confidence, 2)
+                 + "  fase " + juce::String (snap.phaseErrorBeats * beatMs, 0) + " ms"
+                 + "  ricentri " + juce::String (static_cast<int> (snap.phaseNudgeCount)));
+        }
+    }
    #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)
     {
         static int diagTicks = 0;

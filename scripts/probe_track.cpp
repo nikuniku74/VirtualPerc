@@ -40,7 +40,7 @@ int main (int argc, char** argv)
     // seconds after the load (default at the load) and START again G seconds
     // later. --bpm then refers to the second file. docs/TODO.md item 48.
     std::string thenPath;
-    double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0, stopAt = -1.0;
+    double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0, stopAt = -1.0, lagSec = 0.0;
     // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
     // and the engine is told, as MainComponent does. --stop-gap then counts
     // from the seek. --from T scores --bpm only from T seconds on (a long
@@ -78,6 +78,7 @@ int main (int argc, char** argv)
         else if (a == "--stop-gap")   stopGap = std::atof (next());
         else if (a == "--stop-after") stopAfter = std::atof (next());
         else if (a == "--stop-at")    stopAt = std::atof (next());
+        else if (a == "--lag")        lagSec = std::atof (next());
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
         else if (a == "--from")       scoreFrom = std::atof (next());
@@ -282,7 +283,9 @@ int main (int argc, char** argv)
         if (inHop == hop)
         {
             const auto until2 = std::chrono::steady_clock::now() + std::chrono::milliseconds (400);
-            while (eng.analysisCompletedSamples() < pos
+            // --lag keeps the worker that far behind, as a device that cannot
+            // keep up would: the backlog the tracker has to project across.
+            while (eng.analysisCompletedSamples() < pos - static_cast<int64_t> (lagSec * sr)
                    && std::chrono::steady_clock::now() < until2)
                 std::this_thread::yield();
             inHop = 0;

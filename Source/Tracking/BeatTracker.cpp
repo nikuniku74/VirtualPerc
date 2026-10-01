@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 namespace vp
 {
@@ -156,6 +155,8 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // tempo-dependent residue is the network/decoder response to the click.
     // See .superpowers/sdd/phase-156-root-cause.md.
     constexpr float kAnalysisLeadTrimSec = 0.017f;
+    // The analysis FIFO holds 2^19 samples, 10.9 s at 48 kHz.
+    constexpr float kMaxProjectionSec = 10.0f;
 }
 
 void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
@@ -1251,9 +1252,19 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                    / sampleRate;
         // Clamp last: the trim can take a short startup pipeline below zero, and
         // a negative lead would drag the phase target backwards.
+        //
+        // There is no ceiling short of the FIFO. A 0.60 s ceiling stood here
+        // from the first commit with no measurement behind it, and a worker
+        // that falls behind - a long set on a warm iPad - is exactly when the
+        // backlog passes it: the projection then stops short and the part
+        // plays late by the excess, with the confidence still full. Held one
+        // second behind (`VPTrack --lag 1`), VITA and INFINITO lost every
+        // verified second of phase and their kick/snare strokes outside 25 ms
+        // went 5.5 -> 15.7% and 1.4 -> 27.4%. Projecting further is the same
+        // arithmetic at the same tempo.
         const float leadSec = std::clamp (static_cast<float> (pipelineSec) - kAnalysisLeadTrimSec
                                               + reportedLatencyMs * 0.001f,
-                                          0.0f, 0.60f);
+                                          0.0f, kMaxProjectionSec);
         leadBeats = leadSec / beatSeconds;
         lastLeadMs = leadSec * 1000.0f;
     }
@@ -1435,58 +1446,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         const bool useTransitionPayload =
             follower.tempoTransitionActive()
             && hyp.transitionState == TempoTransitionState::rapid;
-        // HOLD-EXPERIMENT (temporary switches)
-        static const float hC = std::getenv ("VP_HOLD_C") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_C"))) : 0.0f;
-        static const float hT = std::getenv ("VP_HOLD_T") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_T"))) : 30.0f;
-        static const float hN = std::getenv ("VP_HOLD_N") ? static_cast<float> (std::atof (std::getenv ("VP_HOLD_N"))) : 10.0f;
-        float clockBpm = nnBpm;
-        bool held = false;
-        const bool holdApplies = hC > 0.0f && ! speakerFollow && sounding && ! needsResync
-                                 && ! tapHold && ! harmonicSourceActive
-                                 && ! useTransitionPayload && ! follower.tempoTransitionActive();
-        if (! holdApplies)
-        {
-            holdRefBpm = 0.0f;
-        }
-        else if (holdRefBpm < 50.0f
-                 || std::fabs (std::fabs (std::log2 (nnBpm / holdRefBpm)) - 1.0f) < 0.10f)
-        {
-            holdRefBpm = nnBpm;
-            holdSettleSamples = 0;
-            holdSide = 0;
-            holdSideSamples = 0;
-        }
-        else
-        {
-            const float dt = static_cast<float> (numSamples) / static_cast<float> (sampleRate);
-            holdSettleSamples += numSamples;
-            if (holdSettleSamples < static_cast<int> (sampleRate * 8.0))
-                holdRefBpm += (nnBpm - holdRefBpm) * std::min (1.0f, dt / 2.0f);
-            else
-            {
-                const float d = nnBpm / holdRefBpm - 1.0f;
-                const int side = std::fabs (d) <= hC ? 0 : (d > 0.0f ? 1 : -1);
-                if (side != 0 && side == holdSide)
-                    holdSideSamples += numSamples;
-                else
-                {
-                    holdSide = side;
-                    holdSideSamples = 0;
-                }
-                if (side != 0 && holdSideSamples >= static_cast<int> (sampleRate * hN))
-                {
-                    holdRefBpm = nnBpm;
-                    holdSide = 0;
-                    holdSideSamples = 0;
-                }
-                clockBpm = std::clamp (nnBpm, holdRefBpm * (1.0f - hC), holdRefBpm * (1.0f + hC));
-                held = clockBpm != nnBpm;
-                holdRefBpm += (clockBpm - holdRefBpm) * std::min (1.0f, dt / hT);
-            }
-        }
-        if (held)
-            follower.setBeatGapHold (true);
-        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : clockBpm,
+        follower.setTargetTempo (useTransitionPayload ? hyp.transitionBpm : nnBpm,
                                  useTransitionPayload ? hyp.transitionConfidence : nnConf);
     }
 
@@ -1857,6 +1817,39 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                                             : kGridTauHolding,
                                     holding, evidence.trust());
             follower.setGridPhase (songPhase, phaseTau);
+            // A sounding clock that has stayed off the published grid on one
+            // side for two beats is re-placed, as STOP/START does, by at most
+            // a fifth of a beat. Against each song's kick and snare the grid
+            // is the better of the two by far (strokes outside 25 ms: 4.2%
+            // grid, 9.9% clock, 30 bench runs; 3.7 / 10.9% over the 97-minute
+            // Flamingo set), and the clock sat 0.08 beat or more off it for
+            // 807 s of that set, bending its rate too slowly to come back.
+            // Song bench, 0.06 beat for two beats: strokes outside 25 ms
+            // 9.9 -> 9.0%, exits 3.82 -> 3.53 /min, surges 0.84 -> 0.75 /min,
+            // 443 re-placements in 30 runs (docs/TODO.md item 77). Listening
+            // candidate: whether the re-placements are heard is the open part.
+            constexpr float nudgeAbove = 0.06f;
+            constexpr float nudgeBeats = 2.0f;
+            if (sounding && ! speakerFollow && ! follower.tempoTransitionActive()
+                && std::fabs (gridErr) > nudgeAbove)
+            {
+                const int side = gridErr > 0.0f ? 1 : -1;
+                nudgeSamples = side == nudgeSide ? nudgeSamples + numSamples : numSamples;
+                nudgeSide = side;
+                if (static_cast<float> (nudgeSamples) > nudgeBeats * beatSeconds * static_cast<float> (sampleRate))
+                {
+                    follower.snapPhase (wrap01 (follower.beatPhase()
+                                                - std::clamp (gridErr, -0.20f, 0.20f)), true);
+                    nudgeSamples = 0;
+                    nudgeSide = 0;
+                    ++phaseNudgeCount;
+                }
+            }
+            else
+            {
+                nudgeSamples = 0;
+                nudgeSide = 0;
+            }
         }
     }
 
@@ -1988,6 +1981,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.phaseRecoveryEvents = follower.phaseRecoveryEvents();
     out.silentSnapBeats = lastSilentSnapBeats;
     out.silentSnapCount = silentSnapCount;
+    out.phaseNudgeCount = phaseNudgeCount;
     out.confidence = smoothedConf;
     out.tempoOctave = octaveAuto ? autoOctave : userOctave;
     out.beatPhase = follower.beatPhase();

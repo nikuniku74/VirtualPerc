@@ -343,6 +343,7 @@ public:
         uint32_t      phaseRecoveryEvents = 0;
         float         silentSnapBeats = 0.0f;
         uint32_t      silentSnapCount = 0;
+        uint32_t      phaseNudgeCount = 0;
         float         confidence = 0.0f;
         float         beatPhase = 0.0f;
         float         barPhase = 0.0f;
@@ -577,6 +578,7 @@ private:
     /** Diagnostics for the STOP/START log: the last silent placement. */
     float lastSilentSnapBeats = 0.0f;
     uint32_t silentSnapCount = 0;
+    uint32_t phaseNudgeCount = 0;
     bool seenSerials = false;
     TempoTransitionConsumer transitionConsumer;
     float lastLeadMs = 0.0f;
@@ -609,10 +611,8 @@ private:
     bool heardMusic = false;
     bool hadPlayed = false;
     bool needsResync = false;
-    float holdRefBpm = 0.0f;
-    int holdSettleSamples = 0;
-    int holdSide = 0;
-    int holdSideSamples = 0;
+    int nudgeSamples = 0;
+    int nudgeSide = 0;
     bool resyncGridArmed = false;
     uint32_t resyncGridSerial = 0;
     bool waitForSongBeat = false;

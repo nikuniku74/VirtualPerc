@@ -56,10 +56,23 @@ def wav_onsets(wav):
         return np.load(cache)
     except OSError:
         pass
+    # In 60 s pieces with 2 s either side: a 97-minute set analysed whole is a
+    # 30 GB spectrogram, and that froze the machine (2026-10-01).
     w = wave.open(wav, 'rb')
-    sr, nch = w.getframerate(), w.getnchannels()
-    x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
-    on = onsets(x.reshape(-1, nch).mean(1), sr)
+    sr, nch, total = w.getframerate(), w.getnchannels(), w.getnframes()
+    body, pad = 60 * sr, 2 * sr
+    out = []
+    for start in range(0, total, body):
+        a0 = max(0, start - pad)
+        w.setpos(a0)
+        x = np.frombuffer(w.readframes(min(total, start + body + pad) - a0),
+                          dtype=np.int16).astype(np.float32) / 32768.0
+        x = x.reshape(-1, nch).mean(1)
+        if len(x) < 4096:
+            continue
+        t = onsets(x, sr) + a0 / sr
+        out.append(t[(t >= start / sr) & (t < (start + body) / sr)])
+    on = np.concatenate(out) if out else np.array([])
     np.save(cache, on)
     return on
 

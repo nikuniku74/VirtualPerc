@@ -499,6 +499,7 @@ private:
     std::atomic<uint32_t> lastPhaseRecoveryEvents { 0 };
     std::atomic<float> lastSilentSnapBeats { 0.0f };
     std::atomic<uint32_t> lastSilentSnapCount { 0 };
+    std::atomic<uint32_t> lastPhaseNudgeCount { 0 };
     std::atomic<uint32_t> lastRestarts { 0 };
     float ownPeakLast = 0.0f;
     float ownFast = 0.0f;

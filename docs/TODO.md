@@ -4560,6 +4560,88 @@ Segnalazione: "i brani seguono leggermente peggio forse… alla fine soprattutto
   tornare a 123.7; e la salita a 128 a 169 s che origina tutto resta (item 71).
 - [ ] Ascolto su iPad del finale di I WANNA DANCE.
 
+### 74. Sessioni lunghe: la proiezione dell'analisi si fermava a 0.6 s 🟡 (2026-10-01, misurato — manca il riscontro su iPad)
+
+Segnalazione: su tracce lunghe o con START tenuto a lungo la parte comincia a sfasare con il pallino al 100.
+- [x] `BeatTracker::process` proietta la fase dell'analisi in avanti del ritardo misurato (FIFO + finestra +
+  latenza), ma con un tetto a 0.60 s presente dal primo commit, senza misura. Se il worker resta indietro
+  (iPad caldo, set lungo) oltre quel tetto la parte suona in ritardo dell'eccesso e la confidenza resta piena.
+- [x] `VPTrack --lag SEC` tiene il worker indietro di SEC. Prima: con 1 s VITA e INFINITO perdono tutta la fase
+  verificata, colpi oltre 25 ms 5.5 → 15.7% e 1.4 → 27.4% (2 s: 24.1 e 22.4%). Dopo (tetto 10 s, la FIFO):
+  1 s 6.7 e 1.9%, 2 s 6.4 e 4.6%, fase verificata 181–204 s. Ritardo 0 identico.
+- [x] `VPTests --phase-lock` 20/0, `--new-input` 16/0, `--state-timing` 0 FAIL, `--tempo-step` 14/0,
+  `--transport` 4/0, `--bar` 10/0.
+- [ ] Su iPad: il pannello DEBUG mostra `lead` (ora non più tagliato). Normale ~70–120 ms; se cresce durante
+  il set, l'analisi non sta al passo e va cercato il perché (CPU, CoreML, termica).
+- [x] Flamingo intero (97 min, `VPTrack --player`, worker in passo): nessuna deriva col tempo. Scarto mediano
+  cassa/rullante contro la parte per finestre di 5 minuti fra +0.7 e +9.9 ms senza tendenza; colpi oltre
+  25 ms fra 1.7 e 15.4% secondo il materiale, non crescenti. 4 restart dell'analisi (17.5, 603, 1511, 5504 s).
+  Quindi lo sfasamento che cresce nel set non viene dall'algoritmo: sul desktop non c'è; su iPad la causa
+  plausibile è l'analisi che resta indietro, corretta qui sopra.
+- [x] `onset_fit.py` legge i file a pezzi da 60 s: sull'intero set calcolava uno spettrogramma da ~30 GB e ha
+  bloccato il Mac.
+
+### 75. Tenuta del tempo nel tracker (banda attorno al tempo lento del brano): scartata 🔴 (2026-10-01)
+
+Priorità dell'utente: un batterista non crolla né accelera di colpo. Sul banco, dopo l'aggancio, la parte sta
+oltre il 2% dal tempo del brano il 16% del tempo (751 s su 4734, brani da studio).
+- [x] Prova: il tempo passato al clock resta entro ±c del tempo lento (media 30 s) dopo 8 s di parte; fuori
+  dalla banda per N s dallo stesso lato → creduto. Fermo dello sterzo di fase mentre tiene.
+- [x] c 1.5% N 10 s / c 1% N 16 s: oltre il 4% 167 → 50 / 34 s, scatti% 0.87 → 0.73 / 0.56, sc/min 0.84 →
+  0.41 / 0.24, sbagl s 448 → 420 / 367. Ma colpi >25 ms 9.9 → 10.8 / 12.2%, sb<40 111 → 160 / 196 s,
+  aggancio 13.1 → 15.6 / 17.2 s, **slittamenti di un battito 0 → 3 / 1**, Sally live >25 ms 10.2 → 15.7%.
+  Tenendo il tempo mentre la griglia del decoder si muove, la fase scappa. Tolta dal tracker (era nel commit
+  b7b72d6 dietro variabili d'ambiente, spenta).
+- [ ] La tenuta va cercata nel decoder (non lasciare FISSO/non salire su prove deboli), non a valle sul clock.
+
+### 76. Tenuta nel decoder: limite di velocità del tempo in VIVO 🔴 (2026-10-01, misurato, scartato)
+
+Dopo l'item 75. Uscite oltre il 2% sul banco (brani da studio, dopo l'aggancio), per origine: decoder già in
+VIVO 220 s, rilascio FISSO→VIVO 170 s, clock che insegue la fase 220 s, il resto in FISSO/CERCO.
+- [x] Prova (`BeatDecoder::updateTempo`, ramo `live`, solo `lineFeed`, parte che suona, nessuna transizione o
+  refit): il tempo committed cambia al massimo di `slew` per battito accettato.
+- [x] Banco ricostruito (30 esecuzioni, 4 alla volta). Base → 0.25% → 0.15% per battito: oltre il 2%
+  751 → 662 → 629 s, oltre il 4% 167 → 108 → 88 s, sbagl s 448 → 369 → 353, scatti% 0.87 → 0.77 → 0.80,
+  sc/min 0.84 → 0.48 → 0.57. Ma colpi >25 ms 9.9 → 10.4 → 10.4%, fase verificata media 12.9 → 19.8 → 23.0 ms,
+  e peggiorano singoli brani: SPLENDIDA 48k >25 ms 1.7 → 8.7%, Sally live 10.2 → 13.0% (0.25%), ASPETTANDO
+  48k uno slittamento con 0.15%. Il calo (`dip`) identico. Non tenuto: migliora il ritmo, peggiora dove cadono
+  i colpi su più brani.
+- [ ] `line_scan` non è un confronto stabile qui: i secondi verificati cambiano da 0 a 57–90 tra le varianti
+  (1000 GIORNI), quindi gli "slittamenti" nuovi stanno in tratti prima non verificati.
+- [x] Tenuta legata alla qualità delle prove: stesso limite (0.15%/battito) solo quando la mossa è debole.
+  Variante 1 = battiti messi peggio del brano (`placementTrust` < 0.50) **o** pettine che non segue la mossa
+  (almeno un quarto, stesso verso); variante 2 = solo battiti messi male. Base → v1 → v2: oltre il 2% 751 →
+  704 → 715 s, oltre il 4% 167 → 136 → 149 s, sbagl s 448 → 400 → 421, sc/min 0.84 → 0.77 → 0.86, >25 ms
+  9.9 → 10.1 → 10.1%. Peggiorano 6 brani in entrambe (v1: SPLENDIDA 48k >25 ms 1.7 → 7.2%, UMBRELLA 48k
+  19.0 → 26.9%, LET ME LOVE YOU 48k 9.8 → 12.5%; v2: Sally live 10.2 → 13.4%, I WANNA DANCE 44k 4.3 → 7.6%).
+  **Codice riportato com'era** (richiesta dell'utente se non migliora).
+- [ ] Conclusione di 75–76: frenare il tempo, a valle o nel decoder, con o senza prove, scambia velocità stabile
+  con colpi meno allineati. La causa da attaccare è a monte: perché il decoder legge 3% in più su prove che il
+  pettine e i battiti non confermano (item 71).
+
+### 77. La parte resta fuori dalla griglia dell'analisi: ricentro come STOP/START, in ascolto 🟡 (2026-10-01)
+
+Segnalazione dal set (Uptown Funk, Another One Bites the Dust, Billie Jean, Get Lucky, Flamingo ~58–82 min):
+le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra subito.
+- [x] Log `VPLAG` da iPad: `lead` 38–66 ms, coda ≤16 ms, 0 buchi: l'analisi tiene il passo, non è l'item 74.
+- [x] Tempo dagli attacchi di cassa/rullante contro il tempo pubblicato, finestre di 10 s: 1–2 BPM di scarto.
+  Il clock sentito invece in 10 s spazia per esempio 112–121 BPM (picchi a 146 e 152).
+- [x] Contro la batteria vera la griglia dell'analisi è molto meglio del clock: colpi oltre 25 ms 4.2% contro
+  9.9% (30 esecuzioni del banco), 3.7% contro 10.9% sul Flamingo intero. Il clock resta ≥0.08 battiti fuori
+  dalla griglia per ≥4 s 69 volte (807 s su 97 min), in 36 con un buco di battiti accettati dentro, in 29
+  dopo un cambio confermato. Esempio 76:00: falso cambio 122.8 → 128.1 (batterista ~124), clock 0.2 battiti
+  avanti, `beatGapHold` ferma la correzione per 5 s, poi la lean chiude in 10 s.
+- [x] `BeatTracker::process`: se la parte suona e il clock resta oltre 0.06 battiti dalla griglia pubblicata
+  dallo stesso lato per 2 battiti, `snapPhase` di al massimo 0.20 battiti (lo stesso tetto del nudge che c'è
+  già alla ricostruzione della griglia). Banco: >25 ms 9.9 → 9.0%, usc/min 3.82 → 3.53, sc/min 0.84 → 0.75;
+  I WANNA DANCE 48k 11.2 → 4.7%, EVERYTIME 44k 5.3 → 1.5%, Sally 10.2 → 7.4%, Flamingo 17.0 → 14.9%.
+  Peggiora UMBRELLA 48k 19.0 → 25.3% con **un solo** ricentro in tutto il brano (dato fragile). 443 ricentri
+  in 30 esecuzioni (1000 GIORNI 60 senza guadagno). Più prudenti, 0.06 per 4 battiti e 0.08 per 3: 9.2 e
+  9.3%, 299 e 278 ricentri, peggiorano BLUE SKY 48k e UNA CANZONE 44k. Tenuta 0.06/2 come candidata.
+- [x] `VPTests --phase-lock` 20/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0, `--tempo-step` 14/0,
+  `--state-timing` 0 FAIL. `VPLAG` stampa anche `ricentri` (`phaseNudgeCount`).
+- [ ] Ascolto su iPad dello stesso tratto del Flamingo: si sentono i ricentri? la parte sta al centro?
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

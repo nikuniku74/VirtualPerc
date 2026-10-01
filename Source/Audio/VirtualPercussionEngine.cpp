@@ -1925,6 +1925,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                    std::memory_order_relaxed);
     lastSilentSnapBeats.store (tr.silentSnapBeats, std::memory_order_relaxed);
     lastSilentSnapCount.store (tr.silentSnapCount, std::memory_order_relaxed);
+    lastPhaseNudgeCount.store (tr.phaseNudgeCount, std::memory_order_relaxed);
     lastConf.store (tr.confidence, std::memory_order_relaxed);
     lastBeat.store (tr.beatPhase, std::memory_order_relaxed);
     lastBar.store (tr.barPhase, std::memory_order_relaxed);
@@ -2056,6 +2057,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
         std::memory_order_relaxed);
     s.silentSnapBeats = lastSilentSnapBeats.load (std::memory_order_relaxed);
     s.silentSnapCount = lastSilentSnapCount.load (std::memory_order_relaxed);
+    s.phaseNudgeCount = lastPhaseNudgeCount.load (std::memory_order_relaxed);
     s.confidence = lastConf.load (std::memory_order_relaxed);
     s.beatPhase = lastBeat.load (std::memory_order_relaxed);
     s.barPhase = lastBar.load (std::memory_order_relaxed);

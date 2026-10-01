@@ -254,6 +254,8 @@ struct EngineSnapshot
         log in the UI reads these (docs/TODO.md item 70). */
     float silentSnapBeats      = 0.0f;
     uint32_t silentSnapCount   = 0;
+    /** Sounding re-placements onto a grid the clock had stayed off (item 77). */
+    uint32_t phaseNudgeCount   = 0;
     float confidence           = 0.0f;
     float beatPhase            = 0.0f;
     float barPhase             = 0.0f;

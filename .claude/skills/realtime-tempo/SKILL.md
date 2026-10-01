@@ -5172,6 +5172,22 @@ and `--steps` pass with the same numbers. Not re-run: `probe_tempo_step`, the
 motion matrix, hats/rolls/D fixtures. Still open: the brake to 117 on rejoin,
 and the VIVO climb to 128 that starts it (item 71).
 
+**Kept (2026-10-01), the projection has no ceiling short of the FIFO
+(docs/TODO.md item 74).** `leadSec` was clamped to 0.60 s since the first
+commit. A worker that falls behind passes it and the part plays late by the
+excess at full confidence. `VPTrack --lag SEC` holds the worker SEC behind:
+at 1 s VITA/INFINITO strokes outside 25 ms 5.5 -> 15.7% / 1.4 -> 27.4%
+before, 6.7 / 1.9% with the ceiling at 10 s. On device, DEBUG `lead` growing
+during a set means the analysis is not keeping up.
+
+**Rejected (2026-10-01), a tempo hold in the tracker (docs/TODO.md item 75).**
+Clamping the clock's target to +/-1-1.5% of a 30 s average, released after
+10-16 s on one side, cut excursions over 4% from 167 to 34-50 s on the song
+bench but added whole-beat slips (0 -> 1-3), later acquisition and worse
+stroke placement (>25 ms 9.9 -> 10.8-12.2%, Sally live 10.2 -> 15.7%): the
+clock held its rate while the decoder's grid moved. Holding has to happen in
+the decoder, not downstream of it.
+
 ## 9. Map: "I want to change X"
 
 | X | file |
