@@ -4676,6 +4676,46 @@ le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra su
   audio).
 - [ ] L'altra metà dei salti falsi non viene da questo ramo: da cercare allo stesso modo sul resto del set.
 
+### 80. Glitch nei brani caricati: il thread audio aspettava il decoder dell'mp3 🟡 (2026-10-01, da ascoltare)
+
+- [x] Log `VPLAG` da iPad in Release, AirPods: `xrun` 3 → 7 in un minuto, `callback` 0.02–0.03 ms (su 5.3 ms),
+  `tagli` 0, `vuoti brano` 0. I glitch sono blocchi audio consegnati in ritardo, non il carico dell'app.
+- [x] Causa nel codice: `juce::AudioTransportSource` legge con `BufferingAudioSource`, che tiene `callbackLock`
+  mentre decodifica un pezzo di file (`juce_BufferingAudioSource.cpp:332`) e lo prende anche nel callback audio
+  (`:127`). Se il thread di lettura viene sospeso a metà decodifica, il thread audio aspetta.
+- [x] `Source/Audio/TrackStreamer.h`: il thread di lettura decodifica in un anello SPSC senza lock; il thread
+  audio legge e ricampiona (Lagrange) senza mai aspettare; ricerca e cambio file passano per uno `SpinLock`
+  che il thread audio prende solo in try-lock (un blocco di silenzio invece di un'attesa). Stessi nomi di
+  metodo di `AudioTransportSource`. Anello 2^18 frame (~6 s), letture da 4096.
+- [x] `scripts/probe_streamer.cpp` (via `VPStyle`): 20 s a ~5× tempo reale su file 44.1 e 48 kHz, uscita
+  identica bit per bit a lettura diretta + stesso interpolatore, 0 silenzi, 0 underrun, seek a 30 s corretto.
+- [ ] Il banco `VPTrack --player` legge il WAV direttamente, non passa per questo lettore: invariato.
+  Sull'iPad cambia il ricampionatore del brano (prima `ResamplingAudioSource`, ora Lagrange).
+- [ ] Ascolto in Release su iPad: `xrun` deve smettere di salire durante i brani caricati.
+
+### 81. Falsi cambi a gradino confermati sotto la parte; ricentro più rapido e morbido scartati ✅ (2026-10-01, misurato — manca l'ascolto)
+
+- [x] Flamingo intero dopo l'item 79, traccia temporanea in `updateTempo`: salti ≥3% in 1 s nello stesso brano
+  43 → 34. Restano tre classi: cambi a gradino confermati che il batterista non ha fatto (61:04 122.1 → 115.2,
+  76:00 122.8 → 128.1; impostati in `observe`/`observeGridStep`, fuori da `updateTempo`), scivolate del 2–3%
+  a passi <1.5% dell'inseguimento VIVO, un passo isolato del ramo `slowIoi` (36:58). Gli altri salti grandi
+  sono cambi di brano.
+- [x] **Tenuto** `BeatDecoder::stepLacksComb`: con la parte che suona su ingresso diretto, un gradino (rilevatore
+  a intervalli, `observeGridStep`, porte 4-battiti FISSO/VIVO e il voto portato) si conferma solo se il pettine
+  sta più vicino al tempo nuovo che a quello tenuto. Banco (30 esecuzioni) contro la versione dell'item 79:
+  >25 ms 8.92 → 8.44%, usc/min 3.48 → 3.28, oltre il 4% 138 → 105 s, oltre il 2% 742 → 716 s, tempo
+  sbagliato 393 → 363 s, nessun brano peggiore; scatti 0.75 → 0.79/min. I banchi sintetici non accendono
+  `sounding`. `VPTests` `--phase-lock` 20/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0,
+  `--tempo-step` 14/0, `--tempo-slow` 13/0, `--state-timing` 0 FAIL.
+- [x] Ricentro dopo 1 battito invece di 2 (salto max 0.20 e 0.12): fuori griglia 717 → 496/511 s, >25 ms
+  8.92 → 8.56/8.32%, ma 5–6 brani peggiori (Sally live 3.2 → 4.8 usc/min) e colpi saltati 93 → 113.
+  Non tenuto.
+- [x] Ricentro morbido (spostamento distribuito su ½ o 1 battito, `TempoFollower::spreadPhase`): colpi saltati
+  93 → 0/1, ma fuori griglia 717 → 1027/1057 s, >25 ms 8.92 → 9.05/8.99%, 4–6 brani peggiori. Non tenuto.
+- [ ] Resta la breve pausa al ricentro (un sedicesimo saltato quando il salto in avanti ne scavalca uno):
+  93 su ~2 ore di banco.
+- [ ] Restano le scivolate del 2–3% in VIVO (stesso meccanismo che segue le inflessioni vere).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

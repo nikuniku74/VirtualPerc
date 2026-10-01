@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Audio/TrackStreamer.h"
 #include "Audio/VirtualPercussionEngine.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -519,7 +520,7 @@ private:
         it owns the security-scoped bookmark granted by the document picker. */
     juce::AudioFormatManager trackFormats;
     juce::TimeSliceThread trackReadThread { "VP track read-ahead" };
-    juce::AudioTransportSource trackTransport;
+    vp::TrackStreamer trackTransport { trackReadThread };
     std::unique_ptr<juce::AudioFormatReaderSource> trackReader;
     std::unique_ptr<juce::FileChooser> trackChooser;
     juce::URL trackUrl;
@@ -606,6 +607,10 @@ private:
         page, because a rig that needs it every few seconds is a rig with a
         problem the app can only paper over. */
     std::atomic<uint32_t> audioBlocks { 0 };
+    /** Blocks of digital silence from the track reader mid-song, after a block
+        that had sound: the read-ahead was not ready (a glitch in the song). */
+    std::atomic<uint32_t> trackDropouts { 0 };
+    bool trackLastBlockHadSound = false;
     uint32_t seenAudioBlocks = 0;
     int  stalledTicks = 0;
     int  rebuildCooldownTicks = 0;

@@ -2299,8 +2299,7 @@ void MainComponent::loadInternalTrack (juce::URL url)
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
     trackName = trackUrl.getFileName();
-    trackTransport.setSource (trackReader.get(), 32768, &trackReadThread,
-                              reader->sampleRate, 2);
+    trackTransport.setSource (reader);
     selectFollowSource (vp::FollowSource::internalPlayer, false);
     // A different file is a different input, not a drift of the one before it.
     // Without this the tracker keeps the lock of the previous song, and with
@@ -3070,7 +3069,7 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         inputScratch.setSize (8, scratchSize, false, false, true);
     if (trackScratch.getNumSamples() < scratchSize || trackScratch.getNumChannels() < 2)
         trackScratch.setSize (2, scratchSize, false, false, true);
-    trackTransport.prepareToPlay (samplesPerBlockExpected, sr);
+    trackTransport.prepareToPlay (scratchSize, sr);
     prepareHits (sr);
     // Same clock, analysis still alive: skip prepare(). It zeros the leak
     // ring, resets BeatTracker (the clock) and start() then clearVoices()
@@ -3221,6 +3220,17 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         {
             trackScratch.clear();
             trackTransport.getNextAudioBlock ({ &trackScratch, 0, chunk });
+            if (trackTransport.isPlaying())
+            {
+                float mag = 0.0f;
+                for (int c = 0; c < trackScratch.getNumChannels(); ++c)
+                    mag = juce::jmax (mag, trackScratch.getMagnitude (c, 0, chunk));
+                const double pos = trackTransport.getCurrentPosition();
+                if (mag == 0.0f && trackLastBlockHadSound && pos > 1.0
+                    && pos < trackTransport.getLengthInSeconds() - 1.0)
+                    trackDropouts.fetch_add (1, std::memory_order_relaxed);
+                trackLastBlockHadSound = mag > 0.0f;
+            }
         }
         else
         {
@@ -3312,7 +3322,8 @@ void MainComponent::timerCallback()
                  + "  ricentri " + juce::String (static_cast<int> (snap.phaseNudgeCount))
                  + "  uscita " + juce::String (outputLatencyMs, 0) + " ms"
                  + "  xrun " + juce::String (lagDevice != nullptr ? lagDevice->getXRunCount() : -1)
-                 + "  tagli " + juce::String (engine.hardSteals()));
+                 + "  tagli " + juce::String (engine.hardSteals())
+                 + "  vuoti brano " + juce::String (static_cast<int> (trackDropouts.load (std::memory_order_relaxed))));
         }
     }
    #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)

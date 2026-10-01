@@ -4,8 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 
 namespace vp
 {
@@ -1742,6 +1740,29 @@ void BeatDecoder::declarePulseHere() noexcept
     hyp.periodSec = period;
 }
 
+bool BeatDecoder::stepLacksComb (float newBpm) const noexcept
+{
+    // Under a sounding part on a direct feed a step - from the interval
+    // detector, the grid-step detector or a 4-beat door - is confirmed only
+    // when the fold sits nearer the new tempo than the held one. The 97-minute
+    // Flamingo set had steps confirmed on a fill or a push that the drummer
+    // never made (61:04 122.1 -> 115.2, 76:00 122.8 -> 128.1); the clock
+    // followed them for seconds. A real step arrives a little later, once the
+    // fold has turned: the drummer's priority is holding, and a drastic change
+    // may come slower (feedback, 2026-09-30). Song bench: strokes outside
+    // 25 ms 8.92 -> 8.44%, exits 3.48 -> 3.28 /min, time over 4% off the song
+    // 138 -> 105 s, time on a wrong tempo 393 -> 363 s, no run worse; surges
+    // 0.75 -> 0.79 /min (docs/TODO.md item 81). The bank never sets `sounding`.
+    if (! lineFeed || ! sounding || bpm < kMinBpm || newBpm < kMinBpm
+        || ! tempo.ready() || tempo.salience() <= kSalienceFloor)
+        return false;
+    const float raw = applyUserOctave (tempo.bpm());
+    if (raw < kMinBpm)
+        return false;
+    const float comb = raw * std::exp2 (std::round (std::log2 (newBpm / raw)));
+    return std::fabs (comb - newBpm) >= std::fabs (comb - bpm);
+}
+
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
 {
     if (candidateBpm < kMinBpm || candidateBpm > kMaxBpm)
@@ -2314,6 +2335,11 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
                 return false;
             }
 
+            if (stepLacksComb (applyUserOctave (60.0f / mean)))
+            {
+                dropTransitionCandidate (TempoTransitionReason::incoherent);
+                return false;
+            }
             const int confirmedIntervals = transitionIntervals >= 2 ? 3 : 2;
             // The last two peaks that measured this are behind us and the fits
             // would
@@ -2617,6 +2643,8 @@ bool BeatDecoder::observeGridStep() noexcept
         // reversed by a step candidate until accepted beats reverse it.
         if (fastDriftBeats >= 2 && fastDriftSign != 0
             && (newBpm > bpm ? 1 : -1) != fastDriftSign)
+            return false;
+        if (stepLacksComb (newBpm))
             return false;
 
         // Confirmed. Same publication as the interval detector, but the fit
@@ -3089,13 +3117,6 @@ float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
 
 void BeatDecoder::updateTempo() noexcept
 {
-    // DBGJUMP temporary
-    struct DbgJump { BeatDecoder& d; float b0; TempoRegime r0; int t0; ~DbgJump() {
-        if (std::getenv ("VP_DBGJUMP") && d.sounding && b0 > 40.0f && std::fabs (d.bpm / b0 - 1.0f) > 0.015f)
-            std::fprintf (stderr, "DBGJUMP t=%.2f %.2f->%.2f reg %d->%d trans=%d->%d refit=%d live[w=%.2f rate=%.2f flags=%d] hold=%d short=%.2f(res %.3f) long=%.2f comb=%.2f\n",
-                d.timeSec, b0, d.bpm, (int) r0, (int) d.tempoRegime, t0, (int) d.transitionState, d.transitionRefitBeats,
-                d.dbgWanted, d.dbgRate, d.dbgFlags, d.ioiTargetHoldBeats, d.shortFitBpm, d.shortFitResidual, d.longFitBpm, d.applyUserOctave (d.tempo.bpm()));
-        d.dbgFlags = -1; } } dbgJump { *this, bpm, tempoRegime, (int) transitionState };
     // "L'1 è QUI" no longer wipes the fits: the lattice stays, so there
     // is no new window to hold the tempo across. If a hold is still
     // armed, restore the tempo (and the fixed anchor the next beat
@@ -4758,7 +4779,7 @@ void BeatDecoder::updateTempo() noexcept
                     const bool confirmed = pass && stepFourHoldBpm > kMinBpm
                         && std::fabs (fourBpm - stepFourHoldBpm)
                                <= 0.02f * fourBpm;
-                    if (confirmed)
+                    if (confirmed && ! stepLacksComb (fourBpm))
                     {
                         bpm = fixedAnchorBpm = std::clamp (fourBpm, kMinBpm, kMaxBpm);
                         gridAnchorSec = a4;
@@ -4847,7 +4868,7 @@ void BeatDecoder::updateTempo() noexcept
                     const bool confirmed = pass && further
                         && std::fabs (fourBpm - stepFourStraddleHoldBpm)
                                <= 0.04f * fourBpm;
-                    if (confirmed)
+                    if (confirmed && ! stepLacksComb (fourBpm))
                     {
                         bpm = fixedAnchorBpm = std::clamp (fourBpm, kMinBpm, kMaxBpm);
                         gridAnchorSec = a4;
@@ -5481,7 +5502,7 @@ void BeatDecoder::updateTempo() noexcept
                     // continuo hashes identical and improved 297576, but
                     // 234224's phase got worse: 70.3/147.1 → 66.9/156.1.
                     // The live pair keeps walking at kRateLive.
-                    if (carried && a4 >= 0.0)
+                    if (carried && a4 >= 0.0 && ! stepLacksComb (fourBpm))
                     {
                         bpm = std::clamp (fourBpm, kMinBpm, kMaxBpm);
                         gridAnchorSec = a4;
@@ -5584,8 +5605,6 @@ void BeatDecoder::updateTempo() noexcept
                                   : (liveFourAim ? kRateLive
                                      : (far || slowIoiLeads ? kRateAcquiring
                                         : (doorHoldRate ? kRateDoorHold : kRateLive)))));
-            dbgWanted = motionTarget;
-            dbgFlags = (shapeLeads ? 1 : 0) | (doorATake ? 2 : 0) | (liveFourAim ? 4 : 0) | (far ? 8 : 0) | (slowIoiLeads ? 16 : 0) | (doorHoldRate ? 32 : 0);
             break;
         }
 

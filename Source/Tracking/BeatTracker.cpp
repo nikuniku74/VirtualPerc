@@ -1830,6 +1830,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // candidate: whether the re-placements are heard is the open part.
             constexpr float nudgeAbove = 0.06f;
             constexpr float nudgeBeats = 2.0f;
+            constexpr float nudgeMax = 0.20f;
             if (sounding && ! speakerFollow && ! follower.tempoTransitionActive()
                 && std::fabs (gridErr) > nudgeAbove)
             {
@@ -1839,7 +1840,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                 if (static_cast<float> (nudgeSamples) > nudgeBeats * beatSeconds * static_cast<float> (sampleRate))
                 {
                     follower.snapPhase (wrap01 (follower.beatPhase()
-                                                - std::clamp (gridErr, -0.20f, 0.20f)), true);
+                                                - std::clamp (gridErr, -nudgeMax, nudgeMax)), true);
                     nudgeSamples = 0;
                     nudgeSide = 0;
                     ++phaseNudgeCount;

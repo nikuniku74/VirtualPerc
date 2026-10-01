@@ -5199,6 +5199,15 @@ that stays 0.06 beat off the published grid for two beats is re-placed by at
 most 0.20 beat, as STOP/START does; against the drums the grid beats the
 clock 4.2 to 9.9% of strokes outside 25 ms.
 
+**Kept (2026-10-01), a step under a sounding part needs the fold (docs/TODO.md
+item 81).** `BeatDecoder::stepLacksComb` gates every step confirmation (interval
+detector, `observeGridStep`, the FISSO/VIVO 4-beat doors, the carried vote) on
+a direct feed while sounding: the comb, folded onto the new tempo's octave, must
+sit nearer the new tempo than the held one. Song bench: strokes outside 25 ms
+8.92 -> 8.44%, time over 4% off 138 -> 105 s, no run worse. Rejected the same
+day: re-placing after one beat (5-6 runs worse) and spreading the re-placement
+over half or one beat (no skipped strokes, but 43% more time off the grid).
+
 ## 9. Map: "I want to change X"
 
 | X | file |
