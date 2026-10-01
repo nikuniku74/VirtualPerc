@@ -2026,6 +2026,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         lastStyleOccupancy.store (f.occupancy, std::memory_order_relaxed);
     }
     lastHits.store (percussion.hitsFired(), std::memory_order_relaxed);
+    lastHardSteals.store (percussion.hardSteals(), std::memory_order_relaxed);
     lastAttackLeadMs.store (percussion.attackLeadMs(), std::memory_order_relaxed);
 
     const auto t1 = std::chrono::steady_clock::now();

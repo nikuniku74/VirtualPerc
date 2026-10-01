@@ -4642,6 +4642,19 @@ le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra su
   `--state-timing` 0 FAIL. `VPLAG` stampa anche `ricentri` (`phaseNudgeCount`).
 - [ ] Ascolto su iPad dello stesso tratto del Flamingo: si sentono i ricentri? la parte sta al centro?
 
+### 78. I pallini dei quarti si accendevano prima del colpo e a scatti 🟡 (2026-10-01, da verificare a occhio)
+
+- [x] Il pallino era deciso dal timer UI a 15 Hz su `snap.barPhase`, cioè la posizione del clock che si sta
+  *calcolando*: si accendeva prima del colpo sentito di tutta la latenza d'uscita (buffer + dispositivo; con le
+  AirPods ~150–250 ms) e dopo il momento giusto di 0–67 ms, diverso a ogni battito.
+- [x] `MainComponent::updateBeatDots` su `juce::VBlankAttachment` (ogni fotogramma dello schermo): fase del clock
+  meno (latenza d'uscita + `attackLeadMs`), ridisegna solo la striscia dei pallini quando il quarto cambia.
+  Vale in BRANO (la canzone esce dalla stessa uscita) e dal vivo (la band è già nella stanza).
+  `VPLAG` stampa `uscita` (latenza d'uscita usata).
+- [x] Verificato: la latenza delle AirPods non entra nel tempo della parte in BRANO (`roundTrip = 0` per
+  `internalPlayer`, `VirtualPercussionEngine.cpp`).
+- [ ] Verifica a occhio su iPad, con AirPods e con cavo/mixer.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

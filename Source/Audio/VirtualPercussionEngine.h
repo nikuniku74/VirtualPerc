@@ -90,6 +90,11 @@ public:
     const EngineSettings& settings() const noexcept { return cfg; }
 
     void setReportedLatencyMs (float ms) noexcept { latencyMs.store (ms, std::memory_order_relaxed); }
+    /** Bar phase of the clock at the end of the last audio block, and how
+        far ahead of a heard attack the clock places it. The beat dots use
+        both to light when the stroke is heard, not when it is computed. */
+    float clockBarPhase() const noexcept { return lastBar.load (std::memory_order_relaxed); }
+    float attackLeadMs() const noexcept { return percussion.attackLeadMs(); }
 
     /** Measure this rig's round trip instead of taking the device's word for
         it: a short sweep goes out, whatever comes back is captured, and the two
@@ -125,6 +130,8 @@ public:
 
     EngineSnapshot snapshot() const noexcept;
     int shakerHits() const noexcept { return lastHits.load (std::memory_order_relaxed); }
+    /** Voices cut with no fade because every voice was busy: a click each. */
+    int hardSteals() const noexcept { return lastHardSteals.load (std::memory_order_relaxed); }
     TrackingState state() const noexcept
     { return static_cast<TrackingState> (lastState.load (std::memory_order_relaxed)); }
 
@@ -410,6 +417,7 @@ private:
     std::atomic<float> lastStyleSync { 0.0f };
     std::atomic<float> lastStyleOccupancy { 0.0f };
     std::atomic<int>   lastHits { 0 };
+    std::atomic<int>   lastHardSteals { 0 };
     std::atomic<bool>  lastLoopPlaying { false };
     std::atomic<float> lastLoopPhaseMs { 0.0f };
     std::atomic<int>   lastHandovers { 0 };

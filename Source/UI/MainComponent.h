@@ -528,6 +528,15 @@ private:
     /** Where the beat dots are drawn, kept so the timer can repaint that strip
         alone rather than the whole console. */
     juce::Rectangle<int> beatStrip;
+    /** The lit dot is re-decided on every screen frame, from the clock less
+        the output path, so it lights when the stroke is heard. The 15 Hz
+        timer alone lit it up to 67 ms late, by a different amount each
+        beat, and before the sound by the whole output latency (AirPods
+        ~150-250 ms). */
+    juce::VBlankAttachment beatVBlank;
+    int dotBeat = -1;
+    float outputLatencyMs = 0.0f;
+    void updateBeatDots();
     juce::Rectangle<int> tapStrip;
     TapZone tapZone { *this };
     TrackWaveform trackWaveform { *this };

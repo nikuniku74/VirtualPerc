@@ -1290,6 +1290,7 @@ MainComponent::MainComponent()
     refreshThemeColours();
 
     startTimerHz (15);
+    beatVBlank = juce::VBlankAttachment (this, [this] { updateBeatDots(); });
 
     {
         juce::Component::SafePointer<MainComponent> safeReset (this);
@@ -3016,6 +3017,26 @@ void MainComponent::refreshSwingButton()
     swingButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
 }
 
+void MainComponent::updateBeatDots()
+{
+    // The clock's bar phase is the position being rendered; the stroke on it
+    // is heard after the output path and the attack lead the clock runs
+    // ahead by. Same in BRANO and with a live band: in BRANO the song shares
+    // that output path, live the band is already in the room.
+    const float bpm = juce::jmax (40.0f, snap.bpm);
+    const float delayBars = (outputLatencyMs + engine.attackLeadMs()) * 0.001f
+                            * bpm / 60.0f * 0.25f;
+    float bar = engine.clockBarPhase() - delayBars;
+    bar -= std::floor (bar);
+    const int beat = juce::jlimit (0, 3, static_cast<int> (bar * 4.0f));
+    if (beat != dotBeat)
+    {
+        dotBeat = beat;
+        if (! beatStrip.isEmpty())
+            repaint (beatStrip.expanded (8));
+    }
+}
+
 void MainComponent::applyLatencyFromDevice()
 {
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -3025,6 +3046,7 @@ void MainComponent::applyLatencyFromDevice()
         const int outL = dev->getOutputLatencyInSamples();
         const int buf = dev->getCurrentBufferSizeSamples();
         const float ms = sr > 0.0 ? static_cast<float> ((inL + outL + buf) * 1000.0 / sr) : 0.0f;
+        outputLatencyMs = sr > 0.0 ? static_cast<float> ((outL + buf) * 1000.0 / sr) : 0.0f;
         engine.setReportedLatencyMs (ms);
         inputChannels = dev->getActiveInputChannels().countNumberOfSetBits();
     }
@@ -3258,6 +3280,15 @@ void MainComponent::timerCallback()
     // applied, coda = audio still waiting for the worker. Both should stay
     // flat; if they climb, the device is falling behind.
     {
+        static uint32_t lastNudges = 0;
+        if (snap.phaseNudgeCount != lastNudges)
+        {
+            lastNudges = snap.phaseNudgeCount;
+            juce::Logger::outputDebugString ("VPNUDGE ricentro n." + juce::String (static_cast<int> (lastNudges))
+                 + "  bpm " + juce::String (snap.bpm, 1));
+        }
+    }
+    {
         static int lagTicks = 0;
         static const juce::uint32 lagStartMs = juce::Time::getMillisecondCounter();
         if (snap.percussionAudible && ++lagTicks >= 75)
@@ -3266,6 +3297,7 @@ void MainComponent::timerCallback()
             const double sr = snap.sampleRate > 0.0 ? snap.sampleRate : 48000.0;
             const int up = static_cast<int> ((juce::Time::getMillisecondCounter() - lagStartMs) / 1000);
             const float beatMs = 60000.0f / juce::jmax (40.0f, snap.bpm);
+            auto* lagDevice = deviceManager.getCurrentAudioDevice();
             juce::Logger::outputDebugString ("VPLAG t " + juce::String (up / 60) + ":"
                  + juce::String (up % 60).paddedLeft ('0', 2)
                  + "  lead " + juce::String (snap.leadMs, 0) + " ms"
@@ -3277,7 +3309,10 @@ void MainComponent::timerCallback()
                  + "  clock " + juce::String (snap.clockBpm, 1)
                  + "  conf " + juce::String (snap.confidence, 2)
                  + "  fase " + juce::String (snap.phaseErrorBeats * beatMs, 0) + " ms"
-                 + "  ricentri " + juce::String (static_cast<int> (snap.phaseNudgeCount)));
+                 + "  ricentri " + juce::String (static_cast<int> (snap.phaseNudgeCount))
+                 + "  uscita " + juce::String (outputLatencyMs, 0) + " ms"
+                 + "  xrun " + juce::String (lagDevice != nullptr ? lagDevice->getXRunCount() : -1)
+                 + "  tagli " + juce::String (engine.hardSteals()));
         }
     }
    #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)
@@ -4371,7 +4406,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float rad = juce::jmin (24.0f, static_cast<float> (rows.beats.getHeight()) * 0.27f);
         const float y = static_cast<float> (band.getCentreY());
         const float step = static_cast<float> (band.getWidth()) / 4.0f;
-        const int beatIdx = juce::jlimit (0, 3, static_cast<int> (snap.barPhase * 4.0f));
+        const int beatIdx = juce::jlimit (0, 3, dotBeat);
         const bool running = snap.bpm > 40.0f || snap.barDeclared;
 
         g.setColour (text().withAlpha (0.10f));
