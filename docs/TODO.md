@@ -4786,6 +4786,21 @@ dell'item 75 (±1% attorno alla media di 30 s, cambio creduto dopo 12 s fuori ba
   concordano entro 1% / 2%: >25 ms 8.72 → 10.74 / 10.93%, scatti 1.18 → 2.09 / 2.13, 26 / 31 esecuzioni
   peggiori. La retta lunga è ferma ma in ritardo sul battito. Tolta.
 
+### 86. Datare il battito sull'attacco del suono invece che sul picco della rete: provato, non tenuto 🔴 (2026-10-02)
+
+- [x] Attacco più netto in ogni hop (energia della differenza prima, blocchi di ~2.2 ms, salita contro gli 8
+  blocchi prima), passato al decoder accanto alle bande; al battito accettato si sceglieva l'attacco più forte
+  vicino. Misura: l'attacco sta 17–25 ms prima del battito della rete (mediana), con 11–17 ms di dispersione
+  (INFINITO, VITA, I WANNA DANCE, GARDEN 1500). Spostamento fisso −20 ms, così la taratura assoluta non cambia.
+- [x] Banco veloce contro `fb0` (>25 ms / usc/min / scatti/min / oltre 4% s):
+  finestra 25 ms 8.81/3.57/0.96/627; 15 ms 8.75/3.67/1.15/181; soglia 1.0 8.79/3.74/1.02/199;
+  35 ms + soglia 0.3 **7.83/3.43/0.87/638** (THE REASON aggancia il tempo sbagliato: 6 → 224 s);
+  la stessa solo dopo l'aggancio e con la parte che suona 8.37/3.46/1.17/190 (13 brani meglio, 13 peggio);
+  sull'energia normale invece della differenza 9.15 e 9.26 %. Nessuna variante migliora senza peggiorare
+  molti brani. Tolto tutto.
+- [ ] Il segnale c'è (la media migliora fino all'8.4% con la variante prudente), ma la scelta dell'attacco
+  sbaglia spesso colpo (charleston, rullante fuori tempo). Servirebbe distinguere la cassa nel mix.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
