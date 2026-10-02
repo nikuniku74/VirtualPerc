@@ -1828,16 +1828,26 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // 9.9 -> 9.0%, exits 3.82 -> 3.53 /min, surges 0.84 -> 0.75 /min,
             // 443 re-placements in 30 runs (docs/TODO.md item 77). Listening
             // candidate: whether the re-placements are heard is the open part.
-            constexpr float nudgeAbove = 0.06f;
-            constexpr float nudgeBeats = 2.0f;
+            constexpr float kNudgeAboveSec = 0.030f;
+            constexpr float kNudgeWaitSec = 1.0f;
             constexpr float nudgeMax = 0.20f;
+            // Heard in milliseconds, so measured in them: 0.06 beat for two
+            // beats is 21 ms for 0.7 s at 168 and 43 ms for 1.4 s at 84 (a
+            // 168 song played with ÷2), so slow songs drifted further and
+            // longer before the re-placement. 30 ms for 1 s is the old rule
+            // at 120. Song bench: strokes outside 25 ms 8.44 -> 8.18%, time
+            // more than 30 ms off the grid 867 -> 755 s, 1000 GIORNI at ÷2
+            // 84/80 -> 57/67 s; exits 3.28 -> 3.33 /min (UNA CANZONE 44k
+            // 5.5 -> 6.5), skipped strokes 94 -> 104 (docs/TODO.md item 82).
+            const float aboveBeats = kNudgeAboveSec / beatSeconds;
+            const float waitBeats = kNudgeWaitSec / beatSeconds;
             if (sounding && ! speakerFollow && ! follower.tempoTransitionActive()
-                && std::fabs (gridErr) > nudgeAbove)
+                && std::fabs (gridErr) > aboveBeats)
             {
                 const int side = gridErr > 0.0f ? 1 : -1;
                 nudgeSamples = side == nudgeSide ? nudgeSamples + numSamples : numSamples;
                 nudgeSide = side;
-                if (static_cast<float> (nudgeSamples) > nudgeBeats * beatSeconds * static_cast<float> (sampleRate))
+                if (static_cast<float> (nudgeSamples) > waitBeats * beatSeconds * static_cast<float> (sampleRate))
                 {
                     follower.snapPhase (wrap01 (follower.beatPhase()
                                                 - std::clamp (gridErr, -nudgeMax, nudgeMax)), true);

@@ -4716,6 +4716,22 @@ le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra su
   93 su ~2 ore di banco.
 - [ ] Restano le scivolate del 2–3% in VIVO (stesso meccanismo che segue le inflessioni vere).
 
+### 82. Il ricentro misurato in millisecondi, non in battiti 🟡 (2026-10-01, misurato — manca l'ascolto)
+
+- [x] Log iPad su 1000 GIORNI suonato a ÷2 (~84): tempo 81.7–87.3, fase fino a +139/−126 ms, 26 ricentri in
+  6 min. Rifatto con `VPTrack --octave-at 6 --octave -1`: contro lo stesso brano al livello naturale (168) la
+  fase p95 sale da 36–40 a 61–68 ms. La soglia del ricentro era in battiti: 0.06 per 2 battiti è 21 ms per
+  0.7 s a 168 e 43 ms per 1.4 s a 84, quindi i tempi lenti uscivano di più e più a lungo.
+- [x] `BeatTracker::process`: ricentro oltre 30 ms per 1 s (uguale alla regola vecchia a 120). Banco contro
+  l'item 81: >25 ms 8.44 → 8.18%, secondi oltre 30 ms dalla griglia 867 → 755, 1000 GIORNI ÷2 84 → 57 s
+  (44k) e 80 → 67 s (48k); usc/min 3.28 → 3.33 (UNA CANZONE 44k 5.5 → 6.5, posizione dei colpi uguale),
+  colpi saltati 94 → 104, ricentri 429 → 482. Tenuto: meno uscita sentita, al costo di qualche pausa in più.
+  `VPTests` `--phase-lock` 20/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0, `--tempo-step` 14/0,
+  `--state-timing` 0 FAIL.
+- [ ] `onset_fit.py` non vale con ÷2: confronta i colpi della batteria con il sedicesimo della parte, che a
+  metà tempo è l'ottavo della batteria.
+- [ ] Ascolto su iPad di 1000 GIORNI con ÷2.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
