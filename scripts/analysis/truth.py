@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verità dei battiti da una rete offline, e quanto l'app ci sta sopra (item 87).
 
-    truth.py make [WAV ...]       battiti e uno -> WAV.truth.txt, e /tmp/vp-bench/clicks/WAV da ascoltare
+    truth.py make [--no-clicks] [WAV ...] battiti e uno -> WAV.truth.txt, e /tmp/vp-bench/clicks/WAV da ascoltare
     truth.py score TAG [TAG2 ...] i pulses del banco veloce (bench_fast.py run TAG) contro la verità
 
 Il maestro è Beat This! (CPJKU, ISMIR 2024): non causale, quindi gira solo qui e
@@ -34,17 +34,29 @@ import numpy as np
 CACHE = '/tmp/vp-bench'
 
 
-def make(wavs):
+def make(wavs, clicks_wanted=True):
     import torch
     from beat_this.inference import Audio2Beats
-    from beat_this.preprocessing import load_audio
     dev = 'mps' if torch.backends.mps.is_available() else 'cpu'
     a2b = Audio2Beats(checkpoint_path='final0', device=dev, dbn=False)
     for w in wavs:
         out = w + '.truth.txt'
         if not os.path.exists(out):
-            signal, sr = load_audio(w)
-            logits, dlogits = (x.cpu().numpy() for x in a2b.spect2frames(a2b.signal2spect(signal, sr)))
+            # In 5-minute pieces with 10 s of context either side: a two-hour set
+            # loaded and transformed whole took the machine down (2026-10-02).
+            import soundfile as sf
+            sr = sf.info(w).samplerate
+            total, body, pad = sf.info(w).frames, 300 * sr, 10 * sr
+            parts = ([], [])
+            for start in range(0, total, body):
+                a0 = max(0, start - pad)
+                x, _ = sf.read(w, start=a0, stop=min(total, start + body + pad), dtype='float32', always_2d=True)
+                fr = [y.cpu().numpy() for y in a2b.spect2frames(a2b.signal2spect(x.mean(1), sr))]
+                lo = round((start - a0) / sr * 50)
+                hi = lo + round((min(total, start + body) - start) / sr * 50)
+                for p, y in zip(parts, fr):
+                    p.append(y[lo:hi])
+            logits, dlogits = (np.concatenate(p) for p in parts)
             beats, downs = a2b.frames2beats(*(torch.from_numpy(x) for x in (logits, dlogits)))
             # The network runs at 50 fps, so its beats sit on a 20 ms grid: ±10 ms
             # of rounding in the truth itself. A parabola through the logit peak
@@ -59,7 +71,7 @@ def make(wavs):
                     f.write(f'{(kk + fr) / 50:.4f} {int(kk in d)}\n')
             print(f'{os.path.basename(w)}: {len(beats)} battiti, {len(downs)} uni')
         ck = f'{CACHE}/clicks/' + os.path.basename(w)
-        if not os.path.exists(w.replace('_48k.wav', '_44k.wav') if w.endswith('_48k.wav') else '') \
+        if clicks_wanted and not os.path.exists(w.replace('_48k.wav', '_44k.wav') if w.endswith('_48k.wav') else '') \
                 and not os.path.exists(ck):
             clicks(w, ck, np.loadtxt(out, ndmin=2))
 
@@ -135,8 +147,10 @@ if __name__ == '__main__':
         print(__doc__)
         sys.exit(1)
     if sys.argv[1] == 'make':
-        wavs = sys.argv[2:] or sorted(f'{CACHE}/wav/{f}' for f in os.listdir(f'{CACHE}/wav') if f.endswith('.wav')
+        nc = '--no-clicks' in sys.argv
+        args = [a for a in sys.argv[2:] if a != '--no-clicks']
+        wavs = args or sorted(f'{CACHE}/wav/{f}' for f in os.listdir(f'{CACHE}/wav') if f.endswith('.wav')
                                       )
-        make(wavs)
+        make(wavs, not nc)
     else:
         report(sys.argv[2:])

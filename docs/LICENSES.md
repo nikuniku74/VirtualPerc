@@ -8,7 +8,7 @@ This project is intended to become a commercial live app. Do not add dependencie
 | Virtual Percussionist source | — | Proprietary (project owner) | Original code in `Source/`, `Tests/` |
 | Percussion samples | VCSL / VSCO 2 CE | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | Conga, tumba, quinto, shaker one-shots in `Assets/Percussion/`. See ATTRIBUTION.md. |
 | ONNX Runtime | 1.20.1 | MIT | Host dylib (GitHub release) + iOS xcframework from NuGet `Microsoft.ML.OnnxRuntime` (`./scripts/fetch_onnxruntime.sh`). |
-| BeatNet BDA weights | model 1 (GTZAN) | [CC BY 4.0](https://github.com/mjhydri/BeatNet/blob/main/LICENSE) | Heydari, Cwitkowitz, Duan, ISMIR 2021. Exported to `Assets/Models/beatnet.onnx`. |
+| BeatNet BDA weights | model 1 (GTZAN), fine-tuned | [CC BY 4.0](https://github.com/mjhydri/BeatNet/blob/main/LICENSE) | Heydari, Cwitkowitz, Duan, ISMIR 2021. Since 2026-10-02 `Assets/Models/beatnet.onnx` is these weights fine-tuned (`scripts/train_beatnet_finetune.py`) on the user's own mixer-send recordings, labelled offline by Beat This! (Foscarin, Schlüter, Widmer, ISMIR 2024, MIT; used only to label, not shipped). docs/TODO.md item 87. |
 | Signalsmith Stretch | 1.3.2 | MIT | Loop time-stretch, header-only, vendored at `third_party/signalsmith-stretch`. `VP_USE_SIGNALSMITH` is AUTO / ON / OFF; OFF falls back to the built-in WSOLA. |
 | Signalsmith Linear | — | MIT | FFT/STFT under Signalsmith Stretch, header-only, vendored at `third_party/signalsmith-linear`. |
 | Dance recorded loop library | CC0 1.0 | nicpressley, Sycopation, shpira / Freesound | Embedded from `Assets/Loops/dance/`. Exact sound pages and take mapping are recorded in `Assets/Loops/dance/SOURCES.md`. |

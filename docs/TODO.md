@@ -4895,6 +4895,66 @@ lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_sca
   battuta non va molto oltre. **L'uno e l'ottava sono il punto dove serve una rete migliore**: il maestro li
   azzecca (confermato a orecchio), BeatNet no. È la fase 2 di questo item, ora giustificata dalla misura.
 
+- [x] **Fase 2 avviata: BeatNet rifinito sulle etichette del maestro** (`scripts/train_beatnet_finetune.py`).
+  Dati dell'utente, tutti dalla mandata del banco, esclusi i brani del banco e i set Flamingo/Garden (esame):
+  Bflat 10.01.26, Capolinea 30.05.26, 1–4.mp3, Promo Dance, ~4.4 h, 31 800 battiti, in `~/vp-train` (fuori
+  da `/tmp`). Feature prese dall'app stessa (`VPActivations --features`): BeatNet in PyTorch le riproduce a
+  5e-5. Etichette spostate di −46.5 ms (dove cadono i picchi di BeatNet sull'orologio dei frame), più un
+  termine che tiene la rete vicina alle uscite originali (il decoder è tarato su quelle).
+- [x] Incidente: il maestro su un set intero di 2 ore ha riempito la memoria e il Mac si è riavviato,
+  svuotando `/tmp`. `truth.py make` ora lavora a pezzi di 5 min (scarto contro il file intero: mediana 2.4 ms,
+  p90 12 ms, uni d'accordo 99%); banco ricostruito con gli stessi tagli, numeri identici (17.9 ms / 26.4% /
+  uno 57.5%). Su MPS un LSTM su 340 000 frame in un colpo sbaglia: valutazione a blocchi da 10 000.
+- [x] Primo modello (500 passi, KD 1.0), banco veloce con `VP_BEAT_MODEL`: livello giusto 62.2 → 71.4%,
+  disp 17.9 → 16.1 ms, uno 57.5 → 64.0%, scatti 0.78 → 0.58/min; >25 ms (verità) 26.4 → 28.0%. Ottava:
+  corretti 1000 GIORNI, DEJAVU, NONSOULFUNKY, VIVERE 48k, GARDEN 600; rotti EVERYTIME (123 → 61),
+  2_WRECKING_BALL (115 → 57), UNA CANZONE (85 → 171), GARDEN 2400. Saldo positivo ma non robusto: servono
+  più dati e più vari.
+- [x] Varianti (passi / peso KD), banco veloce contro la verità (livello giusto %, disp ms, >25 ms %, uno %,
+  scatti/min): oggi 62.2 / 17.9 / 26.4 / 57.5 / 0.78; 500/1 71.4 / 16.1 / 28.0 / 64.0 / 0.58; 2000/1 68.2 /
+  21.5 / 25.6 / 68.2 / 0.74; 2000/0.3 69.5 / 20.4 / 28.2 / 67.9 / 0.66; 500/3 73.4 / 14.9 / 25.8 / 69.8 / 0.51;
+  **1000/3 71.9 / 13.0 / 22.2 / 67.3 / 0.53**; 500/6 70.1 / 15.5 / 25.0 / 66.3 / 0.62. Sulla coda tenuta fuori
+  delle serate di addestramento vince 2000/0.3 (F 0.938, uno 0.848) ma sul banco perde: più addestramento
+  impara quelle due serate, il KD alto generalizza meglio.
+- [x] **Tenuto 1000/3 come `Assets/Models/beatnet.onnx`** (`train_beatnet_finetune.py s1kk3 --steps 1000
+  --kd 3.0`; l'originale GTZAN resta in git). `VPTests` con il modello nuovo: `--phase-lock` 20/0 (il 156 ora
+  si legge 156: era 19/1), `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0, `--tempo-step` 14/0,
+  `--tempo-slow` 13/0, `--state-timing` 0 FAIL. Banco incorporato identico a `VP_BEAT_MODEL`.
+- [x] **Contaminazione trovata e tolta:** controllo per inviluppo d'attacco (correlazione normalizzata, due
+  sonde da 60 s di ogni brano del banco contro ogni altro file) — Promo Dance contiene audio di NonSoulFunky
+  del banco (0.71; il resto ≤ 0.4, il caso casuale 0.06). Il modello 1000/3 l'aveva sentito: la sua
+  correzione d'ottava su NONSOULFUNKY non vale. Promo Dance spostato in `~/vp-train/excluded`.
+- [x] Dati nuovi dell'utente (2026-10-02): 13 brani in studio (38, 12, 18, 30, 33, 40, 41, Back to black,
+  Snow on the sahara, Il mio giorno migliore, Il mare impetuoso, Try, Dance Mesh — quest'ultimo controllato:
+  non è NonSoulFunky, 0.15) e tre serate (nsf08 11 2008, NSF FBI ottobre 2008, SONG00). Totale 9.56 h, 63 000
+  battiti. `--balance 0.5` sceglie i file per radice della durata, così lo studio non sparisce sotto i live.
+- [x] **Ripetizioni con seme diverso** (banco senza NONSOULFUNKY, 48 file; livello giusto % / disp ms / >25 ms % /
+  uno % / file all'ottava giusta): BeatNet 68.6 / 20.4 / 30.2 / 69.0 / 38; s1kk3 70.6 / 13.7 / 23.3 / 74.4 / 39;
+  stessa ricetta senza Promo Dance, seme 0 e 1: 75.7 / 15.9 / 28.0 / 75.5 / 42 e 80.2 / 15.2 / 26.5 / 76.4 / 45;
+  9.56 h 1000 passi 70.2 / 18.3 / 26.3 / 74.8 / 39; 2000 passi seme 0 e 1: 76.0 / 14.8 / 26.4 / 69.8 / 43 e
+  62.3 / 14.3 / 23.9 / 71.6 / 36; bilanciato 74.3 / 15.8 / 28.4 / 71.7 / 42. Media dei pesi (`scripts/
+  average_onnx_models.py`) di 6 e di 4 modelli: 72.7 / 16.2 / 29.7 / 73.3 / 41 e 75.8 / 15.9 / 28.9 / 71.9 / 42.
+  **Solido:** ogni modello rifinito migliora la fase (20.4 → 13.7–18.3 ms) e l'uno (69 → 70–76%). **Non
+  solido:** l'ottava oscilla col seme più che con i dati (62–80%), e 9.56 h non battono chiaramente 4 h.
+- [ ] **L'ottava è una decisione sul filo nel decoder, non solo un limite della rete:** con la stessa rete lo
+  stesso brano a 44.1 e 48 kHz finisce spesso su ottave opposte (VIVERE, 1000 GIORNI, EVERYTIME, UNA CANZONE si
+  ribaltano fra modelli e fra frequenze). Prossima leva: rendere stabile la scelta d'ottava in acquisizione
+  (stessa scelta per piccole perturbazioni), misurata con le coppie 44.1/48 come repliche.
+- [x] **Modello dell'app cambiato in o1k3s1** (4 h senza Promo Dance, 1000 passi, KD 3, seme 1): s1kk3 metteva
+  SALLY live a metà tempo (52 contro 104). o1k3s1 contro BeatNet originale: livello giusto 68.6 → 80.2%,
+  disp 20.4 → 15.2 ms, >25 ms 30.2 → 26.5%, uno 69.0 → 76.4%; corregge VIVERE, WRECKING BALL 04, 1000 GIORNI
+  44k, DEJAVU, rompe solo EVERYTIME 48k. `VPTests` `--phase-lock` 20/0, `--bar` 10/0, `--new-input` 16/0,
+  `--transport` 4/0, `--tempo-step` 14/0, `--tempo-slow` 13/0, `--state-timing` 0 FAIL. Scelto anche per il
+  seme: va riprovato quando la scelta d'ottava sarà stabile.
+- [x] Ascolto su iPad con o1k3s1 (2026-10-02): «sembrano tutti abbastanza corretti sulle ottave»; il tempo non
+  sembra «davanti» al batterista (l'anticipo di ~5 ms contro la verità non si sente).
+- [ ] Ottava ancora fragile: 1000/3 contro oggi corregge VIVERE 48k, WRECKING 04, 1000 GIORNI, DEJAVU,
+  NONSOULFUNKY, GARDEN 2400/600 e ne rompe EVERYTIME, UNA CANZONE 44k, ASPETTANDO 48k; lo stesso brano a
+  44.1 e 48 kHz può finire su ottave diverse. Servono più dati, e più vari (studio, altri palchi).
+- [x] Taratura assoluta: «anticipo» contro la verità 26 → 31 ms (il click `--phase-lock` resta entro 8 ms); all'ascolto non si sente.
+- [x] Ascolto su iPad (vedi sopra). Licenze: pesi derivati da BeatNet (CC BY 4.0, `docs/LICENSES.md`); addestrati anche su
+  1–4.mp3 e Promo Dance, di cui l'utente deve confermare i diritti prima di distribuire l'app.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -5156,7 +5216,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 - Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
-- Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere. Uno: la sola rete corregge un quarto con distacco ≥ 0.30, 50.6 → 57.5%; oltre serve una rete migliore (fase 2).
+- Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere. Uno: la sola rete corregge un quarto con distacco ≥ 0.30, 50.6 → 57.5%; oltre serve una rete migliore (fase 2). Fase 2: BeatNet rifinito sulle etichette del maestro (`train_beatnet_finetune.py`, 1000 passi, KD 3) è ora il modello dell'app: 13.0 ms, >25 ms 22.2%, livello giusto 71.9%, uno 67.3%; ottava ancora fragile.
 - Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.
 # Priorità recupero diretto — 09/09/2026
 

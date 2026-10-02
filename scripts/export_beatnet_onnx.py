@@ -39,7 +39,8 @@ def download_weights(model_id: int) -> Path:
     return dest
 
 
-def export(model_id: int) -> int:
+def make_bda():
+    """BeatNet's BDA network, as the app runs it. Shared with train_beatnet_finetune.py."""
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
@@ -63,27 +64,31 @@ def export(model_id: int) -> int:
             )
             self.linear = nn.Linear(self.dim_hd, 3)
 
-        def forward(self, features, h0, c0):
+        def sequence(self, features, h0, c0):
+            """All frames' logits for [batch, frames, 272]."""
             x = features.reshape(-1, self.dim_in).unsqueeze(1)
             x = F.max_pool1d(F.relu(self.conv1(x)), 2)
             x = torch.flatten(x, 1)
             x = self.linear0(x)
             x = x.reshape(features.shape[0], features.shape[1], self.conv_out)
             x, (hn, cn) = self.lstm(x, (h0, c0))
-            logits = self.linear(x)
+            return self.linear(x), hn, cn
+
+        def forward(self, features, h0, c0):
+            logits, hn, cn = self.sequence(features, h0, c0)
             return logits[:, -1, :], hn, cn
 
-    path = download_weights(model_id)
-    model = BDA()
-    state = torch.load(path, map_location="cpu", weights_only=False)
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    print("loaded", path.name, "missing", missing, "unexpected", unexpected)
-    model.eval()
+    return BDA()
 
+
+def export_model(model, out: Path) -> None:
+    import torch
+
+    model.eval()
     dummy = torch.zeros(1, 1, 272)
     h0 = torch.zeros(2, 1, 150)
     c0 = torch.zeros(2, 1, 150)
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
     kw = dict(
         input_names=["features", "h0", "c0"],
         output_names=["logits", "hn", "cn"],
@@ -91,11 +96,21 @@ def export(model_id: int) -> int:
     )
     with torch.no_grad():
         try:
-            torch.onnx.export(model, (dummy, h0, c0), str(OUT), dynamo=False, **kw)
+            torch.onnx.export(model, (dummy, h0, c0), str(out), dynamo=False, **kw)
         except TypeError:
-            torch.onnx.export(model, (dummy, h0, c0), str(OUT), **kw)
+            torch.onnx.export(model, (dummy, h0, c0), str(out), **kw)
+    print("wrote", out, "bytes", out.stat().st_size)
 
-    print("wrote", OUT, "bytes", OUT.stat().st_size)
+
+def export(model_id: int) -> int:
+    import torch
+
+    path = download_weights(model_id)
+    model = make_bda()
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    print("loaded", path.name, "missing", missing, "unexpected", unexpected)
+    export_model(model, OUT)
     try:
         import onnx
 

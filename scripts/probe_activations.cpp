@@ -119,6 +119,7 @@ int main (int argc, char** argv)
     double seconds = 12.0;
     double silencePreludeSeconds = 0.0;
     bool preserveModelOnRestart = false;
+    std::string featuresPath;
     std::vector<float> gainsDb { 0.0f, -6.0f, -12.0f, -18.0f };
     std::vector<std::string> positional;
 
@@ -130,6 +131,8 @@ int main (int argc, char** argv)
         else if (a == "--secs" && i + 1 < argc)  seconds = std::atof (argv[++i]);
         else if (a == "--silence-prelude" && i + 1 < argc)
             silencePreludeSeconds = std::max (0.0, std::atof (argv[++i]));
+        else if (a == "--features" && i + 1 < argc)
+            featuresPath = argv[++i];
         else if (a == "--preserve-model-on-restart")
             preserveModelOnRestart = true;
         else if (a == "--gains" && i + 1 < argc)
@@ -266,6 +269,10 @@ int main (int argc, char** argv)
             model.reset();
     }
 
+    // `--features out.f32`: the exact 272-d frames the model is fed, float32,
+    // one row per printed frame - so a model trained offline sees what the app
+    // computes, not a re-implementation of it (docs/TODO.md item 87).
+    std::FILE* featuresFile = featuresPath.empty() ? nullptr : std::fopen (featuresPath.c_str(), "wb");
     const int n = static_cast<int> (song.size());
     const int chunk = 512;
     for (int pos = 0; pos + chunk <= n; pos += chunk)
@@ -277,6 +284,8 @@ int main (int argc, char** argv)
         {
             if (! model.infer (frame, vp::LogSpectFeatures::kDim, act))
                 continue;
+            if (featuresFile != nullptr)
+                std::fwrite (frame, sizeof (float), vp::LogSpectFeatures::kDim, featuresFile);
             std::printf ("%d %.4f %.4f %.6f %.6f\n", frameIdx,
                          static_cast<double> (act[0]), static_cast<double> (act[1]),
                          static_cast<double> (vp::LogSpectFeatures::lowBandEnergy (frame)),
@@ -284,5 +293,7 @@ int main (int argc, char** argv)
             ++frameIdx;
         }
     }
+    if (featuresFile != nullptr)
+        std::fclose (featuresFile);
     return 0;
 }
