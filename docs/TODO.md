@@ -4877,6 +4877,23 @@ lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_sca
   velocità scendono 1.18 → 0.78/min.
 - [ ] Il tempo pubblicato in ritardo sulla band che si sposta resta (vedi sopra): la retta lo corregge solo
   nella fase. Pubblicare anche il suo tempo migliorava la verità ma alzava gli scatti.
+- [x] Ascolto dell'utente su iPad dopo la retta di fase (2026-10-02): «sembra meglio».
+- [x] **L'uno: la rete lo vede, l'app lo perde.** `pDownbeat` di BeatNet piegato sui quarti veri dell'intero
+  brano indica il quarto giusto in 29 file su 31 (sbaglia EVERYTIME e DEJAVU), spesso con distacco enorme
+  dove l'app è a 0% (GARDEN 600 0.81 contro 0.08, UNA CANZONE 0.71 contro 0.27). Nel tempo, quarto dell'app su
+  cui cade l'uno vero: ingresso spesso sul 3 per 10–20 battute (BLUE SKY, LET ME LOVE YOU, I WANNA DANCE,
+  FLAMINGO 3750, GARDEN 4200); conteggio scivolato di un quarto a metà brano e mai corretto (FLAMINGO 4500
+  ultime 70 battute, GARDEN 3300 66, EVERYTIME 60), perché a conteggio fidato l'item 61 chiede che rete e
+  armonia concordino, e sul mix dal vivo l'armonia tace.
+- [x] **Tenuto: la sola rete può spostare un quarto se il distacco è ≥ 0.30** (`kBarNetAloneMargin`,
+  `BeatTracker::tryAlignFrom`). Uno giusto contro la verità 50.6 → 57.5% (0.45: 57.3), nessun brano più
+  basso, fase identica. `VPTests` `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0.
+- [x] Simulazione al computer (battiti veri, `pDownbeat` della rete): la regola a quote dell'app 65.1%,
+  verosimiglianza accumulata con oblio (log p sul quarto, log(1−p) sugli altri, 0.95 per battito, soglia 3)
+  72.3%. Non portata nell'app: guadagno simile a quello già tenuto, con più rotazioni. Il tetto di un offset
+  fisso per brano è 71%: anche la verità ha battute da 2 e levare, e il segnale di BeatNet battuta per
+  battuta non va molto oltre. **L'uno e l'ottava sono il punto dove serve una rete migliore**: il maestro li
+  azzecca (confermato a orecchio), BeatNet no. È la fase 2 di questo item, ora giustificata dalla misura.
 
 ## Standby
 
@@ -5139,7 +5156,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 - Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
-- Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere.
+- Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere. Uno: la sola rete corregge un quarto con distacco ≥ 0.30, 50.6 → 57.5%; oltre serve una rete migliore (fase 2).
 - Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.
 # Priorità recupero diretto — 09/09/2026
 

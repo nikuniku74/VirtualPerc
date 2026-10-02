@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
-// EXPERIMENT item 87 - read once at static init, remove before commit
-static const float xBarAlone = std::getenv ("VP_XBAR") ? static_cast<float> (std::atof (std::getenv ("VP_XBAR"))) : 0.0f;
 
 namespace vp
 {
@@ -119,6 +116,16 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // scripts/probe_bar.cpp.
     constexpr float kBarWinMargin = 0.10f;
     constexpr float kBarWinMarginPlaying = 0.20f;
+    // The network alone may move a trusted one by a quarter while the part is
+    // playing, but only this far clear of the runner-up (normalised shares).
+    // Item 61 asked the harmony to agree first; on a live mix it mostly says
+    // nothing, so a count that slipped a quarter stayed there for the rest of
+    // the song while the network named the right quarter: FLAMINGO 4500 the
+    // last 70 bars on the 4, GARDEN 600 the last 40. Against the offline beat
+    // truth (scripts/analysis/truth.py, docs/TODO.md item 87) true ones the
+    // part counts as one 50.6 -> 57.5% (0.45: 57.3), no song lower, phase
+    // unchanged; `VPTests --bar` 10/0.
+    constexpr float kBarNetAloneMargin = 0.30f;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
@@ -1011,7 +1018,7 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
                                 && harmonyVoteCount >= kChangesToTrustTheBar
                                 && winner (harmonyVotes, margin) == best
                                 && margin >= kBarWinMargin)
-                               || (xBarAlone > 0.0f && bestVotes >= runnerUp + xBarAlone);
+                               || bestVotes >= runnerUp + kBarNetAloneMargin;
             else
                 corroborated = ! speakerFollow && voteBeats >= kBeatsToMoveTheBar
                                && winner (downbeatVotes, margin) == best
