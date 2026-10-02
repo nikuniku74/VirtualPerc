@@ -29,6 +29,7 @@
 #include <thread>
 #include <vector>
 
+
 int main (int argc, char** argv)
 {
     std::string path;
@@ -280,7 +281,13 @@ int main (int argc, char** argv)
 
         pos += take;
         inHop += take;
-        if (inHop == hop)
+        // With VP_OFFLINE_PACING the worker drains at once, so the probe can
+        // wait after every block: each block then sees exactly the analysis of
+        // all audio fed so far, and two runs are identical. Waiting only at
+        // hop boundaries let a frame published mid-hop land on a different
+        // block from run to run.
+        static const bool everyBlock = std::getenv ("VP_OFFLINE_PACING") != nullptr;
+        if (inHop == hop || everyBlock)
         {
             const auto until2 = std::chrono::steady_clock::now() + std::chrono::milliseconds (400);
             // --lag keeps the worker that far behind, as a device that cannot

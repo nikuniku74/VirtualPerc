@@ -5208,6 +5208,17 @@ sit nearer the new tempo than the held one. Song bench: strokes outside 25 ms
 day: re-placing after one beat (5-6 runs worse) and spreading the re-placement
 over half or one beat (no skipped strokes, but 43% more time off the grid).
 
+**Fast, repeatable song bench (2026-10-02, docs/TODO.md item 84).** The song
+bench was not slow because of BeatNet: the analysis worker sleeps up to 8 ms
+between passes (right on a device) and `VPTrack` waited for it every hop, so
+it could not run faster than ~2x real time, and a frame published mid-hop
+landed on different blocks run to run. `VP_OFFLINE_PACING=1` makes the worker
+poll at 20 us and `VPTrack` wait after every block: a 4-minute song in ~2 s,
+bit-identical across serial and parallel runs. Use
+`scripts/analysis/bench_fast.py run TAG [VAR=VALUE...]` and
+`bench_fast.py cmp BASE TAG...` (50 runs in ~1 minute). Numbers are not
+comparable with the older slow benches; the new baseline tag is `fb0`.
+
 ## 9. Map: "I want to change X"
 
 | X | file |

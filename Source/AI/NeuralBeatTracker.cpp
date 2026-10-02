@@ -6,6 +6,7 @@
 #include "AI/StubBeatModel.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 
@@ -316,7 +317,13 @@ void NeuralBeatTracker::workerLoop()
         if (wantMore > 0)
         {
             const double sec = static_cast<double> (wantMore) / deviceSr;
-            const auto us = static_cast<long long> (std::clamp (sec * 1.0e6, 500.0, 8000.0));
+            // Offline probes (VPTrack and friends) feed audio as fast as the
+            // worker drains it and wait for each hop; sleeping for real time
+            // there only paces the bench at about twice real time. Never set
+            // on a device.
+            static const bool offline = std::getenv ("VP_OFFLINE_PACING") != nullptr;
+            const auto us = offline ? 20LL
+                                    : static_cast<long long> (std::clamp (sec * 1.0e6, 500.0, 8000.0));
             std::this_thread::sleep_for (std::chrono::microseconds (us));
         }
         wakeCount.fetch_add (1, std::memory_order_relaxed);

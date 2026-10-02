@@ -4732,6 +4732,60 @@ le percussioni non stanno al centro e restano sfasate; STOP/START le ricentra su
   metà tempo è l'ottavo della batteria.
 - [ ] Ascolto su iPad di 1000 GIORNI con ÷2.
 
+### 83. Tenuta del tempo sopra i ricentri: scartata di nuovo 🔴 (2026-10-02)
+
+Richiesta: stare fermi sul tempo con inflessioni leggere, seguire solo variazioni grandi. Rifatta la tenuta
+dell'item 75 (±1% attorno alla media di 30 s, cambio creduto dopo 12 s fuori banda) sopra i ricentri in ms.
+- [x] H1 (con il piegamento di fase normale): oltre il 4% 91 → 43 s, tempo sbagliato 328 → 316 s, ma >25 ms
+  8.18 → 8.59%, usc/min 3.33 → 3.63, ricentri 482 → 568, colpi saltati 104 → 141, 11 brani peggiori. Sui
+  due live senza click invece migliora: Sally >25 ms 8.3 → 5.7%, Flamingo 3750 13.0 → 11.6%.
+- [x] H2 (tempo del clock fermo, fase solo dai ricentri): scatti 0.79 → 0.07/min, oltre il 4% 20 s, tempo
+  sbagliato 221 s, ma >25 ms 10.62%, usc/min 4.27, ricentri 1032, 20 brani peggiori.
+- [x] Rallentando sintetico: H1/H2 restano 3–4 BPM indietro per qualche secondo. Tolte entrambe.
+- [x] Verificato su materiale nuovo: 10 tratti live da 4 min (Garden Beach 15.07.26 a 600/1500/2400/3300/4200/
+  5100 s, Flamingo a 1200/2400/4500/5400 s, `extract_live.swift`) e 5 brani nuovi (DEJAVU, WRECKING BALL
+  versione 2, VIVERE, SING IT BACK, NonSoulFunky) a 44.1/48k. Live: >25 ms 10.00 → 9.68%, usc/min 4.25 → 4.04,
+  ma scatti 0.81 → 0.92/min, oltre 30 ms dalla griglia 367 → 369 s, 2 tratti meglio e 1 peggio. Brani:
+  >25 ms 6.75 → 7.11%, 3 peggio. Il guadagno su Sally non si ripete: non è una tendenza. Tolta.
+- [ ] Brani nuovi con molti scatti di velocità anche nella versione attuale: DEJAVU 3.6–4.0/min,
+  NonSoulFunky 4.0–4.3/min (media banco 0.8). Da guardare.
+
+### 84. Banco veloce e ripetibile: 50 esecuzioni in ~1 minuto invece di ~1 ora ✅ (2026-10-02)
+
+- [x] Il banco non era lento per BeatNet: la rete registrata e riletta da file (prova poi tolta) dava lo stesso
+  tempo, 70 s per un brano di 2:21. Il thread di analisi dorme fino a 8 ms fra un controllo e l'altro (giusto
+  su iPad, per la batteria) e `VPTrack` lo aspetta a ogni hop: il banco non poteva andare oltre ~2× il tempo
+  reale.
+- [x] `VP_OFFLINE_PACING` (solo probe; `NeuralBeatTracker` dorme 20 µs invece di 0.5–8 ms) e `VPTrack` che,
+  con la stessa variabile, aspetta l'analisi a ogni blocco invece che a ogni hop. Lo stesso brano: 70 s → 2 s.
+  Prima un frame pubblicato a metà hop cadeva su blocchi diversi da un'esecuzione all'altra (anche il banco
+  lento non era identico tra due esecuzioni); ora 3 esecuzioni in serie e 6 in parallelo sono identiche bit
+  per bit, e il banco intero rieseguito dà 50 su 50 file identici.
+- [x] `scripts/analysis/bench_fast.py run TAG [VAR=VALORE...]` / `cmp BASE TAG...`: tutti i WAV in
+  `/tmp/vp-bench/wav` (brani a 44.1/48k e i 10 tratti live) a 6 alla volta in ~45 s, confronto in ~20 s
+  (colpi >25 ms, uscite/min, scatti/min, secondi oltre 30 ms dalla griglia, ricentri, colpi saltati, secondi
+  oltre il 4% dal tempo del brano, brani peggiori). I numeri non sono confrontabili con i banchi lenti
+  precedenti (l'analisi è sempre in pari): base nuova `fb0`.
+- [x] DEJAVU e NonSoulFunky (3.6–4.7 scatti/min): ~70% degli scatti dalla piega di fase, che sotto un indizio di
+  moto del decoder si apre al 7.5%. Tenerla sempre al 3% (`fbLC`): NonSoulFunky 4.4 → 3.1/min, DEJAVU 4.7 → 4.4,
+  banco 1.18 → 1.10/min, ma UMBRELLA >25 ms 14.3 → 16.4% e niente altro cambia. Piega 3% + trim 1–2% +
+  decoder 1–2% si sommano comunque oltre il 3%. Non tenuto.
+
+### 85. Gli scatti vengono soprattutto dalla piega di fase; ignorare più tremolio non conviene 🔴 (2026-10-02)
+
+- [x] Banco veloce `fb0` (50 esecuzioni): 216 scatti, 147 dalla piega di fase, 31 dal tempo del decoder,
+  27 da transizioni, 11 dal trim. La piega insegue il tremolio della griglia pubblicata (~20 ms), mentre il
+  pavimento di fase ignora solo 6 ms.
+- [x] Solo ingresso diretto: pavimento 12 / 18 ms, via la scorciatoia `kDirectLightPhaseTau`, e 12 ms + via.
+  Scatti 1.18 → 1.00 / 0.88 / 1.08 / 0.92 al minuto, ma >25 ms 8.72 → 9.25 / 9.94 / 8.80 / 9.36%, oltre 30 ms
+  dalla griglia 1432 → 1584 / 1794 / 1462 / 1629 s, 9 / 20 / 2 / 13 esecuzioni peggiori. Tolte.
+- [ ] Ogni prova a valle (clock) ha lo stesso scambio: velocità più ferma contro colpi meno allineati. Il
+  margine vero è nella griglia pubblicata dal decoder (fase meno rumorosa, tempo meno nervoso in VIVO).
+- [x] Nessun plugin o skill nei cataloghi dell'utente per beat tracking / audio DSP.
+- [x] Ancora della griglia in VIVO portata gradualmente sulla retta da 24 battiti quando le due rette
+  concordano entro 1% / 2%: >25 ms 8.72 → 10.74 / 10.93%, scatti 1.18 → 2.09 / 2.13, 26 / 31 esecuzioni
+  peggiori. La retta lunga è ferma ma in ritardo sul battito. Tolta.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
