@@ -342,6 +342,7 @@ private:
     static constexpr int kBeatHistory = 32;
     static constexpr int kLongFit  = 24;  // precision for a fixed tempo
     static constexpr int kShortFit = 8;   // responsiveness for a live one
+    static constexpr int kPhaseLineBeats = 6; // published phase under a sounding part, item 87
     static constexpr int kRecentIoi = 3;  // detection of a change in progress
 
     TempoEstimator tempo;

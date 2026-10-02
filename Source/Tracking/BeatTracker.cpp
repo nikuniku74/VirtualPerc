@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+// EXPERIMENT item 87 - read once at static init, remove before commit
+static const float xBarAlone = std::getenv ("VP_XBAR") ? static_cast<float> (std::atof (std::getenv ("VP_XBAR"))) : 0.0f;
 
 namespace vp
 {
@@ -1004,10 +1007,11 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
             };
             float margin = 0.0f;
             if (votes == downbeatVotes)
-                corroborated = harmonicShare > kHarmonicShareToTrust
-                               && harmonyVoteCount >= kChangesToTrustTheBar
-                               && winner (harmonyVotes, margin) == best
-                               && margin >= kBarWinMargin;
+                corroborated = (harmonicShare > kHarmonicShareToTrust
+                                && harmonyVoteCount >= kChangesToTrustTheBar
+                                && winner (harmonyVotes, margin) == best
+                                && margin >= kBarWinMargin)
+                               || (xBarAlone > 0.0f && bestVotes >= runnerUp + xBarAlone);
             else
                 corroborated = ! speakerFollow && voteBeats >= kBeatsToMoveTheBar
                                && winner (downbeatVotes, margin) == best

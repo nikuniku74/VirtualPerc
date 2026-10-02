@@ -6575,7 +6575,40 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     const bool useLongFitPeriod = longFitPeriodHeld
                                   && intervalAcquired && longFitBpm >= kMinBpm;
     const float phasePeriod = useLongFitPeriod ? 60.0f / longFitBpm : newPeriod;
-    const float phase = gridPhaseNow (phasePeriod);
+    float phase = gridPhaseNow (phasePeriod);
+    // Under a sounding part on a direct feed, the phase is the line through
+    // the newest kPhaseLineBeats accepted beats, read now. Measured against
+    // an offline beat truth (Beat This!, scripts/analysis/truth.py, 50 runs,
+    // docs/TODO.md item 87): the grid published from the anchor and the
+    // committed period sat 12 ms from the drummer and the clock 17, while a
+    // plain causal line over BeatNet's own peaks predicts the next beat at
+    // 10 - the anchor lags a band that leans, and the clock pays for it.
+    // Clock against the truth, median scatter / beats outside 25 ms:
+    // 21.6 ms / 31.7% -> 17.9 / 26.4%; against each song's drums 8.72 ->
+    // 6.31%, exits 3.56 -> 2.91 /min, surges 1.18 -> 0.78 /min; re-placements
+    // 1036 -> 1310. 4 and 5 beats score the same on the truth with more
+    // re-placements; 8 gives 20.2 ms, 12 gives 21.3. Phase only: also
+    // publishing the line's tempo scored 18.7 ms at 8 beats but raised the
+    // surges. The same line with a period 8% off the committed one, or
+    // fitted through fewer than 60% of the recent peaks, is another grid or
+    // a fill and is left to the ordinary path. Synthetic benches never set
+    // `sounding`, so they do not see this - except `VPTests --phase-lock`,
+    // whose 156 BPM click held at 78 (÷2) moves -7.3 -> -9.1 ms against its
+    // 8 ms line. Leaving ÷2 out passes it but drops the truth gain to
+    // 20.2 ms (most bench songs run at ÷2 under AUTO, and the line helps them
+    // most: FLAMINGO 1200 15.9 -> 10.6 ms); 12 beats at ÷2 still reads -8.4.
+    // Open decision, docs/TODO.md item 87.
+    if (lineFeed && sounding
+        && (tempoRegime == TempoRegime::fixed || tempoRegime == TempoRegime::live))
+    {
+        float linePeriod = 0.0f, lineResidual = 0.0f, lineCoverage = 0.0f;
+        double lineAnchor = -1.0;
+        if (fitPeriod (kPhaseLineBeats, linePeriod, lineResidual, lineCoverage, lineAnchor)
+            && lineAnchor >= 0.0 && lineCoverage > 0.6f
+            && std::fabs (linePeriod / newPeriod - 1.0f) < 0.08f)
+            phase = wrap01 (static_cast<float> ((timeSec - lineAnchor)
+                                                / static_cast<double> (linePeriod)));
+    }
 
     hyp.bpm = bpm;
     hyp.beatPhase = phase;

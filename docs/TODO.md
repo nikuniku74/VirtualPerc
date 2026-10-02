@@ -4801,6 +4801,83 @@ dell'item 75 (±1% attorno alla media di 30 s, cambio creduto dopo 12 s fuori ba
 - [ ] Il segnale c'è (la media migliora fino all'8.4% con la variante prudente), ma la scelta dell'attacco
   sbaglia spesso colpo (charleston, rullante fuori tempo). Servirebbe distinguere la cassa nel mix.
 
+### 87. Salto di qualità: una rete «maestro» offline come verità e come insegnante 🟡 (2026-10-02, proposta — niente codice)
+
+Valutazione delle tre strade rimaste (battiti a mano, rete migliore, cassa nel mix). Gli item 65-86 sono
+quasi tutti scambi a somma zero a valle della rete (clock, ricentri, tenuta, attacchi): il margine non è
+lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_scan`), non su una verità.
+- Un beat tracker **offline** allo stato dell'arte (es. *Beat This!*, CPJKU, ISMIR 2024: non causale, non
+  usabile dal vivo, molto più accurato di BeatNet) unisce le prime due strade:
+  - **Verità quasi gratis:** battiti e «uno» su tutto il banco e le ore di live, nel formato della Parte 2 di
+    `docs/HANDOFF_LIVE_TRACKING.md`. L'utente non batte a mano: ascolta i clic sovrapposti e segnala solo
+    dove sono sbagliati (ottava compresa, secondo la sua convenzione). Il banco misura allora F-measure,
+    fase contro la verità, ottava giusta, e separa errore della rete da errore del decoder.
+  - **Insegnante:** una rete causale nostra (stesso ingresso 272-d di `LogSpectFeatures`, stessa uscita, entra
+    in `OnnxBeatModel` senza toccare il motore) addestrata sulle etichette del maestro, su materiale del
+    repertorio reale (pop/dance, intro tonali, live), con in ingresso le stesse sporcizie del palco: la parte
+    dell'app che rientra, stanza, livelli bassi. BeatNet non le ha mai viste.
+- La cassa nel mix come DSP a sé è già smentita due volte (item 70, 86): se serve, diventa una terza uscita
+  della stessa rete, non un rilevatore separato.
+- [x] `scripts/analysis/truth.py`: `make` (maestro -> `WAV.truth.txt` + `WAV.clicks.wav` da ascoltare) e
+  `score TAG` (pulses del banco veloce contro la verità: ottava giusta, scarto mediano, dispersione, >25 ms, uno).
+  Punteggio provato su una verità finta presa dal clock stesso: 98% giusto / scarto 0; +10 ms -> +10; metà
+  tempo -> «ottava».
+- [x] Maestro installato dall'utente (`~/.venvs/vp-teacher`, Beat This 1.1.0, pesi `final0` scaricati con curl:
+  il Python di python.org non ha i certificati). Verità sul banco veloce in 49 s; 44.1 e 48 kHz danno gli
+  stessi battiti. Battiti raffinati sotto il frame con una parabola sul picco (la rete va a 50 fps).
+- [x] **Il maestro è una verità credibile:** contro gli attacchi di batteria (`.onsets.npy` di `onset_fit`)
+  scarto tipico 10.1 ms e 14% oltre 25 ms, contro 14.6 ms / 26% del clock dell'app; sui live 5–7 ms.
+- [x] **Fase 1, decisione: il tetto NON è la rete.** 25 file (esclusi i 4 all'altra ottava, BLUE SKY e
+  GARDEN 1500), scarto mediano dal mediano / quota oltre 25 ms, contro la verità:
+
+  | | ms | >25 ms |
+  |---|---:|---:|
+  | batterista (ogni battito previsto dai suoi 8 precedenti: il pavimento per chi non vede il futuro) | ~7 sui live | ~5% |
+  | picchi grezzi di BeatNet, quando ci sono (87% dei battiti) | 7.2 | 6.8% |
+  | retta sugli ultimi 8 picchi di BeatNet, causale, picco più forte entro ±15% del periodo (4–12 battiti: 9.7–11.2) | 10.2 | 13.8% |
+  | griglia pubblicata dal decoder (fase − phaseErr) | 12.1 | 17.3% |
+  | clock dell'app, cioè quello che si sente (`t0`, banco veloce al codice attuale) | 16.9 | 31.6% |
+
+  La rete basta per stare a ~10 ms; la catena perde quasi metà della precisione, e la parte più grossa fra la
+  griglia del decoder e il clock (12 → 17 ms, 17 → 32%). Coerente con l'item 85: ignorare più tremolio
+  peggiorava; quindi la direzione è *seguire meglio* la griglia, pagando in scatti di velocità. La retta
+  semplice però si perde (ottava, buchi) dove l'app tiene: l'acquisizione e i cambi restano dell'app.
+- [x] Ascolto dell'utente (2026-10-02): «sembrano giusti i clic». Quindi su VIVERE, 1000 GIORNI, DEJAVU e
+  NONSOULFUNKY è l'app all'ottava sbagliata, e su EVERYTIME / SPLENDIDA / GARDEN 3300 è l'app a sbagliare l'uno.
+  Aperto, non toccato qui.
+- [x] **Inseguire più in fretta non serve.** Interruttori temporanei sul clock (EMA della griglia ×0.5/×0.25,
+  sterzo ×0.5, piega ×2, pavimento ×0.5): dispersione contro la verità 21.6 → 21.2–21.7 ms. Tolti. Il motivo,
+  battito per battito su GARDEN 3300 a 86–93 s: la band sale 115 → 120, il tempo pubblicato resta a 115 per
+  ~3 s e il clock piega fino a 122 per stare dietro alla fase, −52 ms dal batterista contro −21 della griglia.
+  La griglia del decoder è in ritardo su una band che si sposta.
+- [x] **Tenuto: fase pubblicata dalla retta sugli ultimi 6 battiti accettati** (`BeatDecoder`, accanto a
+  `gridPhaseNow` nella pubblicazione; `kPhaseLineBeats`), solo su ingresso diretto con la parte che suona,
+  in FISSO/VIVO, con la retta entro l'8% del periodo e copertura > 0.6. Solo la fase, il tempo resta quello di
+  prima. Causale: usa solo battiti già sentiti. Banco veloce (50 esecuzioni):
+
+  | | disp verità ms | >25 ms verità | >25 ms batteria | usc/min | scatti/min | ricentri | saltati |
+  |---|---:|---:|---:|---:|---:|---:|---:|
+  | prima (`t0`) | 21.6 | 31.7% | 8.72% | 3.56 | 1.18 | 1036 | 271 |
+  | retta 8 battiti | 20.2 | 26.9% | 7.41% | 3.15 | 0.68 | 1168 | 308 |
+  | **retta 6 (`p6`)** | **17.9** | **26.4%** | **6.31%** | **2.91** | **0.78** | 1310 | 313 |
+  | retta 4 / 5 | 17.8 / 17.8 | 26.3 / 25.7% | 5.35 / 5.84% | 2.56 / 2.75 | 0.87 / 0.76 | 1449 / 1389 | 361 / 327 |
+  | retta 12 | 21.3 | 29.4% | 9.54% | 3.63 | 0.67 | 945 | 229 |
+  | retta 8 + tempo della retta | 18.7 | 27.9% | 7.34% | 3.05 | 0.98 | 1077 | 263 |
+
+  Contro la verità nessun brano all'ottava giusta peggiora di più di 2 punti (2_WRECKING_BALL +1–2); i
+  «peggiorano» del banco attacchi sono brani all'ottava sbagliata o invariati sulla verità. `VPTests`
+  `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0, `--tempo-step` 14/0, `--tempo-slow` 13/0,
+  `--state-timing` PASS.
+- [ ] **Da decidere (utente): `--phase-lock` 19/1.** Il click a 156 tenuto a 78 (÷2) passa da −7.3 a −9.1 ms
+  contro la linea degli 8 ms (era già al limite, item 64). Escludere il ÷2 lo fa passare (20/0) ma la
+  verità torna a 20.2 ms: sotto AUTO molti brani del banco girano a ÷2, ed è lì che la retta aiuta di più
+  (FLAMINGO 1200 15.9 → 10.6 ms, LET ME LOVE YOU 19.6 → 14.1). Con 12 battiti a ÷2: −8.4 ms, sempre fuori.
+  La retta a ÷2 sposta la taratura di 1–3 ms anche sulla musica; causa non trovata.
+- [ ] Ascolto su iPad: i ricentri salgono 1036 → 1310 sul banco (colpi saltati 271 → 313), gli scatti di
+  velocità scendono 1.18 → 0.78/min.
+- [ ] Il tempo pubblicato in ritardo sulla band che si sposta resta (vedi sopra): la retta lo corregge solo
+  nella fase. Pubblicare anche il suo tempo migliorava la verità ma alzava gli scatti.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -5062,6 +5139,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 - Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
+- Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere.
 - Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.
 # Priorità recupero diretto — 09/09/2026
 

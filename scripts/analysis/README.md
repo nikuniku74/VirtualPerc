@@ -19,6 +19,7 @@ da `VPTrack --pulses`.
 | `line_check.py pulses pre_lo pre_hi post_lo post_hi` | griglia nota ricavata dal brano stesso: la retta del tratto stabile prima di un'uscita, se cade sui battiti del tratto dopo, è la verità anche in mezzo. Errore di fase reale del clock in ms e slittamenti di un battito intero. |
 | `line_scan.py pulses...` | la stessa cosa in automatico su tutto il brano: trova le coppie di tratti stabili che si confermano, e riporta secondi verificati, errore medio/peggiore del clock e slittamenti di battito. |
 | `bench_songs.py run TAG mp3... / show TAG [TAG2]` | il banco globale: ogni brano a 44.1 e 48 kHz nell'app intera; scatti della velocità sentita, fuori tempo, ottava, fase (`line_scan`). Si giudica una modifica su tutti i brani, mai su uno. Item 58. |
+| `truth.py make [wav...] / score TAG...` | la verità da una rete offline (Beat This!, venv `~/.venvs/vp-teacher`): battiti e uno per ogni WAV del banco, clic sovrapposti da ascoltare, e i pulses del banco veloce misurati contro: ottava, taratura, dispersione, uno. Item 87. |
 | `score.py trace` | il BPM pubblicato contro una curva di riferimento: errore medio, uscite oltre il 4% e loro durata. |
 | `extract_live.swift input.m4a dir [start-sec duration-sec]` | senza intervallo crea i cinque estratti centrali usati da `bench_live.py`; con intervallo estrae un tratto preciso. Aggiunge 3 s di silenzio iniziale. |
 
