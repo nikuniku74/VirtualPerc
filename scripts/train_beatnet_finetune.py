@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fine-tune BeatNet (GTZAN weights) on the teacher's beats, for live mixer-send audio.
 
-    train_beatnet_finetune.py NAME [--steps N] [--kd W] [--lr X] [--balance P] [--seed S] [--data DIR]
+    train_beatnet_finetune.py NAME [--steps N] [--kd W] [--lr X] [--kdoff W] [--balance P] [--seed S] [--data DIR]
 
 Data (docs/TODO.md item 87), per recording in DIR (default ~/vp-train/wav):
   X.f32            the app's own 272-d frames (`VPActivations --features`), so the
@@ -104,7 +104,7 @@ def main():
         print(__doc__)
         return 1
     name = args[0]
-    opt = dict(steps=3000, kd=1.0, lr=1e-4, balance=1.0, seed=0, data=os.path.expanduser('~/vp-train/wav'))
+    opt = dict(steps=3000, kd=1.0, kdoff=-1.0, lr=1e-4, balance=1.0, seed=0, data=os.path.expanduser('~/vp-train/wav'))
     for a, v in zip(args[1::2], args[2::2]):
         key = a.lstrip('-')
         opt[key] = type(opt[key])(v) if key != 'data' else v
@@ -151,7 +151,18 @@ def main():
         h = torch.zeros(2, batch, 150, device=dev)
         lg, _, _ = model.sequence(x, h, h.clone())
         logp = F.log_softmax(lg, -1)
-        loss = -(y * logp).sum(-1).mean() + opt['kd'] * (o * (o.log() - logp)).sum(-1).mean()
+        kl = (o * (o.log() - logp)).sum(-1)
+        if opt['kdoff'] >= 0:
+            # --kdoff W: hold the original outputs (weight --kd) only within three
+            # frames of a teacher beat, W elsewhere. The anchor keeps the peak
+            # shape the decoder is tuned on; away from the beats it was also
+            # keeping BeatNet's off-beat peaks, which on slow songs make it read
+            # the eighths (UN ORA SOLA: 1.76 peaks per true beat, played at 153).
+            near = F.max_pool1d(y[..., :2].sum(-1, keepdim=True).transpose(1, 2), 7, 1, 3).transpose(1, 2)[..., 0] > 0
+            kl = kl * torch.where(near, opt['kd'], opt['kdoff'])
+        else:
+            kl = kl * opt['kd']
+        loss = -(y * logp).sum(-1).mean() + kl.mean()
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

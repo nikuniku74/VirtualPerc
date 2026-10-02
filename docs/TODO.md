@@ -4955,6 +4955,53 @@ lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_sca
 - [x] Ascolto su iPad (vedi sopra). Licenze: pesi derivati da BeatNet (CC BY 4.0, `docs/LICENSES.md`); addestrati anche su
   1–4.mp3 e Promo Dance, di cui l'utente deve confermare i diritti prima di distribuire l'app.
 
+- [x] **Ingresso a tempo sbagliato, misurato** (tempo vero = mediana degli intervalli del maestro nei 4 s dopo
+  l'entrata, ottava ripiegata; 46 file senza NONSOULFUNKY): con o1k3s1 la parte entra sbagliata di oltre il 3%
+  in 21 file su 46 (BeatNet originale: 21), errore medio 10.9%; fase nei primi 8 s mediana 79 ms. Esempi: SALLY
+  live 103 BPM, entra a 6 s a 80 e ci resta fino a ~20 s; ASPETTANDO 88, entra a 81. L'utente sente
+  ASPETTANDO «per un secondo al doppio, poi subito alla metà» (sul banco non riprodotto: entra a 81).
+  Rapporti tipici 4:3 e 3:2, o il tempo dell'intro.
+- [x] Esperimento (tolto, `BeatTracker::updateState`): entrare solo se il tempo del decoder e il pettine
+  (`hyp.combBpm`) concordano entro il 3% (o ×2/÷2). Banco veloce: entrate oltre il 3% 21 → 10, errore medio
+  10.9 → 4.7%, fase primi 8 s 79 → 51 ms; SALLY entra a 12.5 s a 102 invece che a 6 s a 80; ASPETTANDO 48k
+  invariato (il pettine dice 81 anche lui). Costo: ingresso in mediana 3.0 s più tardi (live 3.6 s, studio
+  0), massimo 18 s. Con anche `levelSettled`: errore 2.5%, 8 file, ma 7.4 s di ritardo. Ottava sul brano
+  intero 45 → 43 file (di nuovo la scelta sul filo). **Da decidere con l'utente: ingresso più tardi ma giusto.**
+- [x] **Tenuto (l'utente: «ok che entri 3–4 s più tardi ma al tempo giusto»):** `BeatTracker::entryTempoAgrees`
+  (`kEntryCombAgree` 3%, ×2/÷2 ammessi), esente con TAP, tempo dell'utente, inseguimento spento e armonia
+  (senza pettine: `--harmonic-entry` non entrava più). I «3–4 s» erano la mediana: il controllo non ritarda i
+  brani chiari e aspetta solo dove il tempo è ambiguo, ed è lì che corregge (ASPETTANDO 3.3 s, INFINITO 4.9,
+  SALLY 6.5, GARDEN 600 5.3, FLAMINGO 5400 5.9, DEJAVU/1000 GIORNI ~11, VIVERE/FEEL 17–18). Tetto
+  `kEntryCombWaitSec`: 4 s 21/46 storti (nessun beneficio), 8 s 17/46, **12 s 12/46 (tenuto, mediana 3.0 s,
+  max 10.9)**, senza tetto 10/46 (max 18). `VPTests --level`: «ingresso entro due battute» → «due battute +
+  4 s» (sintetico 91 BPM 2.6 → 7.6 s, 168 0.8 → 4.3 s); restano le 3 bocciature di prima (clip). `--state-
+  timing`: i test chiamano `updateState` senza pettine, ora dichiarano l'accordo e verificano che senza non si
+  entri. Da riascoltare su iPad.
+- [x] Banco: aggiunti **08 UN ORA SOLA** (76.6 BPM, l'app suona 153 tutto il brano: i «colpi doppi» che
+  l'utente sente nei brani lenti) e **11 SEE YOU AGAIN** (81, ottava giusta, fase 23 ms). Controllati per
+  inviluppo: non sono nei dati di addestramento (≤ 0.16).
+- [x] Ottava dalla battuta di 4: l'autocorrelazione di `pDownbeat` a 4 battiti del livello candidato (meno metà
+  di quella a 2) sceglie il livello del maestro in 49/52 file **sul brano intero**, compresi tutti gli errori
+  rimasti (UN ORA SOLA, UNA CANZONE 48k, FLAMINGO 1200, EVERYTIME 48k; sbaglia VIVERE e GARDEN 1500). Ma
+  causale nei primi 16–20 s dall'inizio della musica: giusta 36/51, incerta 7, sbagliata 8 — non abbastanza
+  prima dell'ingresso, e l'ottava non cambia sotto una parte che suona. Non usato.
+- [x] Tenuta nei brani lenti (la lamentela dell'utente): il tempo segue come negli altri brani (scarto mediano
+  0.7%), è la **fase** che peggiora: 22–23 ms mediana (p90 56–147) contro 10–12 nei brani veloci. 1000 GIORNI:
+  picchi rete 6.6 ms, griglia 16.7, clock 22.2 (in VIVO il 76% del tempo); SEE YOU AGAIN e UN ORA SOLA: già i
+  picchi sono sparsi (12–16 ms) perché la rete segna anche gli ottavi (1.6–2.2 picchi per battito vero).
+- [x] `--kdoff W` in `train_beatnet_finetune.py`: KD solo entro 3 frame dai battiti del maestro. 1000/3/0.3
+  seme 0 (`m1k3o03s0`) contro l'app attuale: disp 17.1 → 14.8 ms, >25 ms 28.9 → 26.3%, livello 77.7 → 77.1%,
+  uno 76.5 → 74.8%; SEE YOU AGAIN 22.9 → 19.1 ms, 1000 GIORNI 21.9 → 19.7, corregge UNA CANZONE 48k e FLAMINGO
+  1200; seme 1 più debole (livello 73.1%). UN ORA SOLA resta a 153: i levare scendono solo a 0.51 (battito 0.78).
+- [x] `m1k3o03s0` messo come `Assets/Models/beatnet.onnx` per l'ascolto (incorporato = `VP_BEAT_MODEL`, banco
+  identico). `VPTests` `--phase-lock`, `--bar`, `--new-input`, `--transport`, `--tempo-step`, `--tempo-slow`,
+  `--state-timing`, `--harmonic-entry` senza errori; `--level` 11/5: oltre alle 3 di prima, **168 BPM a −12 dB
+  finisce a 84** (con o1k3s1 restava 168); in cambio 52 BPM a 0/−6 dB ora legge 51.4 invece di 104 (non
+  giudicato). Il brano veloce vero del banco (GARDEN 2400, 159) è invariato. Se l'ascolto non lo giustifica, si
+  torna a o1k3s1: `cp ~/vp-train/models/o1k3s1.onnx Assets/Models/beatnet.onnx`.
+- [ ] UN ORA SOLA a 153: serve un'idea nuova per i brani lenti con ottavi forti (la battuta di 4 funziona sul
+  brano intero ma non prima dell'ingresso).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

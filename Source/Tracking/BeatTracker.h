@@ -609,6 +609,11 @@ private:
     uint32_t lastInputEpoch = 0;
     bool waitForQuantize = false;
     bool heardMusic = false;
+    /** The decoder's tempo and its comb name the same pulse (or an octave of
+        it). Automatic entry waits for it; see updateState. */
+    bool entryTempoAgrees = false;
+    /** How long an otherwise ready entry has waited for that agreement. */
+    int entryWaitSamples = 0;
     bool hadPlayed = false;
     bool needsResync = false;
     int nudgeSamples = 0;

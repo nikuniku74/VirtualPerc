@@ -126,6 +126,21 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // part counts as one 50.6 -> 57.5% (0.45: 57.3), no song lower, phase
     // unchanged; `VPTests --bar` 10/0.
     constexpr float kBarNetAloneMargin = 0.30f;
+    // The part enters only once the decoder's tempo and the comb over the
+    // activation agree, at this ratio or an octave of it. Three peaks were
+    // enough before, and on the song bench 21 of 46 files entered more than
+    // 3% off the tempo the song settles on - SALLY live at 80 against a band
+    // at 103 for fourteen seconds, ratios of 4:3 and 3:2, the tempo of an
+    // intro. With the comb asked first: 10 of 46, mean entry error 10.9 ->
+    // 4.7%, phase over the first 8 s 79 -> 51 ms; the cost is entering 3 s
+    // later in the median (3.6 s on a live set, nothing on most records).
+    // The listener chose later and right (docs/TODO.md item 87). Also asking
+    // the comb's level to be settled took the error to 2.5% for 7.4 s.
+    constexpr float kEntryCombAgree = 0.03f;
+    // ...but never longer than this: the comb is slow on slow tempos (52 BPM on
+    // the level sweep entered at 8-17 s instead of 1.9), and the listener
+    // accepted three or four seconds, not a verse.
+    constexpr double kEntryCombWaitSec = 12.0;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
@@ -502,6 +517,8 @@ int BeatTracker::pulsesFor (Subdivision s) const noexcept
 void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept
 {
     const int sr = static_cast<int> (sampleRate);
+    if (currentState != TrackingState::listening)
+        entryWaitSamples = 0;
 
     switch (currentState)
     {
@@ -511,7 +528,10 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
             break;
 
         case TrackingState::listening:
-            if (periodic && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
+        {
+            const bool combOrWaited = entryTempoAgrees
+                || entryWaitSamples > static_cast<int> (sampleRate * kEntryCombWaitSec);
+            if (periodic && combOrWaited && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
                 && listeningSamples > static_cast<int> (sampleRate * 0.70)
                 && heldBpm > 50.0f && beatCount >= 2
                 && samplesSinceBeat < static_cast<int> (sampleRate * 1.6))
@@ -530,8 +550,15 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 currentState = liveStart ? TrackingState::following
                                          : TrackingState::locking;
                 lockHoldSamples = 0;
+                entryWaitSamples = 0;
+            }
+            else if (periodic && ! entryTempoAgrees && confidence > 0.22f && heldBpm > 50.0f
+                     && beatCount >= 2)
+            {
+                entryWaitSamples += std::max (0, numSamples);
             }
             break;
+        }
 
         case TrackingState::locking:
             if (! loudEnough && ! armed)
@@ -540,6 +567,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 lockHoldSamples = 0;
             }
             else if (periodic && confidence > 0.28f
+                     && (entryTempoAgrees || lockHoldSamples > static_cast<int> (sampleRate * kEntryCombWaitSec))
                      && lockHoldSamples > static_cast<int> (sampleRate * (lockedOnce ? 0.10f : 0.16f)))
             {
                 currentState = TrackingState::following;
@@ -1908,6 +1936,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             heldBpm = 0.0f;
     }
 
+    // A band with no drummer enters on the harmony's tempo, which has no comb.
+    entryTempoAgrees = tempoOwned || tapEstablished || ! tempoFollow || harmonicSourceActive;
+    if (! entryTempoAgrees && haveHyp && hyp.combBpm > 0.0f && hyp.bpm > 0.0f)
+        for (const float octave : { 0.5f, 1.0f, 2.0f })
+            if (std::fabs (hyp.bpm / hyp.combBpm / octave - 1.0f) < kEntryCombAgree)
+                entryTempoAgrees = true;
     const TrackingState prevState = currentState;
     updateState (smoothedConf, hadBeat, loudEnough, periodic, numSamples);
 

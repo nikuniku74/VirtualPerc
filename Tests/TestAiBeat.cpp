@@ -1294,12 +1294,17 @@ void vpRunLevelSweepTest (int& passed, int& failed, const char* only)
             if (! gated)
                 continue;
 
+            // Two bars, plus the four seconds the part may wait for the comb
+            // to agree with the decoder before it enters (BeatTracker
+            // kEntryCombWaitSec, docs/TODO.md item 87): the listener chose a
+            // later entry on the right tempo over an early one on a wrong one.
+            const double entryDeadline = twoBarsSec + 4.0;
             char what[128];
             std::snprintf (what, sizeof (what),
-                           "%.0f BPM a %s: ottava e ingresso entro due battute",
+                           "%.0f BPM a %s: ottava e ingresso entro due battute + 4 s",
                            static_cast<double> (bpm), level.name);
-            expect (r.octaveSec >= 0.0 && r.octaveSec <= twoBarsSec
-                        && r.entrySec >= 0.0 && r.entrySec <= twoBarsSec,
+            expect (r.octaveSec >= 0.0 && r.octaveSec <= entryDeadline
+                        && r.entrySec >= 0.0 && r.entrySec <= entryDeadline,
                     what);
 
             std::snprintf (what, sizeof (what),
@@ -9981,6 +9986,7 @@ struct BeatTrackerTimingProbe
         t.beatCount = 2;
         t.listeningSamples = 48000;
         t.samplesSinceBeat = 0;
+        t.entryTempoAgrees = true; // the comb names the same pulse (process() sets it)
         t.updateState (0.8f, true, true, true, 256);
         return fresh && waitsForCurrentSong
                && t.currentState == TrackingState::following;
@@ -10068,6 +10074,14 @@ struct BeatTrackerTimingProbe
             live.heldBpm = hyp.bpm;
             live.beatCount = lineFeed ? 3 : 4;
             live.samplesSinceBeat = 0;
+            // Entry waits for the comb to agree with the decoder (docs/TODO.md
+            // item 87): without it the part stays out however clean the grid.
+            live.entryTempoAgrees = false;
+            live.updateState (hyp.confidence, true, true, hyp.valid, 256);
+            const bool waitsForComb = live.currentState == TrackingState::listening;
+            // From here this measures the state machine once the comb agrees;
+            // how long the comb takes is what the song bench measures.
+            live.entryTempoAgrees = true;
             live.updateState (hyp.confidence, true, true, hyp.valid, 256);
 
             // Playback joins on the next quarter. The first beat starts this
@@ -10076,7 +10090,7 @@ struct BeatTrackerTimingProbe
                                                 - 1.0e-9);
             const double entrySec = firstBeatSec + std::max (0.0, quarters) * beatSec;
             const double deadlineSec = firstBeatSec + 4.0 * beatSec;
-            const bool ok = validSec >= 0.0
+            const bool ok = validSec >= 0.0 && waitsForComb
                          && live.currentState == TrackingState::following
                          && entrySec <= deadlineSec + 1.0e-9;
             firstBar &= ok;
@@ -10093,6 +10107,7 @@ struct BeatTrackerTimingProbe
         room.heldBpm = 76.0f;
         room.beatCount = 4;
         room.samplesSinceBeat = 0;
+        room.entryTempoAgrees = true;
         room.updateState (0.80f, true, true, true, 256);
 
         const bool ok = firstBar && room.currentState == TrackingState::locking;
