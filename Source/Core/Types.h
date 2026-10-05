@@ -277,7 +277,6 @@ struct EngineSnapshot
     int   bufferSize           = 0;
     int   shakerVoices         = 0;
     double sampleRate          = 0.0;
-    int   beatsLocked          = 0;
     bool  aiOnnx               = false;
     bool  hypValid             = false;
     float neuralBpm            = 0.0f;

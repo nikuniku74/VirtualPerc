@@ -506,18 +506,6 @@ void BeatTracker::tap (double timeSeconds) noexcept
         waitForQuantize = false;
 }
 
-int BeatTracker::pulsesFor (Subdivision s) const noexcept
-{
-    switch (s)
-    {
-        case Subdivision::quarter:    return 1;
-        case Subdivision::eighth:     return 2;
-        case Subdivision::sixteenth:  return 4;
-        case Subdivision::autoDetect: return 4;
-    }
-    return 4;
-}
-
 void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept
 {
     const int sr = static_cast<int> (sampleRate);
@@ -1474,9 +1462,17 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const bool octaveAway = haveHyp && periodic && ! harmonicSourceActive
                             && holdSoundingLevel (nnBpm, hyp.gridSerial);
 
+    // Under a blind START SUBITO the clock is heard before anything is found,
+    // so it takes a tempo only once the tracker has left LISTENING - sustained
+    // evidence, not one block - and on the same evidence the phase needs
+    // (below). On digital silence the decoder still publishes a number, 137.9
+    // BPM at 0.02 confidence after 15 s, and the part would wander onto it.
+    const bool blindUnsure = startImmediately && armed && ! sounding
+                             && (currentState == TrackingState::listening
+                                 || ! (periodic && nnConf > 0.28f));
     if (tempoOwned)
         follower.setTargetTempo (heldBpm, 0.95f);
-    else if (nnBpm > 50.0f && ! octaveAway)
+    else if (nnBpm > 50.0f && ! octaveAway && ! blindUnsure)
     {
         // The decoder now guards its own metrical level and decides for itself
         // whether the tempo is fixed or moving, so there is nothing left for a
@@ -2063,7 +2059,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.barDeclared = barDeclaredSamples > 0;
     out.barLocked = barLocked;
     out.analysisGaps = neural.discontinuities();
-    out.analysisWakeups = neural.wakeups();
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
     out.barRotations = barRotations;
@@ -2197,12 +2192,19 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         }
     }
 
-    out.percussionShouldPlay = canPlay && ! waitForQuantize;
-    sounding = out.percussionShouldPlay;
+    sounding = canPlay && ! waitForQuantize;
+    // START SUBITO also plays with nothing coming in: from the moment START is
+    // pressed, on whatever tempo the clock holds (the last one, a tapped one,
+    // or 120), until the analysis finds the band and the clock moves onto it.
+    // That blind stretch is heard but is not `sounding`: the octave hold, the
+    // decoder's sounding keep and the phase re-placement all mean "a part is
+    // playing on a grid we found", and none of them may defend a grid that
+    // was never found. Listener's request (docs/TODO.md item 88).
+    out.percussionShouldPlay = sounding || (startImmediately && armed);
     // The decoder holds its own metrical level under a playing part for the
     // same reason `updateAutoOctave` holds the shift above it.
     neural.setSounding (sounding);
-    if (out.percussionShouldPlay)
+    if (sounding)
         hadPlayed = true;
     out.tapLocked = tapHold;
     out.aiOnnx = neural.usingOnnx();

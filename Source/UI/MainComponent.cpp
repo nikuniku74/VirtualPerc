@@ -1078,10 +1078,10 @@ MainComponent::MainComponent()
         styleMenu.dismiss();
         soundMenu.showFor (slot);
     };
-    shakerVolSlider.onHold  = [this, holdVoice] { holdVoice (0); };
-    congaVolSlider.onHold   = [this, holdVoice] { holdVoice (1); };
-    cembaloVolSlider.onHold = [this, holdVoice] { holdVoice (2); };
-    clapVolSlider.onHold    = [this, holdVoice] { holdVoice (3); };
+    shakerVolSlider.onHold  = [holdVoice] { holdVoice (0); };
+    congaVolSlider.onHold   = [holdVoice] { holdVoice (1); };
+    cembaloVolSlider.onHold = [holdVoice] { holdVoice (2); };
+    clapVolSlider.onHold    = [holdVoice] { holdVoice (3); };
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 4.0, 1.00,
                 [this] (float v) { engine.settings().inputGain.store (v); },
@@ -3727,13 +3727,6 @@ void MainComponent::applyCompactVisibility()
         setSettingsOpen (false);
 
     refreshTempoModeButtons();
-}
-
-void MainComponent::layoutTransport (juce::Rectangle<int> body)
-{
-    const int rx = juce::jmin (4, juce::jmax (0, body.getWidth() / 8));
-    const int ry = juce::jmin (4, juce::jmax (0, body.getHeight() / 4));
-    startButton.setBounds (body.reduced (rx, ry));
 }
 
 void MainComponent::layoutMisure (juce::Rectangle<int> body)

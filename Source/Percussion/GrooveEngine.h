@@ -120,7 +120,6 @@ public:
     /** Which part to play. Not a set of variations on one pattern: each style
         has its own conga figure and its own shaker weighting. */
     void setStyle (GrooveStyle s) noexcept;
-    GrooveStyle currentStyle() const noexcept { return style; }
 
     /** Whether this bar takes a fill instead of repeating the pattern. */
     bool isFillBar (int barIndex) const noexcept;

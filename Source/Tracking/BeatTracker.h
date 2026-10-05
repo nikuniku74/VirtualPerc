@@ -459,7 +459,6 @@ public:
             are worth having: a gap costs the recent evidence, and a worker
             spinning is a battery draining. */
         int64_t       analysisGaps = 0;
-        int64_t       analysisWakeups = 0;
         /** Input samples fed but not yet analysed. */
         int           analysisBacklog = 0;
         /** The metrical level actually in force, whether AUTO or the listener
@@ -537,7 +536,6 @@ private:
     void updateAutoOctave (float bpm, bool periodic, int numSamples,
                            bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
-    int  pulsesFor (Subdivision s) const noexcept;
 
     void updateKickTrust (float phaseErr) noexcept;
 

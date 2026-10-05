@@ -75,11 +75,6 @@ public:
         the octave (or a competing metre) is nearly as plausible. */
     float clarity()  const noexcept { return bestClarity; }
 
-    /** How strongly the winning period's own subdivision answers back, 0..1.
-        Near zero the beat is unmistakable; near one the level is a coin toss
-        and the decoder should not throw away a working grid over it. */
-    float offbeatRatio() const noexcept { return bestOffbeat; }
-
     /** Whether the buffer is yet long enough to have folded the winner's own
         octave *below* it several times over. Until it is, nothing slower than
         the winner has really been examined, so the level on offer is the
@@ -102,7 +97,7 @@ public:
         question "which half of the beat are we on".
 
         `contrastOut` is how flat it is half a period from its own peak, 0..1,
-        the same number `offbeatRatio` reports for the winner. Near one the fold
+        the same ratio the comb keeps for its winner. Near one the fold
         genuinely cannot tell the beat from the offbeat and its answer must not
         be used. Returns -1 when the buffer cannot answer at all. */
     float beatPhaseFor (float bpmCandidate, float& contrastOut) const noexcept;

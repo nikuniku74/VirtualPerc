@@ -20,8 +20,7 @@ namespace
     // Where a listener's sense of pulse sits. Not a tie-breaker bolted on
     // afterwards - it is part of the model, because it is part of hearing: the
     // reason nobody taps 184 to a slow rock tune is not that 184 does not fit,
-    // it is that 184 is not a pulse.
-    constexpr float kPriorCentreBpm = 118.0f;
+    // it is that 184 is not a pulse. The centre is `priorCentre` (118 BPM).
 
     // How wide the beat is, as a fraction of the period, and how the "not a
     // beat" mass is shared out. Both come from one constant, and it has to be a

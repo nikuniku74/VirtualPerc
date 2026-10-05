@@ -150,7 +150,6 @@ public:
         plays exactly once. `overBeats` is kept at twice the move or more, so
         the rate never drops below half. Replaces any glide still in progress. */
     void glidePhase (float deltaBeats, float overBeats) noexcept;
-    bool glideActive() const noexcept { return glideRemaining != 0.0; }
     void snapDownbeat (float targetPhase = 0.0f) noexcept;
     void snapBeat (int beatIndex, float targetPhase = 0.0f) noexcept;
     void rotateBarIndex (int delta) noexcept;

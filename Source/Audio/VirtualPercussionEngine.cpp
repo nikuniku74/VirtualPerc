@@ -148,14 +148,12 @@ namespace
     constexpr double kShareHighHoldSec = 0.33;
 }
 
-void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChannels) noexcept
+void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] int numInputChannels) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
     maxBlock = std::max (512, maxBlk);
-    preparedInputs = std::max (1, numInputChannels);
 
     mono.assign (static_cast<size_t> (maxBlock), 0.0f);
-    kickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     kickDetector.prepare (sampleRate);
     rawIn.assign (static_cast<size_t> (maxBlock), 0.0f);
     latencyProbe.prepare (sampleRate);
@@ -201,8 +199,6 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, int numInputChanne
     hybrid.setBank (loopBank.get());
     styleDetector.prepare (sampleRate);
     percussion.setSeed (0x51A4E1u);
-    stretcher.prepare (sampleRate, maxBlock);
-    stretch.prepare (120.0f, sampleRate);
     clickPhase = 0.0;
     lastSr.store (sampleRate, std::memory_order_relaxed);
     analysisSuspended = false;
@@ -316,8 +312,6 @@ void VirtualPercussionEngine::reset() noexcept
     percussion.reset();
     hybrid.reset();
     styleDetector.reset();
-    stretcher.reset();
-    stretch.reset();
     clickPhase = 0.0;
     std::fill (outRing.begin(), outRing.end(), 0.0f);
     ringWrite = 0;
@@ -332,20 +326,6 @@ void VirtualPercussionEngine::reset() noexcept
 bool VirtualPercussionEngine::tryLoadNeuralHypothesis (BeatHypothesis& out) const noexcept
 {
     return tracker.tryLoadHypothesis (out);
-}
-
-void VirtualPercussionEngine::loadPercussionLoop (const float* left, const float* right,
-                                                  int frames, float nativeBpm)
-{
-    stretcher.prepare (sampleRate, maxBlock);
-    stretcher.loadLoop (left, right, frames);
-    stretch.prepare (nativeBpm, sampleRate);
-}
-
-void VirtualPercussionEngine::clearPercussionLoop()
-{
-    stretcher.loadLoop (nullptr, nullptr, 0);
-    stretch.prepare (120.0f, sampleRate);
 }
 
 void VirtualPercussionEngine::start() noexcept
@@ -1844,47 +1824,33 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     }
 
 
-    if (stretcher.hasLoop())
-    {
-        stretch.setLiveClock (tr.bpm, tr.beatPhase, tr.confidence);
-        const float ratio = stretch.advance (numSamples);
-        stretcher.process (outL.data(), outR.data(), numSamples, ratio);
-        if (! tr.percussionShouldPlay)
-        {
-            std::fill (outL.begin(), outL.begin() + numSamples, 0.0f);
-            std::fill (outR.begin(), outR.begin() + numSamples, 0.0f);
-        }
-    }
-    else
-    {
 #if defined(VP_ENABLE_RECORDED_LOOPS) && VP_ENABLE_RECORDED_LOOPS
-        // The recorded percussionist. With the flag off - which is the default -
-        // this whole branch is not compiled and the call below is the only thing
-        // that renders the part, exactly as it always was. See
-        // docs/RECORDED_LOOPS.md and TD-16.
-        HybridPercussionRenderer::Input hin;
-        hin.tick = tr.clock;
-        hin.regime = tr.regime;
-        hin.audible = tr.percussionShouldPlay && ! standingDown;
-        hin.bpm = tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
-                                            : (tr.bpm > 40.0f ? tr.bpm : 120.0f);
-        hin.style = chosen;
-        hin.swing = cfg.swing.load (std::memory_order_relaxed);
-        hin.intensity = cfg.intensity.load (std::memory_order_relaxed);
-        hin.dynamics = followDynamics ? bandDynamics.level() : 1.0f;
-        hin.congasEnabled = cfg.congasEnabled.load (std::memory_order_relaxed);
-        hin.shakerEnabled = cfg.shakerEnabled.load (std::memory_order_relaxed);
-        hin.shakerVolume = cfg.shakerVolume.load (std::memory_order_relaxed);
-        hin.congaVolume = cfg.congaVolume.load (std::memory_order_relaxed);
-        hin.shakerSound = cfg.shakerSound.load (std::memory_order_relaxed);
-        hin.congaSound = cfg.congaSound.load (std::memory_order_relaxed);
-        hin.sectionChanged = sectionJustChanged;
-        hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
+    // The recorded percussionist. With the flag off - which is the default -
+    // this whole branch is not compiled and the call below is the only thing
+    // that renders the part, exactly as it always was. See
+    // docs/RECORDED_LOOPS.md and TD-16.
+    HybridPercussionRenderer::Input hin;
+    hin.tick = tr.clock;
+    hin.regime = tr.regime;
+    hin.audible = tr.percussionShouldPlay && ! standingDown;
+    hin.bpm = tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
+                                        : (tr.bpm > 40.0f ? tr.bpm : 120.0f);
+    hin.style = chosen;
+    hin.swing = cfg.swing.load (std::memory_order_relaxed);
+    hin.intensity = cfg.intensity.load (std::memory_order_relaxed);
+    hin.dynamics = followDynamics ? bandDynamics.level() : 1.0f;
+    hin.congasEnabled = cfg.congasEnabled.load (std::memory_order_relaxed);
+    hin.shakerEnabled = cfg.shakerEnabled.load (std::memory_order_relaxed);
+    hin.shakerVolume = cfg.shakerVolume.load (std::memory_order_relaxed);
+    hin.congaVolume = cfg.congaVolume.load (std::memory_order_relaxed);
+    hin.shakerSound = cfg.shakerSound.load (std::memory_order_relaxed);
+    hin.congaSound = cfg.congaSound.load (std::memory_order_relaxed);
+    hin.sectionChanged = sectionJustChanged;
+    hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
 #else
-        percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
-                           tr.percussionShouldPlay && ! standingDown);
+    percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
+                       tr.percussionShouldPlay && ! standingDown);
 #endif
-    }
 
     const bool monitorClick = clickEnabled.load (std::memory_order_relaxed);
     const float master = cfg.masterVolume.load (std::memory_order_relaxed);
@@ -1980,7 +1946,6 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastAnalysisGain.store (makeupGain, std::memory_order_relaxed);
     lastState.store (static_cast<int> (tr.state), std::memory_order_relaxed);
     lastSub.store (static_cast<int> (tr.subdivision), std::memory_order_relaxed);
-    lastBeats.store (tr.beatsElapsed, std::memory_order_relaxed);
     lastAudible.store (tr.percussionShouldPlay, std::memory_order_relaxed);
     lastTapLock.store (tr.tapLocked, std::memory_order_relaxed);
     lastFollowBar.store (static_cast<int> (tr.followBar), std::memory_order_relaxed);
@@ -2079,7 +2044,6 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.followBar = static_cast<FollowBar> (lastFollowBar.load (std::memory_order_relaxed));
     s.bufferSize = lastBuffer.load (std::memory_order_relaxed);
     s.sampleRate = lastSr.load (std::memory_order_relaxed);
-    s.beatsLocked = lastBeats.load (std::memory_order_relaxed);
     s.shakerVoices = lastVoices.load (std::memory_order_relaxed);
     s.aiOnnx = lastAiOnnx.load (std::memory_order_relaxed);
     s.hypValid = lastHypValid.load (std::memory_order_relaxed);

@@ -32,7 +32,6 @@ struct TempoMotionShapeResult
     double nextPeriodDeltaSec = 0.0;
     double robustNoiseSec = 0.0001;
     int hingeSplit = -1;
-    int excludedPoint = -1;
     bool finite = true;
 };
 

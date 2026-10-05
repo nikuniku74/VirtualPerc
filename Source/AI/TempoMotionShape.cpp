@@ -309,7 +309,6 @@ TempoMotionShapeResult TempoMotionShape::classify (
     result.quadraticVsHinge = result.hingeBic - result.quadraticBic;
     result.robustNoiseSec = sigma;
     result.hingeSplit = bestHinge.selection;
-    result.excludedPoint = bestOutlier.selection;
 
     const std::array<double, 4> scores {
         result.affineBic,

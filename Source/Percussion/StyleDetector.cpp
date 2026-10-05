@@ -74,8 +74,6 @@ namespace
     // A sixteenth counts as occupied at this fraction of the busiest one.
     constexpr float kOccupied = 0.22f;
 
-    // Below this many occupied sixteenths the track wants to be left alone.
-    constexpr int kBusyBins = 7;
 
     float onePoleCoeff (float hz, double sr) noexcept
     {

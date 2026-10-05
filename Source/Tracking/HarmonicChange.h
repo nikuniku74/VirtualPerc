@@ -256,12 +256,6 @@ public:
         return n;
     }
 
-    /** The chroma as it stands, twelve pitch classes starting at C. For the
-        debug panel and the probes. */
-    const float* chromaNow() const noexcept { return chroma; }
-    /** How far the harmony has moved from its own recent average, 0..1. */
-    float changeNow() const noexcept { return lastChange; }
-
     /** What the change function has typically been doing below the gate, for
         the probes. */
     float typicalMovement() const noexcept { return typicalMove; }

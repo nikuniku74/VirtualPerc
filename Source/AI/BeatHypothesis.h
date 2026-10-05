@@ -118,12 +118,6 @@ struct BeatHypothesis
 
     TempoRegime regime   = TempoRegime::unknown;
 
-    /** How strongly the network called the last beat it was sure enough about
-        to count as a downbeat, 0..1. Diagnostic now: the bar is decided from
-        `beatDownbeat` below, over every beat rather than over the ones that
-        cleared a threshold, and this is what the threshold was seeing. */
-    float    downbeatStrength = 0.0f;
-
     /** The downbeat activation the network produced for the beat that
         `beatSerial` has just counted, whether or not it cleared the gate that
         makes a beat a *downbeat* - 0..1, and the peak of a three-frame window

@@ -702,7 +702,6 @@ void BeatDecoder::reset() noexcept
     prevPrevDownbeat = 0.0f;
     prevHighBand = 0.0f;
     prevPrevHighBand = 0.0f;
-    lastDownbeatStrength = 0.0f;
     lastBeatDownbeat = 0.0f;
     beatWrite = 0;
     beatFilled = 0;
@@ -1019,7 +1018,6 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.coverage = lastFitCoverage;
     d.fitIndexGap = lastFitIndexGap;
     d.octaveMismatch = octaveMismatchBeats;
-    d.beatsHeld = beatsOnLevel;
     d.levelSettled = tempo.levelSettled();
     d.userOctave = octaveShift;
     d.beatsInRegime = beatsInRegime;
@@ -6509,7 +6507,6 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                                      std::max (prevPrevDownbeat, pDownbeat));
         if (prevDownbeat > downThresh)
         {
-            lastDownbeatStrength = prevDownbeat;
             lastDownbeatSec = eventTimeSec;
             if (lastBeatOnParity)
                 beatsInBar = 0;
@@ -6621,7 +6618,6 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.beatSerial = publishedBeatSerial;
     hyp.downbeatSerial = downbeatSerial;
     hyp.gridSerial = gridSerial;
-    hyp.downbeatStrength = lastDownbeatStrength;
     hyp.beatDownbeat = lastBeatDownbeat;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;

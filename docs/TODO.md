@@ -5047,10 +5047,46 @@ no. L'ingresso arriva basso se il mixer non è al massimo, e alza «mic input» 
   `VPTrack --start-now`: GARDEN 3300 senza silenzio a −24 dB entra a 1.6 s invece di 13.7; solo fruscio resta
   muto in entrambi i casi (nessuna griglia). Default invariato; `VPTests` invariati; app macOS compilata —
   la disposizione dei tre pulsanti nella scheda TEMPO non è ancora vista a schermo.
+- [x] **START SUBITO suona anche senza segnale** (richiesta dell'utente, 2026-10-05): acceso, la parte suona da
+  START qualunque cosa abbia trovato l'analisi, sul tempo del clock (ultimo, TAP, o 120). L'uscita «suona»
+  (`percussionShouldPlay`) è ora separata da `sounding` («suona su una griglia trovata»), che continua a
+  regolare tenuta d'ottava, keep del decoder e ricentri, `hadPlayed`. Alla cieca il clock prende un tempo solo
+  quando il tracker esce da LISTENING e con battito regolare e confidenza > 0.28 (`blindUnsure`): sul silenzio
+  digitale il decoder pubblica comunque 137.9 BPM a confidenza 0.02 dopo 15 s, e un solo blocco sopra soglia
+  bastava a spostarlo. `VPTrack --start-now`: silenzio, fruscio basso e alto suonano al 100% fermi a 120;
+  GARDEN 3300 senza silenzio va subito a 118. Su 8 brani del banco, dopo l'aggancio livello/disp/>25 ms
+  uguali entro rumore; l'uno cambia (THE REASON 81 → 95, INFINITO 87 → 99, UMBRELLA 100 → 75, 1000 GIORNI
+  81 → 72) perché non c'è più l'ingresso quantizzato sul battere. Spento: banco 54/54 identico, test invariati.
 - [ ] Riprova dal vivo, anche con il mixer non al massimo; se si ripete, mandare
   `Documents/VirtualPercussionist-stopstart.log`.
 - [ ] Con l'ingresso a −12 dB su FLAMINGO 4500 compaiono due pause in più della parte (65–70 s, 73–80 s) che a
   0 dB non ci sono; non viene da `BandDynamics` (relativo al brano). Da guardare.
+
+### 89. Pulizia del codice inutilizzato ✅ (2026-10-05, verificata bit per bit)
+
+Metodo: `clang -fsyntax-only` con tutti gli avvisi «unused» su ogni file di `Source/`
+(`build-host/compile_commands.json`, ora esportato) più un incrocio dei nomi dichiarati negli header contro
+tutto `Source/`, `Tests/`, `scripts/` (compresi i file solo iOS), escludendo i nomi che esistono in JUCE.
+- [x] Tolti: costanti `kPriorCentreBpm` (doppione di `BeatHmm::priorCentre`) e `kBusyBins`; catture `this`
+  inutili; funzioni mai chiamate `offbeatRatio`, `lastClarity`, `cancelLatencyMeasurement`,
+  `recordedLoopPlaying`, `currentStyle`, `barsObserved`/`kickBins`/`bodyBins`/`highBins`, `chromaNow`/
+  `changeNow`, `glideActive`, `pulsesFor` (la skill percussioni lo citava: il clock emette sempre
+  `kClockPulsesPerBeat` = 4), `layoutTransport`; campi scritti e mai letti `beatsHeld`, `downbeatStrength`
+  (+ `lastDownbeatStrength`), `excludedPoint`, `beatsLocked` (+ `lastBeats`), `analysisWakeups`,
+  `preparedInputs`, `kickScratch` (allocato e mai usato); nel motore il percorso «loop di percussioni»
+  mai collegato (`loadPercussionLoop`/`clearPercussionLoop`, membri `stretch`/`stretcher` e il ramo
+  `stretcher.hasLoop()` controllato a ogni blocco). `TimeStretchEngine`/`StretchFactor` restano: hanno test.
+- [x] Lasciati apposta: i tre campi di `MainComponent` segnalati inutilizzati (sono usati nel codice solo iOS);
+  la cattura `kDamp` (altri compilatori possono richiederla); i getter citati come concetto in docs/skill
+  (`swingTolerance`, `kickIsTrusted`, `attackLeadSamples`); le manopole dei loop registrati in standby
+  (`setStretchLimit`, `setSwingTolerance`, `setAccentLayer`, `loadLoopBank`, `isArmed`, `lastMiss`…);
+  `useNnapiOnAndroid` (Android più avanti).
+- [x] Verifica: compilano tutti i bersagli (app, `VPTests`, 15 sonde); banco veloce **54/54 file identici bit
+  per bit** a prima; `VPTests` `--phase-lock` 20/0, `--bar` 10/0, `--new-input` 16/0, `--transport` 4/0,
+  `--tempo-step` 14/0, `--tempo-slow` 13/0, `--rhythm` 3/0, `--loops` 58/0, `--percussion` 17/0,
+  `--state-timing`/`--harmonic-entry` senza errori; `--level` 11/5 e `--leak` 46/3 identici alla versione
+  committata (le stesse bocciature già presenti; le 12 righe che differiscono in `--leak` differiscono anche
+  fra due esecuzioni dello stesso codice).
 
 ## Standby
 
@@ -5313,6 +5349,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 - Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
+- Item 89 (2026-10-05): pulizia del codice inutilizzato, banco identico bit per bit.
 - Item 88 (2026-10-05): dal vivo mute con band già in corso — la mandata ha poco basso (`rhythmSeen`) e il livello era giudicato prima del guadagno; ora un aggancio sicuro di 4 s su ingresso diretto basta.
 - Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere. Uno: la sola rete corregge un quarto con distacco ≥ 0.30, 50.6 → 57.5%; oltre serve una rete migliore (fase 2). Fase 2: BeatNet rifinito sulle etichette del maestro (`train_beatnet_finetune.py`, 1000 passi, KD 3) è ora il modello dell'app: 13.0 ms, >25 ms 22.2%, livello giusto 71.9%, uno 67.3%; ottava ancora fragile.
 - Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.

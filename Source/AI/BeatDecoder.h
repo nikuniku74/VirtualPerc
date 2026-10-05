@@ -91,7 +91,6 @@ public:
         float residual = 1.0f;
         float coverage = 0.0f;
         int   octaveMismatch = 0;
-        int   beatsHeld = 0;
         /** How fast the short fit is itself moving, BPM per beat. */
         float shortFitRate = 0.0f;
         /** Diagnostic quadratic fit over the responsive window, evaluated at
@@ -388,7 +387,6 @@ private:
     float  prevPrevHighBand = 0.0f;
     float  prevDownbeat = 0.0f;
     float  prevPrevDownbeat = 0.0f;
-    float  lastDownbeatStrength = 0.0f;
     /** The downbeat activation of the beat last counted, gate or no gate. See
         BeatHypothesis::beatDownbeat. */
     float  lastBeatDownbeat = 0.0f;

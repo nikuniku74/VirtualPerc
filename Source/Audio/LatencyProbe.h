@@ -63,11 +63,6 @@ public:
         Leaves the probe idle either way, so it can be run again. */
     float analyse() noexcept;
 
-    /** How clear the last measurement was: the correlation peak against the
-        best rival peak elsewhere in the capture. Under about two the answer was
-        a coincidence, and `analyse` will have refused it. */
-    float lastClarity() const noexcept { return clarity; }
-
     /** Seconds a measurement takes, so the screen can say how long to wait. */
     static constexpr double kCaptureSeconds = 0.75;
 

@@ -12,9 +12,10 @@ because those decisions were lost once already.
 ## 1. The grid
 
 - Everything is on a **sixteenth grid**: `GrooveEngine::kStepsPerBar = 16`.
-- The clock emits pulses at the tracker's subdivision - 1, 2 or 4 per beat,
-  **4 by default** (`BeatTracker::pulsesFor`). `PercussionEngine::render` maps a
-  pulse onto the sixteenth grid whatever the resolution is:
+- The clock always emits **4 pulses per beat** (`kClockPulsesPerBeat` in
+  `BeatTracker.cpp`); the subdivision setting chooses how dense the groove is,
+  not the clock. `PercussionEngine::render` maps a pulse onto the sixteenth grid
+  whatever the resolution is:
   `step = (barBeat * 4 + (idx * 4) / pulsesPerBeat) % 16`. At a coarser
   resolution the odd steps are simply never visited - the table is not rewritten.
 - Steps `0, 4, 8, 12` are the quarters. `2, 6, 10, 14` are the off-eighths.

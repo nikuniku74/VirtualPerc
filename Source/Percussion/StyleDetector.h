@@ -44,14 +44,6 @@ public:
         whatever it was already playing. */
     float confidence() const noexcept { return score; }
 
-    /** How much of a bar has been folded in, in bars. Useful for deciding
-        whether to believe the answer yet. */
-    float barsObserved() const noexcept { return observed; }
-
-    /** The folded bar, for diagnostics: three bands by sixteenth. */
-    const float* kickBins() const noexcept { return binKick; }
-    const float* bodyBins() const noexcept { return binBody; }
-    const float* highBins() const noexcept { return binHigh; }
     struct Features { float evenKick, alternation, offHigh, syncopation, occupancy; };
     Features features() const noexcept { return lastFeatures; }
 

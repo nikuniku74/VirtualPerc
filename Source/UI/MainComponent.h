@@ -172,7 +172,6 @@ private:
     void layoutFull();
     void layoutCompact();
     void applyCompactVisibility();
-    void layoutTransport (juce::Rectangle<int> body);
     void layoutMisure (juce::Rectangle<int> body);
     void layoutFeelKnobs (juce::Rectangle<int> body);
     void prepareHits (double sampleRate);

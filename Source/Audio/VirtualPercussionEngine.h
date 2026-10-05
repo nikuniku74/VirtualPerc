@@ -10,8 +10,6 @@
 #include "Audio/LatencyProbe.h"
 #include "Tracking/HarmonicChange.h"
 #include "Tracking/KickOnsetDetector.h"
-#include "Stretch/StretchFactor.h"
-#include "Stretch/TimeStretchEngine.h"
 
 #include <atomic>
 #include <memory>
@@ -111,7 +109,6 @@ public:
     bool  latencyMeasurementRunning() const noexcept { return latencyProbe.isRunning(); }
     bool  latencyMeasurementReady() const noexcept { return latencyProbe.ready(); }
     float finishLatencyMeasurement() noexcept;
-    void  cancelLatencyMeasurement() noexcept { latencyProbe.cancel(); }
     /** The measured round trip, or 0 when nobody has measured one. */
     float measuredLatency() const noexcept { return measuredLatencyMs.load (std::memory_order_relaxed); }
     /** Restore a figure measured in an earlier session. */
@@ -147,15 +144,6 @@ public:
 
     bool tryLoadNeuralHypothesis (BeatHypothesis& out) const noexcept;
 
-    /** Loop-kit playback (see docs/ARCHITECTURE.md). Nothing calls these yet.
-        Both allocate, so they may only be called while the device is closed -
-        that is, before prepare() or after releaseResources(). Calling either
-        one while the audio callback is running reallocates the buffers the
-        stretcher is reading from. If this is ever wired to a control the user
-        can touch mid-song, it needs a handoff rather than a direct load. */
-    void loadPercussionLoop (const float* left, const float* right, int frames, float nativeBpm);
-    void clearPercussionLoop();
-
     /** The recorded percussionist (docs/RECORDED_LOOPS.md).
 
         `loadLoopBank` reads a manifest and every file it names into memory and
@@ -179,8 +167,6 @@ public:
     void clearLoopBank();
     void setRecordedLoopsEnabled (bool on) noexcept { hybrid.setEnabled (on); }
     bool recordedLoopsEnabled() const noexcept { return hybrid.isEnabled(); }
-    /** True when a recording is what is currently being heard. */
-    bool recordedLoopPlaying() const noexcept { return hybrid.loopIsPlaying(); }
 
 private:
     /** Bands the leak canceller fits our own output in, split at ~250 Hz and
@@ -279,8 +265,6 @@ private:
     HybridPercussionRenderer hybrid;
     std::unique_ptr<LoopBank> loopBank;
     StyleDetector styleDetector;
-    StretchFactor stretch;
-    TimeStretchEngine stretcher;
     EngineSettings cfg;
 
     std::vector<float> mono;
@@ -296,7 +280,6 @@ private:
 
     double sampleRate = 48000.0;
     int maxBlock = 1024;
-    int preparedInputs = 2;
     bool analysisSuspended = false;
 
     std::atomic<float> latencyMs { 0.0f };
@@ -312,7 +295,6 @@ private:
     std::atomic<int>   lastState { 0 };
     std::atomic<int>   lastSub { 0 };
     std::atomic<int>   lastBuffer { 0 };
-    std::atomic<int>   lastBeats { 0 };
     std::atomic<bool>  lastAudible { false };
     std::atomic<bool>  lastTapLock { false };
     std::atomic<int>   lastFollowBar { 0 };
@@ -338,7 +320,6 @@ private:
         canceller and the high-pass exist to protect a *microphone* from the
         app's own output, and a desk send of the kick has neither problem. */
     KickOnsetDetector  kickDetector;
-    std::vector<float> kickScratch;
     std::atomic<int>   lastKickChannel { -1 };
     std::atomic<float> lastKickLevel { 0.0f };
     std::atomic<float> lastKickQuiet { 0.0f };
