@@ -1700,6 +1700,11 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     // The beats behind us were the wrong ones. Keeping them would have the fit
     // pulling the grid straight back to where it was, which is the same trap
     // one level down.
+    dropBeatHistory();
+}
+
+void BeatDecoder::dropBeatHistory() noexcept
+{
     clearTempoTransition (TempoTransitionReason::reset);
     beatWrite = 0;
     beatFilled = 0;
@@ -1716,7 +1721,7 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
     shortFitResidual = 1.0f;
 }
 
-void BeatDecoder::declarePulseHere() noexcept
+void BeatDecoder::declarePulseHere (bool halfBeat) noexcept
 {
     // Listener said the one is here. The clock places that on the nearest
     // beat it is already playing; this must not publish a different grid.
@@ -1731,6 +1736,27 @@ void BeatDecoder::declarePulseHere() noexcept
     if (bpm < kMinBpm)
         return;
     const float period = 60.0f / bpm;
+    // Pressed in the middle of the clock's beat: the grid is on the levare
+    // (THE REASON, SALLY, FLAMINGO 4500 on the bench; docs/TODO.md item 90).
+    // While sounding nothing automatic may move the half - `checkGridPhase`
+    // and the on-grid keep both defend lastBeat against the hats - so this
+    // is the way out. Half a period back keeps lastBeat in the past. The
+    // levare beats go; the tempo is pinned while the fits refill. gridSerial
+    // does not move: the tracker would read a half-beat rebuilt grid as a
+    // new pulse and stop the part to rejoin it, while its own clock is
+    // already gliding there.
+    if (halfBeat && gridAnchorSec >= 0.0)
+    {
+        const double half = 0.5 * static_cast<double> (period);
+        gridAnchorSec -= half;
+        if (lastBeatSec >= 0.0)
+            lastBeatSec -= half;
+        foldPhaseBeats = 0;
+        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+        dropBeatHistory();
+        longFitPeriodHeld = false;
+        barTempoHoldBeats = kShortFit;
+    }
     const float p = gridPhaseNow (period);
     beatsInBar = p <= 0.5f ? 0 : 3;
     hyp.beatPhase = p;

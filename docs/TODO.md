@@ -5088,6 +5088,55 @@ tutto `Source/`, `Tests/`, `scripts/` (compresi i file solo iOS), escludendo i n
   committata (le stesse bocciature già presenti; le 12 righe che differiscono in `--leak` differiscono anche
   fra due esecuzioni dello stesso codice).
 
+### 90. Dal vivo: livello d'analisi sul MIXER, levare correggibile a mano, volume del clap 🟡 (2026-10-05, misurato — da provare dal vivo)
+
+Richiesta: «un salto di qualità per il live (opzione mixer)», provabile solo con BRANO. Nel frattempo due segnalazioni:
+«a volte il tempo viene agganciato in levare e non riesco nemmeno a correggere» e «il clap è molto più basso
+delle altre percussioni».
+- [x] **Banco veloce sul percorso MIXER** (`bench_fast.py run TAG ARGS="--gain -12"`: `VPTrack` senza `--player`,
+  cioè `kitMic`, stesso audio). A 0 dB è uguale a BRANO; con la mandata più bassa no. Contro la verità del maestro
+  (disp / p90 / >25 ms / levare): 0 dB 11.9 / 35 / 18.7% / 0.65%, −12 dB 14.5 / 56 / 20.6% / 1.28%, −24 dB 14.6 /
+  52 / 20.6% / 1.13%. Motivo: le feature di BeatNet sono log10(1 + modulo), quindi il livello è un ingresso. Il
+  guadagno d'analisi alza solo fino a 0.20; un file passa al suo livello (inviluppo 0.14–0.55 sul banco, mediana
+  0.27; 0.43 sulle mandate dei vostri live, lo stesso livello delle feature su cui è stata rifinita la rete). Dal
+  mixer non al massimo la rete lavorava ~7 dB più in basso.
+- [x] Bersagli provati (ottava giusta % / disp / p90 / >25 ms a 0, −12, −24 dB): 0.20 (oggi) 77.9/11.9/35/18.7,
+  77.3/14.5/56/20.6, 82.9/14.6/52/20.6; 0.30 73.9/11.0/38/17.7, 73.9/12.7/40/18.4, 80.1/12.2/37/19.2; **0.40**
+  74.2/11.4/34/18.4, 76.7/11.0/31/16.8, 81.4/12.0/38/18.5; 0.50 75.9/12.1/47/19.6, 75.7/11.3/38/17.3,
+  83.1/12.2/42/19.0. Simmetrico a 0.30 identico a 0.30 (gli inviluppi dei file quasi mai sopra 0.30). 0.40 fisso
+  rompe anche `VPTests --level` (168 BPM a −6 dB legge la metà): l'ottava si decide su un altro segnale.
+- [x] **Tenuto: 0.40 solo su MIXER e solo con la parte udibile** (`kMakeupPlayingPeak`, `processBlock`); in aggancio
+  resta 0.20, così l'ottava si sceglie come prima. MIXER: 0 dB 76.8 / 11.6 / 36 / 18.6% / levare 0.78%; **−12 dB
+  76.7 / 11.3 / 32 / 17.5% / 0.33%; −24 dB 82.5 / 12.3 / 39 / 18.9% / 0.50%**. Sullo stesso codice anche in BRANO
+  la fase era uguale e l'ottava −1.0 (UNA CANZONE 48k va al doppio dopo l'ingresso): per questo BRANO resta escluso,
+  e il banco BRANO è identico a prima. `VPTests` `--level` 11/5 (le stesse 5), `--new-input` 16/0, `--transport`
+  4/0, `--state-timing` senza errori, `--phase-lock` 20/0.
+- [x] **Levare: perché non si correggeva.** Con la parte che suona nessun automatismo può spostare la griglia di mezzo
+  battito (`checkGridPhase` spento, il keep difende `lastBeat` dai charleston); «L'1 è QUI» rinominava solo il
+  conteggio e il primo TAP spostava il clock, ma il decoder lo riportava indietro in meno di un secondo. Sul banco
+  BRANO 0.61% dei battiti in levare, in tratti fino a 17 s (FLAMINGO 4500 66–83 s, THE REASON 7–16 s, SALLY 12–18 s);
+  MIXER −12 dB fino a 40 s (ASPETTANDO 181–220 s).
+- [x] **Tenuto: «L'1 è QUI» premuto a metà del battito sposta la griglia di mezzo battito** (`kLevarePressBand` 0.15,
+  cioè fase 0.35–0.65). Il clock scivola su un battito (`glidePhase`: mezza o 1.5× velocità, nessun colpo saltato o
+  doppio), il decoder sposta l'àncora di mezzo periodo, butta i battiti presi in levare e tiene il tempo per 8 battiti.
+  Fuori da quella fascia il tasto fa quello che faceva. `VPTrack --declare-at T` premendo sul battito vero: FLAMINGO
+  4500 35 → 0 battiti in levare, THE REASON 14 → 0, EVERYTIME (MIXER −12) 36 → 0, SALLY 15 → 4 (resta un altro
+  episodio a 262 s). Una pressione sbagliata su una griglia giusta si annulla premendo di nuovo sull'1 (VITA). Riaprire
+  `checkGridPhase` con la parte che suona, ri-misurato: peggio (disp 11.8 → 13.4 ms). `VPTests --bar` 13/0 con due
+  controlli nuovi (clock e decoder).
+- [x] **Clap:** misurato ogni strumento da solo a fader pieno (K-pesato, 50 ms più forti di ogni colpo, dance/pop/rock/
+  samba a 120, `VPRender --raw`): shaker 0, cembalo −0.5, conga +2.0, clap −2.5 dB, e sotto la band il clap cade sul
+  rullante. `kClapLevel` +4.5 dB, legato al suono del clap e non alla manopola: ora +2.0 come le conga.
+- [x] **Allineati anche shaker e cembalo** (richiesta dell'utente): `kShakerLevel` +2.0 dB, `kCembaloLevel` +2.5 dB, legati
+  al suono come il clap. Rimisurato, rispetto allo shaker in media: cembalo +0.0, conga −0.0, clap −0.1 dB (fra gli stili
+  ±1.4 dB, dipende dal pattern). Tutti e quattro insieme (dance, riverbero 0.3): 0.39% dei campioni sopra il ginocchio del
+  soft clip. Banco BRANO identico bit per bit (lo shaker suona nel banco), MIXER −12 dB stessi punteggi. `VPTests
+  --percussion` 17/0.
+- [ ] Prova dal vivo con il MIXER, anche con la mandata non al massimo: la fase dovrebbe tenere come in BRANO.
+- [ ] Ascolto: i quattro volumi allineati? «L'1 è QUI» sul levare: va premuto sull'1 (premendo su un altro quarto la griglia si
+  sistema ma il conteggio prende quel quarto come 1).
+- [ ] Il levare automatico resta: il tasto è la via d'uscita, non la cura.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

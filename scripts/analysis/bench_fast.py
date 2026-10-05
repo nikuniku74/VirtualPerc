@@ -26,14 +26,20 @@ CACHE = '/tmp/vp-bench'
 
 def run(tag, env_pairs):
     env = dict(os.environ, VP_OFFLINE_PACING='1')
+    # ARGS="..." replaces the default `--player`: e.g. ARGS="--gain -12" is the
+    # MIXER path (kitMic, the live route) with the send 12 dB down.
+    args = ['--player']
     for kv in env_pairs:
         k, v = kv.split('=', 1)
-        env[k] = v
+        if k == 'ARGS':
+            args = v.split()
+        else:
+            env[k] = v
     os.makedirs(f'{CACHE}/{tag}', exist_ok=True)
     wavs = sorted(f for f in os.listdir(f'{CACHE}/wav') if f.endswith('.wav'))
 
     def one(w):
-        subprocess.run([VPTRACK, '--wav', f'{CACHE}/wav/{w}', '--player', '--pulses',
+        subprocess.run([VPTRACK, '--wav', f'{CACHE}/wav/{w}', *args, '--pulses',
                         f'{CACHE}/{tag}/{w[:-4]}.pul'], env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     with ThreadPoolExecutor(6) as ex:

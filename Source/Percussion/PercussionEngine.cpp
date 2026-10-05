@@ -48,6 +48,17 @@ namespace
     // bass and guitars' octave: the percussionist had to keep the knob at the
     // top to hear them at all (2026-09-28). +5 dB puts them beside the clap.
     constexpr float kCongaLevel = 1.778f;
+    // The other voices at a full knob, by the same measure redone on today's
+    // bank (K-weighted, loudest 50 ms of each stroke, each voice alone,
+    // dance/pop/rock/samba at 120): shaker 0, cembalo -0.5, congas +2.0,
+    // clap -2.5 dB. The clap also lands on the snare's 2 and 4, and the
+    // percussionist had to keep its knob at the top (2026-10-05); then asked
+    // for all four alike. Each is lifted to the congas. These follow the
+    // *sound*, not the knob it is assigned to; the congas' level is the one
+    // set on their knob, above.
+    constexpr float kShakerLevel  = 1.259f;   // +2.0 dB
+    constexpr float kCembaloLevel = 1.334f;   // +2.5 dB
+    constexpr float kClapLevel    = 1.679f;   // +4.5 dB
     // Samples are normalised near full scale, so that gain - and any stack of
     // shaker, conga and clap on one sixteenth - can exceed it. Above the knee
     // peaks are rounded rather than clipped; only the first milliseconds of a
@@ -1499,6 +1510,13 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             case KitSound::congas:   g = congaVolume * kCongaLevel; break;
             case KitSound::triangle:
             case KitSound::count:    break;
+        }
+        switch (kitSoundForStroke (v.stroke))
+        {
+            case KitSound::shaker:  g *= kShakerLevel;  break;
+            case KitSound::cembalo: g *= kCembaloLevel; break;
+            case KitSound::clap:    g *= kClapLevel;    break;
+            default:                break;
         }
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;

@@ -85,7 +85,7 @@ int main (int argc, char** argv)
     // shakerVolume / congaVolume / cembaloVolume / clapVolume (item 9). 0.90
     // is the same headroom the old single `setVolume` asked for.
     float shakerVol = 0.90f, congaVol = 0.90f, cembaloVol = 0.90f, clapVol = 0.90f;
-    bool click = false;
+    bool click = false, raw = false;
     bool congas = true, shaker = true;
     // Off by default in the app (item 10); opt in here too so an unqualified
     // render still sounds like what most listeners hear.
@@ -114,6 +114,7 @@ int main (int argc, char** argv)
         else if (a == "--reverb")    reverb = std::stof (next());
         else if (a == "--tune")      tune = std::stof (next());
         else if (a == "--click")     click = true;
+        else if (a == "--raw")       raw = true;   // no peak normalisation: compare voice levels
         else if (a == "--dynamics")  dynamics = std::stof (next());
         else if (a == "--arc")       arc = true;
         else if (a == "--no-congas") congas = false;
@@ -246,7 +247,7 @@ int main (int argc, char** argv)
     for (int i = 0; i < total; ++i)
         peak = std::max (peak, std::max (std::fabs (L[static_cast<size_t> (i)]),
                                          std::fabs (R[static_cast<size_t> (i)])));
-    const float g = 0.89f / peak;
+    const float g = raw ? 1.0f : 0.89f / peak;
     for (int i = 0; i < total; ++i)
     {
         L[static_cast<size_t> (i)] *= g;

@@ -197,8 +197,14 @@ public:
         already on the grid, not this sample: moving the anchor onto the
         sample publishes phase 0 from mid-beat and the clock spends that
         as a rate bend. Does not move the lattice, the fits, or the tempo.
-        Hats after a hole still cannot steal lastBeat. */
-    void declarePulseHere() noexcept;
+        Hats after a hole still cannot steal lastBeat.
+
+        `halfBeat`: the press landed in the middle of the clock's beat, so
+        the grid is on the levare. The lattice moves half a period, the
+        beats accepted on the levare are dropped, and the tempo is pinned
+        while the fits refill. The one command that may move the half under
+        a sounding part. */
+    void declarePulseHere (bool halfBeat = false) noexcept;
 
     /** `manual`: the listener's own ÷2/×2, as opposed to AUTO's choice of level
         before the part comes in. Only a manual slower level is published
@@ -285,6 +291,9 @@ private:
         subdivision and is thrown away. Moves the grid when the two disagree,
         repeatedly and by more than a fifth of a beat. */
     void  checkGridPhase (float periodSec) noexcept;
+    /** The beats behind us belong to a grid that has just moved: forget them
+        and the fits built on them, or the fit pulls the grid straight back. */
+    void  dropBeatHistory() noexcept;
     void  updateMotionShadow() noexcept;
     void  refreshMotionBridgeAuthority() noexcept;
     void  resetMotionShadow (bool full, TempoMotionVeto reason) noexcept;
@@ -621,10 +630,9 @@ private:
         left the 8-beat by more than 8% and the newest interval agreed.
         Zero unless that beat passed. Confirmed on the next beat. */
     float liveFourHoldBpm = 0.0f;
-    /** Beats left to keep a declared tempo if a hold was armed. "L'1 è QUI"
-        no longer wipes the fits or moves the lattice, so it does not arm
-        this. A hold that is armed still restores `bpm` and the fixed
-        anchor at the end of `updateTempo`. */
+    /** Beats left to keep the tempo after "L'1 è QUI" moved the lattice
+        half a beat and wiped the fits: restores `bpm` and the fixed anchor
+        at the end of `updateTempo` while the fits refill. */
     int   barTempoHoldBeats = 0;
     int   beatsInRegime = 0;
     int   fixedErrorBeats = 0;

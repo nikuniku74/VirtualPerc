@@ -485,6 +485,15 @@ not CC0, fine on his own device). `scripts/prepare_loop_congas.py` cuts it:
   -18.5 clap; now ~-19. A soft clip (tanh above 0.80) at the end of
   `render` rounds peaks instead of clipping them; it also covers stacked
   shaker+conga+clap, which could already exceed full scale.
+- `kShakerLevel` 1.259 (+2.0 dB), `kCembaloLevel` 1.334 (+2.5 dB), `kClapLevel`
+  1.679 (+4.5 dB) follow the *sound* (`kitSoundForStroke`), not the knob
+  (2026-10-05). Remeasured K-weighted, loudest 50 ms of each stroke, each voice
+  alone at a full knob, dance/pop/rock/samba at 120: shaker 0, cembalo -0.5,
+  congas +2.0, synthesized clap -2.5 dB; the clap also sits on the snare's 2
+  and 4 and had to stay at the top, and the percussionist asked for all four
+  alike. Now all four within 0.1 dB on average (+-1.4 dB between styles, the
+  patterns differ). All four together reach the soft clip on 0.39% of samples.
+  `VPRender --raw` skips the peak normalisation so voices can be compared.
 - Measured: attack spread identical to HEAD (25.9-28.6 ms; the 2.7 ms
   pre-existing FAIL is the synthesized clap), drum-strike 2.0-3.0 ms,
   `VPTests --percussion` 17/0, `--leak` MIXER rows and seam unchanged. The iPad

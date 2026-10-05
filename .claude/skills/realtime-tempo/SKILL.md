@@ -3659,6 +3659,23 @@ of the song it was locked to. **"L'1 è QUI"** (`BeatTracker::declareBarHere`)
 names the nearest beat already on the clock as beat zero and locks the bar.
 It does not write the phase. A press in the second half of a beat names the
 beat about to land; a press in the first half names the beat that has started.
+**Except a press in the middle of the beat (0.35-0.65, `kLevarePressBand`):**
+the listener hears the part on the levare and is pressing on the one, so the
+half moves (2026-10-05, docs/TODO.md item 90). The clock glides half a beat
+over one beat (`glidePhase`, half or 1.5x speed, nothing skipped or doubled;
+`tapHold` covers the glide), and `BeatDecoder::declarePulseHere (true)` moves
+`gridAnchorSec`/`lastBeatSec` half a period back, drops the levare beats
+(`dropBeatHistory`) and pins the tempo for `kShortFit` beats
+(`barTempoHoldBeats`). `gridSerial` does not move: the tracker would read a
+half-beat rebuilt grid as a new pulse and stop the part to rejoin it. While
+sounding nothing automatic may move the half (`checkGridPhase` is off, the
+keep defends `lastBeat`), so before this a levare lock could not be corrected
+at all: neither this button (count only) nor TAP (the decoder pulled the clock
+back within a second). Measured with `VPTrack --declare-at T` pressing on the
+teacher's beat: FLAMINGO 4500 35 -> 0 levare beats, THE REASON 14 -> 0,
+EVERYTIME (mixer -12 dB) 36 -> 0; a wrong mid-beat press on a right grid is
+undone by pressing again on the one. Re-enabling `checkGridPhase` while
+sounding was measured again and is still worse (disp 11.8 -> 13.4 ms).
 TAP's first tap is still an instant `snapBeat`, because nothing is being
 asked to keep a stroke that is already in the air. Unlocking is a tap on the lit control: that
 hands the count back without rotating. The old five-tap unlock (all the way
@@ -3921,6 +3938,29 @@ the part comes in the analysis level can step up on its own account. That is us.
 `ownStepSamples` is set from the previous block's output level and, while it is
 running, **vetoes** the rise: it clears any step in progress and returns "no
 epoch". That is all it may do.
+
+**The network's operating level on the MIXER (2026-10-05, docs/TODO.md item
+90).** BeatNet's features are log10(1 + magnitude), so the analysis level is an
+input. The make-up only boosts, to `kMakeupTargetPeak` 0.20, and a loaded file
+passes at gain 1: its envelope is its own level, 0.14-0.55 across the bench
+(median 0.27), 0.43 on the band's mixer sends, which is also where the
+fine-tuned model's training features sit (`VPActivations --features`, no
+make-up). A MIXER send that is not at the top was therefore analysed ~7 dB
+under what BRANO and the training see. Same live recordings through the MIXER
+path (`bench_fast.py run TAG ARGS="--gain -12"`), against the teacher: scatter
+14.5 ms, p90 56 ms, 1.28% of beats on the levare, against 11.9 / 35 / 0.65% at
+0 dB. Now, on `FollowSource::kitMic` while the part is audible, the target is
+`kMakeupPlayingPeak` 0.40: -12 dB reads 11.3 / 32 / 0.33%, -24 dB 12.3 / 39 /
+0.50%, right octave -0.6 and -0.4 points. Not before entry: 0.40 there changes
+the octave decision (bench 77.9 -> 74.2% at 0 dB, `VPTests --level` 168 BPM at
+-6 dB reads the half). Not on a loaded file: there the octave work is tuned on
+the file's own level, and the same rule flipped UNA CANZONE 48k to the double
+after entry; BRANO stays bit-identical. A symmetric make-up (attenuating too)
+changed nothing on this bank: file envelopes almost never exceed 0.30. The
+remaining level dependence is in the raw-level gates (`sourceAudible`,
+`heardMusic`, epochs): at -24 dB entry comes later. The parallel fast bench is
+not bit-deterministic under load (3-6 files differ run to run, isolated reruns
+agree); its aggregate scores repeat to two decimals.
 
 The INPUT trim is similarly not a source change. The leak residual is linear in
 that trim, so source audibility, band dynamics, bar re-entry and

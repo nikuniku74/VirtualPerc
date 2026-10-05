@@ -29,6 +29,8 @@ namespace
     // 0.12 sat on the near side of the optimum, and its failures were the
     // half-tempo readings above 150 BPM and the double-tempo readings below 72.
     constexpr float kMakeupTargetPeak = 0.20f;
+    // The same, on the MIXER while the part is playing. See processBlock.
+    constexpr float kMakeupPlayingPeak = 0.40f;
 
     // Below this there is nothing to normalise, only noise to amplify. Room and
     // iPad-speaker-to-mic material commonly sits around 0.001-0.008, well above
@@ -1039,7 +1041,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
 }
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak,
-                                                   bool levelJumped) noexcept
+                                                   bool levelJumped, float targetPeak) noexcept
 {
     // BeatNet's features are log10(magnitude + 1), which is not scale
     // invariant: the +1 knee means the level the analysis signal arrives at is
@@ -1064,10 +1066,10 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
         peakEnv += (rawPeak - peakEnv) * (rawPeak > peakEnv ? attack : release);
 
     float wanted = 1.0f;
-    if (peakEnv < kMakeupTargetPeak)
+    if (peakEnv < targetPeak)
     {
         if (peakEnv >= kMakeupFloor)
-            wanted = std::clamp (kMakeupTargetPeak / peakEnv, 1.0f, kMakeupMaxGain);
+            wanted = std::clamp (targetPeak / peakEnv, 1.0f, kMakeupMaxGain);
     }
     else if (peakEnv > kMakeupClipGuardPeak)
         wanted = std::clamp (kMakeupClipGuardPeak / peakEnv, kMakeupMinGain, 1.0f);
@@ -1697,7 +1699,24 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         tracker.notifyBarReentry();
     else if (! levelJumped)
         maybeDetectBarReentry (numSamples, sourcePeak);
-    applyAnalysisMakeup (numSamples, postPeak, levelJumped);
+    // MIXER with the part playing: hold the network where the files it was
+    // fine-tuned on sit, not at the acquisition target. The analysis envelope
+    // of a loaded file is its own level - 0.14-0.55 across the bench, 0.43 on
+    // the band's mixer sends - and passes at gain 1, while a send that is not
+    // at the top was boosted only to 0.20. Same live recordings through the
+    // MIXER path 12 dB down, against the offline teacher (docs/TODO.md item
+    // 90): beat scatter 14.5 -> 11.3 ms, p90 56 -> 32 ms, beats outside 25 ms
+    // 20.6 -> 17.5%, beats on the levare 1.28 -> 0.33%; 24 dB down 14.6 ->
+    // 12.3 ms, 52 -> 39 ms, 1.13 -> 0.50%; right octave 77.3 -> 76.7% and
+    // 82.9 -> 82.5%. Before the part sounds the target stays 0.20: 0.40 there
+    // decides the octave on a different signal (168 BPM at -6 dB in
+    // `VPTests --level` reads the half; bench octave 77.9 -> 74.2% at 0 dB).
+    // A loaded file keeps its own level: it is what the octave work was tuned
+    // on, and the same rule there flipped UNA CANZONE 48k to the double.
+    const bool mixerPlaying = source == FollowSource::kitMic
+                              && lastAudible.load (std::memory_order_relaxed);
+    applyAnalysisMakeup (numSamples, postPeak, levelJumped,
+                         mixerPlaying ? kMakeupPlayingPeak : kMakeupTargetPeak);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
         analysisPeak = std::max (analysisPeak, std::abs (mono[static_cast<size_t> (i)]));

@@ -229,7 +229,7 @@ private:
         of what the speaker emits, so it is part of what comes back on the
         microphone. */
     void pushOutputToRing (int numSamples, float master) noexcept;
-    void applyAnalysisMakeup (int numSamples, float rawPeak, bool levelJumped) noexcept;
+    void applyAnalysisMakeup (int numSamples, float rawPeak, bool levelJumped, float targetPeak) noexcept;
     /** Watches the analysis level *before* the make-up gain and counts the
         moments the input changes character - an empty room becoming a band.
         The counter is what the neural worker is told; see

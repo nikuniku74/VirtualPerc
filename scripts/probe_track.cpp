@@ -53,6 +53,8 @@ int main (int argc, char** argv)
     double octaveAt = -1.0;
     int octavePress = 0;
     bool octavePressed = false;
+    std::vector<double> declareAt;   // --declare-at T (repeatable): "L'1 è QUI" pressed at T
+    size_t declared = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -87,6 +89,7 @@ int main (int argc, char** argv)
         else if (a == "--from")       scoreFrom = std::atof (next());
         else if (a == "--octave-at")  octaveAt = std::atof (next());
         else if (a == "--octave")     octavePress = std::atoi (next());
+        else if (a == "--declare-at") declareAt.push_back (std::atof (next()));
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -208,6 +211,13 @@ int main (int argc, char** argv)
             readOffset = static_cast<long> (seekTo * sr) - pos;
             eng.notifyTrackSeek();
             std::printf ("# %.1f s: seek a %.1f s del file\n", pos / sr, seekTo);
+        }
+        if (declared < declareAt.size() && pos >= static_cast<int> (declareAt[declared] * sr))
+        {
+            ++declared;
+            std::printf ("# %.3f s: L'1 è QUI, fase del clock %.3f\n", pos / sr,
+                         (double) eng.snapshot().beatPhase);
+            eng.settings().barDeclare.fetch_add (1);
         }
         if (octaveAt >= 0.0 && ! octavePressed && pos >= static_cast<int> (octaveAt * sr))
         {

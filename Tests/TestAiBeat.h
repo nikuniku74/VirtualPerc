@@ -9,6 +9,7 @@ void vpRunPercussionSoundTests (int& passed, int& failed);
 /** Two-quarter cut / seek re-entry for the bar (docs/TODO.md item 2).
     Part of `vpRunAiBeatTests`; also `VPTests --bar`. */
 void vpRunBarReentryTests (int& passed, int& failed);
+void vpRunDeclareBarHereClockTest (int& passed, int& failed);
 
 /** Loading another file while START stays on is a new input, not a drift of
     the old one (docs/TODO.md item 3): the engine must force one fresh analysis

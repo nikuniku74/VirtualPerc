@@ -166,6 +166,9 @@ constexpr float kNoNetworkTempoSec = 6.0f;
 
     // How long the one stays marked after a tap has declared it.
     constexpr double kBarDeclaredFlashSeconds = 0.9;
+    // "L'1 è QUI" pressed this close to the middle of the clock's beat means
+    // the grid is on the levare: the press is half a beat from any beat we have.
+    constexpr float kLevarePressBand = 0.15f;
 
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
@@ -788,16 +791,32 @@ void BeatTracker::declareBarHere() noexcept
     // phase servo. tapHold still blocks setGridPhase for 0.70 s so the
     // worker's publish of the same lattice cannot be read as a new
     // grid. Automatic hats never take this path.
+    //
+    // The exception is a press in the middle of the beat: the listener hears
+    // the part on the levare and is pressing on the one, half a beat from
+    // any beat the clock has. Then the half moves, here and in the decoder.
+    // The clock glides there over one beat (half or one and a half speed:
+    // no sixteenth skipped or doubled) - the count rule below still names
+    // the right beat, since retarding by p keeps the current beat and
+    // advancing by 1-p reaches the next one. A press of 0.35 beat is
+    // 175 ms late at 120 BPM; a wrong flip is undone by pressing again on
+    // the one, which then lands in the middle again. The hold covers the
+    // glide so the servo does not chase the old grid meanwhile.
+    const float p = follower.beatPhase();
+    const bool levare = std::fabs (p - 0.5f) < kLevarePressBand;
     const int bar = follower.beatInBarIndex();
-    if (follower.beatPhase() <= 0.5f)
+    if (p <= 0.5f)
         follower.rotateBarIndex (-bar);
     else
         follower.rotateBarIndex (3 - bar);
+    if (levare)
+        follower.glidePhase (wrapCentered (-p), 1.0f);
     holdBarDecision();
     barDeclaredSamples = static_cast<int> (sampleRate * kBarDeclaredFlashSeconds);
     tapHold = true;
-    tapHoldSamples = 0;
-    neural.declarePulseHere();
+    const double beatSec = 60.0 / std::max (40.0, static_cast<double> (follower.currentTempo()));
+    tapHoldSamples = levare ? std::min (0, static_cast<int> (sampleRate * (0.70 - 1.25 * beatSec))) : 0;
+    neural.declarePulseHere (levare);
 }
 
 void BeatTracker::notifyBarReentry (bool fromPause) noexcept

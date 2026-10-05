@@ -61,9 +61,9 @@ public:
     /** The listener pressed "L'1 è QUI". Counter, not a flag: the decoder
         belongs to the worker, and a press that comes and goes between two
         of its passes must not be missed. */
-    void declarePulseHere() noexcept
+    void declarePulseHere (bool halfBeat = false) noexcept
     {
-        wantedDeclarePulse.fetch_add (1, std::memory_order_relaxed);
+        (halfBeat ? wantedHalfBeat : wantedDeclarePulse).fetch_add (1, std::memory_order_relaxed);
     }
     /** The analysis input has changed character - see
         BeatDecoder::notifyInputRestart. Handed over as a counter rather than a
@@ -176,6 +176,7 @@ private:
     std::atomic<bool> wantedLineFeed { false };
     std::atomic<bool> wantedSounding { false };
     std::atomic<uint32_t> wantedDeclarePulse { 0 };
+    std::atomic<uint32_t> wantedHalfBeat { 0 };
     std::atomic<uint64_t> inputEpoch { 0 };
     static_assert (std::atomic<uint64_t>::is_always_lock_free);
     std::atomic<uint32_t> dropBeforeWrite { 0 };
@@ -183,6 +184,7 @@ private:
     std::atomic<int64_t> minimumAnalysisSample { 0 };
     uint64_t seenInputEpoch = 0;
     uint32_t seenDeclarePulse = 0;
+    uint32_t seenHalfBeat = 0;
     uint64_t seenDropped = 0;
     /** Where the feature extractor last started from nothing: the input
         sample (dropped audio included) and the decoder frame index before its

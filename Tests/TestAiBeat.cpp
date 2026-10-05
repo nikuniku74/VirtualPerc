@@ -10128,13 +10128,24 @@ struct BeatTrackerTimingProbe
         t.declareBarHere();
         const float after = t.follower.beatPhase();
         const int bar = t.follower.beatInBarIndex();
+        // Pressed in the middle of the beat: the grid was on the levare. The
+        // clock glides half a beat over one beat, so two beats after the press
+        // it sits on the pressed beat (phase 0) and that beat counted as the one.
+        for (int i = 0; i < 225; ++i)   // 225 x 256 samples = 1.2 s = 2 beats at 100
+            t.follower.advance (256);
+        const float twoBeatsOn = t.follower.beatPhase();
+        const int barTwoOn = t.follower.beatInBarIndex();
         t.suspendAnalysis();
         const bool ok = before > 0.40f && before < 0.60f
                         && std::fabs (after - before) < 0.02f
                         && std::fabs (t.follower.currentTempo() - tempoBefore) < 0.05f
                         && bar == 0
                         && t.barLocked
-                        && t.tapHold;
+                        && t.tapHold
+                        && std::fabs (wrapCentered (twoBeatsOn)) < 0.08f   // no decoder here to confirm it
+                        && barTwoOn == 2;
+        std::printf ("declare-bar-here levare  twoBeatsOn=%.3f  beatInBar=%d\n",
+                     static_cast<double> (twoBeatsOn), barTwoOn);
         std::printf ("declare-bar-here  before=%.3f  after=%.3f  beatInBar=%d  tempo=%.2f  locked=%d  tapHold=%d %s\n",
                      static_cast<double> (before), static_cast<double> (after),
                      bar, static_cast<double> (t.follower.currentTempo()),
@@ -10459,7 +10470,54 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
     gPass = &passed;
     gFail = &failed;
     expect (vp::BeatTrackerTimingProbe::declareBarHereUnflipsHalfBeat(),
-            "L'1 e' QUI snaps a half-beat even while sounding");
+            "L'1 e' QUI pressed mid-beat glides the clock half a beat onto the press");
+
+    // The decoder side of the same press: the grid locked on the levare
+    // (here quarters at offset 0 while the band's beats are at 0.5) moves half
+    // a period, keeps its tempo, and then accepts the true beats it was
+    // refusing under the sounding keep.
+    constexpr double fps = 50.0;
+    constexpr float bpm = 100.0f;
+    const double period = 60.0 / static_cast<double> (bpm);
+    const int framesPerBeat = static_cast<int> (std::lround (fps * period));
+    for (const bool flip : { false, true })
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (fps);
+        dec.setLineFeed (true);
+        int frame = 0;
+        auto feed = [&] (int n, double offsetBeats)
+        {
+            for (int i = 0; i < n; ++i, ++frame)
+            {
+                const double ph = std::fmod (static_cast<double> (frame) / fps / period - offsetBeats + 8.0, 1.0);
+                const float on = (ph < 0.03 || ph > 0.97) ? 0.90f : 0.02f;
+                dec.observe (on, on > 0.5f ? 0.55f : 0.02f, 1.0f - on, 0.80f);
+            }
+        };
+        feed (framesPerBeat * 40, 0.0);
+        dec.setSounding (true);
+        feed (framesPerBeat / 2, 0.5);   // up to the band's beat, half a beat off the grid
+        const float pressed = dec.current().beatPhase;
+        dec.declarePulseHere (flip);
+        const float afterPress = dec.current().beatPhase;
+        feed (framesPerBeat * 16, 0.5);
+        // Read the phase on the next true beat.
+        while (std::fmod (static_cast<double> (frame) / fps / period - 0.5 + 8.0, 1.0) > 0.02)
+            feed (1, 0.5);
+        const float onBeat = dec.current().beatPhase;
+        std::printf ("declare-levare flip=%d  pressed=%.3f  after=%.3f  onTrueBeat=%.3f  bpm=%.2f\n",
+                     flip ? 1 : 0, static_cast<double> (pressed), static_cast<double> (afterPress),
+                     static_cast<double> (onBeat), static_cast<double> (dec.current().bpm));
+        if (flip)
+            expect (std::fabs (vp::wrapCentered (afterPress)) < 0.08f
+                        && std::fabs (vp::wrapCentered (onBeat)) < 0.08f
+                        && std::fabs (dec.current().bpm - bpm) < 1.0f,
+                    "L'1 e' QUI mid-beat moves the decoder grid onto the band's beat and keeps the tempo");
+        else
+            expect (std::fabs (std::fabs (vp::wrapCentered (onBeat)) - 0.5f) < 0.08f,
+                    "without the press a sounding levare grid stays on the levare (control)");
+    }
 }
 
 void vpRunStateTimingTest (int& passed, int& failed)

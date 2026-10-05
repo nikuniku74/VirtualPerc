@@ -1122,6 +1122,7 @@ int main (int argc, char** argv)
     if (argc > 1 && std::string (argv[1]) == "--bar")
     {
         vpRunBarReentryTests (gPassed, gFailed);
+        vpRunDeclareBarHereClockTest (gPassed, gFailed);
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }

@@ -294,10 +294,13 @@ void NeuralBeatTracker::workerLoop()
         // is what the clock's bar already says, and the lattice is the one
         // the part is playing on.
         const uint32_t declarePulse = wantedDeclarePulse.load (std::memory_order_relaxed);
-        if (declarePulse != seenDeclarePulse)
+        const uint32_t halfBeat = wantedHalfBeat.load (std::memory_order_relaxed);
+        if (declarePulse != seenDeclarePulse || halfBeat != seenHalfBeat)
         {
+            const bool flip = halfBeat != seenHalfBeat;
             seenDeclarePulse = declarePulse;
-            decoder.declarePulseHere();
+            seenHalfBeat = halfBeat;
+            decoder.declarePulseHere (flip);
             auto h = decoder.current();
             h.analysisSample = analysisSampleFor (h.frameIndex);
             slot.publish (h);
