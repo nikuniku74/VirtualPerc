@@ -5021,6 +5021,37 @@ lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_sca
 - [ ] UN ORA SOLA a 153: serve un'idea nuova per i brani lenti con ottavi forti (la battuta di 4 funziona sul
   brano intero ma non prima dell'ingresso).
 
+### 88. Dal vivo: START premuto, band che suona, percussioni mute 🟡 (2026-10-05, misurato — da riprovare dal vivo)
+
+Segnalazione dell'utente dopo un live: ogni tanto, pur con START premuto e la musica nell'impianto, le
+percussioni non si sentono; cambiare 48/44.1/auto non serve; chiudere e riaprire l'app a volte sì, poi di nuovo
+no. L'ingresso arriva basso se il mixer non è al massimo, e alza «mic input» al massimo.
+- [x] **Riprodotto:** il banco non poteva vederlo perché ogni tratto live comincia con 3 s di silenzio (che dà
+  sempre il passaggio silenzio→musica, `sawInputStart`). Stessi tratti senza silenzio, ingresso diretto
+  (`VPTrack` senza `--player`): GARDEN 3300 non entra **mai** a nessun livello; FLAMINGO 4500 entra a 62 s a
+  0 dB e mai da −12 dB in giù. Il tempo è agganciato (118 BPM, confidenza 1.0, FOLLOWING), ma l'altra via
+  (`alreadyPlaying = heardMusic`) chiede livello grezzo > 0.040 **prima** del guadagno d'ingresso (alzare
+  «mic input» non conta) **e** `rhythmSeen`: quota di bassa frequenza > 0.30 per 0.33 s — la mandata dal vivo
+  ne ha 0.13–0.24. Riaprire l'app funziona solo se poi arriva una pausa fra due brani (nuova epoca).
+- [x] **Tenuto:** `BeatTracker` `lineLockSamples` — su ingresso diretto (mai il microfono dell'iPad, dove una
+  stanza vuota aggancia davvero), con START, un aggancio FOLLOWING con confidenza > 0.80 e pettine d'accordo
+  tenuto 4 s vale come «qualcuno suona» (`kLineLockSec`, `kLineLockConf`). Senza silenzio iniziale ora entra a
+  ~14 s da 0 a −30 dB su entrambi i tratti; solo fruscio (0.003 e 0.05) resta muto. Banco: cambiano solo i brani
+  con intro lunghe — UMBRELLA entra a 38 s invece di 120 (tempo giusto, fase 25 ms invece di 53), NONSOULFUNKY
+  26 invece di 74, 2_WRECKING_BALL 14.5 invece di 51 (sull'intro, coerente); medie contro la verità livello 77.9
+  → 78.3%, uno 68.7 → 69.7%, disp 11.8 invariata. `VPTests` invariati (`--level` 11/5 come prima).
+- [x] **Interruttore START SUBITO** (richiesta dell'utente, SETUP › TEMPO, accanto a SEGUI/FISSO; **spento di
+  default**, salvato nelle preferenze `startImmediately`): acceso, START salta le prove che qualcuno suona
+  (`sawInputStart`, `heardMusic`, aggancio di 4 s) e l'attesa del pettine (`entryTempoAgrees`); la parte entra
+  appena l'analisi ha una griglia. `EngineSettings::startImmediately` → `BeatTracker::setStartImmediately`.
+  `VPTrack --start-now`: GARDEN 3300 senza silenzio a −24 dB entra a 1.6 s invece di 13.7; solo fruscio resta
+  muto in entrambi i casi (nessuna griglia). Default invariato; `VPTests` invariati; app macOS compilata —
+  la disposizione dei tre pulsanti nella scheda TEMPO non è ancora vista a schermo.
+- [ ] Riprova dal vivo, anche con il mixer non al massimo; se si ripete, mandare
+  `Documents/VirtualPercussionist-stopstart.log`.
+- [ ] Con l'ingresso a −12 dB su FLAMINGO 4500 compaiono due pause in più della parte (65–70 s, 73–80 s) che a
+  0 dB non ci sono; non viene da `BandDynamics` (relativo al brano). Da guardare.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
@@ -5282,6 +5313,7 @@ Vedi `**docs/HANDOFF_LOOP_DEBUG.md**`. Switch LOOP/PATTERN, banco `Assets/Loops/
 - Item 68 (2026-09-30): in FISSO stabile (8 s sulla stessa griglia) un obiettivo di fase lontano deve tenere il lato per due battiti prima di essere adottato o di aprire il tetto di sterzo; EVERYTIME 48k 1:53 da 104–132 a 117–127 BPM, resto del banco invariato. H1 (stessa idea in VIVO oltre 0.15 battiti) respinto.
 - Item 69 (2026-09-30): scatti scomposti per origine (`surge_sources.py`); i picchi grandi sono gradini falsi confermati dal decoder. Su ingresso diretto il clock salta solo se la confidenza della transizione è ≥ 0.75 (i gradini veri leggono 0.89–1.00): scatti% 0.83 → 0.79, INFINITO senza più scatti, `VPAlign --steps` identico.
 - Item 70 (2026-09-30): dal vivo solo mix completo. Agganciare i battiti all'attacco più vicino nel mix li rende più irregolari (5 brani su 6): respinto prima di toccare il motore. Aggiunto il registro degli STOP/START (`Documents/VirtualPercussionist-stopstart.log`, visibile in File) con l'entità del riallineamento; serve una prova dell'utente.
+- Item 88 (2026-10-05): dal vivo mute con band già in corso — la mandata ha poco basso (`rhythmSeen`) e il livello era giudicato prima del guadagno; ora un aggancio sicuro di 4 s su ingresso diretto basta.
 - Item 87 (2026-10-02): verità dal maestro offline (Beat This!, `truth.py`). Il tetto non è BeatNet: picchi a 7 ms, retta causale 10, griglia del decoder 12, clock 17 ms (32% oltre 25 ms). Il margine è fra griglia e clock. Tenuta la fase dalla retta su 6 battiti: 21.6 → 17.9 ms, scatti 1.18 → 0.78/min; `--phase-lock` 156 a ÷2 fuori di 1.1 ms, da decidere. Uno: la sola rete corregge un quarto con distacco ≥ 0.30, 50.6 → 57.5%; oltre serve una rete migliore (fase 2). Fase 2: BeatNet rifinito sulle etichette del maestro (`train_beatnet_finetune.py`, 1000 passi, KD 3) è ora il modello dell'app: 13.0 ms, >25 ms 22.2%, livello giusto 71.9%, uno 67.3%; ottava ancora fragile.
 - Item 71 (2026-09-30): pesi Ballroom e Rock Corpus di BeatNet provati sul banco: peggiori di GTZAN, respinti. Registro STOP/START dell'utente: la griglia non è spostata, l'app corre 1–2% sopra il pettine per ~8 s (riprodotto sul Flamingo 64:19, confermato dagli attacchi). Sei varianti di "più autorità al pettine" respinte: o rompono le rampe o peggiorano altri brani.
 # Priorità recupero diretto — 09/09/2026

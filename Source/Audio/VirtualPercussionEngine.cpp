@@ -1551,6 +1551,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     const bool speaker = source == FollowSource::speaker;
     const bool directFile = source == FollowSource::internalPlayer;
     tracker.setSpeakerFollow (speaker);
+    tracker.setStartImmediately (cfg.startImmediately.load (std::memory_order_relaxed));
     // What the clock has to run ahead of the music by, so that what is *heard*
     // lands on the pulse: the device round trip, plus the slowest attack in the
     // percussion bank. The second term is not a device property but it is the

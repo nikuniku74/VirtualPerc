@@ -89,6 +89,9 @@ public:
 
     void setFollowStrength (FollowStrength s) noexcept;
     void setSubdivisionOverride (Subdivision s) noexcept;
+    /** START SUBITO: the listener takes responsibility for entry - no proof
+        that somebody is playing, no wait for the comb. See EngineSettings. */
+    void setStartImmediately (bool on) noexcept { startImmediately = on; }
     void setSpeakerFollow (bool on) noexcept
     {
         speakerFollow = on;
@@ -614,6 +617,9 @@ private:
     bool entryTempoAgrees = false;
     /** How long an otherwise ready entry has waited for that agreement. */
     int entryWaitSamples = 0;
+    /** How long a direct feed has held a confident, comb-agreed lock with START on. */
+    int lineLockSamples = 0;
+    bool startImmediately = false;
     bool hadPlayed = false;
     bool needsResync = false;
     int nudgeSamples = 0;

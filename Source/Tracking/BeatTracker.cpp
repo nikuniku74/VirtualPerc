@@ -141,6 +141,10 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // the level sweep entered at 8-17 s instead of 1.9), and the listener
     // accepted three or four seconds, not a verse.
     constexpr double kEntryCombWaitSec = 12.0;
+    // A direct feed held this long, this confident, counts as somebody playing
+    // even without a quiet-to-loud edge or a heavy low end (see alreadyPlaying).
+    constexpr double kLineLockSec = 4.0;
+    constexpr float kLineLockConf = 0.80f;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
@@ -546,7 +550,7 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 // input can therefore expose the established grid immediately.
                 // Background listening still passes through LOCKING so the
                 // empty-room rejection below retains its observation window.
-                const bool liveStart = armed && (sawInputStart || heardMusic);
+                const bool liveStart = armed && (sawInputStart || heardMusic || startImmediately);
                 currentState = liveStart ? TrackingState::following
                                          : TrackingState::locking;
                 lockHoldSamples = 0;
@@ -1950,6 +1954,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     // A band with no drummer enters on the harmony's tempo, which has no comb.
     entryTempoAgrees = tempoOwned || tapEstablished || ! tempoFollow || harmonicSourceActive;
+    entryTempoAgrees = entryTempoAgrees || startImmediately;
     if (! entryTempoAgrees && haveHyp && hyp.combBpm > 0.0f && hyp.bpm > 0.0f)
         for (const float octave : { 0.5f, 1.0f, 2.0f })
             if (std::fabs (hyp.bpm / hyp.combBpm / octave - 1.0f) < kEntryCombAgree)
@@ -2114,7 +2119,25 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // enough authorisation once those two independent facts agree. A room that
     // merely fooled the decoder remains below the higher heardMusic threshold,
     // so pressing START before the band still waits as intended.
-    const bool alreadyPlaying = armed && heardMusic && periodic;
+    // On a direct feed (mixer send, loaded file - never the iPad's own mic) a
+    // lock the decoder has held, confident and with the comb agreeing, for
+    // kLineLockSec is the same fact. Reported live (2026-10-05): START pressed
+    // with the band already playing, the part never came in until the app was
+    // reopened before a pause. Reproduced: a live mixer send started without
+    // the silence the bench always has never entered (GARDEN 3300 at full
+    // level, FLAMINGO 4500 below -12 dB) while locked at 118 BPM with
+    // confidence 1.0 - the send's low-band share is 0.13-0.24 against the
+    // 0.30 that rhythmSeen asks for, and its level is judged before the input
+    // gain the listener raises. The room path keeps the old rule: there an
+    // empty room really does lock.
+    if (! speakerFollow && armed && periodic && entryTempoAgrees
+        && currentState == TrackingState::following && smoothedConf > kLineLockConf)
+        lineLockSamples = std::min (lineLockSamples + numSamples,
+                                    static_cast<int> (sampleRate * 60.0));
+    else
+        lineLockSamples = 0;
+    const bool lineLocked = lineLockSamples > static_cast<int> (sampleRate * kLineLockSec);
+    const bool alreadyPlaying = armed && periodic && (heardMusic || lineLocked || startImmediately);
     const bool inputIsLive = sawInputStart || alreadyPlaying
                              || tapEstablished || ! tempoFollow;
     const bool canPlay = armed

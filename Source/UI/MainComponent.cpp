@@ -900,6 +900,10 @@ MainComponent::MainComponent()
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
     fixedButton.onClick = [this] { applyTempoFollow (false); };
+    startNowButton.onClick = [this]
+    {
+        applyStartImmediately (! engine.settings().startImmediately.load());
+    };
     bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
     bpmNudgeUp.onClick = [this] { nudgeFixedBpm (1.0f); };
     debugButton.onClick = [this] {
@@ -1188,6 +1192,7 @@ MainComponent::MainComponent()
 
     setupPageBtn (followButton, ink());
     setupPageBtn (fixedButton, ink());
+    setupPageBtn (startNowButton, ink());
     setupPageBtn (settingsClose, ink());
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
@@ -1284,6 +1289,7 @@ MainComponent::MainComponent()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshNaturalButton();
+    refreshStartNowButton();
     refreshSwingButton();
     refreshOctaveButtons();
     refreshLoopModeButton();
@@ -1455,6 +1461,7 @@ void MainComponent::refreshThemeColours()
     refreshStyleButtons();
     refreshSubdivisionButtons();
     refreshNaturalButton();
+    refreshStartNowButton();
     refreshSwingButton();
     refreshBarButton();
     refreshTempoModeButtons();
@@ -2653,6 +2660,8 @@ void MainComponent::loadPrefs()
     }
     engine.settings().shakerNatural.store (
         prefs->getBoolValue ("shakerNatural", engine.settings().shakerNatural.load()));
+    engine.settings().startImmediately.store (
+        prefs->getBoolValue ("startImmediately", false));
 
     const bool recordedLoops = loopBankReady
                                && prefs->getBoolValue ("recordedLoops", true);
@@ -2824,6 +2833,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("cembaloSound", engine.settings().cembaloSound.load());
     prefs->setValue ("clapSound", engine.settings().clapSound.load());
     prefs->setValue ("shakerNatural", engine.settings().shakerNatural.load());
+    prefs->setValue ("startImmediately", engine.settings().startImmediately.load());
     prefs->setValue ("recordedLoops", engine.recordedLoopsEnabled());
     prefs->setValue ("shakerVolume",
                      static_cast<double> (engine.settings().shakerVolume.load()));
@@ -2974,6 +2984,21 @@ void MainComponent::applyShakerNatural (bool on)
     engine.settings().shakerNatural.store (on);
     refreshNaturalButton();
     savePrefs();
+}
+
+void MainComponent::applyStartImmediately (bool on)
+{
+    engine.settings().startImmediately.store (on);
+    refreshStartNowButton();
+    savePrefs();
+}
+
+void MainComponent::refreshStartNowButton()
+{
+    const bool on = engine.settings().startImmediately.load();
+    startNowButton.setToggleState (on, juce::dontSendNotification);
+    startNowButton.setColour (juce::TextButton::buttonColourId, ink());
+    startNowButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
 }
 
 void MainComponent::refreshNaturalButton()
@@ -3689,6 +3714,7 @@ void MainComponent::applyCompactVisibility()
     settingsButton.setVisible (true);
     followButton.setVisible (true);
     fixedButton.setVisible (true);
+    startNowButton.setVisible (true);
     // Visible on a phone too: it now has its own row under the dots instead of
     // having to share their width.
     barButton.setVisible (false);
@@ -4584,7 +4610,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     {
         auto body = card (take (h[kTempo]), "TEMPO");
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &followButton, &fixedButton });
+                   { &followButton, &fixedButton, &startNowButton });
     }
 
     {

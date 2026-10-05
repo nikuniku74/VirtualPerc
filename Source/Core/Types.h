@@ -451,6 +451,13 @@ struct EngineSettings
     // stay exact grids, and NATURALE is a separate choice. See docs/TODO.md
     // item 11.
     std::atomic<bool>  shakerNatural   { false };
+    // START SUBITO (SETUP, TEMPO card). On: START plays as soon as the analysis
+    // has a grid, skipping the proofs that somebody is playing (an input that
+    // went from quiet to loud, a heavy enough low end, a lock held on a line
+    // feed) and the wait for the comb to agree. Off by default: those proofs
+    // are what stops the part playing to an empty room or entering an intro
+    // on a tempo the song does not have (docs/TODO.md items 29, 87, 88).
+    std::atomic<bool>  startImmediately { false };
     // Two more voices, each its own enable and volume - see item 10 in
     // docs/TODO.md. Off by default: turning either on is a choice, not a
     // change to how the app already sounds on upgrade.

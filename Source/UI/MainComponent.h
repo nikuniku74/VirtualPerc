@@ -115,6 +115,8 @@ private:
     void refreshStyleButtons();
     void applyShakerNatural (bool on);
     void refreshNaturalButton();
+    void applyStartImmediately (bool on);
+    void refreshStartNowButton();
     /** Swing is a switch, not a quantity: straight, or the triplet. See
         docs/TODO.md item 7 and `GrooveEngine::humanDelay`. */
     void applySwing (bool on);
@@ -325,6 +327,7 @@ private:
     juce::TextButton stopButton { "STOP" };
     juce::TextButton followButton { "SEGUI" };
     juce::TextButton fixedButton { "FISSO" };
+    juce::TextButton startNowButton { "START SUBITO" };
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
     juce::Label      bpmEdit;

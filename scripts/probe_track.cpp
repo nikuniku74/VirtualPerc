@@ -36,6 +36,7 @@ int main (int argc, char** argv)
     double reference = 0.0, gainDb = 0.0, traceStep = 2.0, until = 1.0e9;
     bool trace = false, speaker = false, loadedFile = false;
     std::string pulses, follow;
+    bool startNow = false;
     // A second file loaded while START stays armed, as CARICA does mid-set.
     // --stop-gap G emulates the listener's workaround: STOP --stop-after X
     // seconds after the load (default at the load) and START again G seconds
@@ -65,6 +66,7 @@ int main (int argc, char** argv)
         else if (a == "--until")      until = std::atof (next());
         else if (a == "--speaker")    speaker = true;
         else if (a == "--player")     loadedFile = true;
+        else if (a == "--start-now")  startNow = true;   // START SUBITO
         // Where the clock actually *is*, block by block, so the strokes can be
         // scored against the drummer instead of against the published BPM.
         // A right tempo and a slipped grid sound completely different and the
@@ -141,6 +143,7 @@ int main (int argc, char** argv)
                                         : vp::FollowStrength::medium;
         eng.settings().followStrength.store (static_cast<int> (f));
     }
+    eng.settings().startImmediately.store (startNow);
     eng.settings().shakerEnabled.store (true);
     eng.settings().congasEnabled.store (false);
     eng.settings().cembaloEnabled.store (false);
