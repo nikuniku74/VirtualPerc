@@ -3866,6 +3866,16 @@ must read 145.9/165.9 ms, not 236.8/193.8) and `score_dip.py` (return must stay
 grid positions as they pass and there is no going back for one, so feel and
 swing are expressed as lateness (see the percussion-patterns skill).
 
+**Re-placement is a glide (2026-10-02).** A sounding clock more than 15 ms off the
+published grid on one side for 0.5 s is moved by `TempoFollower::glidePhase`: the
+move is spent over a quarter beat as a rate bend (never below half speed), so no
+sixteenth is skipped or repeated. The old snap was the "crack" a listener heard
+(35 in 281 s on 1000 GIORNI). Song bench vs the offline truth: clock 14.8 -> 11.8 ms,
+beats outside 25 ms 26.3 -> 18.7%, surges 0.58 -> 0.33 /min, 42 files better, none
+worse. Entry waits for the comb to agree with the decoder (`entryTempoAgrees`, cap
+12 s). Still open: in 25 of 54 files the first four strokes after entry are more
+than 80 ms off, mostly a grid that entered on the off-beat.
+
 ## 5. Two things that are about the room, not the tempo
 
 - **The app finds a tempo in an empty room** - measured, 99 BPM at confidence

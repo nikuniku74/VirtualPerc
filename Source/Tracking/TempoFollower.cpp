@@ -218,6 +218,7 @@ void TempoFollower::reset() noexcept
 {
     cancelPhaseRecovery();
     phase = 0.0;
+    glideRemaining = 0.0;
     tempo = 120.0f;
     target = 120.0f;
     conf = 0.0f;
@@ -274,6 +275,7 @@ void TempoFollower::resetClock() noexcept
     beatGapHold = false;
     gapSteerGuardBeats = 0;
     phase = 0.0;
+    glideRemaining = 0.0;
     beatInBar = 0;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
@@ -607,6 +609,7 @@ void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
     }
 
     phase = to;
+    glideRemaining = 0.0;
     phaseErrEma = 0.0f;
     prevPhaseErr = 0.0f;
     lastObservedPhaseErr = 0.0f;
@@ -627,6 +630,14 @@ void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
     // is heard as the shaker stumbling. `advance` decides whether the pulse
     // would flam against the one before it; that is the only reason to drop it.
     reanchor = true;
+}
+
+void TempoFollower::glidePhase (float deltaBeats, float overBeats) noexcept
+{
+    const double d = static_cast<double> (wrapCentered (deltaBeats));
+    const double over = std::max (static_cast<double> (overBeats), 2.0 * std::fabs (d));
+    glideRemaining = d;
+    glidePerBeat = over > 0.0 ? std::fabs (d) / over : 0.0;
 }
 
 void TempoFollower::snapDownbeat (float targetPhase) noexcept
@@ -1337,8 +1348,22 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     const float effTempo = tempo * (1.0f - steer);
 
     const int beatAtStart = beatInBar;
-    const double beats = (static_cast<double> (effTempo) / 60.0)
-                         * (static_cast<double> (numSamples) / sampleRate);
+    const double beatsNominal = (static_cast<double> (effTempo) / 60.0)
+                                * (static_cast<double> (numSamples) / sampleRate);
+    double beats = beatsNominal;
+    if (glideRemaining != 0.0)
+    {
+        // A glide is phase moved by rate, inside the same advance: the pulses
+        // below are cut from prevPhase..prevPhase+beats, so none is repeated
+        // or skipped, and the loop sees the move as already made.
+        const double step = std::min (std::fabs (glideRemaining), glidePerBeat * beatsNominal);
+        const double g = glideRemaining > 0.0 ? step : -step;
+        beats += g;
+        glideRemaining -= g;
+        if (std::fabs (glideRemaining) < 1.0e-9)
+            glideRemaining = 0.0;
+        phaseErrEma += static_cast<float> (g);
+    }
     const double prevPhase = phase;
     phase += beats;
 

@@ -1857,7 +1857,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                     holding, evidence.trust());
             follower.setGridPhase (songPhase, phaseTau);
             // A sounding clock that has stayed off the published grid on one
-            // side for two beats is re-placed, as STOP/START does, by at most
+            // side is re-placed (once a snap like STOP/START, now a glide) by at most
             // a fifth of a beat. Against each song's kick and snare the grid
             // is the better of the two by far (strokes outside 25 ms: 4.2%
             // grid, 9.9% clock, 30 bench runs; 3.7 / 10.9% over the 97-minute
@@ -1867,8 +1867,21 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             // 9.9 -> 9.0%, exits 3.82 -> 3.53 /min, surges 0.84 -> 0.75 /min,
             // 443 re-placements in 30 runs (docs/TODO.md item 77). Listening
             // candidate: whether the re-placements are heard is the open part.
-            constexpr float kNudgeAboveSec = 0.030f;
-            constexpr float kNudgeWaitSec = 1.0f;
+            // Since 2026-10-02 the re-placement is a glide, not a snap: the move
+            // is spent over a quarter of a beat as a bend in the rate
+            // (TempoFollower::glidePhase), so no sixteenth is skipped or played
+            // twice. The snap was the "crack" the listener heard: 1000 GIORNI
+            // took 35 of them in 281 s, 31-179 ms each. Being inaudible, it can
+            // act earlier and smaller: 15 ms for half a second. Song bench
+            // against the offline truth (docs/TODO.md item 87): clock scatter
+            // 14.8 -> 11.8 ms, beats outside 25 ms 26.3 -> 18.7%; against the
+            // drums 6.20 -> 4.05%, exits 3.16 -> 2.10 /min, surges 0.58 ->
+            // 0.33 /min, skipped strokes 254 -> 7; 42 files better, none worse.
+            // 10 ms was a little better on average with two files worse; a
+            // 0.3 s wait made the published grid itself worse.
+            constexpr float kNudgeAboveSec = 0.015f;
+            constexpr float kNudgeWaitSec = 0.5f;
+            constexpr float kNudgeGlideBeats = 0.25f;
             constexpr float nudgeMax = 0.20f;
             // Heard in milliseconds, so measured in them: 0.06 beat for two
             // beats is 21 ms for 0.7 s at 168 and 43 ms for 1.4 s at 84 (a
@@ -1888,8 +1901,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                 nudgeSide = side;
                 if (static_cast<float> (nudgeSamples) > waitBeats * beatSeconds * static_cast<float> (sampleRate))
                 {
-                    follower.snapPhase (wrap01 (follower.beatPhase()
-                                                - std::clamp (gridErr, -nudgeMax, nudgeMax)), true);
+                    follower.glidePhase (-std::clamp (gridErr, -nudgeMax, nudgeMax), kNudgeGlideBeats);
                     nudgeSamples = 0;
                     nudgeSide = 0;
                     ++phaseNudgeCount;

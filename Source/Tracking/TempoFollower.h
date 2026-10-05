@@ -145,6 +145,12 @@ public:
         the histogram in BeatTracker rotates the bar later, on evidence, if it
         really is in the wrong place. */
     void snapPhase (float targetPhase, bool keepBarInStep = false) noexcept;
+    /** Move the grid by `deltaBeats` without a jump: the move is spent over the
+        next `overBeats` of travel as a bend in the rate, so every pulse still
+        plays exactly once. `overBeats` is kept at twice the move or more, so
+        the rate never drops below half. Replaces any glide still in progress. */
+    void glidePhase (float deltaBeats, float overBeats) noexcept;
+    bool glideActive() const noexcept { return glideRemaining != 0.0; }
     void snapDownbeat (float targetPhase = 0.0f) noexcept;
     void snapBeat (int beatIndex, float targetPhase = 0.0f) noexcept;
     void rotateBarIndex (int delta) noexcept;
@@ -230,6 +236,8 @@ private:
     // by the 20% rate rail) spends that residue promptly.
     int poorTrustSamples = 0;
     int phaseRecoverySamplesRemaining = 0;
+    double glideRemaining = 0.0;   // beats still to add (signed)
+    double glidePerBeat = 0.0;     // beats added per beat travelled
     // A direct live recovery may be proved while the constant-tempo fit is
     // intentionally scoring a curved trajectory poorly. Preserve that proved
     // window until it is spent; this never bypasses the two-beat phase proof.

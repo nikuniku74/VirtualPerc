@@ -4999,6 +4999,25 @@ lì, e ogni giudizio poggia su misure indirette (`onset_fit`, pettine, `line_sca
   finisce a 84** (con o1k3s1 restava 168); in cambio 52 BPM a 0/−6 dB ora legge 51.4 invece di 104 (non
   giudicato). Il brano veloce vero del banco (GARDEN 2400, 159) è invariato. Se l'ascolto non lo giustifica, si
   torna a o1k3s1: `cp ~/vp-train/models/o1k3s1.onnx Assets/Models/beatnet.onnx`.
+- [x] Ascolto utente (2026-10-02): 1000 GIORNI a 84 giusto, segue abbastanza bene, ma all'inizio oscilla e nel
+  brano si sentono **piccoli «crack» ai riallineamenti**; colpi «leggerissimamente spostati, non so se in
+  anticipo o ritardo». Vincolo ribadito: non peggiorare, correzioni globali.
+- [x] **Crack = ricentri a scatto.** 1000 GIORNI: 35 in 281 s, 31–179 ms ciascuno (`snapPhase` mette subito un
+  colpo nella nuova fase: un sedicesimo saltato o ripetuto). **Tenuto:** `TempoFollower::glidePhase` (lo
+  spostamento speso in ¼ di battito come piega della velocità, mai sotto metà velocità: ogni sedicesimo suona
+  una volta) e ricentro più piccolo e precoce (15 ms per 0.5 s invece di 30 ms per 1 s). Banco contro la
+  verità: disp 14.8 → 11.8 ms, >25 ms 26.3 → 18.7%; contro la batteria 6.20 → 4.05%, uscite 3.16 → 2.10/min,
+  scatti 0.58 → 0.33/min, salti 1158 → 21, sedicesimi saltati 254 → 7; **42 file meglio, 0 peggio**, nessuna
+  ottava cambiata. 10 ms: media un po' meglio ma 2 file peggio; attesa 0.3 s: peggiora la griglia stessa.
+  `VPTests` come prima (`--level` 11/5, le stesse 5). 1000 GIORNI: salti 35 → 0, errore mediano 20 → 14 ms.
+- [x] «Leggermente spostati»: non è uno spostamento fisso (la batteria cade in media 4.7 ms dopo il clock, ±3 ms
+  fra i brani; la latenza d'uscita non è compensata per i brani caricati, giusto) ma la dispersione colpo per
+  colpo — quella che il passo sopra riduce.
+- [ ] **Inizio che oscilla:** in 25 file su 54 almeno uno dei primi 4 colpi dopo l'ingresso è oltre 80 ms dal
+  battito vero. Due tipi: ingresso sul levare (THE REASON, SALLY: ~−310 ms costanti; la griglia del decoder
+  resta sul levare da 4 a 16 s e `checkGridPhase` la gira solo a 17 s) e fase che salta fra battere e levare
+  (EVERYTIME, DEJAVU, 1000 GIORNI). Provato e tolto: non entrare finché la piega (`checkGridPhase`) dice
+  «levare» — nessun effetto (25/54), la piega non ha abbastanza dati prima dell'ingresso.
 - [ ] UN ORA SOLA a 153: serve un'idea nuova per i brani lenti con ottavi forti (la battuta di 4 funziona sul
   brano intero ma non prima dell'ingresso).
 
