@@ -2559,8 +2559,8 @@ void MainComponent::loadPrefs()
     // A round trip measured on this rig, if one was. Kept per install rather
     // than per session: the rig does not usually change between soundcheck and
     // the first song, and re-measuring is one press.
-    engine.setMeasuredLatency (static_cast<float> (
-        prefs->getDoubleValue ("measuredLatencyMs", 0.0)));
+    engine.setMeasuredLatency (static_cast<float> (prefs->getDoubleValue ("measuredLatencyMs", 0.0)),
+                               static_cast<float> (prefs->getDoubleValue ("measuredLatencyBaseMs", 0.0)));
 
     const int src = prefs->getIntValue ("followSource",
                                         engine.settings().followSource.load());
@@ -2816,6 +2816,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("followSource", engine.settings().followSource.load());
     prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
     prefs->setValue ("measuredLatencyMs", static_cast<double> (engine.measuredLatency()));
+    prefs->setValue ("measuredLatencyBaseMs", static_cast<double> (engine.measuredLatencyBase()));
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));
     prefs->setValue ("subdivision", engine.settings().subdivision.load());
     prefs->setValue ("tempoOctave", engine.settings().tempoOctave.load());

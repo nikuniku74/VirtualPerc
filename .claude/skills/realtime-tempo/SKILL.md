@@ -3962,6 +3962,24 @@ remaining level dependence is in the raw-level gates (`sourceAudible`,
 not bit-deterministic under load (3-6 files differ run to run, isolated reruns
 agree); its aggregate scores repeat to two decimals.
 
+**Round trip and the mixer return (2026-10-05, docs/TODO.md item 91).** The
+clock leads by `VirtualPercussionEngine::roundTripMs()` (0 for a loaded file)
+plus `attackLeadMs`. A latency-button measurement is now moved by the change
+in the device's own figure since it was taken (`measuredBaseMs`, saved as
+`measuredLatencyBaseMs`), so a buffer or clock change no longer leaves the part
+a buffer late; the MIXER leak canceller uses the same figure instead of the
+reported one. A MIXER level epoch keeps comb and model, as a loaded file does,
+when the part was playing on a settled level and confidence was above 0.5 at
+the step: the band never stopped (GARDEN 2400 at 187 s walked 107 -> 54 cold).
+A song change after a pause arrives at confidence 0 and stays cold. A song
+change with a pause under ~4 s (or applause and talk in the send) never makes
+an epoch at all, and the sounding post-hole refusal defends the old grid for
+13-20 s. The listener's STOP closes it (item 92): on a live input, a STOP held
+3 s during which no beat was accepted for 2 s calls `notifyInputRestart` once,
+while still stopped. Entry after START 11.3 -> 1.9 s on six pairs of live
+sends; a long STOP inside a song with the band playing never fires it
+(`scripts/analysis/stop_song.py change|inside`).
+
 The INPUT trim is similarly not a source change. The leak residual is linear in
 that trim, so source audibility, band dynamics, bar re-entry and
 `updateAnalysisEpoch` read `postPeak / inputTrim`; only the analysis make-up and

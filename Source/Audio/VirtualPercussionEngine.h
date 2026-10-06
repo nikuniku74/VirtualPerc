@@ -111,11 +111,21 @@ public:
     float finishLatencyMeasurement() noexcept;
     /** The measured round trip, or 0 when nobody has measured one. */
     float measuredLatency() const noexcept { return measuredLatencyMs.load (std::memory_order_relaxed); }
-    /** Restore a figure measured in an earlier session. */
-    void  setMeasuredLatency (float ms) noexcept
+    /** The device's reported round trip at the moment of that measurement. */
+    float measuredLatencyBase() const noexcept { return measuredBaseMs.load (std::memory_order_relaxed); }
+    /** Restore a figure measured in an earlier session, with the reported
+        round trip it was taken against (0: not known, from an older install). */
+    void  setMeasuredLatency (float ms, float baseMs = 0.0f) noexcept
     {
         measuredLatencyMs.store (ms > 0.0f && ms < 400.0f ? ms : 0.0f, std::memory_order_relaxed);
+        measuredBaseMs.store (baseMs > 0.0f ? baseMs : 0.0f, std::memory_order_relaxed);
     }
+    /** What the rig takes from a stroke leaving to it coming back: the
+        measurement when there is one, moved by however much the device's own
+        figure has changed since (a new buffer size or clock rate is a new
+        round trip, and the measured desk is still in it). Otherwise the
+        device's figure. */
+    float roundTripMs() const noexcept;
 
     /** Accepts any block length. Anything longer than the size prepare() was
         given is split - never truncated: a truncated block leaves the tail of
@@ -337,6 +347,7 @@ private:
         conditioned bus would be listening for something already subtracted. */
     std::vector<float> rawIn;
     std::atomic<float> measuredLatencyMs { 0.0f };
+    std::atomic<float> measuredBaseMs { 0.0f };
     /** How much the band is giving, and whether the part has stood down. The
         stand-down is taken at a bar line, never in the middle of a figure. */
     /** When the harmony moves. Runs on the analysis bus, which is where the
@@ -471,6 +482,11 @@ private:
         must drop the old song's evidence, while a seek within one file must
         keep the tempo - see notifyInputRestart and notifyTrackSeek. */
     std::atomic<bool> inputRestartPending { false };
+    /** Samples since the listener's STOP, -1 while armed or never stopped.
+        Audio thread (and probes calling start/stop on that thread). */
+    int64_t stoppedSamples = -1;
+    bool    stopRestartDone = false;
+    bool    beatLostWhileStopped = false;
     /** Pending UI command, final armed state, and whether STOP occurred since
         the previous callback. During playback, process() owns these mutations. */
     std::atomic<unsigned int> pendingTransport { 0 };

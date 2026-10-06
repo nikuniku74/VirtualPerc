@@ -32,6 +32,13 @@ namespace
     // The same, on the MIXER while the part is playing. See processBlock.
     constexpr float kMakeupPlayingPeak = 0.40f;
 
+    // Seconds of STOP on a live input after which the analysis treats what
+    // comes next as a new song. Longer than the STOP/START re-sync gesture.
+    constexpr double kNewSongStopSec = 3.0;
+    // Seconds without an accepted beat, during that STOP, that say the song
+    // has ended rather than the percussionist sitting out a section.
+    constexpr double kSongEndGapSec = 2.0;
+
     // Below this there is nothing to normalise, only noise to amplify. Room and
     // iPad-speaker-to-mic material commonly sits around 0.001-0.008, well above
     // it, which is the case this stage exists for.
@@ -321,6 +328,8 @@ void VirtualPercussionEngine::reset() noexcept
     resetAnalysisLevelState();
     analysisEpoch.store (0, std::memory_order_relaxed);
     inputRestartPending.store (false, std::memory_order_relaxed);
+    stoppedSamples = -1;
+    stopRestartDone = false;
     tapWrite.store (0, std::memory_order_relaxed);
     tapRead = 0;
 }
@@ -332,6 +341,7 @@ bool VirtualPercussionEngine::tryLoadNeuralHypothesis (BeatHypothesis& out) cons
 
 void VirtualPercussionEngine::start() noexcept
 {
+    stoppedSamples = -1;
     tracker.start();
     percussion.clearVoices();
     hybrid.start();
@@ -339,6 +349,9 @@ void VirtualPercussionEngine::start() noexcept
 
 void VirtualPercussionEngine::stop() noexcept
 {
+    stoppedSamples = 0;
+    stopRestartDone = false;
+    beatLostWhileStopped = false;
     tracker.stop();
     percussion.silence();
     hybrid.stop();
@@ -780,8 +793,11 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     }
     else
     {
-        delay = static_cast<int> (std::max (8.0f, latencyMs.load (std::memory_order_relaxed))
-                                  * 0.001 * sampleRate);
+        // The mixer return is the path the latency button measures - out, the
+        // desk, back in - so a measurement is the leak delay, and the device's
+        // figure only a guess at it. A few milliseconds off and the canceller
+        // subtracts our part where it is not, leaving it in the analysis.
+        delay = static_cast<int> (std::max (8.0f, roundTripMs()) * 0.001 * sampleRate);
     }
     delay = std::clamp (delay, 64, ringSize - numSamples - 1);
 
@@ -1542,11 +1558,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // A measured round trip beats a reported one. The device's figure is what
     // the operating system believes about the interface; the measurement is
     // what this rig actually did, desk and all. See Audio/LatencyProbe.h.
-    const float measured = measuredLatencyMs.load (std::memory_order_relaxed);
-    const float roundTrip = directFile ? 0.0f
-                                       : (measured > 0.0f ? measured
-                                                          : latencyMs.load (std::memory_order_relaxed));
-    tracker.setReportedLatencyMs (roundTrip + percussion.attackLeadMs());
+    tracker.setReportedLatencyMs ((directFile ? 0.0f : roundTripMs()) + percussion.attackLeadMs());
     percussion.setHumanization (cfg.humanization.load (std::memory_order_relaxed));
     percussion.setShakerVolume (cfg.shakerVolume.load (std::memory_order_relaxed));
     percussion.setCongaVolume (cfg.congaVolume.load (std::memory_order_relaxed));
@@ -1653,6 +1665,31 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // `dropQueuedInput` lets the worker discard only those samples. The part
     // is silenced before the old clock is cleared. An in-song tempo change
     // never takes this path. See docs/TODO.md item 3.
+    // A STOP held on a live input across the end of a song: the analysis
+    // starts over as it does for a new file. Between two songs on a continuous
+    // send the level watcher needs ~4 s of near silence and applause or talk
+    // never gives it; the old grid stayed defended and the part came into the
+    // next song 13-20 s late (six pairs of the band's live sends, 2-4 s apart;
+    // a restart at the attack: 1.6-2.0 s). The song has ended when no beat
+    // was accepted for kSongEndGapSec during the STOP: a STOP inside a song,
+    // with the band still playing, keeps everything (a fresh acquisition
+    // there cost 4 of 23 songs up to 16 s at a wrong tempo). A quick STOP/
+    // START - the re-sync gesture - never reaches kNewSongStopSec. Taken while
+    // still stopped, so the next song is already being acquired when START
+    // comes. A loaded file restarts on load already. docs/TODO.md item 92.
+    if (stoppedSamples >= 0)
+    {
+        stoppedSamples += numSamples;
+        if (tracker.secondsSinceBeat() > kSongEndGapSec)
+            beatLostWhileStopped = true;
+        if (! stopRestartDone && source != FollowSource::internalPlayer
+            && beatLostWhileStopped
+            && stoppedSamples >= static_cast<int64_t> (kNewSongStopSec * sampleRate))
+        {
+            stopRestartDone = true;
+            inputRestartPending.store (true, std::memory_order_relaxed);
+        }
+    }
     bool dropQueuedInput = false;
     if (inputRestartPending.exchange (false, std::memory_order_relaxed))
     {
@@ -1762,10 +1799,18 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // and model, drop only the grid. Latched, because `levelSettled` can read
     // false for the one block the break ends in (it did at 48 kHz). Mixer
     // input keeps the cold epoch - there a quiet gap and a band can be the
-    // next song.
+    // next song - unless the analysis was still sure of the beat when the
+    // level rose: then the band never stopped, the "quiet" was a soft passage
+    // under a loud minute, and it is the same entrance. GARDEN 2400 (the band
+    // live, MIXER) at 187 s: confidence 0.91, a hit after a soft stretch, and
+    // the cold restart walked the sounding part 107 -> 138 -> 143 -> 85 -> 54
+    // for the rest of the song; with the comb kept it stays 105-111. A real
+    // song change after a pause arrives with confidence 0 (pauses of 8 s
+    // between six pairs of live songs: unchanged). docs/TODO.md item 91.
     else if (levelJumped && ! preserveCombOnEpoch && playedOnSettledLevel
-             && cfg.followSource.load (std::memory_order_relaxed)
-                    == static_cast<int> (FollowSource::internalPlayer))
+             && (source == FollowSource::internalPlayer
+                 || (source == FollowSource::kitMic
+                     && lastConf.load (std::memory_order_relaxed) > 0.5f)))
         preserveCombOnEpoch = true;
     tracker.setInputEpoch (analysisEpoch.load (std::memory_order_relaxed),
                            preserveCombOnEpoch, dropQueuedInput);
@@ -2023,8 +2068,22 @@ float VirtualPercussionEngine::finishLatencyMeasurement() noexcept
 {
     const float ms = latencyProbe.analyse();
     if (ms > 0.0f)
-        measuredLatencyMs.store (ms, std::memory_order_relaxed);
+        setMeasuredLatency (ms, latencyMs.load (std::memory_order_relaxed));
     return ms;
+}
+
+float VirtualPercussionEngine::roundTripMs() const noexcept
+{
+    // A measurement used to be kept as it was for good. Taken at a 256-frame
+    // buffer and then played at 512 (the buffer is what the listener changes
+    // when a route misbehaves), the clock ran about one buffer - 10.7 ms at
+    // 48 kHz - late, and nothing on screen said so (docs/TODO.md item 91).
+    const float reported = latencyMs.load (std::memory_order_relaxed);
+    const float measured = measuredLatencyMs.load (std::memory_order_relaxed);
+    if (measured <= 0.0f)
+        return reported;
+    const float base = measuredBaseMs.load (std::memory_order_relaxed);
+    return base > 0.0f && reported > 0.0f ? std::max (1.0f, measured + reported - base) : measured;
 }
 
 EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept

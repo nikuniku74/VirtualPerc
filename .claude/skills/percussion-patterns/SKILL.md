@@ -425,6 +425,15 @@ were playing.
   remainder plus the few milliseconds the ear still heard early after 8 ms.
   It is not a tempo change and it does not change how far a slap waits for
   a shaker. The clock is not moved.
+  **Now 6 ms (2026-10-05, docs/TODO.md item 93).** The listener heard every
+  stroke slightly late. 12 ms was set on 120 BPM alone and the clock has since
+  moved later: the click residual is now -2.6 ms mean over 78-156 BPM (was
+  +1.8). On the rendered part (`VPTrack --player --quarters --out`), against
+  each song's drums dated by `onset_fit.onsets` corrected by its -16.7 ms
+  bias on a sharp attack (synthetic bench), the shaker's 80% point sat
+  +5...+9 ms late on the band's live sends; with 6 ms it is about +1. The
+  `--percussion` triangle windows are read from the stroke's own start, so a
+  hold change no longer moves what that test listens to.
 - **Voices**: `kVoices = 16`. A stolen voice is faded out over a few
   milliseconds, never switched off - cutting a sounding grain is a step, and a
   step is a click. `hardSteals()` counts thefts from still-sounding voices and

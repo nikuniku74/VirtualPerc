@@ -920,10 +920,21 @@ namespace
     // lead still lines a slap up with a shaker, and this only parks the pair
     // on the beat instead of just before it.
     // 8 ms left the 120 BPM energy about 1 ms early, and the attack the ear
-    // locks onto is still a few milliseconds before that. 12 ms parks the
-    // measured +9.1 ms residual a few milliseconds late instead. The clock
-    // is not moved.
-    constexpr double kHeardEarlyHoldSec = 0.012;
+    // locks onto is still a few milliseconds before that. 12 ms parked the
+    // measured +9.1 ms residual a few milliseconds late. The clock is not
+    // moved.
+    //
+    // Retuned to 6 ms (2026-10-05, docs/TODO.md item 93): the listener heard
+    // every stroke slightly late. 12 ms was chosen on 120 BPM alone, and the
+    // clock has since moved later (new network, published line phase): the
+    // click bench residual is now -5.4 / +2.0 / -2.1 / -3.5 / -4.3 ms at
+    // 78-156 BPM (mean -2.6, it was +1.8). Measured on the rendered part
+    // (`VPTrack --player --quarters --out`): the shaker's half-rise sat about
+    // 6 ms after the click, and by one onset detector on both the song's
+    // drums and the part, 8.1 ms after the drums (live sends 7.7-9.7). Six
+    // milliseconds less puts the half-rise on the click and leaves the
+    // detector's ~2 ms for the shaker's softer attack.
+    constexpr double kHeardEarlyHoldSec = 0.006;
 
     /** Where a recording is heard as starting, in samples from its first.
         Taken at the point the energy envelope first reaches a large fraction of

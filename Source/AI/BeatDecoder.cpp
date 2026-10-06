@@ -218,6 +218,7 @@ namespace
     // still centred on the faster tempo). 0.035 is silent on
     // offset-0 fisso/gradino.
     constexpr float kUnknownIoiLead = 0.035f;
+    const bool kExpNoDoors = std::getenv ("VP_EXP_NO_DOORS") != nullptr;   // TEMP ablation
     // Door A without comb-sign: 0.012 misses 192847 t=54.56 (0.0107).
     // 0.010 is silent on offset-0 fisso/gradino. Door B stays at
     // kFastDriftToleranceLine.
@@ -3076,7 +3077,8 @@ void BeatDecoder::refreshMotionBridgeAuthority() noexcept
                               && std::isfinite (motionShadow.shapePredictedBpm)
                               && motionShadow.shapePredictedBpm >= kMinBpm
                               && motionShadow.shapePredictedBpm <= kMaxBpm;
-    if (shapeCanLead)
+    static const bool expNoBridge = std::getenv ("VP_EXP_NO_BRIDGE") != nullptr;   // TEMP ablation
+    if (shapeCanLead && ! expNoBridge)
     {
         if (motionBridgeAuthority == 0.0f)
             motionBridgeAnchorBpm = bpm;
@@ -4166,7 +4168,7 @@ void BeatDecoder::updateTempo() noexcept
         // or off-grid peaks mean no accepted beat arrives to close it sooner.
         const bool foldMayPull = ! provisional || ! intervalAcquired
                                  || tempo.levelSettled();
-        if (ioiTargetHoldBeats > 0 && ioiTargetHoldBpm > kMinBpm
+        if (! kExpNoDoors && ioiTargetHoldBeats > 0 && ioiTargetHoldBpm > kMinBpm
             && tempoRegime != TempoRegime::fixed
             && transitionState != TempoTransitionState::rapid)
         {
@@ -5125,7 +5127,7 @@ void BeatDecoder::updateTempo() noexcept
             // Door B at kRateAcquiring; 0.012 missed t=54.56.
             bool slowIoiLeads = false;
             bool doorATake = false;
-            if (lineFeed && haveShort && haveLong
+            if (! kExpNoDoors && lineFeed && haveShort && haveLong
                 && recent > 0.0f && bpm > kMinBpm
                 && beatsInRegime >= 4
                 && combReady && combBpm > kMinBpm
@@ -5339,7 +5341,7 @@ void BeatDecoder::updateTempo() noexcept
             // 4-beat through a 200 ms overshoot and fattened family
             // p95. Acquiring-rate yank fattened 169090 p995; this only
             // retargets, at kRateLive.
-            if (! slowIoiLeads && lineFeed && haveShort && haveLong
+            if (! kExpNoDoors && ! slowIoiLeads && lineFeed && haveShort && haveLong
                 && recent > 0.0f && bpm > kMinBpm
                 && beatsInRegime >= kLongFit
                 && combReady && combBpm > kMinBpm
@@ -5395,7 +5397,7 @@ void BeatDecoder::updateTempo() noexcept
             // again. Not slowIoiLeads: acquiring overshot 169090.
             const bool doorHoldRate = ioiTargetHoldBpm > kMinBpm
                                       && ioiTargetHoldBeats > 0;
-            if (! slowIoiLeads && ioiTargetHoldBeats > 0 && ! ioiClockLead
+            if (! kExpNoDoors && ! slowIoiLeads && ioiTargetHoldBeats > 0 && ! ioiClockLead
                 && ioiTargetHoldBpm > kMinBpm)
             {
                 float p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
@@ -5703,7 +5705,7 @@ void BeatDecoder::updateTempo() noexcept
             // yank raised the family mean. kUnknownIoiLead (0.035)
             // is silent on offset-0 fisso/gradino; 0.033 lights
             // fisso 24766.
-            if (lineFeed && haveShort && haveLong && recent > 0.0f
+            if (! kExpNoDoors && lineFeed && haveShort && haveLong && recent > 0.0f
                 && bpm < 75.0f && bpm > kMinBpm
                 && beatsInRegime >= kLongFit
                 && combBpm > kMinBpm
@@ -5869,7 +5871,7 @@ void BeatDecoder::updateTempo() noexcept
     // 216604 t=51.10 onto i4=70 while IOI was 67 fattened that p95.
     // Offset-0 fisso/gradino never set ioiClockLead. Switching the
     // origin outright was grid jerk (anchorBlend comment).
-    if (lineFeed && ioiClockLead && tempoRegime != TempoRegime::fixed
+    if (! kExpNoDoors && lineFeed && ioiClockLead && tempoRegime != TempoRegime::fixed
         && haveShort && bpm > kMinBpm && gridAnchorSec >= 0.0)
     {
         float recent = 0.0f, p4 = 0.0f, r4 = 1.0f, c4 = 0.0f;
@@ -5948,7 +5950,7 @@ void BeatDecoder::updateTempo() noexcept
     // (i4=64.5 between short 63.2 and IOI 66.2, bir=1, phase 134 ms).
     // Clock-only ioiLead at bir<4 REJECT; this only pulls origin, same
     // cap. Offset-0 fisso/gradino: 0 frames (t≥0, fold already in i4).
-    if (lineFeed && ! ioiClockLead && tempoRegime == TempoRegime::live
+    if (! kExpNoDoors && lineFeed && ! ioiClockLead && tempoRegime == TempoRegime::live
         && bpm < 75.0f && bpm > kMinBpm
         && beatsInRegime > 0 && beatsInRegime < kShortFit
         && haveShort && lastBeatSec >= 0.0 && gridAnchorSec >= 0.0)

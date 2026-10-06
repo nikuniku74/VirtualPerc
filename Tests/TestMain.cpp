@@ -1252,6 +1252,55 @@ int main (int argc, char** argv)
         expect (render (4)
                     && queued.snapshot().percussionAudible == direct.snapshot().percussionAudible,
                 "STOP/START between callbacks still performs both commands");
+
+        // The rig's round trip: a measurement follows a later buffer/rate change
+        // by the device's own difference (item 91), an older one without its
+        // base is used as it was, and no measurement means the device's figure.
+        vp::VirtualPercussionEngine lat;
+        lat.setReportedLatencyMs (12.0f);
+        const float reportedOnly = lat.roundTripMs();
+        lat.setMeasuredLatency (20.0f, 12.0f);
+        const float same = lat.roundTripMs();
+        lat.setReportedLatencyMs (22.7f);   // buffer 256 -> 512 at 48 kHz
+        const float bigger = lat.roundTripMs();
+        lat.setMeasuredLatency (20.0f);     // saved before the base existed
+        const float legacy = lat.roundTripMs();
+        std::printf ("round trip  reported %.1f  measured %.1f  after +10.7 %.1f  legacy %.1f\n",
+                     static_cast<double> (reportedOnly), static_cast<double> (same),
+                     static_cast<double> (bigger), static_cast<double> (legacy));
+        expect (std::fabs (reportedOnly - 12.0f) < 1.0e-3f && std::fabs (same - 20.0f) < 1.0e-3f
+                    && std::fabs (bigger - 30.7f) < 1.0e-3f && std::fabs (legacy - 20.0f) < 1.0e-3f,
+                "measured round trip follows a buffer change by the reported difference");
+
+        // STOP held across the end of a song on a live input starts the
+        // analysis over (item 92): after 3 s with no beat accepted, once;
+        // not after 2 s, and never for a loaded file. Silence in, so no beat.
+        auto stopRestarts = [&] (vp::FollowSource source, double stopSec)
+        {
+            vp::VirtualPercussionEngine e;
+            e.setBeatModel (std::make_unique<vp::StubBeatModel>());
+            e.prepare (sr, block, 1);
+            e.settings().followSource.store (static_cast<int> (source));
+            float l[block] {}, r[block] {};
+            float* out[2] { l, r };
+            auto run = [&] (double sec) { for (int i = 0; i < static_cast<int> (sec * sr / block); ++i) e.process (inputs, 1, out, 2, block); };
+            e.start();
+            run (1.0);
+            const int before = e.snapshot().analysisRestarts;
+            e.stop();
+            run (stopSec);
+            e.start();
+            run (0.5);
+            return e.snapshot().analysisRestarts - before;
+        };
+        const int mixer35 = stopRestarts (vp::FollowSource::kitMic, 3.5);
+        const int mixer8 = stopRestarts (vp::FollowSource::kitMic, 8.0);
+        const int mixer2 = stopRestarts (vp::FollowSource::kitMic, 2.0);
+        const int file4 = stopRestarts (vp::FollowSource::internalPlayer, 4.0);
+        std::printf ("stop restarts  mixer 3.5 s %d  mixer 8 s %d  mixer 2 s %d  file 4 s %d\n",
+                     mixer35, mixer8, mixer2, file4);
+        expect (mixer35 == 1 && mixer8 == 1 && mixer2 == 0 && file4 == 0,
+                "a STOP held 3 s on a live input with no beat restarts the analysis once");
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }

@@ -7,6 +7,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#if defined (__APPLE__)
+ #include <pthread.h>
+ #include <pthread/qos.h>
+#endif
 #include <chrono>
 #include <cmath>
 
@@ -116,6 +120,16 @@ void NeuralBeatTracker::workerLoop()
 {
     float frame[LogSpectFeatures::kDim];
     float act[3] {};
+
+   #if defined (__APPLE__)
+    // A plain std::thread runs at the default QoS, which iOS lets the UI and a
+    // warm CPU push behind. Every second this worker falls behind is a second
+    // the tracker has to project the beat across, and any tempo error is paid
+    // as lateness - the part drifting behind after a while in BRANO is the
+    // listener's report this answers (docs/TODO.md item 91, not yet measured
+    // on the iPad: watch DEBUG `lead` and the VPLAG log).
+    pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
+   #endif
 
     // Built here rather than in `start` so that opening the audio device never
     // blocks the thread drawing the UI. Until this returns the loop below runs

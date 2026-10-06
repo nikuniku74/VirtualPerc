@@ -2112,17 +2112,25 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
             return e;
         };
         const int n = 24000;
-        const int dryTo = 3120;   // 65 ms at 48 kHz
-        const int wetFrom = 3840; // 80 ms
-        const int wetTo = 9600;   // 200 ms
-        const int lateFrom = 19200; // 400 ms - dry tap plus wet must be gone
         const auto openHit = renderHit (vp::Stroke::triangleOpen, n);
         const auto closedHit = renderHit (vp::Stroke::triangleClosed, n);
+        // The windows were set with the open stroke starting 1253 samples
+        // (26.1 ms) after its trigger - the attack hold of that day. Read them
+        // from where it actually starts, so retuning the hold does not move
+        // what this test listens to.
+        int k = 0;
+        while (k < n && std::fabs (openHit[static_cast<size_t> (k)]) < 1.0e-6f)
+            ++k;
+        k -= 1253;
+        const int dryTo = 3120 + k;   // 65 ms at 48 kHz
+        const int wetFrom = 3840 + k; // 80 ms
+        const int wetTo = 9600 + k;   // 200 ms
+        const int lateFrom = 19200 + k; // 400 ms - dry tap plus wet must be gone
         const double openDry = energyRange (openHit, 0, dryTo);
         const double openWet = energyRange (openHit, wetFrom, wetTo);
         const double openLate = energyRange (openHit, lateFrom, n);
         const double closedWet = energyRange (closedHit, wetFrom, wetTo);
-        const double closedLate = energyRange (closedHit, 5760, n);
+        const double closedLate = energyRange (closedHit, 5760 + k, n);
         const double openClosedCorr = std::fabs (correlation (openHit, closedHit));
         std::printf ("perc-assign  triangle dry/wet/late=%.3f/%.3f/%.5f closedWet=%.5f corr=%.3f\n",
                      openDry, openWet, openLate, closedWet, openClosedCorr);

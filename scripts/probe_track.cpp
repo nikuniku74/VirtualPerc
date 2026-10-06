@@ -53,6 +53,8 @@ int main (int argc, char** argv)
     double octaveAt = -1.0;
     int octavePress = 0;
     bool octavePressed = false;
+    std::string outPath;
+    bool quarters = false;
     std::vector<double> declareAt;   // --declare-at T (repeatable): "L'1 è QUI" pressed at T
     size_t declared = 0;
 
@@ -90,6 +92,8 @@ int main (int argc, char** argv)
         else if (a == "--octave-at")  octaveAt = std::atof (next());
         else if (a == "--octave")     octavePress = std::atoi (next());
         else if (a == "--declare-at") declareAt.push_back (std::atof (next()));
+        else if (a == "--out")        outPath = next();   // the part's left channel, raw float32
+        else if (a == "--quarters")   quarters = true;    // the part on quarters only: strokes apart
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
@@ -147,6 +151,8 @@ int main (int argc, char** argv)
         eng.settings().followStrength.store (static_cast<int> (f));
     }
     eng.settings().startImmediately.store (startNow);
+    if (quarters)
+        eng.settings().subdivision.store (static_cast<int> (vp::Subdivision::quarter));
     eng.settings().shakerEnabled.store (true);
     eng.settings().congasEnabled.store (false);
     eng.settings().cembaloEnabled.store (false);
@@ -165,6 +171,7 @@ int main (int argc, char** argv)
                      "  clock target trim phase trust recover fast interval votes dir bridge shape hinge transition\n");
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
+    std::FILE* outFile = outPath.empty() ? nullptr : std::fopen (outPath.c_str(), "wb");
     if (pulseFile != nullptr)
         std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust rete target trim trans recover bridge\n");
 
@@ -231,6 +238,8 @@ int main (int argc, char** argv)
         eng.process (ins, 1, outs, 2, take);
         s = eng.snapshot();
         const double t = pos / sr;
+        if (outFile != nullptr)
+            std::fwrite (oL.data(), sizeof (float), static_cast<size_t> (take), outFile);
 
         if (s.analysisRestarts != restartsSeen)
         {
@@ -333,5 +342,7 @@ int main (int argc, char** argv)
                  s.silentSnapCount, (double) s.silentSnapBeats);
     if (pulseFile != nullptr)
         std::fclose (pulseFile);
+    if (outFile != nullptr)
+        std::fclose (outFile);
     return 0;
 }

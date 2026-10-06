@@ -147,6 +147,8 @@ public:
         if (on)
             barTrustEstablished = true;
     }
+    /** Seconds since the analysis last accepted a beat. */
+    double secondsSinceBeat() const noexcept { return samplesSinceBeat / sampleRate; }
     bool barIsLocked() const noexcept { return barLocked; }
 
     /** The band came back after a hole (two quarters muted, a seek in the

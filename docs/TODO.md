@@ -5137,6 +5137,82 @@ delle altre percussioni».
   sistema ma il conteggio prende quel quarto come 1).
 - [ ] Il levare automatico resta: il tasto è la via d'uscita, non la cura.
 
+### 91. Controllo live e BRANO: latenza, pause a metà brano, cambi di brano, deriva 🟡 (2026-10-05, misurato — da provare dal vivo)
+
+Richiesta: «verifica se ci possono essere altri problemi, principalmente live (latenza o altro), e anche in BRANO»;
+poi «sembra che dopo un po', su BRANO, tendano a suonare indietro».
+- [x] **Deriva in BRANO: non c'è nel motore.** Scarto con segno contro la verità per finestre di 30 s: pendenza mediana
+  +0.36 ms/min sul banco (NONSOULFUNKY +20…+36 ms per 8 minuti); stessa canzone ripetuta 4 volte, 32 minuti di
+  sessione senza riavvii: −0.05 ms/min. Analisi tenuta indietro (`VPTrack --lag`) di 0.3 / 1 s: anticipo mediano
+  invariato (+24…+27 ms), nessuna deriva, solo meno precisione (disp 11.8 → 12.9 / 15.6 ms). In BRANO il file va
+  all'analisi e all'uscita con gli stessi campioni, quindi nessuna latenza relativa; il ricampionatore verso
+  l'analisi è esatto (double) e i frame sono datati su contatori a 64 bit.
+- [x] **Ipotesi per l'iPad:** il thread di analisi era un `std::thread` con QoS di default, che iOS può far scivolare
+  dietro l'interfaccia e un processore caldo; più resta indietro, più lunga la proiezione e più un piccolo errore di
+  tempo diventa ritardo. Ora `QOS_CLASS_USER_INTERACTIVE` all'avvio del worker (solo Apple). **Non misurato sull'iPad:**
+  se succede ancora, guardare `lead` nel pannello DEBUG (o `VPLAG` nella console di Xcode): se cresce, è questo.
+- [x] **Latenza misurata ferma:** il tasto LATENZA salvava la misura per sempre e la usava al posto di quella riportata;
+  dopo un cambio di buffer (256 → 512 = +10.7 ms a 48 kHz) o di CLOCK la parte arrivava in ritardo di un buffer
+  senza segnali. Ora `roundTripMs()` = misura + (riportata ora − riportata al momento della misura), base salvata
+  nelle preferenze (`measuredLatencyBaseMs`); una misura vecchia senza base si usa com'era. `VPTests --transport` 5/0.
+- [x] **Canceller del MIXER sulla latenza sbagliata:** sottraeva il ritorno della nostra parte al ritardo riportato dal
+  sistema, non a quello misurato, che è esattamente quel percorso (uscita → mixer → ingresso). Ora usa `roundTripMs()`.
+  Conta solo se nella mandata torna anche l'iPad.
+- [x] **Pausa a metà brano sul MIXER:** una ripartenza dell'analisi (salto di livello dopo un tratto piano) era sempre a
+  freddo sul MIXER; su GARDEN 2400 (vostro live, la band non si ferma) la parte che suonava andava 107 → 138 → 143 → 85
+  → 54 e restava a metà tempo. Ora, se la parte suonava su un livello confermato e la confidenza era > 0.5 al salto, la
+  ripartenza tiene pettine e modello come in BRANO (item 54): resta 105–111, ottava giusta su quel brano 54 → 74%.
+  Banco MIXER: ottava 76.8 → 77.3% (0 dB), 76.7 → 77.3% (−12 dB), il resto uguale; BRANO identico. Cambi di brano veri
+  dopo 8 s di pausa (sei coppie di vostri live): confidenza 0 al salto, invariati.
+- [x] **Cambio di brano dal vivo con pausa corta** (risolto con lo STOP, item 92): con 2–4 s fra due brani il guardiano del livello non scatta (vuole
+  ~4 s di quasi silenzio), la griglia vecchia resta difesa (il rifiuto dopo un buco con la parte che suona) e la parte
+  rientra nel brano nuovo dopo 13–20 s (stesso brano partito da solo: ~5.6 s; dopo 8 s di pausa: 0.3–4 s). Niente tempo
+  sbagliato, ma ingresso tardi; con applausi/voci nella mandata la pausa non è mai «silenzio». Un «nuovo brano»
+  esplicito all'attacco (`notifyInputRestart`, come caricare un file) lo porta a 1.6–2.0 s. Da decidere con l'utente
+  se un comando manuale o un riconoscimento automatico (più rischioso: a metà brano lo stesso segnale è un reticolo
+  avanzato, fixture D).
+- [x] Ingresso che satura: `VPTests --level` «clip» (+12 dB oltre il pieno) già bocciato prima; c'è l'indicatore
+  d'ingresso con la fascia buona −12…−1 dBFS.
+- [ ] Dal vivo: misurare la LATENZA al soundcheck con il ritorno del mixer collegato.
+
+### 92. Dal vivo: STOP tenuto fra due brani = nuovo brano 🟡 (2026-10-05, misurato — da provare dal vivo)
+
+Proposta dell'utente: invece di un comando «nuovo brano» o di un riconoscimento automatico, farlo con STOP.
+- [x] **Tenuto:** su ingresso dal vivo (MIXER e microfono; BRANO no, lì ogni file riparte già), se lo STOP dura almeno
+  3 s (`kNewSongStopSec`) **e** durante lo STOP l'analisi è rimasta più di 2 s senza accettare battiti
+  (`kSongEndGapSec`, `BeatTracker::secondsSinceBeat`), l'analisi riparte da zero una volta, come per un file nuovo
+  (`notifyInputRestart`). Succede mentre si è ancora in STOP, così il brano nuovo viene già agganciato quando si preme
+  START. Uno STOP/START rapido (il gesto di riallineamento) resta com'era.
+- [x] Cambi di brano (`scripts/analysis/stop_song.py change`: sei coppie dei vostri live, pause 2–12 s, STOP alla fine
+  di A): START mezzo secondo dopo l'attacco di B, ingresso giusto mediano **11.3 → 1.9 s**; 2 s dopo **11.9 → 0.9 s**.
+  START un secondo prima dell'attacco: se lo STOP è sotto i 3 s non cambia niente; con pause di 8–12 s in silenzio
+  (dove anche prima ripartiva da sola) simile, un brano più lento (FLAMINGO 1200 → GARDEN 5100 3.3–5.0 → 10.1 s).
+  Tempo suonato sbagliato in totale 192 → 167 s.
+- [x] Senza la condizione sui battiti uno STOP lungo **a metà brano** (la band continua) costava: STOP 4 s ingresso
+  mediano 0.4 → 1.5 s, 4 brani su 23 fino a 16 s a tempo sbagliato. Con la condizione (`stop_song.py inside`): STOP 4 s
+  mediana 0.4 s, sbagliata 50 → 46 s; STOP 8 s p90 3.0 → 0.7 s, sbagliata 56 → 53 s; nessun brano peggiore.
+- [x] `VPTests --transport` 6/0 (nuovo: STOP 3.5 s e 8 s senza battiti su MIXER ripartono una volta, 2 s no, BRANO no);
+  `--bar` 13/0, `--new-input` 16/0, `--state-timing`, `--percussion` 17/0.
+- [ ] Dal vivo: a fine brano premere STOP e tenerlo almeno 3 s; START quando parte il brano nuovo (anche un attimo dopo
+  l'attacco va bene). Se lo STOP/START serve solo a riallineare a metà brano, va fatto rapido come prima.
+
+### 93. Percussioni sempre leggermente in ritardo: la trattenuta d'attacco da 12 a 6 ms 🟡 (2026-10-05, misurato — da ascoltare)
+
+Segnalazione: «sembra ancora che le percussioni suonino sempre leggerissimamente in ritardo, di pochissimi millisecondi».
+- [x] Causa: `kHeardEarlyHoldSec` (12 ms) trattiene ogni colpo dopo la compensazione dell'attacco. Fu tarata il 22/09
+  guardando solo i 120 BPM (residuo del click +9.1 ms). Da allora il clock è meno in anticipo: il residuo di
+  `VPTests --phase-lock` a 78/100/120/138/156 BPM è −5.4 / +2.0 / −2.1 / −3.5 / −4.3 ms (media −2.6; allora +1.8).
+- [x] Misura sull'audio vero (`VPTrack --player --quarters --out`: shaker a quarti, colpi separati). La salita del colpo:
+  metà in ~4 ms dall'inizio, 80% in ~13 ms, picco ~19 ms. Il rilevatore a flusso di `onset_fit` data un attacco netto
+  16.7 ms in anticipo (banco sintetico); corretto questo, la batteria fisica dei vostri live cade +11…+12.5 ms dopo il
+  battito del maestro. Punto dell'80% dello shaker (dove il progetto considera «sentito» un colpo, `measureAttack`)
+  rispetto alla batteria: con 12 ms, +5…+9 ms sui live, da −9 a +9 sugli studio; con 6 ms circa +1 ms sui live.
+  Spostamento misurato sull'uscita: esattamente −6.0 ms.
+- [x] **Tenuto 6 ms.** Il clock non si muove; banchi e `--phase-lock` misurano il clock e non cambiano. Il test del triangolo
+  in `--percussion` leggeva finestre assolute tarate sulla vecchia trattenuta (passava per un soffio dall'altra parte):
+  ora le legge dall'inizio vero del colpo, con valori identici a prima a 12 ms. `--percussion` 17/0.
+- [ ] Ascolto su iPad (BRANO), poi dal vivo. Se ora sembra «davanti», 8–9 ms è la via di mezzo.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
