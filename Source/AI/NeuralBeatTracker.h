@@ -30,6 +30,14 @@ public:
 
     void feed (const float* mono, int numSamples) noexcept;
 
+    /** Offline probes only (VP_OFFLINE_PACING): hands the worker the audio
+        `feed` held back, once the audio thread has finished the block and set
+        everything the worker reads with it (`setSounding` comes last). Fed at
+        once, the worker could analyse a block before or after that store, and
+        which one depended on load: two six-way bench runs of one build did not
+        always match (docs/TODO.md item 96). A no-op on a device. */
+    void releaseFed() noexcept;
+
     /** The metrical level the listener asked for, in octaves. Set from the
         audio thread, read by the worker: the decoder is not ours to touch from
         here, so the value is handed over rather than the call. */
@@ -161,6 +169,7 @@ private:
 
     std::vector<float> popBuf;
     std::vector<float> resampled;
+    std::vector<float> offlineHeld;   // VP_OFFLINE_PACING only, see releaseFed
     std::thread worker;
     std::atomic<bool> stopFlag { false };
     std::atomic<bool> armed { false };

@@ -52,6 +52,11 @@ struct BeatHypothesis
         audio costs the recent evidence, not the song. */
     uint32_t gridSerial     = 0;
 
+    /** The grid serial the decoder's one early automatic octave correction
+        built (docs/TODO.md item 97), 0 if none: the one octave jump under a
+        sounding part the tracker must take rather than shift back. */
+    uint32_t earlyOctaveFixSerial = 0;
+
     /** Input-sample position this hypothesis describes, in the device clock the
         audio thread counts in. The pipeline delay is whatever the audio thread
         has fed since; without it the phase target refers to the past. */

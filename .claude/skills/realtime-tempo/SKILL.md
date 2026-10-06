@@ -3516,6 +3516,23 @@ AUTO.
 
 ### The octave (half / double time) is partly unsolvable
 
+**Read this first (2026-10-06, docs/TODO.md item 96).** The numbers below were
+measured on the network before it was fine-tuned on the band's songs. On the
+fine-tuned model the activation half a beat off the true beat, over the beat's
+own, is 0.00-0.03 on EVERYTIME, I WANNA DANCE, INFINITO, THE REASON, VITA and
+UNA CANZONE, 0.17-0.19 on SEE YOU AGAIN and UN ORA SOLA (76 BPM, eighths), and
+only VIVERE is genuinely split (0.55). Most wrong octaves on the bench are now
+the decoder committing before that evidence arrives, not the evidence being
+ambiguous. One cause found and fixed: a lock held from an intro survived the
+cold epoch of the band's entrance, the part came in on it before the decoder
+had read a band beat, and the sounding keep folded every later reading onto it
+(`BeatTracker::setInputEpoch`, `staleIntroLock`, kept when the intro lock is
+proven - coverage >= 0.9, long fit and fold within 4%, item 99; right tempo 78.2 -> 81.6% on
+loaded files, 76.9 -> 81.0% on the MIXER). The other cause, entry a few
+seconds before the comb reads the right level (UN ORA SOLA: in at 153 at
+24.1 s, comb decisive on 76 from 26.5 s), is answered by the one exception to
+"never while sounding" below: `BeatDecoder::updateEarlyOctaveFix` (item 97).
+
 Measured on BeatNet output from a 76 BPM mix with full eighths, the activation
 half a beat off the beat stands at 0.73-0.77 of the beat's own, against
 0.02-0.18 at 104 and 128 BPM. 152 is a *defensible* reading of what the network
@@ -3524,7 +3541,13 @@ because the same asymmetry is what stops an ordinary rock backbeat reading as
 half-time. So: AUTO keeps the pulse inside the range a percussionist counts in
 (`BeatTracker::updateAutoOctave`, `Source/Tracking/BeatTracker.cpp:573`).
 
-**But never while the part is sounding.** The level is chosen before the part
+**But never while the part is sounding** - with one exception, the listener's
+decision of 2026-10-06 (docs/TODO.md item 97): once per song, within 20 s of
+the part's first entry, a comb that outscores the held level 5x for 8 s running
+is let through (`BeatDecoder::updateEarlyOctaveFix`; the tracker accepts it via
+`BeatHypothesis::earlyOctaveFixSerial`). Right tempo 81.6 -> 82.3% (files),
+81.0 -> 81.5% (MIXER); UN ORA SOLA 0 -> 87-91%. Never after a manual ÷2/×2.
+Otherwise: The level is chosen before the part
 comes in, at a stand-down or after STOP, and held for as long as it plays.
 Halving under a percussionist mid-performance is not a correction to them - it
 is the grid they are playing against moving, and the part's density and the bar

@@ -42,7 +42,8 @@ def run(tag, env_pairs):
         subprocess.run([VPTRACK, '--wav', f'{CACHE}/wav/{w}', *args, '--pulses',
                         f'{CACHE}/{tag}/{w[:-4]}.pul'], env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    with ThreadPoolExecutor(6) as ex:
+    # JOBS=N: fewer parallel runs (VPTrack is deterministic at any N since item 96).
+    with ThreadPoolExecutor(int(os.environ.get('JOBS', 6))) as ex:
         list(ex.map(one, wavs))
 
 

@@ -261,7 +261,41 @@ public:
                 neural.setUserOctave (0);
             }
         }
-        if (dropQueued)
+        // A cold epoch before the part has ever played is the band arriving
+        // after an intro, and a lock held from that intro is a lock on
+        // different music: the worker has just restarted its evidence, but
+        // the tracker stayed `following` on the intro's tempo, so the part
+        // came in on it a few blocks after the band - before the decoder had
+        // read a single band beat - and the sounding keep then folded every
+        // new reading onto that level for the rest of the song. EVERYTIME
+        // (loaded file): intro read 62.6, band in at 8.7 s, part in at 9.5 s
+        // on 62.6, the decoder's first reading (120 at 11.1 s) folded to 60;
+        // the true tempo is 123.7. Dropped like a new file, the part waits
+        // for the band's own lock. 54 files against the teacher (docs/TODO.md
+        // item 96): right tempo, loaded files 78.2 -> 81.6% (EVERYTIME 44k
+        // and 48k 0 -> 99%), MIXER -12 dB 76.9 -> 81.0% (VIVERE x2 0 -> 85%,
+        // WRECKING BALL 44k 9 -> 83%, THE REASON 48k 97 -> 92%); every other
+        // file bit-identical. Entry 1-3 s later on those files only. Not once
+        // the part has played (a break inside the song keeps its lock: on
+        // WRECKING BALL 44k a cold epoch at 51 s after a break reacquired at
+        // the half), and not without a lock (the first epoch from silence).
+        // Unless that lock is proven: a long fit over beats found on every
+        // grid point (coverage), with the fold agreeing. Every intro lock
+        // that was right had it - THE REASON x2 84.7/84.4, cov 1.00; BLUE SKY;
+        // EVERYTIME on the MIXER 122.6/123.2, cov 1.00 - and none of the wrong
+        // ones did (VIVERE cov 0.25, WRECKING BALL 0.29, FEEL and EVERYTIME
+        // on the file no long fit). Dropping a proven one cost THE REASON 48k
+        // 15 s on a fresh 59 (docs/TODO.md item 99).
+        const auto near = [] (float a, float b) { return a > 40.0f && b > 40.0f && std::fabs (a / b - 1.0f) < 0.04f; };
+        const bool provenLock = lastHyp.fitCoverage >= 0.9f
+                                && near (lastHyp.bpm, lastHyp.longFitBpm)
+                                && near (lastHyp.bpm, lastHyp.combBpm);
+        const bool staleIntroLock = changed && seenEpoch && epoch != lastInputEpoch
+                                    && ! preserveComb && ! hadPlayed && ! provenLock
+                                    && (currentState == TrackingState::following
+                                        || currentState == TrackingState::lowConfidence
+                                        || currentState == TrackingState::recovering);
+        if (dropQueued || staleIntroLock)
         {
             // The hypothesis still in the slot describes the file that just
             // ended. Leaving it there lets the clock keep steering at that
@@ -284,6 +318,7 @@ public:
             // through here, and that one still must not restart the clock.
             follower.reset();
             evidence.restart();
+            lastHyp = {};
             // The old clock is gone, so its acquisition proof is gone too.
             // Keeping these counters let the next file enter FOLLOWING on its
             // first provisional beat, with the previous file's confidence and
@@ -534,7 +569,7 @@ private:
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
     bool barIsTrustedNow() noexcept;
-    bool holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept;
+    bool holdSoundingLevel (float bpm, uint32_t gridSerial, bool earlyFix) noexcept;
     void updateAutoOctave (float bpm, bool periodic, int numSamples,
                            bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
@@ -621,6 +656,8 @@ private:
     int lineLockSamples = 0;
     bool startImmediately = false;
     bool hadPlayed = false;
+    /** The newest periodic hypothesis, kept across blocks for setInputEpoch. */
+    BeatHypothesis lastHyp {};
     bool needsResync = false;
     int nudgeSamples = 0;
     int nudgeSide = 0;

@@ -90,8 +90,20 @@ void NeuralBeatTracker::feed (const float* mono, int numSamples) noexcept
 {
     if (! armed.load (std::memory_order_relaxed) || mono == nullptr || numSamples <= 0)
         return;
-    fifo.push (mono, numSamples);
+    static const bool offline = std::getenv ("VP_OFFLINE_PACING") != nullptr;
+    if (offline)
+        offlineHeld.insert (offlineHeld.end(), mono, mono + numSamples);   // ponytail: allocates, probes only
+    else
+        fifo.push (mono, numSamples);
     fedTotal.fetch_add (numSamples, std::memory_order_relaxed);
+}
+
+void NeuralBeatTracker::releaseFed() noexcept
+{
+    if (offlineHeld.empty())
+        return;
+    fifo.push (offlineHeld.data(), static_cast<int> (offlineHeld.size()));
+    offlineHeld.clear();
 }
 
 void NeuralBeatTracker::invalidatePublicationsBeforeNow() noexcept

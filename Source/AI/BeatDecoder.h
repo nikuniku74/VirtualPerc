@@ -522,6 +522,15 @@ private:
     bool  useAnchor = false;
     bool  lineFeed = false;
     bool  sounding = false;
+    /** One automatic octave correction early in a song, the only one under a
+        sounding part (docs/TODO.md item 97): see `updateEarlyOctaveFix`. */
+    double soundingStartSec = -1.0;
+    float  soundingStartBpm = 0.0f;
+    double combDecisiveSinceSec = -1.0;
+    bool   earlyOctaveFixArmed = false;
+    bool   earlyOctaveFixUsed = false;
+    uint32_t earlyOctaveFixSerial = 0;
+    void   updateEarlyOctaveFix() noexcept;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear

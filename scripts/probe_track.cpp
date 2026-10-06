@@ -311,7 +311,12 @@ int main (int argc, char** argv)
         static const bool everyBlock = std::getenv ("VP_OFFLINE_PACING") != nullptr;
         if (inHop == hop || everyBlock)
         {
-            const auto until2 = std::chrono::steady_clock::now() + std::chrono::milliseconds (400);
+            // A safety net, not pacing. At 400 ms a wait could run out (UNA
+            // CANZONE 48k at -12 dB alone: 0.8% right tempo, inside the
+            // six-way bench 85.9%), and a run that stops waiting is no longer
+            // the run it is compared with (docs/TODO.md item 96).
+            const auto until2 = std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds (everyBlock ? 10000 : 400);
             // --lag keeps the worker that far behind, as a device that cannot
             // keep up would: the backlog the tracker has to project across.
             while (eng.analysisCompletedSamples() < pos - static_cast<int64_t> (lagSec * sr)
