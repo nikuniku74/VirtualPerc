@@ -125,7 +125,7 @@ private:
     void refreshThemeColours();
     void refreshBarButton();
     /** FEEL voice knobs: on/off is a tap, volume is a drag. Off is the same
-        knob, slightly faded. A hold opens the sample-family picker. */
+        knob, slightly faded. With EDIT on, a tap opens the sound modal instead. */
     void refreshVoiceKnobs();
     void assignKitSound (int slot, vp::KitSound sound);
     std::atomic<int>& kitSoundAtomic (int slot) noexcept;
@@ -388,7 +388,8 @@ private:
     StyleMenuOverlay styleMenu { *this };
 
     static constexpr int kHitSampleCount = 6;
-    /** Vertical stack of unused sounds, anchored to the held knob. */
+    /** Modal with the sounds (or, for the one-shot knobs, the samples) that no
+        knob is using yet. Opened by a tap on a knob while EDIT is on. */
     struct SoundMenuOverlay final : juce::Component
     {
         explicit SoundMenuOverlay (MainComponent& o);
@@ -403,10 +404,18 @@ private:
         MainComponent& owner;
         int slot = 0;
         bool hitMode = false;
+        int shown = 0;
+        static constexpr int kTitleH = 56;
+        juce::Rectangle<int> card;
         juce::Component list;
         juce::TextButton items[kCount];
     };
     SoundMenuOverlay soundMenu { *this };
+    /** Top-right of the FEEL card. Off: knobs are played. On: a tap on a knob
+        opens the modal to swap its sound, and the knobs wear a dashed ring. */
+    juce::TextButton editSoundsButton { "EDIT" };
+    bool soundEditMode = false;
+    void setSoundEditMode (bool on);
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { "CASSA NO" };
     /** Measures this rig's round trip instead of taking the device's word for
@@ -421,47 +430,31 @@ private:
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
     /** Volume knob that also arms the voice: a tap (no drag) flips the
-        enable, a vertical drag is still the level, a 450 ms hold opens
-        the sample-family picker. */
-    struct VoiceKnob final : juce::Slider, private juce::Timer
+        enable (or, with EDIT on, opens the sound modal), a vertical drag is
+        still the level. */
+    struct VoiceKnob final : juce::Slider
     {
         std::function<void()> onTap;
-        std::function<void()> onHold;
         void mouseDown (const juce::MouseEvent& e) override
         {
-            held = false;
             dragged = false;
             juce::Slider::mouseDown (e);
-            if (onHold != nullptr)
-                startTimer (450);
         }
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            if (held)
-                return;
             // A press that stays put is the sample (or the mute). The slider
             // otherwise treats that press as a drag and the tap never fires.
             if (e.getDistanceFromDragStart() <= 8.0f)
                 return;
             dragged = true;
-            stopTimer();
             juce::Slider::mouseDrag (e);
         }
         void mouseUp (const juce::MouseEvent& e) override
         {
-            stopTimer();
             juce::Slider::mouseUp (e);
-            if (! held && ! dragged && onTap != nullptr)
+            if (! dragged && onTap != nullptr)
                 onTap();
         }
-        void timerCallback() override
-        {
-            stopTimer();
-            held = true;
-            if (onHold != nullptr)
-                onHold();
-        }
-        bool held = false;
         bool dragged = false;
     };
     VoiceKnob shakerVolSlider;
@@ -488,7 +481,7 @@ private:
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
-    /** One-shot samples. Tap starts or restarts; hold assigns an unused sample. */
+    /** One-shot samples. Tap starts or restarts; with EDIT on, a tap assigns an unused sample. */
     VoiceKnob absorbVolSlider;
     juce::Label absorbHitLabel { {}, "ABSORB" };
     juce::Label absorbHitValue { {}, "100%" };

@@ -5236,6 +5236,17 @@ Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non 
   vivo usa solo il mix completo. Da togliere se l'utente conferma.
 - [ ] Ascolto: con le porte tolte la parte dovrebbe «scattare» meno, soprattutto nei brani lenti e dal vivo.
 
+### 95. Cambio suoni dei knob: pulsante EDIT e modale al posto del long-press 🟡 (2026-10-06, compila — da provare sul dispositivo)
+
+Il tenere premuto 450 ms su un knob apriva il menu dei suoni; si apriva per sbaglio mentre si cercava di regolare il volume. Ora il cambio è un'azione esplicita: **EDIT** in alto a destra nella scheda FEEL.
+
+- EDIT acceso (il testo diventa **FATTO**): i knob portano un anello tratteggiato fucsia; un tap su un knob apre una **modale centrata** («SUONI» per i quattro knob delle percussioni, «CAMPIONI» per i quattro one-shot) con solo ciò che nessun knob usa già, e la riga «al posto di …». Se non resta nulla di libero lo dice. Il trascinamento verticale regola ancora il volume.
+- EDIT spento: tap = mute / one-shot come prima. Il long-press è stato rimosso (`VoiceKnob` non ha più timer né `onHold`).
+- Codice: `MainComponent::setSoundEditMode`, `SoundMenuOverlay` (ora una modale, non più ancorata al knob), anello in `drawRotarySlider` (proprietà `editMode`).
+- **Bug trovato al primo giro (2026-10-06):** EDIT c'era ma non si vedeva — `refreshThemeColours()` ricolora una lista fissa di pulsanti e EDIT non c'era, quindi teneva il testo scuro della costruzione (prima del tema scuro): nero su nero. Ora `refreshThemeColours()` richiama `setSoundEditMode()`, e EDIT è fucsia da spento, bianco con la barra fucsia da acceso. Verificato con cattura della finestra su Mac: «EDIT» fucsia in alto a destra nella scheda FEEL.
+- **Icona (2026-10-06):** EDIT è ora un quadratino con una matita disegnata come path (proprietà `pencilIcon` in `drawButtonText`, come l'ingranaggio), niente più scritta EDIT/FATTO. Senza riquadro né barra: spenta la matita è bianca (colore del testo, scura nel tema chiaro), in modalità edit è fucsia. Titolo accessibile «Modifica suoni». Verificato con cattura della finestra su Mac.
+- Resta da fare: provare il flusso (EDIT → tap su knob → modale → scelta) sul dispositivo, e guardare nel layout compatto che il pulsante non copra l'ultimo knob della riga alta.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

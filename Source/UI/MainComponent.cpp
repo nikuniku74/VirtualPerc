@@ -491,6 +491,26 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     if (w > room && w > 1.0f)
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
 
+    if ((bool) button.getProperties().getWithDefault ("pencilIcon", false))
+    {
+        // EDIT: a pencil drawn as a path, tip bottom-left - tip, body and
+        // eraser as three pieces so the gaps read at 16 pt. Off/on colours
+        // come from the button (see setSoundEditMode).
+        juce::Path pencil;
+        pencil.startNewSubPath (0.0f, 0.0f);
+        pencil.lineTo (0.22f, -0.13f);
+        pencil.lineTo (0.22f, 0.13f);
+        pencil.closeSubPath();
+        pencil.addRectangle (0.27f, -0.13f, 0.52f, 0.26f);
+        pencil.addRoundedRectangle (0.84f, -0.13f, 0.16f, 0.26f, 0.04f);
+        pencil.applyTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::pi * 0.25f));
+        auto box = button.getLocalBounds().toFloat().reduced (7.0f);
+        g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                                : juce::TextButton::textColourOffId));
+        g.fillPath (pencil, pencil.getTransformToScaleToFit (box, true));
+        return;
+    }
+
     if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
     {
         static juce::Image gear;
@@ -529,7 +549,9 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           const juce::Colour& backgroundColour,
                                                           bool, bool shouldDrawButtonAsDown)
 {
-    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
+    // The gear and the EDIT pencil are bare icons: no fill, no edge, no bar.
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false)
+        || (bool) button.getProperties().getWithDefault ("pencilIcon", false))
         return;
 
     if ((bool) button.getProperties().getWithDefault ("circle", false))
@@ -797,6 +819,19 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
                                             innerR * 1.56f, nameH).toNearestInt(),
                     juce::Justification::centred, false);
     }
+
+    // EDIT is on: this knob will open the sound modal. A dashed ring just
+    // outside the arc says "tappable to change" without touching the fills.
+    if ((bool) slider.getProperties().getWithDefault ("editMode", false))
+    {
+        juce::Path ring, dashed;
+        const float rr = radius + 1.5f;
+        ring.addEllipse (centre.x - rr, centre.y - rr, rr * 2.0f, rr * 2.0f);
+        const float dashes[] = { 5.0f, 4.0f };
+        juce::PathStrokeType (1.0f).createDashedStroke (dashed, ring, dashes, 2);
+        g.setColour (fuchsia());
+        g.strokePath (dashed, juce::PathStrokeType (1.0f));
+    }
 }
 
 MainComponent::MainComponent()
@@ -845,6 +880,11 @@ MainComponent::MainComponent()
     settingsButton.getProperties().set ("gearIcon", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
+    setupBtn (editSoundsButton, ink());
+    editSoundsButton.setButtonText ({});
+    editSoundsButton.setTitle ("Modifica suoni");
+    editSoundsButton.getProperties().set ("pencilIcon", true);
+    editSoundsButton.onClick = [this] { setSoundEditMode (! soundEditMode); };
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
@@ -1069,19 +1109,25 @@ MainComponent::MainComponent()
         refreshVoiceKnobs();
         savePrefs();
     };
-    shakerVolSlider.onTap  = [this, tapVoice] { tapVoice (engine.settings().shakerEnabled); };
-    congaVolSlider.onTap   = [this, tapVoice] { tapVoice (engine.settings().congasEnabled); };
-    cembaloVolSlider.onTap = [this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); };
-    clapVolSlider.onTap    = [this, tapVoice] { tapVoice (engine.settings().clapEnabled); };
-    auto holdVoice = [this] (int slot)
+    // With EDIT on, a tap on a knob is "change this one" (the sound modal),
+    // not the mute or the one-shot. Drag is still the level either way.
+    auto tapOrEdit = [this] (int slot, bool hits, std::function<void()> act)
     {
-        styleMenu.dismiss();
-        soundMenu.showFor (slot);
+        return [this, slot, hits, act = std::move (act)]
+        {
+            if (! soundEditMode)
+            {
+                act();
+                return;
+            }
+            styleMenu.dismiss();
+            soundMenu.showFor (slot, hits);
+        };
     };
-    shakerVolSlider.onHold  = [holdVoice] { holdVoice (0); };
-    congaVolSlider.onHold   = [holdVoice] { holdVoice (1); };
-    cembaloVolSlider.onHold = [holdVoice] { holdVoice (2); };
-    clapVolSlider.onHold    = [holdVoice] { holdVoice (3); };
+    shakerVolSlider.onTap  = tapOrEdit (0, false, [this, tapVoice] { tapVoice (engine.settings().shakerEnabled); });
+    congaVolSlider.onTap   = tapOrEdit (1, false, [this, tapVoice] { tapVoice (engine.settings().congasEnabled); });
+    cembaloVolSlider.onTap = tapOrEdit (2, false, [this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); });
+    clapVolSlider.onTap    = tapOrEdit (3, false, [this, tapVoice] { tapVoice (engine.settings().clapEnabled); });
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 4.0, 1.00,
                 [this] (float v) { engine.settings().inputGain.store (v); },
@@ -1133,19 +1179,14 @@ MainComponent::MainComponent()
     for (int i = 0; i < 4; ++i)
         hitVoices[i].selected.store (i, std::memory_order_relaxed);
     refreshHitKnobs();
-    absorbVolSlider.onTap = [this] { hitVoices[0].request.fetch_add (1, std::memory_order_release); };
-    hornVolSlider.onTap = [this] { hitVoices[1].request.fetch_add (1, std::memory_order_release); };
-    uplifterVolSlider.onTap = [this] { hitVoices[2].request.fetch_add (1, std::memory_order_release); };
-    riserVolSlider.onTap = [this] { hitVoices[3].request.fetch_add (1, std::memory_order_release); };
-    auto holdHit = [this] (int slot)
+    auto fireHit = [this] (int i)
     {
-        styleMenu.dismiss();
-        soundMenu.showFor (slot, true);
+        return [this, i] { hitVoices[i].request.fetch_add (1, std::memory_order_release); };
     };
-    absorbVolSlider.onHold = [holdHit] { holdHit (0); };
-    hornVolSlider.onHold = [holdHit] { holdHit (1); };
-    uplifterVolSlider.onHold = [holdHit] { holdHit (2); };
-    riserVolSlider.onHold = [holdHit] { holdHit (3); };
+    absorbVolSlider.onTap = tapOrEdit (0, true, fireHit (0));
+    hornVolSlider.onTap = tapOrEdit (1, true, fireHit (1));
+    uplifterVolSlider.onTap = tapOrEdit (2, true, fireHit (2));
+    riserVolSlider.onTap = tapOrEdit (3, true, fireHit (3));
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -1427,6 +1468,9 @@ void MainComponent::refreshThemeColours()
         button->setColour (juce::TextButton::textColourOffId, text());
         button->setColour (juce::TextButton::textColourOnId, text());
     }
+    // EDIT has its own text colours. Without this it kept the ones from
+    // construction, before the theme was applied: dark text on a dark card.
+    setSoundEditMode (soundEditMode);
 
     auto paintVoiceKnob = [] (juce::Slider& s, juce::Colour fill)
     {
@@ -1508,6 +1552,27 @@ void MainComponent::assignKitSound (int slot, vp::KitSound sound)
     kitSoundAtomic (slot).store (want);
     refreshVoiceKnobs();
     savePrefs();
+}
+
+void MainComponent::setSoundEditMode (bool on)
+{
+    soundEditMode = on;
+    if (! on)
+        soundMenu.dismiss();
+    editSoundsButton.setToggleState (on, juce::dontSendNotification);
+    // A bare pencil, so the colour is the whole state: text colour when
+    // the knobs are played, fuchsia while they are being edited.
+    editSoundsButton.setColour (juce::TextButton::textColourOffId, text());
+    editSoundsButton.setColour (juce::TextButton::textColourOnId, fuchsia());
+    juce::Slider* knobs[] = {
+        &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
+        &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider
+    };
+    for (auto* k : knobs)
+    {
+        k->getProperties().set ("editMode", on);
+        k->repaint();
+    }
 }
 
 void MainComponent::refreshVoiceKnobs()
@@ -3849,6 +3914,16 @@ void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
     hornVolSlider.setVisible (true);
     uplifterVolSlider.setVisible (true);
     riserVolSlider.setVisible (true);
+
+    // EDIT sits in the title strip of the FEEL card, on the right. layoutFull
+    // and layoutCompact both add the card just before calling this.
+    if (! cards.isEmpty())
+    {
+        const auto cardR = cards.getLast().bounds;
+        editSoundsButton.setBounds (cardR.getRight() - 12 - 28, cardR.getY() + 4, 28, 28);
+        editSoundsButton.setVisible (true);
+        editSoundsButton.toFront (false);
+    }
 }
 
 namespace
@@ -5216,7 +5291,7 @@ void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
 {
     // Settings is an opaque page (fillAll(bg)), not a blur of the editor.
     // A live Gaussian would snapshot the parent every frame on iPad. This
-    // picker is a hold menu, so the editor stays; veil it enough that the
+    // modal keeps the editor visible behind it; veil it enough that the
     // Misure cells do not merge with the knobs underneath.
     auto full = getLocalBounds().toFloat();
     g.setColour ((gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6))
@@ -5225,16 +5300,43 @@ void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
     g.setColour (juce::Colours::white.withAlpha (gDarkMode ? 0.07f : 0.20f));
     g.fillRect (full);
 
-    auto card = list.getBounds().toFloat().expanded (4.0f, 4.0f);
+    const auto c = card.toFloat();
     g.setColour (panel());
-    g.fillRect (card);
+    g.fillRoundedRectangle (c, 14.0f);
     g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
-    g.drawRect (card, 1.0f);
+    g.drawRoundedRectangle (c.reduced (0.5f), 14.0f, 1.0f);
+
+    // Title and what is being replaced. The knob keeps its name until a
+    // choice is made, so the player sees which one this modal is for.
+    juce::Slider* kit[] = { &owner.shakerVolSlider, &owner.congaVolSlider,
+                            &owner.cembaloVolSlider, &owner.clapVolSlider };
+    juce::Slider* hit[] = { &owner.absorbVolSlider, &owner.hornVolSlider,
+                            &owner.uplifterVolSlider, &owner.riserVolSlider };
+    const auto current = (hitMode ? hit : kit)[juce::jlimit (0, 3, slot)]
+                             ->getProperties().getWithDefault ("knobName", {}).toString();
+    auto head = card.reduced (16, 0).withTrimmedTop (12).removeFromTop (kTitleH - 12);
+    g.setColour (text());
+    g.setFont (fontUi (13.0f, true));
+    g.drawText (hitMode ? "CAMPIONI" : "SUONI", head.removeFromTop (18),
+                juce::Justification::centredLeft, false);
+    g.setColour (mute());
+    g.setFont (fontUi (10.5f));
+    g.drawText (juce::String ("al posto di ") + current, head,
+                juce::Justification::centredLeft, false);
+
+    if (shown == 0)
+    {
+        g.setColour (mute());
+        g.setFont (fontUi (12.0f));
+        g.drawFittedText (hitMode ? "Nessun campione libero"
+                                  : "Nessun suono libero",
+                          list.getBounds(), juce::Justification::centred, 2);
+    }
 }
 
 void MainComponent::SoundMenuOverlay::mouseDown (const juce::MouseEvent& e)
 {
-    if (! list.getBounds().expanded (4).contains (e.getPosition()))
+    if (! card.contains (e.getPosition()))
         dismiss();
 }
 
@@ -5242,18 +5344,6 @@ void MainComponent::SoundMenuOverlay::resized()
 {
     if (! isVisible())
         return;
-
-    juce::Slider* kitKnobs[] = {
-        &owner.shakerVolSlider, &owner.congaVolSlider,
-        &owner.cembaloVolSlider, &owner.clapVolSlider
-    };
-    juce::Slider* hitKnobs[] = {
-        &owner.absorbVolSlider, &owner.hornVolSlider,
-        &owner.uplifterVolSlider, &owner.riserVolSlider
-    };
-    const int idx = juce::jlimit (0, 3, slot);
-    auto* knob = hitMode ? hitKnobs[idx] : kitKnobs[idx];
-    auto anchor = getLocalArea (knob, knob->getLocalBounds());
 
     // Offer only sounds not assigned to another knob. The current assignment
     // is omitted too; tapping outside keeps it.
@@ -5271,15 +5361,19 @@ void MainComponent::SoundMenuOverlay::resized()
     for (int i = 0; i < count; ++i)
         if (! taken[i])
             vis[n++] = i;
+    shown = n;
     for (int i = 0; i < kCount; ++i)
         items[i].setVisible (false);
 
-    // Vertical stack on the held knob. Twice the previous hug width
-    // (label + 6 px each side). Font 12, a step up from the 9 px Misure
-    // floor. Height still a Misure chip. Gap 5 matches layoutMisure.
-    const int btnGap = 5;
-    const int sidePad = 6;
-    const int cellH = juce::jlimit (22, 36, 32);
+    // A centred modal, not a menu hanging off the knob: the knob row is small
+    // and sits at the bottom of the screen, and a finger is about to cover it.
+    // Chips are touch-sized (up to 40 pt, shrunk to fit a short window).
+    const int btnGap = 6;
+    const int pad = 16;
+    const int margin = 12;
+    const int rows = juce::jmax (1, n);
+    const int availH = getHeight() - 2 * margin - kTitleH - pad;
+    const int cellH = juce::jlimit (28, 40, (availH - btnGap * (rows - 1)) / rows);
     const float chipFontH = juce::jmax (12.0f, (float) cellH * 0.38f);
     const auto measureFont = fontUi (chipFontH, true);
     int labelW = 0;
@@ -5289,31 +5383,13 @@ void MainComponent::SoundMenuOverlay::resized()
             : vp::toString (static_cast<vp::KitSound> (vis[k])));
         labelW = juce::jmax (labelW, juce::GlyphArrangement::getStringWidthInt (measureFont, name));
     }
-    const int cellW = juce::jmax (1, 2 * (labelW + sidePad * 2));
-    const int listW = cellW;
-    const int listH = n * cellH + btnGap * juce::jmax (0, n - 1);
+    const int listW = juce::jmin (getWidth() - 2 * (margin + pad),
+                                  juce::jmax (220, labelW + 48));
+    const int listH = rows * cellH + btnGap * (rows - 1);
 
-    const int margin = 8;
-    const int yAbove = anchor.getY() - listH - margin;
-    const int yBelow = anchor.getBottom() + margin;
-    const bool aboveFits = yAbove >= margin;
-    const bool belowFits = yBelow + listH <= getHeight() - margin;
-    int y;
-    if (aboveFits)
-        y = yAbove;
-    else if (belowFits)
-        y = yBelow;
-    else if (anchor.getY() >= getHeight() - anchor.getBottom())
-        y = juce::jmax (margin, yAbove);
-    else
-        y = juce::jmin (getHeight() - listH - margin, yBelow);
-
-    int x = anchor.getCentreX() - listW / 2;
-    if (x + listW > getWidth() - margin)
-        x = getWidth() - listW - margin;
-    if (x < margin)
-        x = margin;
-    list.setBounds (x, y, listW, listH);
+    card = juce::Rectangle<int> (listW + 2 * pad, kTitleH + listH + pad)
+               .withCentre (getLocalBounds().getCentre());
+    list.setBounds (card.getX() + pad, card.getY() + kTitleH, listW, listH);
 
     auto row = list.getLocalBounds();
     for (int k = 0; k < n; ++k)
@@ -5334,5 +5410,5 @@ void MainComponent::SoundMenuOverlay::resized()
         items[i].setColour (juce::TextButton::textColourOffId, juce::Colours::white);
         items[i].setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     }
+    repaint();
 }
-
