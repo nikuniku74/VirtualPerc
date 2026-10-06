@@ -903,6 +903,24 @@ identical 6.9/33.3, 7.2/22.0, 19.9/78.4, **32.1/82.0**, 25.9/81.6,
 `/tmp/motion_comb_origin.csv`. The remaining continuous hole is
 the live clean-rate class, not this unknown stale pulse.
 
+**Removed (2026-10-06, docs/TODO.md item 94): the four-beat/IOI "doors".**
+Live Doors A/B/C/D, the Door D hold and its re-arm/keep/refractory widening,
+the unknown-regime doors and hold, and the 4-beat/IOI origin pulls documented
+in the entries below were taken out of `BeatDecoder` (698 lines). They were
+tuned seed by seed on the synthetic motion bank before the network was
+fine-tuned. Switched off together on the real bench (54 runs, teacher truth
+and drum onsets): rate surges 0.31 -> 0.18 /min in BRANO and 0.46 -> 0.26 at
+MIXER -12 dB, scatter 11.8 -> 11.7 and 11.3 -> 11.1 ms, beats outside 25 ms
+18.6 -> 18.5% and 17.5 -> 17.2%, right octave 78.3 -> 78.2% and 77.3 -> 76.9%
+(UNA CANZONE 44k, already 70% wrong), no BRANO run worse. `VPAlign --steps`
+and `--ramps`, `VPTests --tempo-step`, `--tempo-slow`, `--phase-lock` are
+unchanged; the removed code is bit-identical to the switched-off build in
+isolation (16/16 runs). The synthetic `probe_motion_matrix --quick` continuous
+family is worse, 38.8/95.0 -> 54.1/119.1 ms mean/p95 (fixed identical, step
+30.3 -> 30.2): that family is what they were built for. The entries below are
+history; do not re-add a door without real-bench evidence. `ioiClockLead`
+remains, set by the hole/comb and persistence paths.
+
 **Kept (2026-09-18), slow live 4-beat/IOI lead.** The 8-beat line
 is centred 3.5 beats back; at 60 BPM that is seconds of integrated
 phase while residual stays clean (seed 192847: short 3-5% off, IOI

@@ -602,11 +602,6 @@ private:
     double refusedRunSec[4] {};
     float refusedRunStrength[4] {};
     float refusedRunLowBand[4] {};
-    // Door D (live) and unknown Door B: keep aiming at that 4-beat
-    // for kShortFit, including kit-gap !haveShort frames.
-    float ioiTargetHoldBpm = 0.0f;
-    int   ioiTargetHoldBeats = 0;
-
     float longHist[kLongHistory] {};
     int   longWrite = 0;
     int   longFilled = 0;

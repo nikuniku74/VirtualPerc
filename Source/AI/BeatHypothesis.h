@@ -107,8 +107,9 @@ struct BeatHypothesis
     int      motionShapeQuadraticWins = 0;
     int      motionShapeQuarantineBeats = 0;
     float    motionBridgeAuthority = 0.0f;
-    /** True when Door B/C/D (not Door A) retargeted this publication.
-        The clock may use the existing motion tau; it does not choose a tempo. */
+    /** True while the decoder leads the clock from a recent interval
+        reading (`ioiClockLead`). The clock may use the existing motion tau;
+        it does not choose a tempo. */
     bool     ioiLead = false;
     /** The last accepted beat is more than one and a half periods old and a
         part is already sounding. The pulse is the one already counted: the

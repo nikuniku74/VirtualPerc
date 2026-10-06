@@ -81,11 +81,9 @@ inline bool directTempoMotionHint (TempoRegime regime,
 {
     if (bridgeAuthority > 0.0f)
         return true;
-    // Door A/B/C/D already moved the decoder onto a 4-beat. Offset-0
-    // fisso/gradino never fire those doors (Door A's live band without
-    // bir>=4 lights fisso 1009; the product block does not). The
-    // 0.90 s hold tau would otherwise leave the clock on the late
-    // grid while the target has moved. Call sites use kGridTauIoiLead
+    // The decoder has already moved onto a recent interval reading
+    // (`ioiClockLead`). The 0.90 s hold tau would otherwise leave the
+    // clock on the late grid while the target has moved. Call sites use kGridTauIoiLead
     // (0.01 s, the setGridPhase floor) for this flag; quadratic
     // authority still gets kGridTauProvenMotion.
     if (ioiLead)

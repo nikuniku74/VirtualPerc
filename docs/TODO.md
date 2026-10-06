@@ -5213,6 +5213,29 @@ Segnalazione: «sembra ancora che le percussioni suonino sempre leggerissimament
   ora le legge dall'inizio vero del colpo, con valori identici a prima a 12 ms. `--percussion` 17/0.
 - [ ] Ascolto su iPad (BRANO), poi dal vivo. Se ora sembra «davanti», 8–9 ms è la via di mezzo.
 
+### 94. Pulizia del core: le «porte» del decoder via; ponte di moto e canale cassa da decidere 🟡 (2026-10-06, misurato — da ascoltare)
+
+Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non serve più e quindi meglio rimuovere».
+- [x] Inventario: nessun interruttore sperimentale né codice spento nel tree (a parte i due temporanei di questa verifica,
+  finiti nel commit `c119aad` e ora tolti). Restano: modalità LOOP (accesa di default, le conga vengono da lì),
+  microfono dell'iPad (sorgente di partenza), armonia.
+- [x] **Porte del decoder (A/B/C/D, i loro «hold», le guide IOI di clock, gli spostamenti d'origine):** tarate seme per
+  seme sul banco sintetico del moto fra il 18 e il 23/09, prima della rete rifinita. Spente insieme sul banco vero (54
+  esecuzioni, verità del maestro + batteria): scatti di velocità **0.31 → 0.18/min** in BRANO e **0.46 → 0.26** in MIXER
+  −12 dB; disp 11.8 → 11.7 e 11.3 → 11.1 ms; oltre 25 ms 18.6 → 18.5% e 17.5 → 17.2%; ottava 78.3 → 78.2% e 77.3 → 76.9%
+  (UNA CANZONE 44k, già sbagliata al 70%); nessun brano BRANO peggiore, 8 con meno scatti; in MIXER 12 con meno scatti.
+  `VPAlign --steps/--ramps`, `VPTests --tempo-step` 14/0, `--tempo-slow` 13/0 identici. **Tolte** (−698 righe in
+  `BeatDecoder`): identiche bit per bit alla versione spenta, in isolamento, 16/16. Banco sintetico `probe_motion_matrix
+  --quick`: fisso identico, gradino 30.3 → 30.2 ms, **continuo 38.8/95.0 → 54.1/119.1 ms** (la famiglia per cui erano nate).
+  `VPTests` `--bar` 13/0, `--new-input` 16/0, `--transport` 6/0, `--state-timing`, `--phase-lock` 20/0.
+- [ ] **Ponte di moto** (`TempoMotionShape` + `TempoMotionTracker`, classificatore di forma e autorità del ponte, ~1500
+  righe fra decoder, tracker, motore, DEBUG, 2 file di test, 3 sonde): attivo lo 0.14–0.16% del tempo sui brani veri;
+  spento, tutte le metriche identiche in BRANO e MIXER. Neutro: da togliere se l'utente vuole (cambia lo strumento
+  `compare_motion_matrix.py`, che pretende autorità sul continuo).
+- [ ] **Canale cassa separato** (`KickOnsetDetector`, tasto CASSA, ~300 righe): spento di default e inerte; l'utente dal
+  vivo usa solo il mix completo. Da togliere se l'utente conferma.
+- [ ] Ascolto: con le porte tolte la parte dovrebbe «scattare» meno, soprattutto nei brani lenti e dal vivo.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
