@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Da dove viene ogni scatto del clock (vedi surge_scan.py).
 
-    surge_sources.py TAG [--top N]        (pulses in /tmp/vp-bench/TAG)
+    surge_sources.py TAG [--top N]        (pulses in ~/vp-bench/TAG)
 
 Per ogni scatto, al suo picco: quanta parte viene dal tempo del decoder (rete),
 quanta dal trim, quanta dalla piega di fase (clock contro tempo del follower), e
@@ -14,7 +14,7 @@ import numpy as np
 THR = 3.0
 tag = sys.argv[1]
 cnt = collections.Counter(); sec = collections.Counter(); rows = []
-for p in sorted(glob.glob(f'/tmp/vp-bench/{tag}/*.pul')):
+for p in sorted(glob.glob(os.path.expanduser(f'~/vp-bench/{tag}/*.pul'))):
     X = np.loadtxt(p, comments='#')
     t, pub, clk, snd, pe, reg = X[:, 0], X[:, 3], X[:, 4], X[:, 5], X[:, 6], X[:, 7]
     rete, tgt, trim, trans, rec = X[:, 9], X[:, 10], X[:, 11], X[:, 12], X[:, 13]

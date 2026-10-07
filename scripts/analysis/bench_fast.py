@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Banco veloce e ripetibile: tutti i brani e i tratti live in /tmp/vp-bench/wav.
+"""Banco veloce e ripetibile: tutti i brani e i tratti live in ~/vp-bench/wav.
 
     bench_fast.py run TAG [VAR=VALORE ...]   esegue (VPTrack --player) con le variabili date
     bench_fast.py cmp BASE TAG [TAG2 ...]     confronta, brano per brano
@@ -21,7 +21,7 @@ import surge_scan  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 VPTRACK = os.environ.get('VPTRACK', os.path.join(ROOT, 'build-host/VPTrack_artefacts/Release/VPTrack'))
-CACHE = '/tmp/vp-bench'
+CACHE = os.path.expanduser('~/vp-bench')
 
 
 def run(tag, env_pairs):

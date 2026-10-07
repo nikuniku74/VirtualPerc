@@ -6,7 +6,7 @@
 
 Prints, per case, when the part first sounds at the right tempo after START and how
 many seconds it sounds at a wrong one (outside 4% of the local true tempo or its
-octaves) in the next 40 s. Uses the live sends and truths in /tmp/vp-bench/wav
+octaves) in the next 40 s. Uses the live sends and truths in ~/vp-bench/wav
 (docs/TODO.md items 91-92). VAR=VALUE pairs go to VPTrack's environment.
 """
 import os, subprocess, sys, wave
@@ -15,7 +15,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VP = os.environ.get('VPTRACK', os.path.join(HERE, '../../build-host/VPTrack_artefacts/Release/VPTrack'))
-C = '/tmp/vp-bench'
+C = os.path.expanduser('~/vp-bench')
 PAIRS = [('GARDEN_3300_48k', 'FLAMINGO_1200_48k'), ('FLAMINGO_4500_48k', 'GARDEN_600_48k'),
          ('FLAMINGO_1200_48k', 'GARDEN_5100_48k'), ('99_SALLY_LIVE_48k', '98_FLAMINGO_3750_48k'),
          ('GARDEN_5100_48k', 'FLAMINGO_2400_48k'), ('FLAMINGO_5400_48k', 'GARDEN_4200_48k')]

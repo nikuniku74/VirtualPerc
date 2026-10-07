@@ -5306,7 +5306,7 @@ Dalla PR nikuniku74/VirtualPerc#2 (basata sulla 1.2.6) portato sul ramo di lavor
 - `CLAUDE.md` (importa `AGENTS.md`), `AGENTS.md` e la regola Cursor come nella PR.
 - Non portato: niente (il resto della PR era solo spostamento).
 
-### 102. Rete: secondo giro di addestramento con i brani nuovi dell'utente 🟡 (2026-10-07, misurato — nessun modello nuovo adottato)
+### 102. Rete: secondo giro di addestramento con i brani nuovi dell'utente 🔴 (2026-10-07, misurato — nessun modello nuovo adottato)
 
 Dati nuovi (`~/Desktop/clicks/nuovi`: 9 brani, FBI 17.11.11, Nonsoulfunky 18.04.2009 2P): 3.9 h, ~22 900 battiti, in `~/vp-train/new` (wav mono 44.1 kHz, verità del maestro, `.f32`/`.act` con `VP_BEAT_MODEL=gtzan_orig.onnx`, ricetta verificata identica ai file esistenti). Contaminazione (inviluppo d'attacco, 2 sonde da 60 s per brano del banco): massimo 0.45 (GARDEN 2400 dentro FBI: stesso repertorio, non stesso audio; copia = 0.71), NonSoulFunky 2009 contro il 2015 del banco < 0.20. `~/vp-train/plus` = `wav` + `new` (link).
 - [x] **L'addestramento è deterministico:** `--data ~/vp-train/old --steps 1000 --kd 3 --kdoff 0.3 --seed 0` rifà `m1k3o03s0` (il modello dell'app) bit per bit. Quindi il modello dell'app è addestrato sulle 4 h.
@@ -5320,7 +5320,15 @@ Dati nuovi (`~/Desktop/clicks/nuovi`: 9 brani, FBI 17.11.11, Nonsoulfunky 18.04.
 | disp ms BRANO / MIXER | 12.0 / 12.7 | 13.1 / 12.8 | 13.8 / 12.1 |
 
   Uguale senza GARDEN 2400. Più dati: **BRANO meglio e molto più stabile fra i semi** (intervallo 9.5 → 1.0 punti), uno +5; ma **MIXER peggio di ~5 punti**, ed è il modo dal vivo. Il modello dell'app (A seme 0: 81.7 / 81.0) è il seme fortunato di A; nessun modello nuovo lo batte in entrambi i modi → **non cambiato**.
-- [ ] Ipotesi da provare: la rete impara le feature calcolate al livello del file (`VPActivations`), mentre in MIXER l'analisi passa dalla catena del motore (−12 dB, make-up a 0.20/0.40, inviluppo lento). Rigenerare le feature d'addestramento anche attraverso la catena MIXER (doppio esempio per ogni brano) e ripetere C × 4 semi.
+- [x] **Ipotesi provata e respinta:** il MIXER peggiora perché la rete impara le feature al livello del file? Feature d'addestramento rigenerate attraverso la catena MIXER del motore (VPTrack `--gain -12`, rete originale per i `.act`; scrittura temporanea dei fotogrammi dal worker, poi tolta), fotogramma per fotogramma allineate a quelle del file (stesso numero, ±1 in coda), ogni brano due volte (`~/vp-train/plusmx`). D × 4 semi, tempo giusto: BRANO **77.7** [75.2–79.4] (C 80.8), MIXER **76.0** [73.9–79.2] (C 76.2), uno 69.5 / 68.9 (C 71.7 / 74.2). Peggio o uguale ovunque: il calo in MIXER non viene dalle feature.
+- [x] **Correzione dell'utente (2026-10-07):** tutti i file in `~/Desktop/clicks` e `nuovi` sono registrazioni live dalla mandata del mixer (anche i brani del banco): i dati d'addestramento sono già del dominio giusto, e il banco intero è uso dal vivo.
+- [x] **Solo i 12 tratti live Garden/Flamingo**, tempo giusto BRANO / MIXER: modello dell'app **86.1 / 84.8**; A 74.9 / 78.4; B 77.2 / 73.0; C 82.1 / **63.7**; D 79.0 / 69.6 (medie di 4 semi). Il modello dell'app vince ovunque.
+- [x] **Seconda ipotesi respinta:** il make-up del MIXER a parte suonante (0.40, item 90, scelto con il modello dell'app). Riportato a 0.20 (interruttore temporaneo, tolto): modello dell'app 81.0 → 80.9, C 76.2 → 76.0. Non è il make-up.
+- [x] **Conclusione:** con questi dati l'addestramento non dà un salto: il modello dell'app (4 h, seme 0: 81.7 / 81.0) resta il migliore in entrambi i modi; più dati rendono BRANO stabile ma costano il MIXER, con qualunque feature. Probabile che il percorso MIXER del decoder sia tarato su questo modello (item 90, make-up 0.40 scelto con esso). Perché un modello nuovo perda in MIXER sugli stessi file resta non spiegato (non le feature, non il make-up).
+
+### 103. Banco spostato in `~/vp-bench` ✅ (2026-10-07)
+
+`/tmp/vp-bench` è stato svuotato due volte in un giorno (pulizia periodica di macOS dopo 3 giorni e riavvio). Gli script (`bench_fast.py`, `truth.py`, `stop_song.py`, `bench_songs.py`, `surge_scan.py`, `surge_sources.py`) usano ora `~/vp-bench`; banco ricostruito lì (54 WAV, verità del maestro rigenerata: le eventuali correzioni a mano della verità fatte in passato sono perse). Ricetta di ricostruzione nella skill `tempo-bench` §0. Riferimento attuale: BRANO 81.7%, MIXER 81.0% di tempo giusto.
 
 ## Standby
 

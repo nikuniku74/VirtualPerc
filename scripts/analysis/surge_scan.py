@@ -2,7 +2,7 @@
 """Scatti di velocita' del clock sentito: quello che si sente come "accelera o
 frena troppo rispetto al brano e poi fatica a rientrare".
 
-    SURGE=--top surge_scan.py TAG [TAG2]     (pulses in /tmp/vp-bench/TAG)
+    SURGE=--top surge_scan.py TAG [TAG2]     (pulses in ~/vp-bench/TAG)
 
 Uno scatto e' un tratto in cui clockBpm sta oltre THR% dalla sua mediana su 8 s
 (mentre la parte suona, dopo 20 s). Per ognuno: picco, quanto si e' mosso il BPM
@@ -40,7 +40,7 @@ def surges(pul):
 if __name__ == '__main__':
     for tag in sys.argv[1:]:
         n = 0; secs = 0; span = 0; byreg = collections.Counter(); rows = []
-        for p in sorted(glob.glob(f'/tmp/vp-bench/{tag}/*.pul')):
+        for p in sorted(glob.glob(os.path.expanduser(f'~/vp-bench/{tag}/*.pul'))):
             s, sp = surges(p); span += sp
             for e in s:
                 n += 1; secs += e['dur']; byreg[('CERCO', 'FISSO', 'VIVO')[e['reg']]] += 1

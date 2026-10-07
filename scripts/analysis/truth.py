@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Verità dei battiti da una rete offline, e quanto l'app ci sta sopra (item 87).
 
-    truth.py make [--no-clicks] [WAV ...] battiti e uno -> WAV.truth.txt, e /tmp/vp-bench/clicks/WAV da ascoltare
+    truth.py make [--no-clicks] [WAV ...] battiti e uno -> WAV.truth.txt, e ~/vp-bench/clicks/WAV da ascoltare
     truth.py score TAG [TAG2 ...] i pulses del banco veloce (bench_fast.py run TAG) contro la verità
 
 Il maestro è Beat This! (CPJKU, ISMIR 2024): non causale, quindi gira solo qui e
 mai nell'app. `make` va lanciato con il venv ~/.venvs/vp-teacher; `score` con il
 python di sistema, come bench_fast.py. Senza WAV, `make` prende tutto
-/tmp/vp-bench/wav; i clic vanno fuori da quella cartella, perché bench_fast.py esegue ogni WAV che ci trova; i clic si scrivono una volta per brano: se c'è la versione a
+~/vp-bench/wav; i clic vanno fuori da quella cartella, perché bench_fast.py esegue ogni WAV che ci trova; i clic si scrivono una volta per brano: se c'è la versione a
 44.1 kHz, la 48k (stesso audio, stessi battiti) si salta.
 
 Formato: quello della Parte 2 di docs/HANDOFF_LIVE_TRACKING.md, una riga per
@@ -31,7 +31,7 @@ battiti del clock e la fase sembrerebbe buona.
 import os, sys, wave
 import numpy as np
 
-CACHE = '/tmp/vp-bench'
+CACHE = os.path.expanduser('~/vp-bench')
 
 
 def make(wavs, clicks_wanted=True):

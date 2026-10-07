@@ -43,7 +43,7 @@ import surge_scan  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 VPTRACK = os.environ.get('VPTRACK', os.path.join(ROOT, 'build-host/VPTrack_artefacts/Release/VPTrack'))
-CACHE = '/tmp/vp-bench'
+CACHE = os.path.expanduser('~/vp-bench')
 # Tempo of each song at the level a percussionist plays it, over 60-100 s
 # (docs/TODO.md item 59). Used only to score the bench afterwards; the app
 # never sees it and no threshold is tuned on it.

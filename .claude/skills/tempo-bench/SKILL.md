@@ -10,11 +10,17 @@ A timing change is accepted only with numbers from this procedure. Read
 
 ## 0. Preconditions (run on the user's Mac, not in a cloud container)
 
-- Real audio lives only on the Mac: `/tmp/vp-bench/wav/*.wav` (bench songs at
+- Real audio lives only on the Mac, in `~/vp-bench/wav/*.wav` (bench songs at
   44.1 and 48 kHz + live excerpts), truth files `*.truth.txt` next to them,
-  training data in `~/vp-train`. `/tmp` is wiped on reboot: rebuild the bench
-  as in `scripts/analysis/bench_songs.py` / `extract_live.swift`, truth with
-  `truth.py make` (venv `~/.venvs/vp-teacher`, works in 5-min chunks).
+  training data in `~/vp-train`. It used to be `/tmp/vp-bench`, which macOS
+  empties on reboot and prunes after 3 days (lost twice on 2026-10-07). To
+  rebuild: each `~/Desktop/clicks/NN TITLE.mp3` of the bench through
+  `afconvert -f WAVE -d LEI16@44100|48000` into `NN_TITLE_44k|48k.wav`
+  (`NonSoulFunky - DanceMesh 2015.mp3` -> `NONSOULFUNKY`); live excerpts with
+  `extract_live.swift` from Garden Beach 15.07.26 at 600/1500/2400/3300/4200/5100 s
+  and Flamingo 09.07.26 at 1200/2400/4500/5400 s (240 s each), Flamingo 3750 s
+  (250 s, `98_FLAMINGO_3750`) and 610 s (280 s, `99_SALLY_LIVE`); then
+  `truth.py make --no-clicks` (venv `~/.venvs/vp-teacher`, ~10 min).
 - Build in the **same** `build-host` every time for A/B of the working tree.
 - To measure an older commit, use a separate `git worktree` with its own build
   dir, and link `third_party/JUCE` and `third_party/onnxruntime` into it: without
@@ -29,7 +35,7 @@ A timing change is accepted only with numbers from this procedure. Read
 ## 1. Baseline first
 
 Run the bench on the unmodified tree under a tag (e.g. `b0`) unless a baseline
-tag for the same commit and model already exists in `/tmp/vp-bench/`.
+tag for the same commit and model already exists in `~/vp-bench/`.
 
 ```bash
 python3 scripts/analysis/bench_fast.py run b0          # ~1 min, BRANO path (--player)
