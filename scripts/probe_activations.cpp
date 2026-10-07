@@ -15,6 +15,7 @@
 #include "AI/OnnxBeatModel.h"
 #include "Loops/WavFile.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -120,6 +121,7 @@ int main (int argc, char** argv)
     double silencePreludeSeconds = 0.0;
     bool preserveModelOnRestart = false;
     std::string featuresPath;
+    double dumpGainDb = 0.0;
     std::vector<float> gainsDb { 0.0f, -6.0f, -12.0f, -18.0f };
     std::vector<std::string> positional;
 
@@ -131,6 +133,8 @@ int main (int argc, char** argv)
         else if (a == "--secs" && i + 1 < argc)  seconds = std::atof (argv[++i]);
         else if (a == "--silence-prelude" && i + 1 < argc)
             silencePreludeSeconds = std::max (0.0, std::atof (argv[++i]));
+        else if (a == "--gain" && i + 1 < argc)    // dB on the loaded wav: level-augmented training data (docs/TODO.md item 104)
+            dumpGainDb = std::atof (argv[++i]);
         else if (a == "--features" && i + 1 < argc)
             featuresPath = argv[++i];
         else if (a == "--preserve-model-on-restart")
@@ -175,6 +179,12 @@ int main (int argc, char** argv)
         for (int i = 0; i < wav.frames; ++i)
             song[static_cast<size_t> (i)] = 0.5f * (wav.left[static_cast<size_t> (i)]
                                                     + wav.right[static_cast<size_t> (i)]);
+        if (dumpGainDb != 0.0)
+        {
+            const float g = static_cast<float> (std::pow (10.0, dumpGainDb / 20.0));
+            for (auto& x : song)
+                x = std::clamp (x * g, -1.0f, 1.0f);   // what an int16 send would clip to
+        }
     }
     else
     {

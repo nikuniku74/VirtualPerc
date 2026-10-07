@@ -39,7 +39,9 @@ def load(data):
     tracks = []
     for f in sorted(glob.glob(os.path.join(data, '*.f32'))):
         base = f[:-4]
-        X = np.fromfile(f, dtype=np.float32).reshape(-1, 272)
+        # Read from disk as needed: loading every recording at once (9.6 h at four
+        # analysis levels, ~10 GB) filled a 19 GB Mac's swap and froze it.
+        X = np.memmap(f, dtype=np.float32, mode='r').reshape(-1, 272)
         A = np.loadtxt(base + '.act', comments='#', usecols=(1, 2)).astype(np.float32)
         T = np.loadtxt(base + '.wav.truth.txt', ndmin=2)
         n = len(X)
