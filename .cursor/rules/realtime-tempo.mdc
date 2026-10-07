@@ -5,7 +5,8 @@ alwaysApply: false
 ---
 
 Read `.claude/skills/realtime-tempo/SKILL.md` in full before changing anything
-in `Source/AI/` or `Source/Tracking/`. It is the single source of truth for the
+in `Source/AI/` or `Source/Tracking/`, and the matching file in its
+`references/` for the part you touch. It is the single source of truth for the
 tempo chain and it is shared with Claude Code and Codex - update it there, not
 here.
 
@@ -25,6 +26,6 @@ Non-negotiables it spells out:
 - The octave (half/double time) is not fully solvable from the signal. Do not
   "fix" it in the decoder; AUTO plus the listener's choice is the design.
 
-Verify with `./scripts/run-tests.sh` plus the probe targets listed in the skill
-(`VPAlign`, `VPBar`, `VPTiming`, `VPProbe`, `VPRoom`, `VPReplay`). A timing
+Verify with the procedure in `.claude/skills/tempo-bench/SKILL.md` (fast
+real-song bench + teacher truth + regression gates). A timing
 change with no probe number attached is not reviewable.
