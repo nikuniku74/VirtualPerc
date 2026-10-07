@@ -5298,6 +5298,30 @@ Richiesta: «non mi interessa che migliori le acquisizioni per brani specifici. 
 - [x] **Stato finale** (rispetto al commit `8acfc4b` restano solo item 96 e `releaseFed`): tempo giusto BRANO **81.6%**, MIXER **81.0%** (1.2.6: 78.3% e 76.7%); `stop_song.py` come item 92 (STOP 8 s p90 0.7 s, 53 s); `VPTests` `--transport` 6/0, `--new-input` 16/0, `--bar` 13/0, `--phase-lock` 20/0, `--state-timing` PASS. UN ORA SOLA torna a 153 in BRANO (÷2 a mano).
 - [x] Regola salvata in memoria e nella skill: ogni regola si convalida su file da cui non è nata.
 
+### 101. Skill del tempo snella + `tempo-bench` + `CLAUDE.md`, dalla PR #2 ✅ (2026-10-07, solo documentazione)
+
+Dalla PR nikuniku74/VirtualPerc#2 (basata sulla 1.2.6) portato sul ramo di lavoro solo ciò che migliora:
+- `realtime-tempo/SKILL.md` da 5.300 righe a ~190 (regole, schema del decoder, numeri, mappa); sezioni 2–6 e 8 in `references/`, **rigenerate dalla skill di questo ramo** (comprese le note degli item 94–100: 4763 righe, nessuna persa). Numeri della §4 aggiornati allo stato attuale (item 100), aggiunte la regola dell'aggancio dell'intro (item 96), la nota sulla rete rifinita e la convalida su brani mai visti.
+- Nuova skill `tempo-bench`, corretta: worktree con `third_party/onnxruntime` collegato (non `git checkout <sha> -- Source/`, che cancella il lavoro non salvato), determinismo vero solo da item 96, fallimenti noti `--level` 11/5 e `--octave` 7/4, verifica su metà banco mai vista.
+- `CLAUDE.md` (importa `AGENTS.md`), `AGENTS.md` e la regola Cursor come nella PR.
+- Non portato: niente (il resto della PR era solo spostamento).
+
+### 102. Rete: secondo giro di addestramento con i brani nuovi dell'utente 🟡 (2026-10-07, misurato — nessun modello nuovo adottato)
+
+Dati nuovi (`~/Desktop/clicks/nuovi`: 9 brani, FBI 17.11.11, Nonsoulfunky 18.04.2009 2P): 3.9 h, ~22 900 battiti, in `~/vp-train/new` (wav mono 44.1 kHz, verità del maestro, `.f32`/`.act` con `VP_BEAT_MODEL=gtzan_orig.onnx`, ricetta verificata identica ai file esistenti). Contaminazione (inviluppo d'attacco, 2 sonde da 60 s per brano del banco): massimo 0.45 (GARDEN 2400 dentro FBI: stesso repertorio, non stesso audio; copia = 0.71), NonSoulFunky 2009 contro il 2015 del banco < 0.20. `~/vp-train/plus` = `wav` + `new` (link).
+- [x] **L'addestramento è deterministico:** `--data ~/vp-train/old --steps 1000 --kd 3 --kdoff 0.3 --seed 0` rifà `m1k3o03s0` (il modello dell'app) bit per bit. Quindi il modello dell'app è addestrato sulle 4 h.
+- [x] **Tre insiemi × 4 semi**, stessa ricetta, banco di 54 file contro la verità (media [min–max] sui semi), tempo giusto %:
+
+| | A: 4 h | B: 9.6 h | C: 9.6 + 3.9 h nuove |
+|---|---|---|---|
+| BRANO | 74.9 [72.2–81.7] | 77.3 [74.8–81.8] | **80.8 [80.3–81.3]** |
+| MIXER −12 dB | **81.0 [78.2–83.5]** | 78.2 [76.7–79.7] | 76.2 [74.1–79.6] |
+| uno BRANO / MIXER | 66.5 / 74.6 | 67.8 / 72.3 | 71.7 / 74.2 |
+| disp ms BRANO / MIXER | 12.0 / 12.7 | 13.1 / 12.8 | 13.8 / 12.1 |
+
+  Uguale senza GARDEN 2400. Più dati: **BRANO meglio e molto più stabile fra i semi** (intervallo 9.5 → 1.0 punti), uno +5; ma **MIXER peggio di ~5 punti**, ed è il modo dal vivo. Il modello dell'app (A seme 0: 81.7 / 81.0) è il seme fortunato di A; nessun modello nuovo lo batte in entrambi i modi → **non cambiato**.
+- [ ] Ipotesi da provare: la rete impara le feature calcolate al livello del file (`VPActivations`), mentre in MIXER l'analisi passa dalla catena del motore (−12 dB, make-up a 0.20/0.40, inviluppo lento). Rigenerare le feature d'addestramento anche attraverso la catena MIXER (doppio esempio per ogni brano) e ripetere C × 4 semi.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).
