@@ -717,7 +717,7 @@ void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,
     }
 }
 
-bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial, bool earlyFix) noexcept
+bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept
 {
     // A part that is playing keeps its level, whoever argues otherwise.
     // updateAutoOctave already refuses to move AUTO under a sounding part, but
@@ -735,11 +735,8 @@ bool BeatTracker::holdSoundingLevel (float bpm, uint32_t gridSerial, bool earlyF
     // the next block re-applied cfg.tempoOctave, so the two fought and the
     // tempo did not change (listener report, 2026-09-29). A manual level is
     // the listener's; this rule does not touch it.
-    // The one exception is the decoder's early correction (docs/TODO.md
-    // item 97): a decisive fold early in the song, let through once, by the
-    // listener's decision.
     if (! octaveAuto || ! sounding || ! tempoFollow || tapEstablished
-        || bpm < 40.0f || heldBpm < 40.0f || earlyFix)
+        || bpm < 40.0f || heldBpm < 40.0f)
         return false;
 
     constexpr float kOctaveMatch = 0.10f;   // log2, about 7%
@@ -1255,8 +1252,6 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
     const bool periodic = haveHyp && hyp.valid && nnBpm >= 50.0f;
-    if (periodic)
-        lastHyp = hyp;
 
     // How well the analysis is fitting, against how well it has been fitting on
     // this song. Nothing downstream of this touches the tempo - see the note on
@@ -1484,8 +1479,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     // An exact octave of the tempo being played is not a tempo for the clock.
     const bool octaveAway = haveHyp && periodic && ! harmonicSourceActive
-                            && holdSoundingLevel (nnBpm, hyp.gridSerial,
-                                                  hyp.earlyOctaveFixSerial == hyp.gridSerial);
+                            && holdSoundingLevel (nnBpm, hyp.gridSerial);
 
     // Under a blind START SUBITO the clock is heard before anything is found,
     // so it takes a tempo only once the tracker has left LISTENING - sustained

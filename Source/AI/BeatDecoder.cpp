@@ -380,16 +380,6 @@ namespace
     // allowances in `updateTempo`.
     constexpr float kOctaveArgumentTolerance = 0.15f;
     constexpr float kOctaveSnapSalience = 0.22f;
-    // The one automatic octave correction under a sounding part (docs/TODO.md
-    // item 97): the fold's own level must outscore the held one this many
-    // times over, for this long without a break, and the run must complete
-    // within this long of the part's first entry in the song.
-    constexpr float  kEarlyOctaveFixRatio = 5.0f;
-    constexpr double kEarlyOctaveFixHoldSec = 8.0;
-    constexpr double kEarlyOctaveFixWindowSec = 20.0;
-    // log2: a move of the sounding part's tempo past this (~11%), not an
-    // octave, starts the window again. Same bar as BeatTracker's kAnalysisJump.
-    constexpr float  kEarlyOctaveFixNewLattice = 0.15f;
 
     // How far the comb may move and still be casting the same vote.
     constexpr float kOctaveVoteHold = 0.10f;
@@ -707,12 +697,6 @@ void BeatDecoder::reset() noexcept
     combSlowerBeats = 0;
     combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
-    soundingStartSec = -1.0;
-    soundingStartBpm = 0.0f;
-    combDecisiveSinceSec = -1.0;
-    earlyOctaveFixArmed = false;
-    earlyOctaveFixUsed = false;
-    earlyOctaveFixSerial = 0;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
     beatsOnLevel = 0;
@@ -752,8 +736,6 @@ void BeatDecoder::reset() noexcept
 void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
 {
     const int request = std::clamp (octaves, -2, 2);
-    if (manual)
-        earlyOctaveFixUsed = true;   // the listener owns the level from here
     // A slower level the listener asked for is published, everything else is
     // decoded (see `outputShift`). Going between two published levels, or to
     // the natural one, moves nothing that was measured: the tempo is the same,
@@ -815,67 +797,6 @@ void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
     // Regime exit revokes authority with a generic tenure reset first. Publish
     // the causal boundary last so diagnostics retain the octave/grid reason.
     resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
-}
-
-void BeatDecoder::updateEarlyOctaveFix() noexcept
-{
-    // The level is held under a sounding part (`levelHeldWhilePlaying`), and
-    // the fine-tuned network made that hold the thing keeping some songs wrong:
-    // UN ORA SOLA enters at 24.1 s on 153 as the drums arrive, the fold reads
-    // the song's 76 from 26.5 s for most of the song, outscoring 153 by 30x
-    // and more, and the part plays it at double throughout. Over all 54 bench
-    // files a fold that outscored the held level 5x for 8 s running was right
-    // every time but on one file whose truth is itself unreliable (docs/TODO.md
-    // item 96). So, by the listener's decision: once per song, within 20 s of
-    // the part's first entry, never after a manual octave.
-    // A move of the part's tempo by more than ~11% that is not an octave is a
-    // new entry in all but name - the part changes tempo there anyway - so the
-    // window starts again from it. UNA CANZONE 44k (MIXER) enters at 116 on a
-    // 4:3 lattice of the true 85.7, the analysis moves it at 22.7 s to 151 and
-    // then 168, the double, two seconds before a window counted from the
-    // first entry runs out (docs/TODO.md item 98). Still once per song.
-    const float moved = soundingStartBpm >= kMinBpm && bpm >= kMinBpm
-                            ? std::fabs (std::log2 (bpm / soundingStartBpm)) : 0.0f;
-    const bool newLattice = moved > kEarlyOctaveFixNewLattice
-                            && std::fabs (moved - 1.0f) > kOctaveArgumentTolerance;
-    if (sounding && (soundingStartSec < 0.0 || newLattice))
-    {
-        soundingStartSec = timeSec;
-        soundingStartBpm = bpm;
-    }
-    const bool mayArm = sounding && ! earlyOctaveFixUsed && soundingStartSec >= 0.0
-                        && timeSec - soundingStartSec <= kEarlyOctaveFixWindowSec;
-    if (! sounding || earlyOctaveFixUsed || octaveShift != 0 || outputShift != 0
-        || (! mayArm && ! earlyOctaveFixArmed))
-    {
-        combDecisiveSinceSec = -1.0;
-        earlyOctaveFixArmed = false;
-        return;
-    }
-    if ((frame % 25) != 0)   // two folds every half second, not every frame
-        return;
-
-    // A fold that is not settled is asked nothing - neither for nor against:
-    // the flag drops for single half-seconds in the middle of a decisive run
-    // (UNA CANZONE 44k, MIXER, at 53 s) and must not restart it.
-    if (! tempo.ready() || ! tempo.levelSettled())
-        return;
-    const float raw = tempo.bpm();
-    bool decisive = false;
-    if (raw >= kMinBpm && bpm >= kMinBpm
-        && std::fabs (std::fabs (std::log2 (raw / bpm)) - 1.0f) < kOctaveArgumentTolerance)
-        decisive = tempo.scoreFor (raw).score
-                   > kEarlyOctaveFixRatio * std::max (tempo.scoreFor (bpm).score, 1.0e-3f);
-    if (! decisive)
-    {
-        combDecisiveSinceSec = -1.0;
-        earlyOctaveFixArmed = false;
-        return;
-    }
-    if (combDecisiveSinceSec < 0.0)
-        combDecisiveSinceSec = timeSec;
-    if (mayArm && timeSec - combDecisiveSinceSec >= kEarlyOctaveFixHoldSec)
-        earlyOctaveFixArmed = true;
 }
 
 float BeatDecoder::foldToAnchor (float bpmValue) const noexcept
@@ -1212,12 +1133,6 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     combSlowerBeats = 0;
     combSlowerBpm = 0.0f;
     octaveVoteBpm = 0.0f;
-    soundingStartSec = -1.0;
-    soundingStartBpm = 0.0f;
-    combDecisiveSinceSec = -1.0;
-    earlyOctaveFixArmed = false;
-    earlyOctaveFixUsed = false;
-    earlyOctaveFixSerial = 0;
     staleGridBeats = 0;
     staleGridBpm = 0.0f;
     beatsOnLevel = 0;
@@ -3578,8 +3493,7 @@ void BeatDecoder::updateTempo() noexcept
     // enter the snap vote undid a newly proven 120 -> 160 change after six
     // beats, sent the decoder to 53 BPM and never recovered. This is not an
     // octave veto: once fresh fits exist the ordinary level arbitration resumes.
-    const bool combDisagrees = combReady && combMayCorrect
-                               && (! unprovenSlowerOctave || earlyOctaveFixArmed)
+    const bool combDisagrees = combReady && combMayCorrect && ! unprovenSlowerOctave
                                && ! transitionOwnsRate
                                && bpm > kMinBpm
                                && std::fabs (std::log2 (bpm / combRawBpm)) > kOctaveThreshold;
@@ -3667,12 +3581,7 @@ void BeatDecoder::updateTempo() noexcept
     // `established` through `notifyInputRestart` and is not covered by this at
     // all; and if the held level is the wrong one, the way out is the same one
     // item 17 names - the listener taps ÷2 or ×2.
-    //
-    // One exception, the listener's (docs/TODO.md item 97): early in a song a
-    // fold that outscores the held level five times over for eight seconds
-    // running is let through once - see `updateEarlyOctaveFix`.
-    const bool levelHeldWhilePlaying = sounding && ! provisional && octaveArgument
-                                       && ! earlyOctaveFixArmed;
+    const bool levelHeldWhilePlaying = sounding && ! provisional && octaveArgument;
 
     if (combDisagrees && ! levelHeldWhilePlaying
         && tempo.salience() > kOctaveSnapSalience)
@@ -3747,8 +3656,7 @@ void BeatDecoder::updateTempo() noexcept
             combAgreedBpm > kMinBpm
             && std::fabs (std::log2 (bpm / combAgreedBpm)) < kStaleGridThreshold;
         bool refusePostHoleComb = false;
-        // Eight seconds of a decisive fold are not a leftover (item 97).
-        if (sounding && ! earlyOctaveFixArmed && postHoleReopenSec >= 0.0 && heldLatticeCorroborated
+        if (sounding && postHoleReopenSec >= 0.0 && heldLatticeCorroborated
             && combRawBpm > kMinBpm && bpm > kMinBpm
             && std::fabs (std::log2 (combRawBpm / bpm)) > kStaleGridThreshold)
         {
@@ -3828,13 +3736,6 @@ void BeatDecoder::updateTempo() noexcept
         longFitBpm = 0.0f;
         shortFitBpm = 0.0f;
         shortFitResidual = 1.0f;
-        if (sounding)
-        {
-            if (earlyOctaveFixArmed)
-                earlyOctaveFixSerial = gridSerial;
-            earlyOctaveFixArmed = false;
-            earlyOctaveFixUsed = true;
-        }
         resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
         return;
         }
@@ -5498,7 +5399,6 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     // also a beat, and looking only at pBeat drops bar accents.
     const float pulseActivation = std::max (pBeat, pDownbeat);
     tempo.push (pulseActivation);
-    updateEarlyOctaveFix();
     if (useAnchor)
     {
         hmm.push (pulseActivation);
@@ -6051,7 +5951,6 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.beatSerial = publishedBeatSerial;
     hyp.downbeatSerial = downbeatSerial;
     hyp.gridSerial = gridSerial;
-    hyp.earlyOctaveFixSerial = earlyOctaveFixSerial;
     hyp.beatDownbeat = lastBeatDownbeat;
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;

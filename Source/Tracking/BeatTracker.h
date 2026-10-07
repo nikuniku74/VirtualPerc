@@ -279,19 +279,8 @@ public:
         // the part has played (a break inside the song keeps its lock: on
         // WRECKING BALL 44k a cold epoch at 51 s after a break reacquired at
         // the half), and not without a lock (the first epoch from silence).
-        // Unless that lock is proven: a long fit over beats found on every
-        // grid point (coverage), with the fold agreeing. Every intro lock
-        // that was right had it - THE REASON x2 84.7/84.4, cov 1.00; BLUE SKY;
-        // EVERYTIME on the MIXER 122.6/123.2, cov 1.00 - and none of the wrong
-        // ones did (VIVERE cov 0.25, WRECKING BALL 0.29, FEEL and EVERYTIME
-        // on the file no long fit). Dropping a proven one cost THE REASON 48k
-        // 15 s on a fresh 59 (docs/TODO.md item 99).
-        const auto near = [] (float a, float b) { return a > 40.0f && b > 40.0f && std::fabs (a / b - 1.0f) < 0.04f; };
-        const bool provenLock = lastHyp.fitCoverage >= 0.9f
-                                && near (lastHyp.bpm, lastHyp.longFitBpm)
-                                && near (lastHyp.bpm, lastHyp.combBpm);
         const bool staleIntroLock = changed && seenEpoch && epoch != lastInputEpoch
-                                    && ! preserveComb && ! hadPlayed && ! provenLock
+                                    && ! preserveComb && ! hadPlayed
                                     && (currentState == TrackingState::following
                                         || currentState == TrackingState::lowConfidence
                                         || currentState == TrackingState::recovering);
@@ -318,7 +307,6 @@ public:
             // through here, and that one still must not restart the clock.
             follower.reset();
             evidence.restart();
-            lastHyp = {};
             // The old clock is gone, so its acquisition proof is gone too.
             // Keeping these counters let the next file enter FOLLOWING on its
             // first provisional beat, with the previous file's confidence and
@@ -569,7 +557,7 @@ private:
     bool tryAlignFrom (const float* votes, float evidence, bool comingIn,
                        float extraMargin) noexcept;
     bool barIsTrustedNow() noexcept;
-    bool holdSoundingLevel (float bpm, uint32_t gridSerial, bool earlyFix) noexcept;
+    bool holdSoundingLevel (float bpm, uint32_t gridSerial) noexcept;
     void updateAutoOctave (float bpm, bool periodic, int numSamples,
                            bool metricalHintValid, int metricalHint) noexcept;
     void holdBarDecision() noexcept;
@@ -656,8 +644,6 @@ private:
     int lineLockSamples = 0;
     bool startImmediately = false;
     bool hadPlayed = false;
-    /** The newest periodic hypothesis, kept across blocks for setInputEpoch. */
-    BeatHypothesis lastHyp {};
     bool needsResync = false;
     int nudgeSamples = 0;
     int nudgeSide = 0;

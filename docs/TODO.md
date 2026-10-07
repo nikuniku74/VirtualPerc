@@ -5262,14 +5262,14 @@ Richiesta: «continua sul lavoro sul core che varrebbe di più» (item 94: levar
 - [x] Misura (pettine contro ancora, su tutti i file): un pettine **deciso** (≥5 volte l'ottava dell'ancora) **per 8 s di fila** ha ragione su UN ORA SOLA (×4, fino a 64 s di fila), FLAMINGO 2400 (MIXER) e VIVERE (BRANO); ha torto solo su GARDEN 1500, file con verità inaffidabile. Ma quasi sempre succede **con la parte che suona**.
 - [x] **Decisione dell'utente (2026-10-06): sì alla correzione automatica, misurata → item 97.** Era: correggere UN ORA SOLA vuol dire o un ingresso più lento per tutti i brani (≥ 8–10 s dopo la batteria), o **una correzione automatica dell'ottava dopo l'ingresso**, che oggi la regola vieta (solo a mano). Proposta: una sola volta, solo nei primi ~20 s dopo l'ingresso, solo con il pettine deciso per 8 s di fila. Senza il sì dell'utente non si fa: resta il ÷2/×2 a mano.
 
-### 97. Una sola correzione automatica dell'ottava, nei primi 20 s dopo l'ingresso 🟡 (2026-10-06, misurato — da ascoltare)
+### 97. Una sola correzione automatica dell'ottava, nei primi 20 s dopo l'ingresso 🔴 (2026-10-06, TOLTA — vedi item 100)
 
 Decisione dell'utente dopo l'item 96: «sì, prova la correzione automatica e misurala». Regola globale, nessun valore per brano.
 - [x] **Regola** (`BeatDecoder::updateEarlyOctaveFix`): con la parte che suona, se il pettine dà alla sua ottava almeno **5 volte** il punteggio dell'ottava tenuta, **per 8 s di fila**, a livello assestato, e la serie si completa entro **20 s** dal primo ingresso della parte nel brano, il voto d'ottava già esistente viene lasciato passare **una volta**. Mai dopo un ÷2/×2 a mano; si azzera con un brano nuovo (`notifyInputRestart`). Da armata scavalca il rifiuto «pettine rimasto dopo un buco» e il veto `unprovenSlowerOctave` (8 s di pettine deciso sono la prova). Il tracker riconosce quella griglia (`BeatHypothesis::earlyOctaveFixSerial`) e non la riporta indietro (`holdSoundingLevel`), come fa con ogni altro salto d'ottava sotto la parte.
 - [x] **Misura, 54 file contro il maestro:** tempo giusto **BRANO 81.6 → 82.3%**, **MIXER 81.0 → 81.5%**; cambiano 4 file su 108, gli altri identici bit per bit. **UN ORA SOLA** 44k e 48k (BRANO) **0 → 87% e 91%** (ingresso a 24.1 s su 153, passa a 76.9 a 39.5 s, poi resta 74–75), **FLAMINGO 2400** (MIXER) **60 → 84%**; **VIVERE 48k** (BRANO) 87 → 0.3%: era a 54 (né 65 né 130), il pettine deciso a 108 l'ha portato a ~130, l'ottava che le altre tre versioni di VIVERE avevano già. VIVERE è il brano che la rete legge davvero ambiguo (attivazione a metà quarto 0.55). Scatti di velocità BRANO 0.18 → 0.19/min, MIXER 0.24 → 0.23.
 - [ ] Ascolto: UN ORA SOLA in BRANO suona ~15 s a 153 e poi passa a 76 per il resto del brano; VIVERE ora sempre a ~130 (se va contato a 65, ÷2).
 
-### 98. Controllo regressioni contro la 1.2.6 (`be0315f`) e correzione di UNA CANZONE 44k (MIXER) 🟡 (2026-10-06, misurato — da ascoltare)
+### 98. Controllo regressioni contro la 1.2.6 (`be0315f`) e correzione di UNA CANZONE 44k (MIXER) 🔴 (2026-10-06, correzione TOLTA con la 97 — vedi item 100; il controllo regressioni resta valido)
 
 Richiesta: «analizza se segue al meglio e stabilmente i brani o se è subentrato qualche bug o regressione… rispetto alla versione con tag 1.2.6». 1.2.6 ricompilata a parte, stessi 54 file, stesso banco deterministico.
 - [x] **Medie, 1.2.6 → ora:** tempo giusto BRANO 78.3 → **82.3%**, MIXER −12 dB 76.7 → **82.4%**; primo quarto («uno») 69.7 → 70.4% e 73.0 → **76.9%**; scatti di velocità 0.31 → **0.19/min** e 0.45 → **0.23/min**; precisione sui brani alla stessa ottava 12.4 → 12.2 ms e 11.7 → 11.6 ms (oltre 25 ms 19.0 → 18.9% e 18.0 → 17.8%).
@@ -5280,7 +5280,7 @@ Richiesta: «analizza se segue al meglio e stabilmente i brani o se è subentrat
 - [ ] Ascolto: UNA CANZONE 44k in MIXER.
 - [ ] Possibili miglioramenti (non fatti): riaggancio dopo la ripartenza (THE REASON 59, UN ORA SOLA 60 dopo lo STOP — stessa famiglia: una lettura fresca su un reticolo 2:3); START premuto prima dell'attacco con STOP breve.
 
-### 99. Riaggancio dopo una ripartenza: l'aggancio dell'intro si tiene se è dimostrato 🟡 (2026-10-06, misurato — da ascoltare)
+### 99. Riaggancio dopo una ripartenza: l'aggancio dell'intro si tiene se è dimostrato 🔴 (2026-10-06, TOLTO — vedi item 100)
 
 Richiesta: «migliora il riaggancio dopo una ripartenza» (item 98: THE REASON 48k riagganciato a 59, UN ORA SOLA a 60 dopo lo STOP, FEEL a 69).
 - [x] **Causa (THE REASON 48k, MIXER):** l'intro è agganciato bene (84.7, fit lunghi pieni, pettine d'accordo, confidenza 0.97); all'ingresso della band l'item 96 lo scarta, il decoder riparte e 1 s dopo aggancia 59.1 con confidenza 0.52 e senza pettine, la parte entra lì; il pettine dice 85 da 23.6 s, il decoder ci passa a 30 s.
@@ -5288,6 +5288,15 @@ Richiesta: «migliora il riaggancio dopo una ripartenza» (item 98: THE REASON 4
 - [x] **Fix** (`BeatTracker::setInputEpoch`, `provenLock`; `lastHyp` tiene l'ultima ipotesi periodica): l'aggancio dell'intro si scarta solo se non è dimostrato (copertura ≥ 0.9, fit lungo e pettine entro il 4% del tempo). Tempo giusto MIXER 82.4 → **82.5%** (THE REASON 48k **92 → 97%**, BLUE SKY 48k 60 → 61%), BRANO identico bit per bit; ingressi tornati ai tempi della 1.2.6 (EVERYTIME MIXER 11.1 → 9.1 s, THE REASON 48k 17.4 → 16.4 s, BLUE SKY 48k 54.8 → 53.5 s). `stop_song.py` identico; `VPTests` `--transport` 6/0, `--new-input` 16/0, `--bar` 13/0, `--phase-lock` 20/0, `--state-timing` PASS.
 - [x] Provati e scartati: **non azzerare la rete** a una ripartenza fredda su audio continuo (BRANO 82.3 → 80.6%, MIXER 82.4 → 79.1%: guariscono THE REASON 48k e UNA CANZONE 44k, si rompono VIVERE ×2, WRECKING BALL 44k, UNA CANZONE 48k, FLAMINGO 2400); **primo ingresso solo con il pettine d'accordo** (stesso tempo o un'ottava) (BRANO +0.1, MIXER 82.5 → 81.3%, ingresso ritardato fino a 27 s, p90 3–4 s; FEEL e WRECKING BALL invariati).
 - [ ] Resta: UN ORA SOLA dopo uno STOP di 8 s su un passaggio piano (item 98) — anche una fine brano vera ha un aggancio dimostrato prima, quindi questa regola non li separa. FEEL e WRECKING BALL 04 (BRANO) entrano su un primo aggancio sbagliato senza ripartenza: altro problema (acquisizione iniziale).
+
+### 100. Verifica su brani mai visti: tenuta la 96, tolte 97–99; un difetto della 97 trovato 🟡 (2026-10-06, misurato)
+
+Richiesta: «non mi interessa che migliori le acquisizioni per brani specifici. Mi interessa che sfrutti i brani per capire e migliorare globalmente» → «procedi».
+- [x] **Metodo:** banco di verifica = i 46 file (23 brani × 44k/48k) da cui **non** è nata nessuna regola di oggi (fuori UN ORA SOLA, UNA CANZONE, THE REASON, EVERYTIME). Per ogni regola: tutto acceso meno quella regola, effetto sulla media del banco di verifica (BRANO e MIXER −12 dB, 92 esecuzioni). Si tiene solo ciò che lo migliora in modo netto.
+- [x] **Esito sulla verifica:** item 96 (scarto dell'aggancio dell'intro) MIXER 4 file cambiati, tempo giusto **+4.7**, uno +4.3, scatti −0.04/min → **tenuto**. Item 97 (correzione d'ottava) 1 file su 92 (+0.58 MIXER) → **tolto**. Item 98 (finestra che riparte, campione non assestato) 0 file → **tolto**. Item 99 (aggancio «dimostrato») 1 file, giusto +0.01, uno −0.32 → **tolto**.
+- [x] **Difetto trovato nella 97 durante la verifica:** il tracker accettava come «correzione ammessa» `earlyOctaveFixSerial == gridSerial`, vero anche con entrambi a 0 a inizio brano: la tenuta d'ottava sotto la parte era spenta finché la griglia non veniva ricostruita (VIVERE 48k BRANO 87 → 0.3%; media BRANO falsata di −1.5 punti nelle misure degli item 97–99). Sparito con la 97.
+- [x] **Stato finale** (rispetto al commit `8acfc4b` restano solo item 96 e `releaseFed`): tempo giusto BRANO **81.6%**, MIXER **81.0%** (1.2.6: 78.3% e 76.7%); `stop_song.py` come item 92 (STOP 8 s p90 0.7 s, 53 s); `VPTests` `--transport` 6/0, `--new-input` 16/0, `--bar` 13/0, `--phase-lock` 20/0, `--state-timing` PASS. UN ORA SOLA torna a 153 in BRANO (÷2 a mano).
+- [x] Regola salvata in memoria e nella skill: ogni regola si convalida su file da cui non è nata.
 
 ## Standby
 
