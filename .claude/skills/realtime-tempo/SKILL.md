@@ -66,6 +66,9 @@ mic / line in
 - Bar count: a trusted one is moved only with strong evidence (network alone at
   `kBarNetAloneMargin`, or network + harmony agreeing). `barLocked` (SPOSTA L'1 /
   a tap on the one) stops all automatic rotation.
+  The network's downbeat votes forget at `kVoteDecay` 0.95 per beat (half in
+  ~3.5 bars, item 106): the app was already at the best fixed one-per-song,
+  and the true one moves mid-song; 0.982 kept it wrong for ten bars.
 
 ## 3. How the decoder works, in one page
 
@@ -119,7 +122,7 @@ Against the offline teacher (Beat This!) on the real-song bench:
 
 Decisions, current model (2026-10-06, 54 files): right tempo/octave 81.6% of
 beats on loaded files and 81.0% on the MIXER at -12 dB (1.2.6: 78.3 / 76.7%),
-right one 69.5 / 75.7%, scatter 12.1 / 11.8 ms, beats > 25 ms 19.3 / 18.6%,
+right one 75.0 / 78.8% (item 106; 69.5 / 75.7 before), scatter 12.1 / 11.8 ms, beats > 25 ms 19.3 / 18.6%,
 rate surges 0.18 / 0.24 per minute; no drift between the first and the last
 quarter of a song (median < 1 ms). **Phase is near the network's ceiling; the open problems
 are decisions (octave, the one, entry), not precision.** Any threshold measured

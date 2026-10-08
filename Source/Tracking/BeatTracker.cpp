@@ -20,45 +20,57 @@ namespace
     // Beats the histogram has to hold before it is worth acting on while
     // waiting to come in, and the larger number needed to move a bar that is
     // already playing - where the correction is something the listener hears.
-    // The decayed counter reaches 7 after the eighth accepted beat, so a clear
-    // opinion can place the one by the end of two bars. Waiting twelve used to
+    // The decayed counter reaches this after the eighth accepted beat, so a
+    // clear opinion can place the one by the end of two bars (6.63 at the
+    // current kVoteDecay; it was 7 when the decay was 0.982 - the beat count
+    // is the decision, the number only follows it, docs/TODO.md item 106). Waiting twelve used to
     // require thirteen beats in practice: more than three bars before a player
     // could even call the first quarter. The confidence margin below still has
     // to win; this only removes evidence that arrived after the deadline.
-    constexpr float kBeatsToTrustTheBar = 7.0f;
-    // What 32 costs, written down because it is not obvious from the number:
-    // the counter is `v = v * kVoteDecay + 1`, so it converges to 55.6 and
-    // crosses 32 on the forty-seventh beat - twelve bars, twenty-nine seconds
-    // at 100 BPM and fifty-nine at 50. Measured on the bar bench by moving the
-    // hole: the count is still on the wrong beat at 46.7 beats of clean
-    // downbeats and has rotated by 53.3. That is the deliberate price of
-    // moving a bar the listener can hear - one tap fixes a bar that is
-    // consistently wrong, nothing fixes one that keeps moving - but it is a
-    // long time to play on the wrong one, so change it knowing the number.
-    constexpr float kBeatsToMoveTheBar = 32.0f;
-    // Two bars: with per-beat decay a threshold of 7 is crossed by the eighth
-    // vote. After a hole the new downbeats are a flip of 1 vs 3, not a noisy
+    constexpr float kBeatsToTrustTheBar = 6.6f;
+    // The counter is `v = v * kVoteDecay + 1` and converges to 20 at the
+    // current decay; 11.6 is the same share of that limit (0.58) that 32 was of
+    // 55.6 when the decay was 0.982, i.e. the twelfth beat - three bars - rather
+    // than the forty-seventh. See kVoteDecay for why it is short now.
+    constexpr float kBeatsToMoveTheBar = 11.6f;
+    // What a listener-declared one (SPOSTA L'1 / L'1 e' QUI) starts the vote
+    // with: a full count, so the network has to argue a long while against it
+    // once the lock comes off. Unchanged from when it was kBeatsToMoveTheBar.
+    constexpr float kLockedBarVotes = 32.0f;
+    // Two bars: with per-beat decay this threshold is crossed by the eighth
+    // vote (see kBeatsToTrustTheBar). After a hole the new downbeats are a flip of 1 vs 3, not a noisy
     // plurality, so there is no reason to charge a ninth beat.
-    constexpr float kBeatsToTrustReentry = 7.0f;
+    constexpr float kBeatsToTrustReentry = 6.6f;
     // Four bars at the current tempo. Long enough for the eight beats of
     // evidence, short enough that a false hole does not leave the clap muted
     // for a phrase.
     constexpr double kBarReentryBars = 4.0;
 
-    // Per beat. Over sixty-four of them - sixteen bars - the oldest evidence is
-    // worth a third of the newest, which is a phrase or two: long enough to be
-    // a vote and short enough to notice a section change. It used to be applied
-    // per downbeat *event*, which on material the network was sure about was
-    // about once a bar and on material it was unsure about was hardly ever, so
-    // the window the vote covered was a function of how confident the network
-    // happened to be.
-    constexpr float kVoteDecay = 0.982f;
+    // Per beat (it used to be per downbeat *event*, so the window was a
+    // function of how sure the network happened to be). Half the weight is
+    // gone after 13.5 beats - three bars and a half. It was 0.982 (38 beats,
+    // ten bars), and measured against the offline teacher that was what kept
+    // the count wrong: on the 54-file bench the app already matched the best
+    // fixed alignment per song (72.1 vs 72.7% of true ones, loaded files),
+    // while realigning every four bars would reach 88%, because the true one
+    // moves mid-song (odd bars, pick-ups, sections) and the long memory needed
+    // ten bars to follow. Bench split by song, chosen on one half, checked on
+    // the other (docs/TODO.md item 106), true one counted as one, loaded file /
+    // MIXER -12 dB: held-out half 73.0 / 82.6 -> 78.2 / 85.1%; 0.93 was 79.3 /
+    // 85.1 and 0.90 dropped. The cost is audible: bar rotations 0.27 -> 0.39
+    // per minute (loaded) and 0.21 -> 0.45 (MIXER), and of those 14 and 19
+    // moved a one that was right (1 and 4 before). 0.95 is the listener's
+    // choice between the two. Tempo, phase and rate surges unchanged.
+    constexpr float kVoteDecay = 0.95f;
+    // The harmony keeps the long memory it was measured with: chord changes
+    // arrive about once a bar, not once a beat.
+    constexpr float kHarmonyVoteDecay = 0.982f;
 
     /** Harmonic changes the histogram has to hold before the harmony is allowed
         to place the bar. One change is an anecdote; eight is a section, and on
         material that changes chord once a bar that is eight bars of agreement.
-        Decayed with the same constant as the network's votes, so an arrangement
-        that stops moving stops answering. */
+        Decayed per change by kHarmonyVoteDecay, so an arrangement that stops
+        moving stops answering. */
     constexpr float kChangesToTrustTheBar = 8.0f;
 
     /** How much clearer than the network the harmony has to be before it is
@@ -625,8 +637,8 @@ void BeatTracker::holdBarDecision() noexcept
     // the song was over. On material where the vote is no better than a coin
     // that is the worst of both: the correction appears to take, and then goes.
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
-    downbeatVotes[0] = kBeatsToMoveTheBar;
-    voteBeats = kBeatsToMoveTheBar;
+    downbeatVotes[0] = kLockedBarVotes;
+    voteBeats = kLockedBarVotes;
     barLocked = true;
     barTrustEstablished = true;
 }
@@ -1672,8 +1684,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const int nearest = static_cast<int> (std::lround (posNow - leadSec / beatSeconds));
             const int at = ((nearest % 4) + 4) & 3;
             for (float& v : harmonyVotes)
-                v *= kVoteDecay;
-            harmonyVoteCount = harmonyVoteCount * kVoteDecay + 1.0f;
+                v *= kHarmonyVoteDecay;
+            harmonyVoteCount = harmonyVoteCount * kHarmonyVoteDecay + 1.0f;
             harmonyVotes[at] += pendingHarmonyStrength[h];
             ++harmonicChangeCount;
         }

@@ -5230,10 +5230,12 @@ Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non 
   `VPTests` `--bar` 13/0, `--new-input` 16/0, `--transport` 6/0, `--state-timing`, `--phase-lock` 20/0.
 - [ ] **Ponte di moto** (`TempoMotionShape` + `TempoMotionTracker`, classificatore di forma e autorità del ponte, ~1500
   righe fra decoder, tracker, motore, DEBUG, 2 file di test, 3 sonde): attivo lo 0.14–0.16% del tempo sui brani veri;
-  spento, tutte le metriche identiche in BRANO e MIXER. Neutro: da togliere se l'utente vuole (cambia lo strumento
-  `compare_motion_matrix.py`, che pretende autorità sul continuo).
-- [ ] **Canale cassa separato** (`KickOnsetDetector`, tasto CASSA, ~300 righe): spento di default e inerte; l'utente dal
-  vivo usa solo il mix completo. Da togliere se l'utente conferma.
+  spento, tutte le metriche identiche in BRANO e MIXER. **Da togliere** (decisione dell'utente, 2026-10-08), a patto
+  che non ci siano regressioni: banco veloce bit per bit identico in BRANO e MIXER −12 (e −6/−18), `stop_song.py`,
+  `VPAlign --steps/--ramps`, `VPTests --tempo-step --tempo-slow --bar --new-input --transport --phase-lock`.
+  Cambia lo strumento `compare_motion_matrix.py`, che pretende autorità sul continuo. Da fare in una nuova chat.
+- [x] **Canale cassa separato** (`KickOnsetDetector`, tasto CASSA, ~300 righe): **resta** (decisione dell'utente,
+  2026-10-08: «potrebbe servire»). Spento di default; dal vivo oggi si usa il mix completo.
 - [ ] Ascolto: con le porte tolte la parte dovrebbe «scattare» meno, soprattutto nei brani lenti e dal vivo.
 
 ### 95. Cambio suoni dei knob: pulsante EDIT e modale al posto del long-press 🟡 (2026-10-06, compila — da provare sul dispositivo)
@@ -5348,6 +5350,25 @@ Dati nuovi (`~/Desktop/clicks/nuovi`: 9 brani, FBI 17.11.11, Nonsoulfunky 18.04.
 - [x] **Difetto di «senza ancora»:** sui brani che partono già a pieno volume (START con la band in corso, item 88) la parte a volte non entra mai (UMBRELLA 4 repliche su 8, INFINITO e ASPETTANDO 1): senza ancora la confidenza perde il margine del modello a stati (`scoreConfidence`) e la regola `lineLocked` (confidenza > 0.80 per 4 s di fila) non si chiude.
 - [x] **Variante: togliere solo il ripiegamento del pettine sull'ancora** (`foldToAnchor`; il modello a stati resta per l'aggancio rapido e la confidenza). Nessuna parte muta. Banco intero: 82.5 / 81.5 / 78.3 / 82.7 (media **81.3**, oggi 80.3), uno BRANO 71.9 (69.5), M6 71.7 (67.4); tratti live 86.5 / 84.6 / 82.2 / 86.2.
 - [x] **Ma la verifica su brani mai visti non regge** (fuori i 6 brani instabili da cui è partito il lavoro, 43 file): BRANO 86.0 → 86.1, MIXER −12 **85.3 → 84.2**, −6 85.3 → 84.9, −18 84.7 → 84.7; uno −0.3/−1.1/+1.0/−0.1. Tutto il guadagno sta nei 6 brani (MIXER −6 27.4 → 49.7, ma −18 80.7 → 73.6). **Non adottata.** Limite del metodo: una correzione di stabilità migliora solo i brani instabili, e non ce ne sono di «mai visti» per dimostrarla; servirebbero registrazioni nuove con ottava in bilico.
+
+### 106. Il primo quarto: memoria dei voti più corta 🟡 (2026-10-07, misurato, scelto ×0.95 dall'utente — da ascoltare)
+
+- [x] **Diagnosi** (voti per battito registrati dall'app, interruttore temporaneo; verità del maestro): uno giusto 72.1% BRANO, 78.2% MIXER −12. Errori: 1↔3 55% / 78%, un quarto il resto; solo 10–12% nei primi 20 s; 76–82% in tratti di almeno 8 battute. **Tetto con un allineamento fisso per brano: 72.7 / 74.7%** (l'app è già lì); riallineando ogni 4 battute 88.4 / 89.4% → l'uno vero si sposta a metà brano (battute irregolari, levare, sezioni) e l'app lo segue tardi: memoria dei voti ×0.982 per battito (metà in ~38 battiti), 32 battiti per spostare.
+- [x] **Memoria più corta** (`kVoteDecay`, con i battiti per spostare `0.58/(1−decay)`, al più 32; la pausa dopo una rotazione 9.6 → 4.8 s non cambia nulla). Banco diviso per brano, scelta sulla metà A, verifica sulla B. Uno giusto BRANO / MIXER:
+
+| | A | B (verifica) | rotazioni/min | rotazioni che correggono / rompono |
+|---|---|---|---|---|
+| ×0.982 (oggi) | 66.8 / 70.8 | 73.0 / 82.6 | 0.27 / 0.21 | 48 / 1, 32 / 4 |
+| ×0.97 | 71.3 / 72.1 | 75.1 / 84.1 | 0.32 / 0.27 | |
+| ×0.95 | 72.6 / 74.1 | 78.2 / 85.1 | 0.39 / 0.45 | 56 / 14, 49 / 19 |
+| ×0.93 | **74.0 / 75.3** | **79.3 / 85.1** | 0.50 / 0.53 | 62 / 24, 50 / 24 |
+| ×0.90 | 74.1 / 73.4 | 77.7 / 82.3 | 0.82 / 0.85 | |
+
+  Tempo, fase e scatti invariati (la rotazione cambia solo il conteggio). Migliora su entrambe le metà: è globale. **Costo udibile:** più rotazioni, e una parte rompe un uno giusto (il pattern salta di un quarto). Da scegliere con l'utente fra ×0.95 e ×0.93, poi ascolto.
+- [x] **Scelto ×0.95** (utente). `BeatTracker`: `kVoteDecay` 0.982 → 0.95 per i voti della rete; `kBeatsToMoveTheBar` 32 → 11.6 (stessa quota del limite del contatore, dodicesimo battito); `kBeatsToTrustTheBar` e `kBeatsToTrustReentry` 7 → 6.6 (di nuovo l'ottavo battito, come dice il loro commento: con 7 il rientro dopo un buco perdeva la finestra di due battute, `--bar`); l'armonia tiene 0.982 (`kHarmonyVoteDecay`); l'uno dichiarato dall'utente parte ancora da 32 voti (`kLockedBarVotes`).
+- [x] **Misura finale** (54 file contro il maestro): uno giusto BRANO **69.5 → 75.0%**, MIXER −12 **75.7 → 78.8%**; metà di verifica 73.0 → 78.2 / 82.6 → 85.3; tempo, fase, scatti, uscite identici; rotazioni 0.27 → 0.39 / 0.21 → 0.44 al minuto.
+- [x] `VPTests` `--bar` 13/0 dopo aver corretto il test del «fill»: teneva lo spostamento dell'uno per sempre e chiedeva 4 battute ferme (cioè la memoria vecchia di 10 battute); ora è un fill di una battuta che torna, e il conteggio non lo segue. `--new-input` 16/0, `--transport` 6/0, `--phase-lock` 20/0, `--state-timing` e `--harmonic-entry` PASS.
+- [ ] Ascolto: l'uno dovrebbe tornare giusto in poche battute dopo una battuta irregolare o un cambio di sezione; il pattern si sposta un po' più spesso (circa una volta ogni 2–2.5 minuti invece di 4), a volte su un uno che era giusto.
 
 ## Standby
 

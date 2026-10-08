@@ -4,6 +4,21 @@ Moved verbatim from SKILL.md section 3 on 2026-10-07. Chronological log: newest 
 
 ## 3. Phase: the part that is easy to get wrong
 
+**Kept (2026-10-07), shorter memory for the network's downbeat votes (docs/TODO.md item 106).**
+Measured against the offline teacher on the 54-file bench, from the votes the app
+actually receives (per-beat dump, removed): the app's one was already at the best
+*fixed* alignment per song (72.1 vs 72.7% loaded files, 78.2 vs 74.7% MIXER), while
+re-aligning every four bars would reach 88-89%: the true one moves mid-song and
+`kVoteDecay` 0.982 (half-life 38 beats) followed it ten bars late. Errors: 1-vs-3
+55/78%, 76-82% in runs of 8+ bars, only 10-12% in the first 20 s. Bench split by
+song, chosen on half A, checked on half B: 0.97 / 0.95 / 0.93 / 0.90 all better
+than 0.982 on both halves, 0.93 best on A, 0.90 drops. Listener chose 0.95 for
+fewer audible rotations: held-out one 73.0/82.6 -> 78.2/85.3%, whole bench
+69.5/75.7 -> 75.0/78.8%, rotations 0.27/0.21 -> 0.39/0.44 per min (14/19 of them
+move a right one, 1/4 before). `kBeatsToMoveTheBar` 11.6 (same share of the
+counter's limit), trust thresholds 6.6 (still the eighth beat), harmony keeps
+0.982, a declared one starts from 32. Tempo/phase untouched.
+
 The hypothesis describes audio that arrived *in the past*. Everything is
 projected forward to now before it is handed to the clock. The projection term
 is the same everywhere in `BeatTracker.cpp` (see `:1157` for the kick path,

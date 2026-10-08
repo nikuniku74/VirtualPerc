@@ -1465,8 +1465,12 @@ void vpRunBarReentryTests (int& passed, int& failed)
     }
 
     {
-        // Fill: the network's downbeat flips by two quarters with no level
-        // hole. Playing alignment must not rotate inside the re-entry window.
+        // Fill: the network's downbeat flips by two quarters for one bar, with
+        // no level hole, then returns. The count must not follow it. A flip
+        // that *stays* is a different thing and is followed after about three
+        // bars since the vote memory was shortened (docs/TODO.md item 106) -
+        // this test used to hold the flip for good and ask for four bars of
+        // stillness, which is the old ten-bar memory, not a fill.
         auto model = std::make_unique<ShiftBarModel> (framesPerBeat);
         auto* raw = model.get();
         vp::VirtualPercussionEngine eng;
@@ -1486,6 +1490,8 @@ void vpRunBarReentryTests (int& passed, int& failed)
         const int rotBefore = eng.snapshot().barRotations;
         const bool starved = eng.snapshot().analysisGaps > 0;
         raw->shifted.store (true, std::memory_order_relaxed);
+        pos = pump (eng, song.data(), n, pos, static_cast<int> (sr * fourBarsSec / 4.0), oL, oR);
+        raw->shifted.store (false, std::memory_order_relaxed);
         pos = pump (eng, song.data(), n, pos, static_cast<int> (sr * fourBarsSec), oL, oR);
         const int rotAfter = eng.snapshot().barRotations;
         const bool reentry = eng.snapshot().barReentry;
@@ -1494,7 +1500,7 @@ void vpRunBarReentryTests (int& passed, int& failed)
         expect (starved || ! reentry,
                 "a fill without a level hole does not open the re-entry window");
         expect (starved || rotAfter == rotBefore,
-                "and the bar is not rotated for it inside four bars");
+                "and the bar is not rotated for a one-bar fill");
         (void) pos;
     }
 
