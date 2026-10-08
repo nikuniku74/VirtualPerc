@@ -175,7 +175,6 @@ private:
     void layoutCompact();
     void applyCompactVisibility();
     void layoutMisure (juce::Rectangle<int> body);
-    void layoutFeelKnobs (juce::Rectangle<int> body);
     void prepareHits (double sampleRate);
     void mixHits (float* const* outs, int numChannels, int numSamples) noexcept;
 
