@@ -540,6 +540,8 @@ private:
         never reads these. */
     float tempoBloomLead = 0.0f;
     float tempoBloomAmount = 0.0f;
+    juce::Colour stateSmooth;
+    float heroBloomAmt = 0.0f;
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

@@ -1212,8 +1212,6 @@ MainComponent::MainComponent()
     setupBtn (tapButton, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
-    halveButton.getProperties().set ("circle", true);
-    doubleButton.getProperties().set ("circle", true);
 
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
@@ -3904,6 +3902,13 @@ void MainComponent::timerCallback()
         const auto bloom = tempoBloomFor (snap);
         tempoBloomLead += (bloom.lead - tempoBloomLead) * 0.22f;
         tempoBloomAmount += (bloom.amount - tempoBloomAmount) * 0.35f;
+
+        // The state colour and its bloom fade rather than switch.
+        const auto target = stateColour (snap.followBar);
+        const bool neutral = snap.followBar == vp::FollowBar::ready
+                          || snap.followBar == vp::FollowBar::paused;
+        stateSmooth = stateSmooth.getAlpha() == 0 ? target : stateSmooth.interpolatedWith (target, 0.10f);
+        heroBloomAmt += ((neutral ? 0.0f : 1.0f) - heroBloomAmt) * 0.10f;
     }
 
     // iOS hands over the safe area after the first resized() has already run,
@@ -4265,8 +4270,16 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
         for (int i = 0; i < 3; ++i)
             segs[i]->setBounds (i < 2 ? r.removeFromLeft (w) : r);
     };
-    const auto placePills = [gap, &pills] (juce::Rectangle<int> r)
+    const auto placePills = [this, gap, &pills] (juce::Rectangle<int> r)
     {
+        // The EDIT pencil rides at the end of the pills: small, same height.
+        {
+            auto pen = r.removeFromRight (36);
+            r.removeFromRight (gap);
+            editSoundsButton.setBounds (pen);
+            editSoundsButton.setVisible (true);
+            editSoundsButton.toFront (false);
+        }
         const int w = juce::jmax (1, (r.getWidth() - gap * 2) / 3);
         for (int i = 0; i < 3; ++i)
         {
@@ -4316,14 +4329,6 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
     // the ones ridden during the song; the effects are fired.
     // The EDIT pencil has a 44 pt rail of its own on the right, centred on the
     // two rows: a real tap target, and no title strip needed to hold it.
-    {
-        auto rail = body.removeFromRight (44);
-        if (body.getWidth() > 10)
-            body.removeFromRight (10);
-        editSoundsButton.setBounds (rail.withSizeKeepingCentre (44, 44));
-        editSoundsButton.setVisible (true);
-        editSoundsButton.toFront (false);
-    }
     const int gapX = 14;
     const int gapY = 10;
     auto voiceRow = body.removeFromTop (juce::jmax (1, (body.getHeight() - gapY) * 56 / 100));
@@ -4360,9 +4365,9 @@ namespace
     // The tempo, its label, the phase lane, the four quarters and the note all
     // sit in one bordered hero card (see paintStage), 10 pt of padding inside:
     // hence the 22 above it and the 18 below it.
-    constexpr int kCompactBpmH   = 108;
+    constexpr int kCompactBpmH   = 128;
     constexpr int kCompactLabelH = 16;
-    constexpr int kCompactLaneH  = 18;
+    constexpr int kCompactLaneH  = 22;
     constexpr int kCompactBeatsH = 46;
     constexpr int kCompactNoteH  = 18;
     constexpr int kCompactBarH   = 56;   // ÷2 | TAP | ×2, one row
@@ -4458,13 +4463,14 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         }
     }
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
+    // The phase orb rides on top of the number, inside the card.
+    s.lane = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLaneH)));
     const int bpmH = px (kCompactBpmH);
     s.bpm = area.removeFromTop (takeAtMost (area.getHeight(), bpmH));
     // The number has the whole width now: the octave buttons moved down next
     // to TAP, so "128.4" can be as large as the column lets it.
     s.bpmNumber = s.bpm.reduced (4, 0);
     s.bpmLabel = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLabelH)));
-    s.lane = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLaneH)));
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
     s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
     s.tempoLine = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactNoteH)));
@@ -4557,13 +4563,13 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     }
     s.barShift = {};
     area.removeFromTop (px (22));
+    s.lane = area.removeFromTop (px (18));
     s.bpm = area.removeFromTop (bpmH);
     // The number has the whole (bounded) width; the octave buttons sit with
     // TAP on the row under the dots.
     s.bpmNumber = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 560), bpmH)
                       .reduced (8, 0);
     s.bpmLabel = area.removeFromTop (px (16));
-    s.lane = area.removeFromTop (px (18));
     area.removeFromTop (px (4));
     s.beats = area.removeFromTop (beatsH);
     if (! follow)
@@ -4892,17 +4898,15 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         cardPath.addRoundedRectangle (card, 24.0f);
         g.setColour (panel());
         g.fillPath (cardPath);
-        const bool neutral = snap.followBar == vp::FollowBar::ready
-                          || snap.followBar == vp::FollowBar::paused;
-        if (! neutral)
+        if (heroBloomAmt > 0.01f)
         {
-            const auto bloom = stateColour (snap.followBar);
+            const auto bloom = stateSmooth;
             const float big = juce::jmax (card.getWidth(), card.getHeight());
             g.saveState();
             g.reduceClipRegion (cardPath);
             paintRadial (g, { card.getCentreX(), card.getY() + card.getHeight() * 0.36f },
-                         big * 0.80f, bloom, 0.46f);
-            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f);
+                         big * 0.80f, bloom, 0.46f * heroBloomAmt);
+            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt);
             g.restoreState();
         }
         g.setColour (border());
@@ -4917,7 +4921,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // in, so a five-character tempo in a narrow landscape column came out
         // as "11...". Measure, scale, draw.
         const juce::String bpmText (snap.bpm, 1);
-        const float wanted = static_cast<float> (numberR.getHeight()) * 0.88f;
+        const float wanted = static_cast<float> (numberR.getHeight()) * 1.0f;
         juce::Font f = fontDisplay (wanted);
         const float textW = juce::GlyphArrangement::getStringWidth (f, bpmText);
         const float roomW = static_cast<float> (numberR.getWidth());
@@ -4928,15 +4932,21 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // The state colour is the first thing read from a metre away: a halo
         // behind the tempo in green / amber / red, the digits dimmed when the
         // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
-        const auto heroCol = stateColour (snap.followBar);
-        const bool heroLost = heroCol == stateLost();
+        const auto heroCol = stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth;
+        const bool heroLost = stateColour (snap.followBar) == stateLost();
         // The offset copy behind the digits is a glow on a dark ground and a
         // smear on a white one, so light gets a fainter one.
         g.setColour (heroCol.withAlpha (gDarkMode ? 0.40f : 0.16f));
         g.drawText (bpmText, numberR.translated (0, gDarkMode ? 3 : 2),
                     juce::Justification::centred, false);
+        // Faux extra weight: the same digits nudged a hair each way.
         g.setColour (text().withAlpha (heroLost ? 0.35f : 1.0f));
-        g.drawText (bpmText, numberR, juce::Justification::centred, false);
+        const float fw = juce::jmax (0.6f, f.getHeight() * 0.014f);
+        const auto nr = numberR.toFloat();
+        for (const auto& d : { juce::Point<float> (-fw, 0.0f), juce::Point<float> (fw, 0.0f),
+                               juce::Point<float> (0.0f, -fw * 0.6f), juce::Point<float> (0.0f, fw * 0.6f),
+                               juce::Point<float> (0.0f, 0.0f) })
+            g.drawText (bpmText, nr.translated (d.x, d.y), juce::Justification::centred, false);
     }
     else
     {
@@ -4994,12 +5004,12 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             parts.add (juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0 ? "a met\xc3\xa0"
                                                                                   : "doppio"))
                        + (snap.tempoOctaveAuto ? " (auto)" : " (manuale)"));
-        const bool hint = parts.isEmpty();
-        if (hint)
-            parts.add (juce::String (juce::CharPointer_UTF8 ("TOCCA IL NUMERO  \xc2\xb7  L'1 \xc3\x88 QUI")));
-        g.setColour (hint ? mute() : text());
-        g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
-                          rows.tempoLine, juce::Justification::centred, 1);
+        if (! parts.isEmpty())
+        {
+            g.setColour (text());
+            g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
+                              rows.tempoLine, juce::Justification::centred, 1);
+        }
     }
 
     // Four beats, the one marked. Big enough to read at arm's length on a
@@ -5362,7 +5372,8 @@ void MainComponent::paint (juce::Graphics& g)
     // brand: fuchsia is reserved for the downbeat. Fuchsia only returns under a
     // tap, as the flash.
     paintRadial (g, { stage.toFloat().getCentreX(), full.getY() + 28.0f },
-                 full.getWidth() * 0.60f, stateColour (snap.followBar), wash * 0.45f);
+                 full.getWidth() * 0.60f,
+                 stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth, wash * 0.45f);
     if (tapFlash > 0)
         paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
                      full.getWidth() * 0.45f, fuchsia(), 0.22f);
