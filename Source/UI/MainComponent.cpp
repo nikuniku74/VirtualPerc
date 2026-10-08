@@ -541,8 +541,15 @@ namespace
             // it is held (hold progress, see StopHold).
             juce::Path pill;
             pill.addRoundedRectangle (body, round);
-            g.setColour (pressed (fill));
+            const float pulse = static_cast<float> (button.getProperties().getWithDefault ("pulse", 0.0));
+            g.setColour (pressed (pulse > 0.01f ? fill.interpolatedWith (juce::Colours::white, 0.22f * pulse)
+                                                 : fill));
             g.fillPath (pill);
+            if (pulse > 0.01f)
+            {
+                g.setColour (juce::Colours::white.withAlpha (0.55f * pulse));
+                g.drawRoundedRectangle (body.reduced (1.0f), round, 1.0f + 2.0f * pulse);
+            }
             const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
             if (hold > 0.0f)
             {
@@ -2120,6 +2127,7 @@ void MainComponent::writeRestartLog()
 
 void MainComponent::tapPressed()
 {
+    tapAlignFlash = 1.0f;
     if (! internalTrackSelected())
         ensureMicrophone();
     engine.tap();
@@ -3599,6 +3607,16 @@ void MainComponent::updateBeatDots()
     float bar = engine.clockBarPhase() - delayBars;
     bar -= std::floor (bar);
     const int beat = juce::jlimit (0, 3, static_cast<int> (bar * 4.0f));
+    {
+        const float frac = bar * 4.0f - std::floor (bar * 4.0f);
+        const float pulse = userWantsArmed ? std::exp (-frac * 3.2f) : 0.0f;
+        if (std::abs (pulse - armedPulse) > 0.02f || (pulse == 0.0f && armedPulse != 0.0f))
+        {
+            armedPulse = pulse;
+            startButton.getProperties().set ("pulse", static_cast<double> (pulse));
+            startButton.repaint();
+        }
+    }
     if (beat != dotBeat)
     {
         dotBeat = beat;
@@ -3986,7 +4004,14 @@ void MainComponent::timerCallback()
         const bool neutral = snap.followBar == vp::FollowBar::ready
                           || snap.followBar == vp::FollowBar::paused;
         stateSmooth = stateSmooth.getAlpha() == 0 ? target : stateSmooth.interpolatedWith (target, 0.10f);
-        heroBloomAmt += ((neutral ? 0.0f : 1.0f) - heroBloomAmt) * 0.10f;
+        // Green is earned: a locked tracker with low confidence blooms
+        // half-strength, so a drifting grid reads before it turns amber.
+        heroConf += (juce::jlimit (0.0f, 1.0f, snap.confidence) - heroConf) * 0.10f;
+        const float strength = stateIsHot (snap.followBar)
+                                   ? juce::jlimit (0.40f, 1.0f, 0.40f + heroConf)
+                                   : 1.0f;
+        heroBloomAmt += ((neutral ? 0.0f : strength) - heroBloomAmt) * 0.10f;
+        tapAlignFlash *= 0.90f;
     }
 
     // iOS hands over the safe area after the first resized() has already run,
@@ -4929,7 +4954,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // same fact the colour already carries.
     if (! rows.pill.isEmpty())
     {
-        const auto stCol = stateColour (snap.followBar);
+        const auto stCol = stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth;
         const bool hot = stateIsHot (snap.followBar);
         const juce::String label (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar)));
         const bool bigPill = rows.pill.getHeight() >= 40;
@@ -4950,7 +4975,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.fillEllipse (dot.x - dotR, dot.y - dotR, dotR * 2.0f, dotR * 2.0f);
         auto textR = juce::Rectangle<float> (x0 + dotR * 2.0f + gapDot,
                                             static_cast<float> (rows.pill.getY()),
-                                            juce::jmax (8.0f, totalW - dotR * 2.0f - gapDot),
+                                            juce::jmax (8.0f, static_cast<float> (rows.pill.getWidth()) - dotR * 2.0f - gapDot),
                                             static_cast<float> (rows.pill.getHeight()))
                          .toNearestInt();
         g.setFont (f);
@@ -4978,13 +5003,19 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.fillPath (cardPath);
         if (heroBloomAmt > 0.01f)
         {
-            const auto bloom = stateSmooth;
+            // Light ground: the same alphas read as a stain, so ease them.
+            const float lm = gDarkMode ? 1.0f : 0.55f;
+            // After declaring the one the bloom flashes fuchsia, then settles
+            // into whatever the tracker really thinks.
+            const auto bloom = tapAlignFlash > 0.02f
+                                   ? stateSmooth.interpolatedWith (fuchsia(), tapAlignFlash * 0.85f)
+                                   : stateSmooth;
             const float big = juce::jmax (card.getWidth(), card.getHeight());
             g.saveState();
             g.reduceClipRegion (cardPath);
             paintRadial (g, { card.getCentreX(), card.getY() + card.getHeight() * 0.36f },
-                         big * 0.80f, bloom, 0.46f * heroBloomAmt);
-            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt);
+                         big * 0.80f, bloom, 0.46f * heroBloomAmt * lm);
+            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt * lm);
             g.restoreState();
         }
         g.setColour (border());
@@ -5454,7 +5485,7 @@ void MainComponent::paint (juce::Graphics& g)
     // tap, as the flash.
     paintRadial (g, { stage.toFloat().getCentreX(), full.getY() + 28.0f },
                  full.getWidth() * 0.60f,
-                 stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth, wash * 0.45f);
+                 stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth, wash * 0.45f * (gDarkMode ? 1.0f : 0.6f));
     if (tapFlash > 0)
         paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
                      full.getWidth() * 0.45f, fuchsia(), 0.22f);
@@ -5914,14 +5945,23 @@ void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
     g.setColour ((gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6))
                      .withAlpha (gDarkMode ? 0.78f : 0.70f));
     g.fillRect (full);
-    g.setColour (juce::Colours::white.withAlpha (gDarkMode ? 0.07f : 0.20f));
-    g.fillRect (full);
 
+    // Same card as the pages: rounded 24, panel fill, hairline border, a soft
+    // brand bloom coming off the top edge.
     const auto c = card.toFloat();
     g.setColour (panel());
-    g.fillRoundedRectangle (c, 14.0f);
-    g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
-    g.drawRoundedRectangle (c.reduced (0.5f), 14.0f, 1.0f);
+    g.fillRoundedRectangle (c, 24.0f);
+    {
+        juce::Path cp;
+        cp.addRoundedRectangle (c, 24.0f);
+        g.saveState();
+        g.reduceClipRegion (cp);
+        paintRadial (g, { c.getCentreX(), c.getY() }, c.getWidth() * 0.9f, fuchsia(),
+                     gDarkMode ? 0.12f : 0.07f);
+        g.restoreState();
+    }
+    g.setColour (border());
+    g.drawRoundedRectangle (c.reduced (0.5f), 24.0f, 1.0f);
 
     // Title and what is being replaced. The knob keeps its name until a
     // choice is made, so the player sees which one this modal is for.
@@ -5933,7 +5973,7 @@ void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
                              ->getProperties().getWithDefault ("knobName", {}).toString();
     auto head = card.reduced (16, 0).withTrimmedTop (12).removeFromTop (kTitleH - 12);
     g.setColour (text());
-    g.setFont (fontUi (13.0f, true));
+    g.setFont (fontUi (15.0f, true));
     g.drawText (hitMode ? "CAMPIONI" : "SUONI", head.removeFromTop (18),
                 juce::Justification::centredLeft, false);
     g.setColour (mute());

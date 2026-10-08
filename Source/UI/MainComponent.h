@@ -566,6 +566,9 @@ private:
     float tempoBloomAmount = 0.0f;
     juce::Colour stateSmooth;
     float heroBloomAmt = 0.0f;
+    float heroConf = 0.0f;        // eased tracker confidence, drives bloom strength
+    float tapAlignFlash = 0.0f;   // fuchsia flash after declaring the one
+    float armedPulse = 0.0f;      // START/STOP pulse on the beat
     juce::Slider inputGainSlider;
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
