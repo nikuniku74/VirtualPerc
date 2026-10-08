@@ -416,6 +416,34 @@ private:
     juce::TextButton editSoundsButton { "EDIT" };
     bool soundEditMode = false;
     void setSoundEditMode (bool on);
+
+    /** Phone-width layout only. The four voices stay on the page; the four
+        effects (each with its own level, same tap/drag logic as a voice) live in
+        a sheet from the bottom behind this button, because they are fired now
+        and then rather than played all song. Tap outside the sheet closes it. */
+    juce::TextButton fxButton { "FX" };
+    bool fxSheetOpen = false;
+    juce::Rectangle<int> fxSheetRect;
+    void setFxSheetOpen (bool open);
+    void layoutFxSheet();
+    void paintFxSheet (juce::Graphics& g);
+    void layoutVoicesRow (juce::Rectangle<int> body);
+    struct FxSheetOverlay final : juce::Component
+    {
+        explicit FxSheetOverlay (MainComponent& o) : owner (o)
+        {
+            setOpaque (false);
+            setInterceptsMouseClicks (true, false);
+        }
+        void paint (juce::Graphics& g) override { owner.paintFxSheet (g); }
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! owner.fxSheetRect.contains (e.getPosition()))
+                owner.setFxSheetOpen (false);
+        }
+        MainComponent& owner;
+    };
+    FxSheetOverlay fxSheetOverlay { *this };
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { "CASSA NO" };
     /** Measures this rig's round trip instead of taking the device's word for

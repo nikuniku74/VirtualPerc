@@ -1038,6 +1038,11 @@ MainComponent::MainComponent()
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
     addChildComponent (soundMenu);
+    addChildComponent (fxSheetOverlay);
+    setupBtn (fxButton, ink());
+    fxButton.setTitle ("Effetti");
+    fxButton.onClick = [this] { setFxSheetOpen (! fxSheetOpen); };
+    fxButton.setVisible (false);
 
     // Pressing the level you are already on is the way back to AUTO: the same
     // idiom the bar button used to use, and the only way out that does not need
@@ -3918,6 +3923,7 @@ void MainComponent::applyCompactVisibility()
     // SETUP stays visible on a phone too - it is the only way into the settings
     // page, and the compact layout gives it the status row's right side.
     settingsButton.setVisible (true);
+    fxButton.setVisible (compact);
     followButton.setVisible (true);
     fixedButton.setVisible (true);
     startNowButton.setVisible (true);
@@ -3998,6 +4004,102 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
         if (i + 1 < nMisureSq && row.getWidth() > btnGap)
             row.removeFromLeft (btnGap);
     }
+}
+
+void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
+{
+    juce::Component* voices[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider };
+    juce::Label* labels[] = { &shakerVolLabel, &congaVolLabel, &cembaloVolLabel, &clapVolLabel,
+                              &absorbHitLabel, &hornHitLabel, &uplifterHitLabel, &riserHitLabel };
+    juce::Label* values[] = { &shakerVolValue, &congaVolValue, &cembaloVolValue, &clapVolValue,
+                              &absorbHitValue, &hornHitValue, &uplifterHitValue, &riserHitValue };
+    // Names and values are painted inside each fader.
+    for (auto* l : labels) l->setVisible (false);
+    for (auto* v : values) v->setVisible (false);
+
+    const int gap = 8;
+    // FX is as tall as the faders: a 56 pt wide column, never a small chip.
+    const int fxW = juce::jlimit (48, 64, body.getWidth() / 7);
+    fxButton.setBounds (body.removeFromRight (fxW));
+    if (body.getWidth() > gap)
+        body.removeFromRight (gap);
+    const int colW = juce::jmax (1, (body.getWidth() - gap * 3) / 4);
+    for (int i = 0; i < 4; ++i)
+    {
+        voices[i]->setBounds (body.removeFromLeft (colW));
+        voices[i]->setVisible (true);
+        if (i < 3 && body.getWidth() > gap)
+            body.removeFromLeft (gap);
+    }
+    fxButton.setVisible (true);
+
+    if (! cards.isEmpty())
+    {
+        const auto cardR = cards.getLast().bounds;
+        editSoundsButton.setBounds (cardR.getRight() - 12 - 28, cardR.getY() + 4, 28, 28);
+        editSoundsButton.setVisible (true);
+        editSoundsButton.toFront (false);
+    }
+}
+
+void MainComponent::setFxSheetOpen (bool open)
+{
+    fxSheetOpen = open && isCompact();
+    layoutFxSheet();
+    repaint();
+}
+
+void MainComponent::layoutFxSheet()
+{
+    juce::Slider* hits[] = { &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider };
+    if (! isCompact())
+    {
+        // The full page keeps all eight in its own grid.
+        fxSheetOpen = false;
+        fxSheetOverlay.setVisible (false);
+        return;
+    }
+
+    const bool show = fxSheetOpen;
+    fxSheetOverlay.setVisible (show);
+    for (auto* h : hits)
+        h->setVisible (show);
+    if (! show)
+        return;
+
+    fxSheetOverlay.setBounds (getLocalBounds());
+    const int bottomInset = effectiveSafeArea().getBottom();
+    const int titleH = 44;
+    const int faderH = 150;
+    const int sheetH = titleH + faderH + 24 + bottomInset;
+    fxSheetRect = getLocalBounds().removeFromBottom (juce::jmin (sheetH, getHeight()));
+    auto row = fxSheetRect.withTrimmedTop (titleH).withTrimmedBottom (24 + bottomInset).reduced (16, 0);
+    const int gap = 10;
+    const int w = juce::jmax (1, (row.getWidth() - gap * 3) / 4);
+    for (int i = 0; i < 4; ++i)
+    {
+        hits[i]->setBounds (row.removeFromLeft (w));
+        if (row.getWidth() > gap)
+            row.removeFromLeft (gap);
+    }
+    fxSheetOverlay.toFront (false);
+    for (auto* h : hits)
+        h->toFront (false);
+}
+
+void MainComponent::paintFxSheet (juce::Graphics& g)
+{
+    g.fillAll (juce::Colours::black.withAlpha (gDarkMode ? 0.66f : 0.42f));
+    // The sheet runs 24 pt past the bottom edge so only its top corners round.
+    const auto r = fxSheetRect.toFloat().withHeight (static_cast<float> (fxSheetRect.getHeight()) + 24.0f);
+    g.setColour (panel());
+    g.fillRoundedRectangle (r, 24.0f);
+    g.setColour (border());
+    g.drawRoundedRectangle (r.reduced (0.5f), 24.0f, 1.0f);
+    g.setColour (mute());
+    g.setFont (fontUi (13.0f));
+    g.drawText (juce::String (juce::CharPointer_UTF8 ("EFFETTI  \xc2\xb7  TOCCA = SPARA  \xc2\xb7  TRASCINA = VOLUME")),
+                fxSheetRect.withHeight (44).reduced (20, 0), juce::Justification::centredLeft, false);
 }
 
 void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
@@ -4104,9 +4206,8 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     const int gap = 6;
     constexpr int kChrome = 22;      // compact card title strip + padding
     constexpr int kMisureRow = 48 * 2 + 5;   // "come suona": two rows of 48 pt
-    const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 4);
     const int misureH = kChrome + kMisureRow;
-    const int knobsH = kChrome + knobColW * 2 + 8;   // two rows, four across
+    const int knobsH = kChrome + 132;   // one row of faders, FX behind a button
     // On a phone the squares (MISURE, seven across) and the knobs (FEEL, four
     // across) are limited by their *width*, so handing their cards extra height
     // only floats them in empty space - which is where a tall portrait screen
@@ -4138,7 +4239,10 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     g.transport = {};
     g.misure = r.removeFromTop (takeAtMost (r.getHeight(), misH));
     if (r.getHeight() > gap) r.removeFromTop (gap);
-    g.knobs = r;
+    // Faders stop growing at 200 pt: past that a tall phone gets a longer
+    // throw and nothing else. What is left stays empty above START, which is
+    // the clear space the transport wants round it anyway.
+    g.knobs = r.removeFromTop (juce::jmin (r.getHeight(), 200));
     return g;
 }
 
@@ -4375,6 +4479,7 @@ void MainComponent::resized()
     }
 
     applyCompactVisibility();
+    layoutFxSheet();
     layoutTrackWaveform();
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.
@@ -4469,8 +4574,8 @@ void MainComponent::layoutCompact()
         return innerCard (bounds, 8, 4, 14);
     };
 
-    layoutMisure (card (g.misure, "MISURE"));
-    layoutFeelKnobs (card (g.knobs, "FEEL"));
+    layoutMisure (card (g.misure, "COME SUONA"));
+    layoutVoicesRow (card (g.knobs, "VOCI"));
 }
 
 
