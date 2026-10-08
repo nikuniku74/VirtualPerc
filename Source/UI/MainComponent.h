@@ -497,6 +497,7 @@ private:
     struct VoiceKnob final : juce::Slider
     {
         std::function<void()> onTap;
+        std::function<void (bool)> onZoom;
         void mouseDown (const juce::MouseEvent& e) override
         {
             dragged = false;
@@ -508,17 +509,40 @@ private:
             // otherwise treats that press as a drag and the tap never fires.
             if (e.getDistanceFromDragStart() <= 8.0f)
                 return;
+            if (! dragged && onZoom != nullptr)
+                onZoom (true);
             dragged = true;
             juce::Slider::mouseDrag (e);
         }
         void mouseUp (const juce::MouseEvent& e) override
         {
             juce::Slider::mouseUp (e);
+            if (dragged && onZoom != nullptr)
+                onZoom (false);
             if (! dragged && onTap != nullptr)
                 onTap();
         }
         bool dragged = false;
     };
+    /** While a fader is being dragged, a large copy of it grows from the
+        fader to the middle of the screen, so the level can be read and set
+        with more travel per step. Mouse-transparent: the drag stays on the
+        small fader. */
+    struct FaderZoom final : juce::Component
+    {
+        explicit FaderZoom (MainComponent& o) : owner (o) { setInterceptsMouseClicks (false, false); }
+        void show (juce::Slider& k);
+        void hide();
+        void paint (juce::Graphics& g) override;
+        void tick();
+
+        MainComponent& owner;
+        juce::Component::SafePointer<juce::Slider> knob;
+        float t = 0.0f, target = 0.0f;
+        juce::Rectangle<float> from;
+        std::unique_ptr<juce::VBlankAttachment> vblank;
+    };
+    FaderZoom faderZoom { *this };
     VoiceKnob shakerVolSlider;
     juce::Label  shakerVolLabel { {}, "SHAKER" };
     juce::Label  shakerVolValue { {}, "100%" };

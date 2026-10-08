@@ -926,6 +926,65 @@ namespace
     }
 }
 
+void MainComponent::FaderZoom::show (juce::Slider& k)
+{
+    knob = &k;
+    setBounds (owner.getLocalBounds());
+    from = owner.getLocalArea (&k, k.getLocalBounds()).toFloat();
+    target = 1.0f;
+    setVisible (true);
+    toFront (false);
+    if (vblank == nullptr)
+        vblank = std::make_unique<juce::VBlankAttachment> (this, [this] { tick(); });
+}
+
+void MainComponent::FaderZoom::hide()
+{
+    target = 0.0f;
+}
+
+void MainComponent::FaderZoom::tick()
+{
+    if (! isVisible())
+        return;
+    t += (target - t) * 0.20f;
+    if (std::abs (target - t) < 0.004f)
+        t = target;
+    if (t <= 0.0f && target <= 0.0f)
+    {
+        setVisible (false);
+        return;
+    }
+    repaint();
+}
+
+void MainComponent::FaderZoom::paint (juce::Graphics& g)
+{
+    if (t <= 0.001f || knob == nullptr)
+        return;
+    const float e = 1.0f - std::pow (1.0f - t, 3.0f);
+    const auto b = getLocalBounds().toFloat();
+    g.setColour (juce::Colours::black.withAlpha (0.58f * e));
+    g.fillRect (b);
+
+    const float w = juce::jlimit (130.0f, 190.0f, b.getWidth() * 0.42f);
+    const float h = juce::jmin (b.getHeight() * 0.64f, 460.0f);
+    const auto to = juce::Rectangle<float> (w, h).withCentre (b.getCentre());
+    const auto lerp = [e] (float a, float z) { return a + (z - a) * e; };
+    const juce::Rectangle<float> r (lerp (from.getX(), to.getX()), lerp (from.getY(), to.getY()),
+                                    lerp (from.getWidth(), to.getWidth()),
+                                    lerp (from.getHeight(), to.getHeight()));
+
+    auto& s = *knob;
+    const bool voiceOff = ! (bool) s.getProperties().getWithDefault ("voiceEnabled", true);
+    const bool hitKnob = s.getProperties().contains ("hitLit");
+    const bool hitLit = (bool) s.getProperties().getWithDefault ("hitLit", false);
+    const auto accent = s.findColour (juce::Slider::rotarySliderFillColourId);
+    paintRadial (g, r.getCentre(), r.getHeight() * 0.7f, accent, 0.22f * e);
+    paintVoiceFader (g, r, static_cast<float> (s.valueToProportionOfLength (s.getValue())),
+                     s, accent, voiceOff, hitKnob, hitLit);
+}
+
 void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                                       float sliderPos, float rotaryStartAngle,
                                                       float rotaryEndAngle, juce::Slider& slider)
@@ -1524,6 +1583,17 @@ MainComponent::MainComponent()
     {
         return [this, i] { hitVoices[i].request.fetch_add (1, std::memory_order_release); };
     };
+    addChildComponent (faderZoom);
+    for (auto* k : { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
+                     &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider })
+    {
+        k->setMouseDragSensitivity (380);
+        k->onZoom = [this, k] (bool on)
+        {
+            if (on) faderZoom.show (*k);
+            else    faderZoom.hide();
+        };
+    }
     absorbVolSlider.onTap = tapOrEdit (0, true, fireHit (0));
     hornVolSlider.onTap = tapOrEdit (1, true, fireHit (1));
     uplifterVolSlider.onTap = tapOrEdit (2, true, fireHit (2));
