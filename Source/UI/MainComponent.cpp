@@ -100,17 +100,26 @@ namespace
         return juce::String (juce::roundToInt (static_cast<double> (v) * 100.0)) + "%";
     }
 
-    juce::Colour bg()      { return gDarkMode ? juce::Colour (0xff050506) : juce::Colour (0xfff5f1f6); }
-    juce::Colour panel()   { return gDarkMode ? juce::Colour (0xff0c0c0e) : juce::Colour (0xffffffff); }
+    // Design tokens (docs/DESIGN_BRIEF_MAIN_SCREEN.md, restyle). Three surface
+    // levels: bg < panel (cards) < ink (controls). The old panel was #0C0C0E on
+    // #050506 - a card nobody could see from an arm's length in the dark.
+    juce::Colour bg()      { return gDarkMode ? juce::Colour (0xff08080a) : juce::Colour (0xfff4f2f5); }
+    juce::Colour panel()   { return gDarkMode ? juce::Colour (0xff141418) : juce::Colour (0xffffffff); }
+    juce::Colour border()  { return gDarkMode ? juce::Colour (0xff2a2a32) : juce::Colour (0xffd8d2db); }
     // The surface a control sits on. In light this has to *be* light: it was a
     // near-black in both themes, and since every button is filled with it the
     // light theme came out as a light background behind a wall of black
     // buttons - which is the whole reason "light" still looked dark.
-    juce::Colour ink()     { return gDarkMode ? juce::Colour (0xff121214) : juce::Colour (0xffe8e3ea); }
-    juce::Colour text()    { return gDarkMode ? juce::Colours::white : juce::Colour (0xff18141b); }
+    juce::Colour ink()     { return gDarkMode ? juce::Colour (0xff1e1e24) : juce::Colour (0xffece8ee); }
+    juce::Colour text()    { return gDarkMode ? juce::Colour (0xfff4f4f7) : juce::Colour (0xff17131a); }
     juce::Colour sliderTrack() { return gDarkMode ? ink() : juce::Colour (0xffd9d2dc); }
-    juce::Colour fuchsia() { return juce::Colour (0xffff2ec8); }
-    juce::Colour mute()    { return gDarkMode ? juce::Colour (0xffa8a8b4) : juce::Colour (0xff655e6a); }
+    // Fuchsia now means the brand and the downbeat ("the one") only. What the
+    // tracker is doing is carried by the three state colours below.
+    juce::Colour fuchsia() { return gDarkMode ? juce::Colour (0xffff2ec8) : juce::Colour (0xffe0129f); }
+    juce::Colour mute()    { return gDarkMode ? juce::Colour (0xff9a9aa8) : juce::Colour (0xff5e5764); }
+    juce::Colour stateLocked()    { return gDarkMode ? juce::Colour (0xff34d17a) : juce::Colour (0xff1fa85c); }
+    juce::Colour stateSearching() { return gDarkMode ? juce::Colour (0xffffb020) : juce::Colour (0xffd98a00); }
+    juce::Colour stateLost()      { return gDarkMode ? juce::Colour (0xffff4d4d) : juce::Colour (0xffe0302f); }
 
     /** Colour and energy the MIC knob paints for a held peak. Fuchsia inside
         the analysis band, amber then red once it is too hot. */
@@ -269,17 +278,20 @@ namespace
     juce::Colour stateColour (vp::FollowBar b)
     {
         using B = vp::FollowBar;
+        // Three families, readable without reading the word: locked (green),
+        // searching (amber), uncertain or lost (red). Ready and paused are
+        // neither - nothing is being followed - so they stay neutral.
         switch (b)
         {
-            case B::following:       return fuchsia();
-            case B::followingListen: return fuchsia();
-            case B::calibrating:     return text();
-            case B::listening:       return text();
-            case B::tapAlign:        return fuchsia();
-            case B::waitBeat:        return fuchsia().withAlpha (0.75f);
-            case B::waitStart:       return text();
-            case B::weakFollow:      return text();
-            case B::recalin:         return text();
+            case B::following:       return stateLocked();
+            case B::followingListen: return stateLocked();
+            case B::tapAlign:        return stateLocked();
+            case B::calibrating:     return stateSearching();
+            case B::listening:       return stateSearching();
+            case B::waitBeat:        return stateSearching();
+            case B::waitStart:       return stateSearching();
+            case B::weakFollow:      return stateLost();
+            case B::recalin:         return stateLost();
             case B::paused:          return mute();
             case B::ready:           return mute();
         }
@@ -4384,11 +4396,11 @@ void MainComponent::paintCardList (juce::Graphics& g, const juce::Array<Card>& l
     for (const auto& c : list)
     {
         g.setColour (panel());
-        g.fillRoundedRectangle (c.bounds.toFloat(), 14.0f);
-        g.setColour (text().withAlpha (0.07f));
-        g.drawRoundedRectangle (c.bounds.toFloat().reduced (0.5f), 14.0f, 1.0f);
+        g.fillRoundedRectangle (c.bounds.toFloat(), 20.0f);
+        g.setColour (border());
+        g.drawRoundedRectangle (c.bounds.toFloat().reduced (0.5f), 20.0f, 1.0f);
         g.setColour (mute());
-        g.setFont (fontUi (10.5f));
+        g.setFont (fontUi (12.0f));
         auto titleR = innerCard (c.bounds, 14, 9, 0);
         titleR = titleR.removeFromTop (juce::jmin (14, titleR.getHeight()));
         if (! titleR.isEmpty())
@@ -4468,12 +4480,23 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             f = f.withHeight (juce::jmax (1.0f, wanted * roomW / textW));
 
         g.setFont (f);
+        // The state colour is the first thing read from a metre away: a halo
+        // behind the tempo in green / amber / red, the digits dimmed when the
+        // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
+        const auto heroCol = stateColour (snap.followBar);
+        const bool heroNeutral = snap.followBar == vp::FollowBar::ready
+                              || snap.followBar == vp::FollowBar::paused;
+        const bool heroLost = heroCol == stateLost();
+        if (! heroNeutral)
+            paintRadial (g, numberR.getCentre().toFloat(),
+                         static_cast<float> (juce::jmax (numberR.getWidth(), numberR.getHeight())) * 0.75f,
+                         heroCol, 0.30f);
         // The offset copy behind the digits is a glow on a dark ground and a
         // smear on a white one, so light gets a fainter one.
-        g.setColour (fuchsia().withAlpha (gDarkMode ? 0.40f : 0.16f));
+        g.setColour (heroCol.withAlpha (gDarkMode ? 0.40f : 0.16f));
         g.drawText (bpmText, numberR.translated (0, gDarkMode ? 3 : 2),
                     juce::Justification::centred, false);
-        g.setColour (text());
+        g.setColour (text().withAlpha (heroLost ? 0.35f : 1.0f));
         g.drawText (bpmText, numberR, juce::Justification::centred, false);
     }
     else
@@ -4514,8 +4537,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
 
     if (! rows.bpmLabel.isEmpty())
     {
-        g.setColour (fuchsia());
-        g.setFont (fontUi (11.5f));
+        g.setColour (mute());
+        g.setFont (fontUi (12.0f));
         g.drawFittedText ("BPM", rows.bpmLabel, juce::Justification::centred, 1);
     }
 
@@ -4525,7 +4548,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     {
         const bool userFixed = ! snap.tempoFollow;
         const bool held = userFixed || snap.tempoRegime == 1;
-        g.setColour (held ? fuchsia() : mute());
+        g.setColour (held ? text() : mute());
         g.setFont (fontUi (12.0f));
         juce::String tempoLine = userFixed
                                      ? juce::String ("TEMPO FISSO")
