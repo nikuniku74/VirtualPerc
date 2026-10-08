@@ -714,6 +714,76 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
     g.fillEllipse (sliderPos - tr + 2.6f, cy - tr + 2.6f, (tr - 2.6f) * 2.0f, (tr - 2.6f) * 2.0f);
 }
 
+namespace
+{
+    /** A voice or an effect as a vertical fader: the tile *is* the level, filled
+        from the bottom in the part's colour. Same gesture as the disc it
+        replaces (vertical drag = level, tap = mute or fire), but a thumb can
+        read it at a glance and eight identical dials are gone. Name on top,
+        value at the foot; the text flips to dark where the fill reaches it. */
+    void paintVoiceFader (juce::Graphics& g, juce::Rectangle<float> area, float pos,
+                          const juce::Slider& slider, juce::Colour accent, bool off,
+                          bool hitKnob, bool hitLit)
+    {
+        area = area.reduced (1.0f);
+        if (area.getWidth() < 12.0f || area.getHeight() < 24.0f)
+            return;
+        const float alpha = slider.isEnabled() ? 1.0f : 0.45f;
+        const float radius = juce::jlimit (8.0f, 14.0f, area.getWidth() * 0.22f);
+        const float level = juce::jlimit (0.0f, 1.0f, pos);
+
+        g.setColour (ink().withMultipliedAlpha (alpha));
+        g.fillRoundedRectangle (area, radius);
+
+        if (level > 0.004f)
+        {
+            juce::Path clip;
+            clip.addRoundedRectangle (area, radius);
+            g.saveState();
+            g.reduceClipRegion (clip);
+            g.setColour (accent.withMultipliedAlpha ((off ? 0.16f : 0.92f) * alpha));
+            g.fillRect (area.withTrimmedTop (area.getHeight() * (1.0f - level)));
+            g.restoreState();
+        }
+
+        // A fired effect wears its colour round the edge for as long as it sounds.
+        g.setColour ((hitKnob && hitLit ? accent : border()).withMultipliedAlpha (alpha));
+        g.drawRoundedRectangle (area.reduced (0.5f), radius, hitKnob && hitLit ? 2.4f : 1.0f);
+
+        const juce::Colour onFill = juce::Colour (0xff0a0a0c);
+        const bool nameOnFill = ! off && level > 0.88f;
+        const bool valueOnFill = ! off && level > 0.14f;
+        const juce::String name = slider.getProperties().getWithDefault ("knobName", {}).toString();
+        const float nameH = juce::jlimit (11.0f, 16.0f, area.getWidth() * 0.19f);
+        const float valueH = juce::jlimit (12.0f, 18.0f, area.getWidth() * 0.22f);
+
+        const auto nameFont = fontUi (nameH);
+        g.setFont (nameFont);
+        g.setColour ((nameOnFill ? onFill : text()).withMultipliedAlpha ((off ? 0.55f : 1.0f) * alpha));
+        g.drawText (ellipsis (name, nameFont, area.getWidth() - 8.0f),
+                    area.withHeight (nameH * 1.6f).translated (0.0f, 6.0f).toNearestInt(),
+                    juce::Justification::centredTop, false);
+
+        const juce::String valueText = off ? juce::String ("MUTO") : knobValueText (slider);
+        g.setFont (fontUi (valueH));
+        g.setColour ((valueOnFill ? onFill : mute()).withMultipliedAlpha (alpha));
+        g.drawText (valueText,
+                    area.withTop (area.getBottom() - valueH * 1.8f).toNearestInt(),
+                    juce::Justification::centred, false);
+
+        // EDIT is on: tapping opens the sound modal. Dashed rim, as the discs had.
+        if ((bool) slider.getProperties().getWithDefault ("editMode", false))
+        {
+            juce::Path ring, dashed;
+            ring.addRoundedRectangle (area, radius);
+            const float dashes[] = { 5.0f, 4.0f };
+            juce::PathStrokeType (1.0f).createDashedStroke (dashed, ring, dashes, 2);
+            g.setColour (fuchsia());
+            g.strokePath (dashed, juce::PathStrokeType (1.4f));
+        }
+    }
+}
+
 void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                                       float sliderPos, float rotaryStartAngle,
                                                       float rotaryEndAngle, juce::Slider& slider)
@@ -739,6 +809,14 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         ? slider.findColour (juce::Slider::rotarySliderFillColourId)
         : fuchsia();
     const float alpha = slider.isEnabled() ? ((voiceOff || hitDark) ? 0.40f : 1.0f) : 0.45f;
+
+    // Voices and effects are faders now; only the MIC trim keeps its own look.
+    if (voiceKnob && ! (bool) slider.getProperties().getWithDefault ("micMeter", false))
+    {
+        paintVoiceFader (g, juce::Rectangle<int> (x, y, width, height).toFloat(), sliderPos,
+                         slider, accent, voiceOff, hitKnob, hitLit);
+        return;
+    }
 
     const float innerR = juce::jmax (6.0f, arcRadius - lineW * 0.7f);
     const bool micMeter = (bool) slider.getProperties().getWithDefault ("micMeter", false);
