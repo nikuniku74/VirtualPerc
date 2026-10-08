@@ -181,11 +181,59 @@ namespace
                                .withHeight (juce::jmax (1.0f, h)));
     }
 
+    /** The condensed face every label, button and caption is set in; only the
+        BPM keeps Futura Bold. Impact is the look asked for, but iOS does not
+        ship it (macOS does), so the first family the system actually has wins:
+        Impact, then Futura Condensed ExtraBold (the closest thing on iOS, and
+        the same family as the tempo), then DIN Condensed, Avenir Next
+        Condensed, Arial Narrow, and finally the old Avenir Next. Resolved once:
+        findAllTypefaceNames walks the system font list. */
+    struct CondensedFace
+    {
+        juce::String family, boldStyle, textStyle;
+        float heightScale = 1.0f;
+    };
+
+    const CondensedFace& condensedFace()
+    {
+        static const CondensedFace face = []
+        {
+            struct Candidate { const char* family; const char* bold; const char* text; float scale; };
+            // Condensed faces run small for their em: scale so a 12 pt caption
+            // still reads at the 12 pt the design asks for.
+            constexpr Candidate candidates[] = {
+                { "Impact",                "Regular",             "Regular",          1.00f },
+                { "Futura",                "Condensed ExtraBold", "Condensed Medium", 1.14f },
+                { "DIN Condensed",         "Bold",                "Bold",             1.20f },
+                { "Avenir Next Condensed", "Heavy",               "Medium",           1.10f },
+                { "Arial Narrow",          "Bold",                "Regular",          1.12f },
+            };
+            const auto families = juce::Font::findAllTypefaceNames();
+            for (const auto& c : candidates)
+            {
+                if (! families.contains (c.family))
+                    continue;
+                const auto styles = juce::Font::findAllTypefaceStyles (c.family);
+                if (styles.contains (c.bold))
+                    return CondensedFace { c.family, c.bold,
+                                           styles.contains (c.text) ? c.text : c.bold, c.scale };
+            }
+            return CondensedFace { "Avenir Next", "Bold", "Medium", 1.0f };
+        }();
+        return face;
+    }
+
+    /** Tight tracking: the condensed face is meant to sit close, and wide
+        letter-spacing on 12 pt captions is what made the old labels long. */
+    constexpr float kUiTracking = -0.01f;
+
     juce::Font fontUi (float h, bool bold = true)
     {
-        return juce::Font (juce::FontOptions().withName ("Avenir Next")
-                               .withStyle (bold ? "Bold" : "Medium")
-                               .withHeight (juce::jmax (1.0f, h)));
+        const auto& f = condensedFace();
+        return juce::Font (juce::FontOptions().withName (f.family)
+                               .withStyle (bold ? f.boldStyle : f.textStyle)
+                               .withHeight (juce::jmax (1.0f, h * f.heightScale))
+                               .withKerningFactor (kUiTracking));
     }
 
     int clampW (int lo, int hi, int v) noexcept
