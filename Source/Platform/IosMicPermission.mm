@@ -286,7 +286,10 @@ bool copySystemGear (int px, unsigned char* argb, int lineStride, bool white)
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef ctx = CGBitmapContextCreate (argb, (size_t) px, (size_t) px, 8,
                                               (size_t) lineStride, space,
-                                              kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Little);
+                                              // BGRA in memory, as a JUCE ARGB image is. "Last" put the
+                                              // red channel where JUCE reads alpha: a black (light-theme)
+                                              // glyph came out fully transparent.
+                                              kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
     CGColorSpaceRelease (space);
     if (ctx == nullptr)
         return false;

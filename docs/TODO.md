@@ -5392,6 +5392,13 @@ Dati nuovi (`~/Desktop/clicks/nuovi`: 9 brani, FBI 17.11.11, Nonsoulfunky 18.04.
 - [x] `VPTests` `--bar` 13/0 dopo aver corretto il test del «fill»: teneva lo spostamento dell'uno per sempre e chiedeva 4 battute ferme (cioè la memoria vecchia di 10 battute); ora è un fill di una battuta che torna, e il conteggio non lo segue. `--new-input` 16/0, `--transport` 6/0, `--phase-lock` 20/0, `--state-timing` e `--harmonic-entry` PASS.
 - [ ] Ascolto: l'uno dovrebbe tornare giusto in poche battute dopo una battuta irregolare o un cambio di sezione; il pattern si sposta un po' più spesso (circa una volta ogni 2–2.5 minuti invece di 4), a volte su un uno che era giusto.
 
+### 107. Tema chiaro: ingranaggio invisibile, scheda BPM scura 🟡 (2026-10-08, da compilare e guardare)
+
+Segnalato dall'utente dopo la prima compilazione del restyle (`docs/UI_RESTYLE_HANDOFF.md`).
+- [x] **Ingranaggio SETUP invisibile nel tema chiaro.** `vp::copySystemGear` disegnava con `kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Little` (in memoria A,B,G,R) in un'immagine JUCE ARGB (B,G,R,A): JUCE leggeva l'alfa dal rosso. Glifo bianco (scuro) rosso = alfa, funzionava; glifo nero (chiaro) rosso = 0, trasparente. Ora `PremultipliedFirst`.
+- [x] **Scheda BPM uguale al tema scuro** (richiesta utente): in `paintStage` la scheda e tutto quello che c'è dentro (numero, orb, BPM, riga del tempo, quattro quarti) si disegnano con i colori scuri anche nel tema chiaro; tolti gli alfa ridotti per il chiaro (bloom ×0.55, alone 0.16).
+- [ ] Guardare sul dispositivo nel tema chiaro. Restano col tema chiaro: i pulsanti ±/BPM sotto FISSO (dentro la scheda, sono componenti) e il colore di stato del bloom (verde/ambra/rosso nella versione chiara, leggermente più scura).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

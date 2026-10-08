@@ -87,6 +87,12 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // when the iPad is turned.
     const auto numberR = rows.bpmNumber;
 
+    // The hero card is dark in both themes, so a light page still reads its
+    // tempo the same way from the stand. Everything drawn inside it takes the
+    // dark tokens until the beats are done.
+    const bool lightTheme = ! gDarkMode;
+    gDarkMode = true;
+
     // The hero: tempo, phase lane and the four quarters in one bordered card,
     // with the state colour blooming from inside it. From a metre away the
     // whole card is the reading (green / amber / red); neutral states get none.
@@ -102,8 +108,6 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.fillPath (cardPath);
         if (heroBloomAmt > 0.01f)
         {
-            // Light ground: the same alphas read as a stain, so ease them.
-            const float lm = gDarkMode ? 1.0f : 0.55f;
             // After declaring the one the bloom flashes fuchsia, then settles
             // into whatever the tracker really thinks.
             const auto bloom = tapAlignFlash > 0.02f
@@ -113,8 +117,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             g.saveState();
             g.reduceClipRegion (cardPath);
             paintRadial (g, { card.getCentreX(), card.getY() + card.getHeight() * 0.36f },
-                         big * 0.80f, bloom, 0.46f * heroBloomAmt * lm);
-            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt * lm);
+                         big * 0.80f, bloom, 0.46f * heroBloomAmt);
+            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt);
             g.restoreState();
         }
         g.setColour (border());
@@ -142,10 +146,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
         const auto heroCol = stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth;
         const bool heroLost = stateColour (snap.followBar) == stateLost();
-        // The offset copy behind the digits is a glow on a dark ground and a
-        // smear on a white one, so light gets a fainter one.
-        g.setColour (heroCol.withAlpha (gDarkMode ? 0.40f : 0.16f));
-        g.drawText (bpmText, numberR.translated (0, gDarkMode ? 3 : 2),
+        // The offset copy behind the digits glows on the dark card.
+        g.setColour (heroCol.withAlpha (0.40f));
+        g.drawText (bpmText, numberR.translated (0, 3),
                     juce::Justification::centred, false);
         // Faux extra weight: the same digits nudged a hair each way.
         g.setColour (text().withAlpha (heroLost ? 0.35f : 1.0f));
@@ -281,6 +284,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             }
         }
     }
+
+    gDarkMode = ! lightTheme;
 
     // Which part is playing, and under AUTO how sure the detector is.
     if (! rows.part.isEmpty())
