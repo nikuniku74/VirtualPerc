@@ -539,24 +539,24 @@ namespace
         {
             // START: a solid light pill. STOP: an outline that fills red while
             // it is held (hold progress, see StopHold).
-            const bool solid = (bool) button.getProperties().getWithDefault ("solidFill", false);
             juce::Path pill;
             pill.addRoundedRectangle (body, round);
-            g.setColour (solid ? pressed (fill) : ink());
+            g.setColour (pressed (fill));
             g.fillPath (pill);
             const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
             if (hold > 0.0f)
             {
                 g.saveState();
                 g.reduceClipRegion (pill);
-                g.setColour (stateLost().withAlpha (0.85f));
+                g.setColour (stateLost().darker (0.35f));
                 g.fillRect (bounds.withWidth (bounds.getWidth() * hold));
                 g.restoreState();
             }
-            if (! solid)
+            // Black on a near-black page needs its edge.
+            if (fill.getBrightness() < 0.14f)
             {
-                g.setColour (text());
-                g.drawRoundedRectangle (body.reduced (0.8f), round, 1.6f);
+                g.setColour (border());
+                g.drawRoundedRectangle (body, round, 1.0f);
             }
             return;
         }
@@ -652,7 +652,7 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
         pencil.addRectangle (0.27f, -0.13f, 0.52f, 0.26f);
         pencil.addRoundedRectangle (0.84f, -0.13f, 0.16f, 0.26f, 0.04f);
         pencil.applyTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::pi * 0.25f));
-        auto box = button.getLocalBounds().toFloat().reduced (7.0f);
+        auto box = button.getLocalBounds().toFloat().reduced (13.0f);
         g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
                                                                 : juce::TextButton::textColourOffId));
         g.fillPath (pencil, pencil.getTransformToScaleToFit (box, true));
@@ -668,9 +668,21 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
             gearWhite = gDarkMode;
             constexpr int px = 64;
             gear = juce::Image (juce::Image::ARGB, px, px, true);
-            juce::Image::BitmapData bits (gear, juce::Image::BitmapData::writeOnly);
+            juce::Image::BitmapData bits (gear, juce::Image::BitmapData::readWrite);
             if (! vp::copySystemGear (px, bits.data, bits.lineStride, gDarkMode))
+            {
                 gear = {};
+            }
+            else
+            {
+                // The system symbol comes in its own tint (blue in light mode).
+                // Keep its shape - the alpha - and take the theme's text colour.
+                const auto tint = text();
+                for (int yy = 0; yy < px; ++yy)
+                    for (int xx = 0; xx < px; ++xx)
+                        bits.setPixelColour (xx, yy, tint.withAlpha (
+                            static_cast<float> (bits.getPixelColour (xx, yy).getAlpha()) / 255.0f));
+            }
         }
         // 20 pt glyph in whatever target it sits in: the 44 pt tap area is for
         // the thumb, the picture does not need to fill it.
@@ -694,6 +706,34 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     else if ((style == 1 || style == 2) && ! button.getToggleState())
         labelCol = mute();                             // off segments and pills are quiet
     g.setColour (labelCol.withMultipliedAlpha (alpha));
+    if (style == 3)
+    {
+        // START / STOP: the play triangle or the stop square, then the word,
+        // as one centred group.
+        const bool armed = button.getToggleState();
+        const float iconS = juce::jmin (static_cast<float> (area.getHeight()) * 0.34f, 22.0f);
+        const float gapI = 12.0f;
+        const float tw = juce::GlyphArrangement::getStringWidth (f, label);
+        const float x0 = static_cast<float> (area.getCentreX()) - (iconS + gapI + tw) * 0.5f;
+        const float cy = static_cast<float> (area.getCentreY());
+        if (armed)
+        {
+            g.fillRoundedRectangle (x0, cy - iconS * 0.5f, iconS, iconS, 3.0f);
+        }
+        else
+        {
+            juce::Path tri;
+            tri.addTriangle (x0 + iconS * 0.08f, cy - iconS * 0.55f,
+                             x0 + iconS * 0.08f, cy + iconS * 0.55f,
+                             x0 + iconS * 1.05f, cy);
+            g.fillPath (tri);
+        }
+        g.drawText (label,
+                    juce::Rectangle<float> (x0 + iconS + gapI, static_cast<float> (area.getY()),
+                                            tw + 6.0f, static_cast<float> (area.getHeight())).toNearestInt(),
+                    juce::Justification::centredLeft, false);
+        return;
+    }
     if (tight)
         g.drawFittedText (label, area, juce::Justification::centred, 2);
     else
@@ -705,9 +745,18 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           bool, bool shouldDrawButtonAsDown)
 {
     // The gear and the EDIT pencil are bare icons: no fill, no edge, no bar.
-    if ((bool) button.getProperties().getWithDefault ("gearIcon", false)
-        || (bool) button.getProperties().getWithDefault ("pencilIcon", false))
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
         return;
+    if ((bool) button.getProperties().getWithDefault ("pencilIcon", false))
+    {
+        // EDIT: a quiet tile that lights its rim when the mode is on.
+        const auto tile = button.getLocalBounds().toFloat().reduced (0.5f);
+        g.setColour (ink());
+        g.fillRoundedRectangle (tile, 12.0f);
+        g.setColour (button.getToggleState() ? fuchsia() : border());
+        g.drawRoundedRectangle (tile, 12.0f, button.getToggleState() ? 1.6f : 1.0f);
+        return;
+    }
 
     if ((bool) button.getProperties().getWithDefault ("circle", false))
     {
@@ -2064,14 +2113,18 @@ void MainComponent::refreshStartButton()
 {
     // START is the solid, light button; STOP is quiet until you hold it and
     // fills red as you do. Fuchsia is not used here any more - it means "the one".
+    // START: black with white lettering (the text colour in light mode, so it
+    // still reads as the dark key); STOP: fuchsia, which then fills darker red
+    // as it is held. The play triangle and stop square are drawn by the look.
     startButton.setButtonText (userWantsArmed
                                    ? juce::String (juce::CharPointer_UTF8 ("STOP  \xc2\xb7  TIENI PREMUTO"))
                                    : juce::String ("START"));
-    startButton.getProperties().set ("solidFill", ! userWantsArmed);
     startButton.getProperties().set ("holdProgress", 0.0);
-    startButton.setColour (juce::TextButton::buttonColourId, userWantsArmed ? ink() : text());
-    startButton.setColour (juce::TextButton::textColourOffId, userWantsArmed ? text() : bg());
-    startButton.setColour (juce::TextButton::textColourOnId, text());
+    startButton.setColour (juce::TextButton::buttonColourId,
+                           userWantsArmed ? fuchsia()
+                                          : (gDarkMode ? juce::Colours::black : text()));
+    startButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    startButton.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     startButton.setToggleState (userWantsArmed, juce::dontSendNotification);
     startButton.repaint();
 }
@@ -2085,8 +2138,9 @@ void MainComponent::StopHold::mouseDown (const juce::MouseEvent&)
     }
     if (! owner.userWantsArmed)
         return;
+    fired = false;
     downMs = juce::Time::getMillisecondCounterHiRes();
-    startTimerHz (30);
+    vblank = std::make_unique<juce::VBlankAttachment> (&owner.startButton, [this] { tick(); });
 }
 
 void MainComponent::StopHold::mouseDrag (const juce::MouseEvent& e)
@@ -2104,19 +2158,29 @@ void MainComponent::StopHold::mouseUp (const juce::MouseEvent&)
 
 void MainComponent::StopHold::cancel()
 {
-    stopTimer();
+    vblank.reset();
     owner.startButton.getProperties().set ("holdProgress", 0.0);
     owner.startButton.repaint();
 }
 
-void MainComponent::StopHold::timerCallback()
+void MainComponent::StopHold::tick()
 {
+    if (fired)
+        return;
     constexpr double kHoldMs = 500.0;
     const double p = (juce::Time::getMillisecondCounterHiRes() - downMs) / kHoldMs;
     if (p >= 1.0)
     {
-        cancel();
-        owner.stopPressed();
+        // Do not tear the attachment down from inside its own callback.
+        fired = true;
+        juce::Component::SafePointer<MainComponent> safe (&owner);
+        juce::MessageManager::callAsync ([this, safe]
+        {
+            if (safe == nullptr)
+                return;
+            cancel();
+            owner.stopPressed();
+        });
         return;
     }
     owner.startButton.getProperties().set ("holdProgress", juce::jlimit (0.0, 1.0, p));
@@ -4250,6 +4314,16 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
     // Two rows of four, 14 pt between faders so a thumb can pick one without
     // brushing its neighbour. The voices get a little more height: they are
     // the ones ridden during the song; the effects are fired.
+    // The EDIT pencil has a 44 pt rail of its own on the right, centred on the
+    // two rows: a real tap target, and no title strip needed to hold it.
+    {
+        auto rail = body.removeFromRight (44);
+        if (body.getWidth() > 10)
+            body.removeFromRight (10);
+        editSoundsButton.setBounds (rail.withSizeKeepingCentre (44, 44));
+        editSoundsButton.setVisible (true);
+        editSoundsButton.toFront (false);
+    }
     const int gapX = 14;
     const int gapY = 10;
     auto voiceRow = body.removeFromTop (juce::jmax (1, (body.getHeight() - gapY) * 56 / 100));
@@ -4268,13 +4342,6 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
     placeRow (voiceRow, voices);
     placeRow (body, hits);
 
-    if (! cards.isEmpty())
-    {
-        const auto cardR = cards.getLast().bounds;
-        editSoundsButton.setBounds (cardR.getRight() - 12 - 28, cardR.getY() + 4, 28, 28);
-        editSoundsButton.setVisible (true);
-        editSoundsButton.toFront (false);
-    }
 }
 
 namespace
@@ -4289,16 +4356,22 @@ namespace
     // under the thumb. The note line ("TEMPO FISSO", "a meta (auto)") gets its
     // own row instead of living on three lines of small text.
     constexpr int kCompactPillH  = 44;
-    constexpr int kCompactBpmH   = 120;
-    constexpr int kCompactBeatsH = 52;
+    //
+    // The tempo, its label, the phase lane, the four quarters and the note all
+    // sit in one bordered hero card (see paintStage), 10 pt of padding inside:
+    // hence the 22 above it and the 18 below it.
+    constexpr int kCompactBpmH   = 108;
+    constexpr int kCompactLabelH = 16;
+    constexpr int kCompactLaneH  = 18;
+    constexpr int kCompactBeatsH = 46;
     constexpr int kCompactNoteH  = 18;
     constexpr int kCompactBarH   = 56;   // ÷2 | TAP | ×2, one row
-    constexpr int kCompactGapA   = 22;  // status row -> BPM; the orb lane lives here
-    constexpr int kCompactGapB   = 6;   // BPM -> dots
-    constexpr int kCompactGapC   = 8;   // note -> control row
+    constexpr int kCompactGapA   = 22;  // status row -> hero card
+    constexpr int kCompactGapB   = 2;   // lane -> dots
+    constexpr int kCompactGapC   = 18;  // hero card -> control row
     constexpr int kCompactTempoNatural =
-        kCompactPillH + kCompactGapA + kCompactBpmH + kCompactGapB
-        + kCompactBeatsH + kCompactNoteH + kCompactGapC + kCompactBarH;
+        kCompactPillH + kCompactGapA + kCompactBpmH + kCompactLabelH + kCompactLaneH
+        + kCompactGapB + kCompactBeatsH + kCompactNoteH + kCompactGapC + kCompactBarH;
 }
 
 MainComponent::CompactGeom MainComponent::compactGeom() const
@@ -4308,7 +4381,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     CompactGeom g;
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
-    constexpr int kChrome = 22;      // compact card title strip + padding
+    constexpr int kChrome = 12;      // compact card padding (no title strip)
     constexpr int kMisureRow = 48 * 2 + 8;   // "come suona": two rows of 48 pt
     const int misureH = kChrome + kMisureRow;
     const int knobsH = kChrome + 190;   // voices over effects, two rows of faders
@@ -4390,6 +4463,8 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     // The number has the whole width now: the octave buttons moved down next
     // to TAP, so "128.4" can be as large as the column lets it.
     s.bpmNumber = s.bpm.reduced (4, 0);
+    s.bpmLabel = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLabelH)));
+    s.lane = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLaneH)));
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
     s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
     s.tempoLine = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactNoteH)));
@@ -4445,9 +4520,9 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // 36-point row under the tempo is only the ± BPM nudge that appears
     // under FISSO.
     const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
-    const int natural = 44 + 22 + naturalBpm + 16
-                        + (follow ? 0 : 28) + 18 + 10
-                        + naturalBeats + 10 + 56 + 20 + trackExtra;
+    const int natural = 44 + 22 + naturalBpm + 16 + 18 + 4
+                        + naturalBeats + (follow ? 0 : 28) + 18 + 18
+                        + 56 + 20 + trackExtra;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
                           : 1.0f;
@@ -4488,12 +4563,13 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.bpmNumber = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 560), bpmH)
                       .reduced (8, 0);
     s.bpmLabel = area.removeFromTop (px (16));
+    s.lane = area.removeFromTop (px (18));
+    area.removeFromTop (px (4));
+    s.beats = area.removeFromTop (beatsH);
     if (! follow)
         s.tempoNudge = area.removeFromTop (px (28));
     s.tempoLine = area.removeFromTop (px (18));
-    area.removeFromTop (px (10));
-    s.beats = area.removeFromTop (beatsH);
-    area.removeFromTop (px (10));
+    area.removeFromTop (px (18));
     {
         // ÷2 | TAP | ×2, one 56 pt row, bounded so it does not stretch across
         // a wide column.
@@ -4522,7 +4598,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     // MISURE is one row (style + squares). Leftover height goes to FEEL, whose
     // chrome is kept tight so the knobs, not the padding, take the card.
     const int gap = 10;
-    const int titleH = 18;
+    const int titleH = 0;   // no card titles on the live page
     auto card = [&] (juce::Rectangle<int> bounds, const char* title,
                      int padY = 10, int titleStrip = 18)
     {
@@ -4544,7 +4620,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     const int hMisure = chrome + (innerW < 640 ? 48 * 2 + 8 : misureSide);
 
     {
-        auto body = card (area.removeFromTop (hMisure), "COME SUONA");
+        auto body = card (area.removeFromTop (hMisure), "", 10, 0);
         layoutMisure (body);
         area.removeFromTop (gap);
     }
@@ -4555,7 +4631,7 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
         // name sits tight under it. Tap a voice knob to mute that part.
         // Title paint occupies y+9..y+23 of the card; pad 4 + strip 20 starts
         // the knobs 1 px under that. Labels are 11 px with a 1 px gap above.
-        auto body = card (area, "FEEL", 4, 20);
+        auto body = card (area, "", 10, 0);
         layoutVoicesRow (body);
     }
 
@@ -4706,11 +4782,11 @@ void MainComponent::layoutCompact()
     auto card = [&] (juce::Rectangle<int> bounds, const char* title)
     {
         cards.add ({ bounds, juce::String (title) });
-        return innerCard (bounds, 8, 4, 14);
+        return innerCard (bounds, 8, 6, 0);
     };
 
-    layoutMisure (card (g.misure, "COME SUONA"));
-    layoutVoicesRow (card (g.knobs, "FEEL"));
+    layoutMisure (card (g.misure, ""));
+    layoutVoicesRow (card (g.knobs, ""));
 }
 
 
@@ -4803,6 +4879,36 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // when the iPad is turned.
     const auto numberR = rows.bpmNumber;
 
+    // The hero: tempo, phase lane and the four quarters in one bordered card,
+    // with the state colour blooming from inside it. From a metre away the
+    // whole card is the reading (green / amber / red); neutral states get none.
+    {
+        auto hero = rows.bpm.getUnion (rows.beats);
+        for (const auto& part : { rows.bpmLabel, rows.lane, rows.tempoNudge, rows.tempoLine })
+            if (! part.isEmpty())
+                hero = hero.getUnion (part);
+        const auto card = hero.expanded (0, 10).toFloat();
+        juce::Path cardPath;
+        cardPath.addRoundedRectangle (card, 24.0f);
+        g.setColour (panel());
+        g.fillPath (cardPath);
+        const bool neutral = snap.followBar == vp::FollowBar::ready
+                          || snap.followBar == vp::FollowBar::paused;
+        if (! neutral)
+        {
+            const auto bloom = stateColour (snap.followBar);
+            const float big = juce::jmax (card.getWidth(), card.getHeight());
+            g.saveState();
+            g.reduceClipRegion (cardPath);
+            paintRadial (g, { card.getCentreX(), card.getY() + card.getHeight() * 0.36f },
+                         big * 0.80f, bloom, 0.46f);
+            paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f);
+            g.restoreState();
+        }
+        g.setColour (border());
+        g.drawRoundedRectangle (card.reduced (0.5f), 24.0f, 1.0f);
+    }
+
     const bool haveBpm = snap.bpm > 40.0f;
     if (haveBpm)
     {
@@ -4823,13 +4929,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // behind the tempo in green / amber / red, the digits dimmed when the
         // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
         const auto heroCol = stateColour (snap.followBar);
-        const bool heroNeutral = snap.followBar == vp::FollowBar::ready
-                              || snap.followBar == vp::FollowBar::paused;
         const bool heroLost = heroCol == stateLost();
-        if (! heroNeutral)
-            paintRadial (g, numberR.getCentre().toFloat(),
-                         static_cast<float> (juce::jmax (numberR.getWidth(), numberR.getHeight())) * 0.75f,
-                         heroCol, 0.30f);
         // The offset copy behind the digits is a glow on a dark ground and a
         // smear on a white one, so light gets a fainter one.
         g.setColour (heroCol.withAlpha (gDarkMode ? 0.40f : 0.16f));
@@ -4857,20 +4957,14 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // Above the digits, from ÷2 across to ×2. On the pulse it sits in
     // the middle and burns green; ahead of the clock it slides right,
     // behind it slides left, and the colour follows the distance.
-    if (tempoBloomAmount > 0.02f && rows.bpm.getWidth() > 16)
+    if (tempoBloomAmount > 0.02f && ! rows.lane.isEmpty())
     {
-        const int left = rows.octaveDown.isEmpty() ? rows.bpm.getX()
-                                                    : rows.octaveDown.getX();
-        const int right = rows.octaveUp.isEmpty() ? rows.bpm.getRight()
-                                                   : rows.octaveUp.getRight();
-        // Just under the status row. 18 above the digits put the lane on
-        // "SEGUENDO" / "IN ASCOLTO" and on the setup gear.
-        const float y = rows.pill.isEmpty()
-                            ? static_cast<float> (rows.bpm.getY()) - 18.0f
-                            : static_cast<float> (rows.pill.getBottom()) + 3.0f;
+        // Inside the hero card, under the BPM label.
+        const auto laneR = rows.lane.reduced (rows.lane.getWidth() / 12, 0);
         paintTempoOrb (g,
-                       { static_cast<float> (left), y,
-                         static_cast<float> (right - left), 14.0f },
+                       { static_cast<float> (laneR.getX()),
+                         static_cast<float> (laneR.getCentreY()) - 7.0f,
+                         static_cast<float> (laneR.getWidth()), 14.0f },
                        tempoBloomLead, 0.85f * tempoBloomAmount);
     }
 
@@ -4889,19 +4983,23 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const bool held = userFixed || snap.tempoRegime == 1;
         g.setColour (held ? text() : mute());
         g.setFont (fontUi (12.0f));
-        juce::String tempoLine = userFixed
-                                     ? juce::String ("TEMPO FISSO")
-                                     : juce::String (vp::regimeLabel (snap.tempoRegime));
-        if (! userFixed && ! snap.levelSettled)
-            tempoLine += juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  livello provvisorio"));
+        // Notes only when there is one; otherwise the line says what a tap on
+        // the number does. The state itself is the pill's job, not this line's.
+        juce::StringArray parts;
+        if (userFixed)
+            parts.add ("TEMPO FISSO");
+        else if (! snap.levelSettled)
+            parts.add ("livello provvisorio");
         if (snap.tempoOctave != 0)
-        {
-            tempoLine += juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0
-                                                                  ? "  \xc2\xb7  a met\xc3\xa0"
-                                                                  : "  \xc2\xb7  doppio"))
-                          + (snap.tempoOctaveAuto ? " (auto)" : " (manuale)");
-        }
-        g.drawFittedText (tempoLine, rows.tempoLine, juce::Justification::centred, 1);
+            parts.add (juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0 ? "a met\xc3\xa0"
+                                                                                  : "doppio"))
+                       + (snap.tempoOctaveAuto ? " (auto)" : " (manuale)"));
+        const bool hint = parts.isEmpty();
+        if (hint)
+            parts.add (juce::String (juce::CharPointer_UTF8 ("TOCCA IL NUMERO  \xc2\xb7  L'1 \xc3\x88 QUI")));
+        g.setColour (hint ? mute() : text());
+        g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
+                          rows.tempoLine, juce::Justification::centred, 1);
     }
 
     // Four beats, the one marked. Big enough to read at arm's length on a
@@ -4937,7 +5035,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             const float rr = one ? rad : rad * 0.82f;
             if (on)
             {
-                paintRadial (g, { x, y }, rr * 2.6f, fuchsia(), 0.45f);
+                paintRadial (g, { x, y }, rr * 3.4f, fuchsia(), 0.60f);
                 g.setColour (fuchsia());
                 g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
                 g.setColour (juce::Colours::white);
