@@ -1088,6 +1088,9 @@ MainComponent::MainComponent()
     addChildComponent (styleMenu);
     addChildComponent (soundMenu);
     addChildComponent (fxSheetOverlay);
+    addChildComponent (wakeGuard);
+    addMouseListener (this, true);   // every touch anywhere resets the stage-mode clock
+    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
     setupBtn (fxButton, ink());
     fxButton.setTitle ("Effetti");
     fxButton.onClick = [this] { setFxSheetOpen (! fxSheetOpen); };
@@ -3620,9 +3623,58 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
 }
 
+void MainComponent::mouseDown (const juce::MouseEvent&)
+{
+    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
+    if (stageDim)
+        setStageDim (false);
+}
+
+void MainComponent::mouseDrag (const juce::MouseEvent&)
+{
+    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
+}
+
+void MainComponent::wakeFromStageDim()
+{
+    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
+    setStageDim (false);
+}
+
+void MainComponent::setStageDim (bool dim)
+{
+    // Only the phone-width page has a stage mode, and only while a set is on.
+    dim = dim && isCompact();
+    stageDim = dim;
+
+    juce::Component* secondary[] = {
+        &styleSelect, &sub4, &sub8, &sub16, &dynamicsButton, &naturalButton, &swingButton,
+        &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
+        &fxButton, &editSoundsButton
+    };
+    for (auto* c : secondary)
+        c->setAlpha (dim ? 0.45f : 1.0f);
+
+    wakeGuard.setVisible (dim);
+    if (dim)
+    {
+        const auto geom = compactGeom();
+        wakeGuard.setBounds (geom.misure.getUnion (geom.knobs));
+        wakeGuard.toFront (false);
+    }
+}
+
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+    {
+        const bool wantDim = isCompact() && userWantsArmed
+                             && ! settingsOverlay.isVisible()
+                             && ! styleMenu.isOpen() && ! soundMenu.isOpen() && ! fxSheetOpen
+                             && juce::Time::getMillisecondCounterHiRes() - lastTouchMs > 8000.0;
+        if (wantDim != stageDim)
+            setStageDim (wantDim);
+    }
     if (restartLogPending
         && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
     {
@@ -4612,6 +4664,8 @@ void MainComponent::resized()
 
     applyCompactVisibility();
     layoutFxSheet();
+    if (stageDim)
+        setStageDim (true);   // re-fit the guard to the new geometry (drops out if no longer compact)
     layoutTrackWaveform();
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.

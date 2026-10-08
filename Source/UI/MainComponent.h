@@ -33,6 +33,8 @@ public:
 private:
     void timerCallback() override;
     void darkModeSettingChanged() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
     void startPressed();
     void stopPressed();
     void tapPressed();
@@ -424,6 +426,25 @@ private:
         effects (each with its own level, same tap/drag logic as a voice) live in
         a sheet from the bottom behind this button, because they are fired now
         and then rather than played all song. Tap outside the sheet closes it. */
+    /** Stage mode, phone width, while playing: after 8 s without a touch the
+        controls that are not needed mid-song (style, subdivision, switches,
+        voices, FX) fall to 45%, and a transparent guard sits over them. The
+        first touch only wakes them - it never lands on a fader or a switch -
+        so a blind thumb cannot change the sound. The tempo, TAP, the octave
+        buttons and START stay fully live and fully lit. */
+    struct WakeGuard final : juce::Component
+    {
+        explicit WakeGuard (MainComponent& o) : owner (o) { setOpaque (false); }
+        void paint (juce::Graphics&) override {}
+        void mouseDown (const juce::MouseEvent&) override { owner.wakeFromStageDim(); }
+        MainComponent& owner;
+    };
+    WakeGuard wakeGuard { *this };
+    double lastTouchMs = 0.0;
+    bool stageDim = false;
+    void setStageDim (bool dim);
+    void wakeFromStageDim();
+
     /** STOP is a press-and-hold: a stray thumb mid-song cannot end the set.
         START fires on touch-down (it is harmless and should feel instant); once
         armed, the same button fills left to right over 0.5 s and only a full
