@@ -2308,6 +2308,12 @@ void MainComponent::refreshSwingButton()
 
 void MainComponent::updateBeatDots()
 {
+    if (layoutFading)
+    {
+        if (layoutFadeAmount() >= 1.0f)
+            layoutFading = false;
+        repaint();
+    }
     // The clock's bar phase is the position being rendered; the stroke on it
     // is heard after the output path and the attack lead the clock runs
     // ahead by. Same in BRANO and with a live band: in BRANO the song shares

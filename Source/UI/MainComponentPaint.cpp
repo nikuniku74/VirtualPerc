@@ -515,4 +515,13 @@ void MainComponent::paint (juce::Graphics& g)
                    + "  occ " + juce::String (snap.styleOccupancy, 2));
         g.drawFittedText (lines.joinIntoString ("\n"), dbg.reduced (16), juce::Justification::topLeft, 22);
     }
+
+    // The painted cards fade in after a layout change while the controls glide
+    // (see resized()): a veil of the page colour, lifted over 280 ms.
+    if (layoutFading)
+    {
+        const float k = layoutFadeAmount();
+        if (k < 1.0f)
+            g.fillAll (bg().withAlpha (1.0f - k));
+    }
 }

@@ -150,6 +150,18 @@ private:
         else entirely. */
     juce::BorderSize<int> laidOutSafeArea { -1, -1, -1, -1 };
     juce::Point<int> laidOutWindowSize { -1, -1 };
+    /** Phone/wide x portrait/landscape, as last laid out (-1 before the first
+        layout). A change glides the controls to their new places and fades the
+        painted cards in, instead of the page jumping. */
+    int layoutMode = -1;
+    juce::ComponentAnimator layoutAnimator;
+    /** Controls being faded in by a layout change, with the alpha they end at
+        (stage mode dims some to 0.45); restored if the fade is cut short. */
+    juce::Array<std::pair<juce::Component::SafePointer<juce::Component>, float>> layoutFadeIns;
+    double layoutFadeStartMs = 0.0;
+    bool layoutFading = false;
+    static constexpr double kLayoutAnimMs = 280.0;
+    float layoutFadeAmount() const noexcept;
     int resizeSettleTicks = 0;
     int resizeXrunsBefore = 0;
     bool a2dpResizeRecovered = false;

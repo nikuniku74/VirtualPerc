@@ -534,7 +534,27 @@ void MainComponent::resized()
         }
     }
    #endif
+    // A layout run always wins over a glide still in flight: a Split View
+    // drag fires resized() every frame and must not fight the animator.
+    layoutAnimator.cancelAllAnimations (false);
+    for (auto& f : layoutFadeIns)
+        if (f.first != nullptr)
+            f.first->setAlpha (f.second);
+    layoutFadeIns.clearQuick();
     updateCompactLayout();
+    const int newMode = (compactLayout ? 1 : 0) | (isLandscape() ? 2 : 0);
+    const bool animateMode = layoutMode >= 0 && newMode != layoutMode && isShowing()
+                             && ! settingsOverlay.isVisible();
+    layoutMode = newMode;
+    const auto isOverlay = [this] (const juce::Component* c)
+    {
+        return c == &settingsOverlay || c == &styleMenu || c == &soundMenu || c == &faderZoom;
+    };
+    juce::Array<std::pair<juce::Component*, juce::Rectangle<int>>> before;
+    if (animateMode)
+        for (auto* c : getChildren())
+            if (c->isVisible() && ! isOverlay (c))
+                before.add ({ c, c->getBounds() });
     laidOutSafeArea = effectiveSafeArea();
     settingsOverlay.setBounds (getLocalBounds());
     if (settingsOverlay.isVisible())
@@ -589,6 +609,44 @@ void MainComponent::resized()
         styleMenu.setBounds (getLocalBounds());
     if (soundMenu.isOpen())
         soundMenu.setBounds (getLocalBounds());
+
+    if (animateMode)
+    {
+        // Controls that were on screen glide from where they were; ones that
+        // just appeared fade in where they are. Ease in and out, 280 ms.
+        for (auto* c : getChildren())
+        {
+            if (! c->isVisible() || isOverlay (c))
+                continue;
+            const auto target = c->getBounds();
+            const auto* was = std::find_if (before.begin(), before.end(),
+                                            [c] (const auto& p) { return p.first == c; });
+            if (was == before.end())
+            {
+                const float endAlpha = c->getAlpha();
+                layoutFadeIns.add ({ c, endAlpha });
+                c->setAlpha (0.0f);
+                layoutAnimator.animateComponent (c, target, endAlpha, (int) kLayoutAnimMs, false, 0.0, 0.0);
+            }
+            else if (was->second != target)
+            {
+                c->setBounds (was->second);
+                layoutAnimator.animateComponent (c, target, c->getAlpha(), (int) kLayoutAnimMs, false, 0.0, 0.0);
+            }
+        }
+        layoutFadeStartMs = juce::Time::getMillisecondCounterHiRes();
+        layoutFading = true;
+        repaint();
+    }
+}
+
+float MainComponent::layoutFadeAmount() const noexcept
+{
+    if (! layoutFading)
+        return 1.0f;
+    const double p = (juce::Time::getMillisecondCounterHiRes() - layoutFadeStartMs) / kLayoutAnimMs;
+    const float x = juce::jlimit (0.0f, 1.0f, static_cast<float> (p));
+    return x * x * (3.0f - 2.0f * x);
 }
 
 void MainComponent::layoutFull()
