@@ -296,4 +296,34 @@ bool copySystemGear (int px, unsigned char* argb, int lineStride, bool white)
     return true;
 }
 
+void haptic (Haptic kind)
+{
+    dispatch_async (dispatch_get_main_queue(), ^{
+        switch (kind)
+        {
+            case Haptic::select:
+            {
+                UISelectionFeedbackGenerator* g = [[UISelectionFeedbackGenerator alloc] init];
+                [g selectionChanged];
+                break;
+            }
+            case Haptic::success:
+            {
+                UINotificationFeedbackGenerator* g = [[UINotificationFeedbackGenerator alloc] init];
+                [g notificationOccurred: UINotificationFeedbackTypeSuccess];
+                break;
+            }
+            default:
+            {
+                const UIImpactFeedbackStyle s = kind == Haptic::heavy  ? UIImpactFeedbackStyleHeavy
+                                              : kind == Haptic::medium ? UIImpactFeedbackStyleMedium
+                                                                       : UIImpactFeedbackStyleLight;
+                UIImpactFeedbackGenerator* g = [[UIImpactFeedbackGenerator alloc] initWithStyle: s];
+                [g impactOccurred];
+                break;
+            }
+        }
+    });
+}
+
 } // namespace vp

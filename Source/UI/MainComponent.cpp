@@ -1204,7 +1204,7 @@ MainComponent::MainComponent()
     editSoundsButton.setButtonText ({});
     editSoundsButton.setTitle ("Modifica suoni");
     editSoundsButton.getProperties().set ("pencilIcon", true);
-    editSoundsButton.onClick = [this] { setSoundEditMode (! soundEditMode); };
+    editSoundsButton.onClick = [this] { vp::haptic (vp::Haptic::select); setSoundEditMode (! soundEditMode); };
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
@@ -1225,6 +1225,7 @@ MainComponent::MainComponent()
     // a second control. See applyTempoOctave.
     halveButton.onClick = [this]
     {
+        vp::haptic (vp::Haptic::select);
         const bool mine = ! engine.settings().tempoOctaveAuto.load()
                           && engine.settings().tempoOctave.load() < 0;
         if (mine) applyTempoOctaveAuto();
@@ -1233,6 +1234,7 @@ MainComponent::MainComponent()
     };
     doubleButton.onClick = [this]
     {
+        vp::haptic (vp::Haptic::select);
         const bool mine = ! engine.settings().tempoOctaveAuto.load()
                           && engine.settings().tempoOctave.load() > 0;
         if (mine) applyTempoOctaveAuto();
@@ -1248,7 +1250,7 @@ MainComponent::MainComponent()
     // The button "L'1 è QUI": the nearest beat is the one. The bar locks.
     // The phase is not snapped — that shortened the beat and was heard as
     // the tempo jumping. It is not a nudge and not a toggle.
-    tapButton.onClick = [this] { tapPressed(); };
+    tapButton.onClick = [this] { vp::haptic (vp::Haptic::medium); tapPressed(); };
     setupBtn (sub4, ink());
     setupBtn (sub8, ink());
     setupBtn (sub16, ink());
@@ -1351,11 +1353,13 @@ MainComponent::MainComponent()
 
     naturalButton.onClick = [this]
     {
+        vp::haptic (vp::Haptic::select);
         applyShakerNatural (! engine.settings().shakerNatural.load());
     };
 
     swingButton.onClick = [this]
     {
+        vp::haptic (vp::Haptic::select);
         applySwing (engine.settings().swing.load() <= 0.5f);
     };
 
@@ -1363,6 +1367,7 @@ MainComponent::MainComponent()
     // musical choices, where it can be reached mid-song.
     dynamicsButton.onClick = [this]
     {
+        vp::haptic (vp::Haptic::select);
         auto& v = engine.settings().dynamicsFollow;
         v.store (! v.load());
         savePrefs (true);
@@ -1370,9 +1375,9 @@ MainComponent::MainComponent()
     };
 
     subAuto.setVisible (false);
-    sub4.onClick    = [this] { applySubdivision (vp::Subdivision::quarter); };
-    sub8.onClick    = [this] { applySubdivision (vp::Subdivision::eighth); };
-    sub16.onClick   = [this] { applySubdivision (vp::Subdivision::sixteenth); };
+    sub4.onClick    = [this] { vp::haptic (vp::Haptic::select); applySubdivision (vp::Subdivision::quarter); };
+    sub8.onClick    = [this] { vp::haptic (vp::Haptic::select); applySubdivision (vp::Subdivision::eighth); };
+    sub16.onClick   = [this] { vp::haptic (vp::Haptic::select); applySubdivision (vp::Subdivision::sixteenth); };
 
     auto setupFader = [this] (juce::Slider& s, juce::Label& name, juce::Label& value,
                               const char* title, double minV, double maxV, double initial,
@@ -1450,6 +1455,7 @@ MainComponent::MainComponent()
     {
         return [this, slot, hits, act = std::move (act)]
         {
+            vp::haptic (vp::Haptic::light);
             if (! soundEditMode)
             {
                 act();
@@ -1978,6 +1984,7 @@ void MainComponent::refreshHitKnobs()
 
 void MainComponent::startPressed()
 {
+    vp::haptic (vp::Haptic::medium);
     if (! internalTrackSelected())
         ensureMicrophone();
     restartWallMs = juce::Time::getMillisecondCounterHiRes();
@@ -1989,6 +1996,7 @@ void MainComponent::startPressed()
 
 void MainComponent::stopPressed()
 {
+    vp::haptic (vp::Haptic::heavy);
     stopSnap = engine.snapshot();
     stopWallMs = juce::Time::getMillisecondCounterHiRes();
     stopTrackSec = internalTrackSelected() ? trackTransport.getCurrentPosition() : -1.0;

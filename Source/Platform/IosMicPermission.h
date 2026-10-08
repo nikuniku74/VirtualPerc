@@ -79,4 +79,8 @@ bool copySystemGear (int px, unsigned char* argb, int lineStride, bool white);
     place. */
 void setMediaServicesResetHandler (std::function<void()> handler);
 
+/** A tap of the Taptic engine. No-op off iOS or without the hardware. */
+enum class Haptic { light, medium, heavy, select, success };
+void haptic (Haptic kind);
+
 } // namespace vp

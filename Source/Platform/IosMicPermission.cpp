@@ -26,5 +26,6 @@ bool   otherAudioPlaying()   { return false; }
 bool   sessionInputProcessing() { return true; }
 void   setMediaServicesResetHandler (std::function<void()>) {}
 bool   copySystemGear (int, unsigned char*, int, bool) { return false; }
+void   haptic (Haptic) {}
 
 } // namespace vp
