@@ -234,7 +234,7 @@ namespace
 
     /** Tight tracking: the condensed face is meant to sit close, and wide
         letter-spacing on 12 pt captions is what made the old labels long. */
-    constexpr float kUiTracking = -0.01f;
+    constexpr float kUiTracking = 0.03f;
 
     juce::Font fontUi (float h, bool bold = true)
     {
@@ -3879,21 +3879,26 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
         block.removeFromTop (btnGap);
         auto bottom = block.removeFromTop (rowH);
 
-        styleSelect.setBounds (top.removeFromLeft (clampW (56, 120, top.getWidth() / 4)));
+        // Two rows with a meaning each: what is played (style and the
+        // 1/4 - 1/8 - 1/16 subdivision), then the three character switches.
+        // The old split put DINAMICA next to the style and 1/16 under it.
+        juce::TextButton* topSq[]    = { &sub4, &sub8, &sub16 };
+        juce::TextButton* bottomSq[] = { &dynamicsButton, &naturalButton, &swingButton };
+        styleSelect.setBounds (top.removeFromLeft (clampW (96, 150, top.getWidth() * 36 / 100)));
         if (top.getWidth() > btnGap)
             top.removeFromLeft (btnGap);
         const int wTop = juce::jmax (1, (top.getWidth() - btnGap * 2) / 3);
         for (int i = 0; i < 3; ++i)
         {
-            squares[i]->setBounds (top.removeFromLeft (wTop));
+            topSq[i]->setBounds (top.removeFromLeft (wTop));
             if (i < 2 && top.getWidth() > btnGap)
                 top.removeFromLeft (btnGap);
         }
         const int wBottom = juce::jmax (1, (bottom.getWidth() - btnGap * 2) / 3);
-        for (int i = 3; i < nMisureSq; ++i)
+        for (int i = 0; i < 3; ++i)
         {
-            squares[i]->setBounds (bottom.removeFromLeft (wBottom));
-            if (i + 1 < nMisureSq && bottom.getWidth() > btnGap)
+            bottomSq[i]->setBounds (bottom.removeFromLeft (wBottom));
+            if (i < 2 && bottom.getWidth() > btnGap)
                 bottom.removeFromLeft (btnGap);
         }
         return;
@@ -3991,16 +3996,23 @@ namespace
     // The compact tempo column, top to bottom, at its natural size. Fixed
     // numbers rather than fractions of the area: the column must not grow to
     // fill whatever it is handed, or the space below the dots becomes a hole.
-    constexpr int kCompactPillH  = 26;
-    constexpr int kCompactBpmH   = 104;
-    constexpr int kCompactBeatsH = 62;
-    constexpr int kCompactBarH   = 38;   // a full-width target, not a strip
+    //
+    // Restyle: the status row is a 44 pt target row (state, SETUP), the number
+    // is the biggest thing, and "÷2 · TAP · ×2" share one 56 pt row under the
+    // dots so the three controls a player reaches for are at the same height,
+    // under the thumb. The note line ("TEMPO FISSO", "a meta (auto)") gets its
+    // own row instead of living on three lines of small text.
+    constexpr int kCompactPillH  = 44;
+    constexpr int kCompactBpmH   = 120;
+    constexpr int kCompactBeatsH = 52;
+    constexpr int kCompactNoteH  = 18;
+    constexpr int kCompactBarH   = 56;   // ÷2 | TAP | ×2, one row
     constexpr int kCompactGapA   = 22;  // status row -> BPM; the orb lane lives here
     constexpr int kCompactGapB   = 6;   // BPM -> dots
-    constexpr int kCompactGapC   = 4;   // dots -> "L'1 e QUI"
+    constexpr int kCompactGapC   = 8;   // note -> control row
     constexpr int kCompactTempoNatural =
         kCompactPillH + kCompactGapA + kCompactBpmH + kCompactGapB
-        + kCompactBeatsH + kCompactGapC + kCompactBarH;
+        + kCompactBeatsH + kCompactNoteH + kCompactGapC + kCompactBarH;
 }
 
 MainComponent::CompactGeom MainComponent::compactGeom() const
@@ -4011,7 +4023,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
     constexpr int kChrome = 22;      // compact card title strip + padding
-    constexpr int kMisureRow = 52;   // the square row is capped here
+    constexpr int kMisureRow = 48 * 2 + 5;   // "come suona": two rows of 48 pt
     const int knobColW = juce::jmax (1, (r.getWidth() - 24) / 4);
     const int misureH = kChrome + kMisureRow;
     const int knobsH = kChrome + knobColW * 2 + 8;   // two rows, four across
@@ -4038,11 +4050,6 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
         tempoH = tempoMin;
         int extra = room - tempoMin - misureH - knobsH;
         misH = misureH;
-        if (extra >= kMisureRow + 6)
-        {
-            misH += kMisureRow + 6;
-            extra -= kMisureRow + 6;
-        }
         knH = knobsH + juce::jmax (0, extra);
     }
     juce::ignoreUnused (knH);
@@ -4076,28 +4083,30 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     // SETUP rides the status row's right side: the words are left-aligned and
     // the rest of the row is empty, and a phone has no title row to put it in.
     {
-        const int side = juce::jmin (s.pill.getHeight(), 34);
-        s.settings = s.pill.removeFromRight (side).reduced (1);
+        const int side = juce::jmin (s.pill.getHeight(), 44);
+        s.settings = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
     }
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
     const int bpmH = px (kCompactBpmH);
     s.bpm = area.removeFromTop (takeAtMost (area.getHeight(), bpmH));
-    {
-        auto block = s.bpm.withSizeKeepingCentre (juce::jmin (s.bpm.getWidth(), 360), s.bpm.getHeight());
-        const int octW = clampW (36, 64, block.getWidth() / 6);
-        s.octaveDown = block.removeFromLeft (octW).reduced (0, juce::jmax (2, bpmH / 6));
-        s.octaveUp = block.removeFromRight (octW).reduced (0, juce::jmax (2, bpmH / 6));
-        s.bpmNumber = block.reduced (4, 0);
-    }
+    // The number has the whole width now: the octave buttons moved down next
+    // to TAP, so "128.4" can be as large as the column lets it.
+    s.bpmNumber = s.bpm.reduced (4, 0);
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
     s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
+    s.tempoLine = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactNoteH)));
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC)));
-    // TAP sits alone under the dots. Declaring the one is a tap on the BPM.
+    // ÷2 | TAP | ×2. Declaring the one is still a tap on the number.
     {
-        auto row = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)))
-                       .reduced (0, 1);
+        auto row = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)));
+        const int gapX = 12;
+        const int octW = clampW (48, 72, row.getWidth() / 5);
+        s.octaveDown = row.removeFromLeft (octW);
+        s.octaveUp = row.removeFromRight (octW);
+        if (row.getWidth() > gapX * 2)
+            row.reduce (gapX, 0);
         s.tap = row;
         s.barShift = {};
     }
@@ -4361,8 +4370,7 @@ void MainComponent::layoutCompact()
     const auto rows = compactTempoRows (g.tempo);
     auto placeOctave = [] (juce::Rectangle<int> col, juce::TextButton& b)
     {
-        const int side = juce::jlimit (26, 36, juce::jmin (col.getWidth(), col.getHeight()));
-        b.setBounds (col.withSizeKeepingCentre (side, side));
+        b.setBounds (col);   // the whole cell: 56 pt tall, never the old 26-36 chip
     };
     placeOctave (rows.octaveDown, halveButton);
     placeOctave (rows.octaveUp, doubleButton);
@@ -4435,10 +4443,12 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const auto stCol = stateColour (snap.followBar);
         const bool hot = stateIsHot (snap.followBar);
         const juce::String label (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar)));
-        const auto f = fontUi (rows.pill.getHeight() < 28 ? 11.0f : 12.0f, false);
+        const bool bigPill = rows.pill.getHeight() >= 40;
+        const auto f = bigPill ? fontUi (17.0f)
+                               : fontUi (rows.pill.getHeight() < 28 ? 11.0f : 12.0f, false);
         const float textW = juce::GlyphArrangement::getStringWidth (f, label);
-        const float dotR = 4.5f;
-        const float gapDot = 7.0f;
+        const float dotR = bigPill ? 7.0f : 4.5f;
+        const float gapDot = bigPill ? 10.0f : 7.0f;
         const float totalW = juce::jmin (static_cast<float> (rows.pill.getWidth()),
                                          dotR * 2.0f + gapDot + textW);
         // Left of the leftover pill so "L'1 è QUI" owns the right edge.
@@ -4455,7 +4465,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                             static_cast<float> (rows.pill.getHeight()))
                          .toNearestInt();
         g.setFont (f);
-        g.setColour (hot ? text() : mute());
+        g.setColour (bigPill || hot ? text() : mute());
         g.drawFittedText (label, textR, juce::Justification::centredLeft, 1);
     }
 
