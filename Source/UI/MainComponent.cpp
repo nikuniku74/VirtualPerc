@@ -468,49 +468,126 @@ namespace
         g.fillEllipse (cx - core, cy - core, core * 2.0f, core * 2.0f);
     }
 
+    /** Which shared look a button wears. 0: plain rounded key. 1: a segment of
+        the 1/4 - 1/8 - 1/16 track. 2: a switch pill with a dot. 3: START/STOP. */
+    int buttonStyle (const juce::Button& b)
+    {
+        return static_cast<int> (b.getProperties().getWithDefault ("btnStyle", 0));
+    }
+
+    bool buttonIsVoiceTile (const juce::Button& b)
+    {
+        return b.getToggleState()
+               && (bool) b.getProperties().getWithDefault ("voiceOnFill", false);
+    }
+
+    bool buttonIsChip (const juce::Button& b)
+    {
+        return (bool) b.getProperties().getWithDefault ("chipFill", false);
+    }
+
+    /** A saturated fill asks to be "hot" (fuchsia). Voice and kit-sound tiles
+        keep their own colour. */
+    bool buttonIsHot (const juce::Button& b, juce::Colour fill)
+    {
+        return ! buttonIsVoiceTile (b) && ! buttonIsChip (b)
+               && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
+    }
+
+    /** Plain and segment buttons that are on get the light solid face, so the
+        label has to turn dark. */
+    bool buttonIsSolidOn (const juce::Button& b, juce::Colour fill)
+    {
+        const int st = buttonStyle (b);
+        if (st == 2 || st == 3)
+            return false;
+        return b.getToggleState() && ! buttonIsHot (b, fill)
+               && ! buttonIsVoiceTile (b) && ! buttonIsChip (b);
+    }
+
     void drawFlatButton (juce::Graphics& g, juce::Button& button, juce::Colour fill,
                          bool down)
     {
-        auto bounds = button.getLocalBounds().toFloat();
-        const bool voiceOn = button.getToggleState()
-                             && (bool) button.getProperties().getWithDefault ("voiceOnFill", false);
-        const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
-        // Voice tiles keep their own fill even when saturated; hotFill is
-        // the START/lock language and would otherwise paint them fuchsia.
-        // chipFill is a kit-sound identity (not a hot START state).
-        const bool hotFill = ! voiceOn && ! chipFill
-                             && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
-        const bool active = button.getToggleState() || down || hotFill;
-
-        // START/STOP carry their own fill (see refreshStartButton) and a hold
-        // progress; they are neither "hot" nor underlined.
-        const bool solid = (bool) button.getProperties().getWithDefault ("solidFill", false);
-        const bool transport = button.getProperties().contains ("holdProgress");
-        g.setColour (solid ? fill
-                           : ((hotFill || (down && ! chipFill && ! transport)) ? fuchsia()
-                                                                                : (voiceOn || chipFill ? fill : ink())));
-        g.fillRect (bounds);
-        const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
-        if (hold > 0.0f)
+        const auto bounds = button.getLocalBounds().toFloat();
+        const int style = buttonStyle (button);
+        const bool on = button.getToggleState();
+        const bool voiceOn = buttonIsVoiceTile (button);
+        const bool chip = buttonIsChip (button);
+        const bool hot = buttonIsHot (button, fill);
+        const bool solidOn = buttonIsSolidOn (button, fill);
+        const float round = style >= 2 ? bounds.getHeight() * 0.5f
+                                       : juce::jmin (12.0f, bounds.getHeight() * 0.5f);
+        const auto body = bounds.reduced (0.5f);
+        const auto pressed = [down] (juce::Colour c)
         {
-            g.setColour (stateLost().withAlpha (0.85f));
-            g.fillRect (bounds.withWidth (bounds.getWidth() * hold));
+            return down ? c.interpolatedWith (text(), 0.14f) : c;
+        };
+
+        if (style == 1)
+        {
+            // Segment: the track is painted by the page; only the chosen one
+            // (or the one under the finger) has a face of its own.
+            if (on || down)
+            {
+                g.setColour (text().withAlpha (on ? 1.0f : 0.28f));
+                g.fillRoundedRectangle (bounds.reduced (3.0f), juce::jmin (9.0f, round));
+            }
+            return;
         }
 
-        // MISURE is a row of squares: without an edge they read as
-        // one bar. START/STOP stay flush - they are wide enough to be a pair.
-        const bool compact = button.getWidth() <= button.getHeight() + 8;
-        if (compact)
+        if (style == 3)
         {
-            g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
-            g.drawRect (bounds.reduced (0.5f), 1.0f);
+            // START: a solid light pill. STOP: an outline that fills red while
+            // it is held (hold progress, see StopHold).
+            const bool solid = (bool) button.getProperties().getWithDefault ("solidFill", false);
+            juce::Path pill;
+            pill.addRoundedRectangle (body, round);
+            g.setColour (solid ? pressed (fill) : ink());
+            g.fillPath (pill);
+            const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
+            if (hold > 0.0f)
+            {
+                g.saveState();
+                g.reduceClipRegion (pill);
+                g.setColour (stateLost().withAlpha (0.85f));
+                g.fillRect (bounds.withWidth (bounds.getWidth() * hold));
+                g.restoreState();
+            }
+            if (! solid)
+            {
+                g.setColour (text());
+                g.drawRoundedRectangle (body.reduced (0.8f), round, 1.6f);
+            }
+            return;
         }
 
-        if (active && ! transport)
+        if (style == 2)
         {
-            const float h = 3.0f;
-            g.setColour (hotFill || down ? juce::Colours::white : fuchsia());
-            g.fillRect (bounds.getX(), bounds.getBottom() - h, bounds.getWidth(), h);
+            // Switch pill: outlined and dotted when on, quiet when off.
+            g.setColour (pressed (ink()));
+            g.fillRoundedRectangle (body, round);
+            g.setColour (on ? text() : border());
+            g.drawRoundedRectangle (body, round, on ? 1.4f : 1.0f);
+            if (on)
+            {
+                g.setColour (text());
+                g.fillEllipse (bounds.getX() + 14.0f, bounds.getCentreY() - 4.0f, 8.0f, 8.0f);
+            }
+            return;
+        }
+
+        juce::Colour face = ink();
+        if (solidOn)                face = text();
+        else if (hot)               face = fuchsia();
+        else if (voiceOn || chip)   face = fill;
+        if (! solidOn)
+            face = pressed (face);
+        g.setColour (face);
+        g.fillRoundedRectangle (body, round);
+        if (! solidOn && ! hot && ! voiceOn && ! chip)
+        {
+            g.setColour (border());
+            g.drawRoundedRectangle (body, round, 1.0f);
         }
     }
 }
@@ -606,12 +683,17 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     }
 
     g.setFont (f);
+    const int style = buttonStyle (button);
     const float alpha = button.isEnabled()
-                            ? (tight && ! button.getToggleState() ? 0.55f : 1.0f)
+                            ? (tight && style == 0 && ! button.getToggleState() ? 0.55f : 1.0f)
                             : 0.5f;
-    g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
-                                                            : juce::TextButton::textColourOffId)
-                     .withMultipliedAlpha (alpha));
+    juce::Colour labelCol = button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
+                                                                       : juce::TextButton::textColourOffId);
+    if (buttonIsSolidOn (button, button.findColour (juce::TextButton::buttonColourId)))
+        labelCol = bg();                               // dark on the light face
+    else if ((style == 1 || style == 2) && ! button.getToggleState())
+        labelCol = mute();                             // off segments and pills are quiet
+    g.setColour (labelCol.withMultipliedAlpha (alpha));
     if (tight)
         g.drawFittedText (label, area, juce::Justification::centred, 2);
     else
@@ -676,8 +758,8 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
                                                                   track.getRight(), bottom);
         if (filled.getHeight() > 1.0f)
         {
-            juce::ColourGradient fill (fuchsia().darker (0.08f), filled.getX(), filled.getBottom(),
-                                       fuchsia().brighter (0.18f), filled.getX(), filled.getY(), false);
+            juce::ColourGradient fill (mute(), filled.getX(), filled.getBottom(),
+                                       text(), filled.getX(), filled.getY(), false);
             g.setGradientFill (fill);
             g.fillRoundedRectangle (filled, 5.0f);
         }
@@ -685,12 +767,12 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
         const float capW = 34.0f;
         const float capH = 16.0f;
         juce::Rectangle<float> cap (cx - capW * 0.5f, sliderPos - capH * 0.5f, capW, capH);
-        paintRadial (g, { cx, sliderPos }, 22.0f, fuchsia(), 0.28f);
+        paintRadial (g, { cx, sliderPos }, 22.0f, text(), 0.28f);
         g.setColour (gDarkMode ? juce::Colour (0xff2a2a30) : juce::Colour (0xfff3eef4));
         g.fillRoundedRectangle (cap.translated (0.0f, 1.5f), 4.0f);
         g.setColour (juce::Colours::white);
         g.fillRoundedRectangle (cap, 4.0f);
-        g.setColour (fuchsia());
+        g.setColour (text());
         g.fillRoundedRectangle (cap.removeFromTop (3.5f), 2.0f);
         return;
     }
@@ -709,8 +791,8 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
     if (fillW > 1.0f)
     {
         auto filled = track.withWidth (fillW);
-        juce::ColourGradient fill (fuchsia().brighter (0.18f), filled.getX(), filled.getY(),
-                                   fuchsia(), filled.getRight(), filled.getY(), false);
+        juce::ColourGradient fill (text(), filled.getX(), filled.getY(),
+                                   text(), filled.getRight(), filled.getY(), false);
         g.setGradientFill (fill);
         g.fillRoundedRectangle (filled, 6.0f);
     }
@@ -718,8 +800,8 @@ void MainComponent::AppLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, 
     juce::ignoreUnused (minSliderPos, maxSliderPos);
 
     const float tr = 16.0f;
-    paintRadial (g, { sliderPos, cy }, 26.0f, fuchsia(), 0.22f);
-    g.setColour (fuchsia());
+    paintRadial (g, { sliderPos, cy }, 26.0f, text(), 0.22f);
+    g.setColour (text());
     g.drawEllipse (sliderPos - tr, cy - tr, tr * 2.0f, tr * 2.0f, 2.4f);
     g.setColour (juce::Colours::white);
     g.fillEllipse (sliderPos - tr + 2.6f, cy - tr + 2.6f, (tr - 2.6f) * 2.0f, (tr - 2.6f) * 2.0f);
@@ -789,7 +871,7 @@ namespace
             ring.addRoundedRectangle (area, radius);
             const float dashes[] = { 5.0f, 4.0f };
             juce::PathStrokeType (1.0f).createDashedStroke (dashed, ring, dashes, 2);
-            g.setColour (fuchsia());
+            g.setColour (text());
             g.strokePath (dashed, juce::PathStrokeType (1.4f));
         }
     }
@@ -1134,6 +1216,14 @@ MainComponent::MainComponent()
         }
     };
     startButton.setTriggeredOnMouseDown (true);
+    // Shared looks: see buttonStyle() in the look-and-feel.
+    sub4.getProperties().set ("btnStyle", 1);
+    sub8.getProperties().set ("btnStyle", 1);
+    sub16.getProperties().set ("btnStyle", 1);
+    dynamicsButton.getProperties().set ("btnStyle", 2);
+    naturalButton.getProperties().set ("btnStyle", 2);
+    swingButton.getProperties().set ("btnStyle", 2);
+    startButton.getProperties().set ("btnStyle", 3);
     startButton.addMouseListener (&stopHold, false);
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
@@ -1949,8 +2039,8 @@ void MainComponent::refreshTempoModeButtons()
     auto paint = [] (juce::TextButton& b, bool on)
     {
         b.setToggleState (on, juce::dontSendNotification);
-        b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
-        b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
+        b.setColour (juce::TextButton::buttonColourId, ink());
+        b.setColour (juce::TextButton::textColourOffId, text());
     };
     paint (followButton, follow);
     paint (fixedButton, ! follow);
@@ -2428,7 +2518,7 @@ namespace
     {
         b.setToggleState (on, juce::dontSendNotification);
         b.setColour (juce::TextButton::buttonColourId, ink());
-        b.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+        b.setColour (juce::TextButton::textColourOffId, text());
     }
 
     juce::Font noteFont() { return fontUi (11.5f, false); }
@@ -3211,8 +3301,8 @@ void MainComponent::refreshOctaveButtons()
     auto paint = [] (juce::TextButton& b, bool on)
     {
         b.setToggleState (on, juce::dontSendNotification);
-        b.setColour (juce::TextButton::buttonColourId, on ? fuchsia() : ink());
-        b.setColour (juce::TextButton::textColourOffId, on ? juce::Colours::white : text());
+        b.setColour (juce::TextButton::buttonColourId, ink());
+        b.setColour (juce::TextButton::textColourOffId, text());
     };
     paint (halveButton, mine && oct < 0);
     paint (doubleButton, mine && oct > 0);
@@ -3233,7 +3323,7 @@ void MainComponent::refreshSubdivisionButtons()
         const bool on = cur == v;
         b.setToggleState (on, juce::dontSendNotification);
         b.setColour (juce::TextButton::buttonColourId, ink());
-        b.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+        b.setColour (juce::TextButton::textColourOffId, text());
     };
     paint (sub4,    static_cast<int> (vp::Subdivision::quarter));
     paint (sub8,    static_cast<int> (vp::Subdivision::eighth));
@@ -3267,9 +3357,8 @@ void MainComponent::refreshBarButton()
     const bool locked = engine.settings().barLocked.load();
     barButton.setButtonText (juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI")));
     barButton.setToggleState (locked, juce::dontSendNotification);
-    barButton.setColour (juce::TextButton::buttonColourId, locked ? fuchsia() : ink());
-    barButton.setColour (juce::TextButton::textColourOffId,
-                         locked ? juce::Colours::white : text());
+    barButton.setColour (juce::TextButton::buttonColourId, ink());
+    barButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
 void MainComponent::refreshStyleButtons()
@@ -3283,7 +3372,7 @@ void MainComponent::refreshStyleButtons()
         b.setToggleState (on, juce::dontSendNotification);
         b.setColour (juce::TextButton::buttonColourId, ink());
         b.setColour (juce::TextButton::textColourOffId,
-                     on || detected ? fuchsia() : text());
+                     detected && ! on ? stateLocked() : text());
     };
 
     // Lit while it is on; the text says what it is doing right now, because
@@ -3315,7 +3404,7 @@ void MainComponent::refreshStartNowButton()
     const bool on = engine.settings().startImmediately.load();
     startNowButton.setToggleState (on, juce::dontSendNotification);
     startNowButton.setColour (juce::TextButton::buttonColourId, ink());
-    startNowButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+    startNowButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
 void MainComponent::refreshNaturalButton()
@@ -3323,7 +3412,7 @@ void MainComponent::refreshNaturalButton()
     const bool on = engine.settings().shakerNatural.load();
     naturalButton.setToggleState (on, juce::dontSendNotification);
     naturalButton.setColour (juce::TextButton::buttonColourId, ink());
-    naturalButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+    naturalButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
 void MainComponent::applySwing (bool on)
@@ -3355,7 +3444,7 @@ void MainComponent::refreshSwingButton()
     const bool on = engine.settings().swing.load() > 0.5f;
     swingButton.setToggleState (on, juce::dontSendNotification);
     swingButton.setColour (juce::TextButton::buttonColourId, ink());
-    swingButton.setColour (juce::TextButton::textColourOffId, on ? fuchsia() : text());
+    swingButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
 void MainComponent::updateBeatDots()
@@ -4098,67 +4187,52 @@ void MainComponent::applyCompactVisibility()
 
 void MainComponent::layoutMisure (juce::Rectangle<int> body)
 {
-    const int btnGap = 5;
-    constexpr int nMisureSq = 6;
-    juce::TextButton* squares[] = {
-        &sub4, &sub8, &sub16,
-        &dynamicsButton, &naturalButton, &swingButton
+    // Three groups with a meaning each: the style, how it is subdivided (one
+    // segmented track, 1/4 - 1/8 - 1/16) and the three character switches
+    // (pills). Wide: one row. Narrow: style and track, then the pills.
+    const int gap = 8;
+    juce::TextButton* segs[]  = { &sub4, &sub8, &sub16 };
+    juce::TextButton* pills[] = { &dynamicsButton, &naturalButton, &swingButton };
+
+    const auto placeSeg = [this, &segs] (juce::Rectangle<int> r)
+    {
+        subdivisionTrack = r;
+        const int w = juce::jmax (1, r.getWidth() / 3);
+        for (int i = 0; i < 3; ++i)
+            segs[i]->setBounds (i < 2 ? r.removeFromLeft (w) : r);
+    };
+    const auto placePills = [gap, &pills] (juce::Rectangle<int> r)
+    {
+        const int w = juce::jmax (1, (r.getWidth() - gap * 2) / 3);
+        for (int i = 0; i < 3; ++i)
+        {
+            pills[i]->setBounds (i < 2 ? r.removeFromLeft (w) : r);
+            if (i < 2)
+                r.removeFromLeft (gap);
+        }
     };
 
-    // Seven squares plus the style menu across a phone leaves each of them
-    // about forty points wide. Where the card has the height for it, wrap to
-    // two rows instead: the squares then take roughly twice the width, which
-    // is what that height is for. Only where the width is actually the binding
-    // constraint - an iPad has room for all seven and should keep one row.
-    const int oneRowSq = (body.getWidth() - clampW (40, 72, body.getWidth() / 7)
-                          - btnGap * nMisureSq) / nMisureSq;
-    const int rowH = juce::jmin (56, (body.getHeight() - btnGap) / 2);
-    if (rowH >= 36 && oneRowSq < 56)
+    const int rowH2 = juce::jmin (56, (body.getHeight() - gap) / 2);
+    if (body.getWidth() < 640 && rowH2 >= 36)
     {
-        auto block = body.withSizeKeepingCentre (body.getWidth(), rowH * 2 + btnGap);
-        auto top = block.removeFromTop (rowH);
-        block.removeFromTop (btnGap);
-        auto bottom = block.removeFromTop (rowH);
-
-        // Two rows with a meaning each: what is played (style and the
-        // 1/4 - 1/8 - 1/16 subdivision), then the three character switches.
-        // The old split put DINAMICA next to the style and 1/16 under it.
-        juce::TextButton* topSq[]    = { &sub4, &sub8, &sub16 };
-        juce::TextButton* bottomSq[] = { &dynamicsButton, &naturalButton, &swingButton };
+        auto block = body.withSizeKeepingCentre (body.getWidth(), rowH2 * 2 + gap);
+        auto top = block.removeFromTop (rowH2);
+        block.removeFromTop (gap);
+        auto bottom = block.removeFromTop (rowH2);
         styleSelect.setBounds (top.removeFromLeft (clampW (96, 150, top.getWidth() * 36 / 100)));
-        if (top.getWidth() > btnGap)
-            top.removeFromLeft (btnGap);
-        const int wTop = juce::jmax (1, (top.getWidth() - btnGap * 2) / 3);
-        for (int i = 0; i < 3; ++i)
-        {
-            topSq[i]->setBounds (top.removeFromLeft (wTop));
-            if (i < 2 && top.getWidth() > btnGap)
-                top.removeFromLeft (btnGap);
-        }
-        const int wBottom = juce::jmax (1, (bottom.getWidth() - btnGap * 2) / 3);
-        for (int i = 0; i < 3; ++i)
-        {
-            bottomSq[i]->setBounds (bottom.removeFromLeft (wBottom));
-            if (i < 2 && bottom.getWidth() > btnGap)
-                bottom.removeFromLeft (btnGap);
-        }
+        top.removeFromLeft (gap);
+        placeSeg (top);
+        placePills (bottom);
         return;
     }
 
-    // One row. The squares spend the whole width rather than staying square
-    // and leaving the right-hand end of the card empty.
     auto row = body.withSizeKeepingCentre (body.getWidth(),
-        juce::jmin (body.getHeight(), clampW (22, 52, body.getHeight())));
-    styleSelect.setBounds (row.removeFromLeft (clampW (40, 72, row.getWidth() / 7)));
-    if (row.getWidth() > btnGap)
-        row.removeFromLeft (btnGap);
-    const int sideFit = juce::jmax (1, (row.getWidth() - btnGap * (nMisureSq - 1)) / nMisureSq);
-    for (int i = 0; i < nMisureSq; ++i)
-    {
-        squares[i]->setBounds (row.removeFromLeft (sideFit));
-        if (i + 1 < nMisureSq && row.getWidth() > btnGap)
-            row.removeFromLeft (btnGap);
-    }
+        juce::jmin (body.getHeight(), clampW (40, 56, body.getHeight())));
+    styleSelect.setBounds (row.removeFromLeft (clampW (110, 170, row.getWidth() / 5)));
+    row.removeFromLeft (gap);
+    placeSeg (row.removeFromLeft (clampW (200, 280, row.getWidth() * 30 / 100)));
+    row.removeFromLeft (gap);
+    placePills (row);
 }
 
 void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
@@ -4235,7 +4309,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
     constexpr int kChrome = 22;      // compact card title strip + padding
-    constexpr int kMisureRow = 48 * 2 + 5;   // "come suona": two rows of 48 pt
+    constexpr int kMisureRow = 48 * 2 + 8;   // "come suona": two rows of 48 pt
     const int misureH = kChrome + kMisureRow;
     const int knobsH = kChrome + 190;   // voices over effects, two rows of faders
     // On a phone the squares (MISURE, seven across) and the knobs (FEEL, four
@@ -4466,7 +4540,8 @@ juce::Rectangle<int> MainComponent::layoutConsole (juce::Rectangle<int> area)
     const int styleW = 68;
     const int misureSide = juce::jlimit (28, 52,
         (innerW - styleW - btnGap * nMisureSq) / nMisureSq);
-    const int hMisure = chrome + misureSide;
+    // Narrow console: two rows (style + track, then the pills) of 48 pt.
+    const int hMisure = chrome + (innerW < 640 ? 48 * 2 + 8 : misureSide);
 
     {
         auto body = card (area.removeFromTop (hMisure), "COME SUONA");
@@ -4642,6 +4717,15 @@ void MainComponent::layoutCompact()
 void MainComponent::paintCards (juce::Graphics& g)
 {
     paintCardList (g, cards);
+    if (! subdivisionTrack.isEmpty())
+    {
+        const auto t = subdivisionTrack.toFloat();
+        const float r = juce::jmin (12.0f, t.getHeight() * 0.5f);
+        g.setColour (ink());
+        g.fillRoundedRectangle (t, r);
+        g.setColour (border());
+        g.drawRoundedRectangle (t.reduced (0.5f), r, 1.0f);
+    }
 }
 
 void MainComponent::paintCardList (juce::Graphics& g, const juce::Array<Card>& list)
@@ -5084,7 +5168,8 @@ void MainComponent::paintSettings (juce::Graphics& g)
         g.fillRoundedRectangle (brand.withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
         g.setColour (text());
         g.setFont (fontUi (13.0f));
-        g.drawFittedText ("IMPOSTAZIONI", titleR, juce::Justification::centredLeft, 1);
+        g.drawFittedText (juce::String (juce::CharPointer_UTF8 ("VIRTUAL PERCUSSIONIST  \xc2\xb7  IMPOSTAZIONI")),
+                          titleR, juce::Justification::centredLeft, 1);
         g.setColour (fuchsia().withAlpha (0.55f));
         g.fillRect ((float) settingsRows.title.getX(),
                     (float) settingsRows.title.getBottom() + 2.0f,
@@ -5175,11 +5260,14 @@ void MainComponent::paint (juce::Graphics& g)
     g.fillRect (full);
 
     const auto stage = stageArea();
+    // The page tint follows the tracker's state (green / amber / red), not the
+    // brand: fuchsia is reserved for the downbeat. Fuchsia only returns under a
+    // tap, as the flash.
     paintRadial (g, { stage.toFloat().getCentreX(), full.getY() + 28.0f },
-                 full.getWidth() * 0.60f, fuchsia(), wash);
-    paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
-                 full.getWidth() * 0.45f, fuchsia(),
-                 0.08f + 0.14f * (tapFlash > 0 ? 1.0f : energy));
+                 full.getWidth() * 0.60f, stateColour (snap.followBar), wash * 0.45f);
+    if (tapFlash > 0)
+        paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
+                     full.getWidth() * 0.45f, fuchsia(), 0.22f);
 
     paintCards (g);
     paintStage (g, stage);
@@ -5394,55 +5482,56 @@ namespace
 
 void MainComponent::StyleSelect::paint (juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
+    const auto bounds = getLocalBounds().toFloat();
+    const float round = juce::jmin (12.0f, bounds.getHeight() * 0.5f);
     g.setColour (ink());
-    g.fillRect (bounds);
-    g.setColour (text().withAlpha (gDarkMode ? 0.22f : 0.28f));
-    g.drawRect (bounds.reduced (0.5f), 1.0f);
-    g.setColour (fuchsia());
-    g.fillRect (bounds.getX(), bounds.getBottom() - 3.0f, bounds.getWidth(), 3.0f);
+    g.fillRoundedRectangle (bounds.reduced (0.5f), round);
+    g.setColour (border());
+    g.drawRoundedRectangle (bounds.reduced (0.5f), round, 1.0f);
 
     const bool autoOn = owner.engine.settings().grooveAuto.load();
     const auto chosen = static_cast<vp::GrooveStyle> (
         owner.engine.settings().grooveStyle.load());
-    juce::String main = autoOn ? "AUTO" : juce::String (vp::toString (chosen));
-    juce::String hint;
+    // The style name is the big word. Under AUTO it is the one the detector has
+    // landed on (without selecting it), and a small AUTO tag says who chose.
+    juce::String mainText = juce::String (vp::toString (chosen));
+    juce::String tag;
     if (autoOn)
     {
-        // Hint the style the detector has landed on without selecting it,
-        // same job the tinted squares used to do.
         const auto detected = static_cast<vp::GrooveStyle> (owner.snap.grooveStyle);
         if (detected != vp::GrooveStyle::count)
-            hint = juce::String (vp::toString (detected));
+        {
+            mainText = juce::String (vp::toString (detected));
+            tag = "AUTO";
+        }
+        else
+            mainText = "AUTO";
     }
 
-    auto textArea = getLocalBounds().reduced (6, 2).withTrimmedRight (16);
-    const float dim = juce::jmin ((float) getHeight(), (float) juce::jmax (1, getWidth()));
-    juce::Font f = fontUi (juce::jmax (9.0f, dim * 0.28f));
+    const float h = static_cast<float> (getHeight());
+    const auto f = fontUi (juce::jlimit (13.0f, 19.0f, h * 0.36f));
+    const auto tagFont = fontUi (juce::jlimit (10.0f, 13.0f, h * 0.26f), false);
+    const float chevW = 26.0f;
+    auto area = getLocalBounds().toFloat().reduced (12.0f, 0.0f).withTrimmedRight (chevW);
+    const float mainW = juce::GlyphArrangement::getStringWidth (f, mainText);
+    const float tagW = tag.isEmpty() ? 0.0f : juce::GlyphArrangement::getStringWidth (tagFont, tag) + 8.0f;
     g.setFont (f);
-    if (hint.isNotEmpty() && hint != main)
+    g.setColour (text());
+    g.drawText (mainText, area.toNearestInt(), juce::Justification::centredLeft, false);
+    if (tagW > 0.0f && mainW + tagW <= area.getWidth())
     {
-        const float mainW = juce::GlyphArrangement::getStringWidth (f, main + "  ");
-        g.setColour (fuchsia());
-        g.drawFittedText (main, textArea, juce::Justification::centredLeft, 1);
-        auto hintArea = textArea.withTrimmedLeft (juce::roundToInt (mainW));
+        g.setFont (tagFont);
         g.setColour (mute());
-        g.drawFittedText (hint, hintArea, juce::Justification::centredLeft, 1);
-    }
-    else
-    {
-        g.setColour (fuchsia());
-        g.drawFittedText (main, textArea, juce::Justification::centredLeft, 1);
+        g.drawText (tag, area.toNearestInt(), juce::Justification::centredRight, false);
     }
 
-    auto chev = juce::Rectangle<float> ((float) getWidth() - 18.0f,
-                                        (float) getHeight() * 0.5f - 3.0f,
-                                        8.0f, 6.0f);
+    auto chev = juce::Rectangle<float> (static_cast<float> (getWidth()) - 20.0f,
+                                        h * 0.5f - 2.5f, 8.0f, 5.0f);
     juce::Path p;
     p.addTriangle (chev.getX(), chev.getY(),
                    chev.getRight(), chev.getY(),
                    chev.getCentreX(), chev.getBottom());
-    g.setColour (text().withAlpha (0.7f));
+    g.setColour (mute());
     g.fillPath (p);
 }
 
@@ -5581,10 +5670,10 @@ void MainComponent::StyleMenuOverlay::resized()
                             && i - 1 != static_cast<int> (vp::GrooveStyle::twoOne);
         items[i].setToggleState (on, juce::dontSendNotification);
         items[i].setColour (juce::TextButton::buttonColourId, ink());
-        items[i].setColour (juce::TextButton::textColourOffId,
-                            on || hinted ? fuchsia() : text());
-        items[i].setColour (juce::TextButton::textColourOnId,
-                            on || hinted ? fuchsia() : text());
+        // The chosen style takes the light face (see the plain button look);
+        // under AUTO the detector's pick is tinted green, "locked".
+        items[i].setColour (juce::TextButton::textColourOffId, hinted ? stateLocked() : text());
+        items[i].setColour (juce::TextButton::textColourOnId, text());
     }
 }
 

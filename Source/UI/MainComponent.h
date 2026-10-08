@@ -195,6 +195,9 @@ private:
         juce::String title;
     };
     juce::Array<Card> cards;
+    /** The rounded track behind the 1/4 - 1/8 - 1/16 segments. The three
+        buttons only draw the chosen face; the track is the page's to paint. */
+    juce::Rectangle<int> subdivisionTrack;
     juce::Array<Card> settingsCards;
     void paintCardList (juce::Graphics& g, const juce::Array<Card>& list);
 
