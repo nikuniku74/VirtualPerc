@@ -3,7 +3,6 @@
 #include "Percussion/PercussionEngine.h"
 #include "TestAiBeat.h"
 #include "TestLoops.h"
-#include "TestTempoMotion.h"
 #include "Tracking/TempoFollower.h"
 
 #include "../scripts/probe_song_render.h"
@@ -1319,12 +1318,6 @@ int main (int argc, char** argv)
     if (argc > 1 && std::string (argv[1]) == "--tempo-step")
     {
         vpRunWideTempoStepTest (gPassed, gFailed);
-        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
-        return gFailed == 0 ? 0 : 1;
-    }
-    if (argc > 1 && std::string (argv[1]) == "--tempo-motion")
-    {
-        vpRunTempoMotionTrackerTests (gPassed, gFailed);
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }

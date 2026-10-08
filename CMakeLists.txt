@@ -31,8 +31,6 @@ set (VP_CORE_SOURCES
     Source/AI/OnnxBeatModel.cpp
     Source/AI/StubBeatModel.cpp
     Source/AI/BeatDecoder.cpp
-    Source/AI/TempoMotionTracker.cpp
-    Source/AI/TempoMotionShape.cpp
     Source/AI/TempoEstimator.cpp
     Source/AI/BeatHmm.cpp
     Source/AI/NeuralBeatTracker.cpp
@@ -325,8 +323,6 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         Tests/TestMain.cpp
         Tests/TestAiBeat.cpp
         Tests/TestLoops.cpp
-        Tests/TestTempoMotion.cpp
-        Tests/TestTempoMotionShape.cpp
     )
 
     target_include_directories (VPTests PRIVATE

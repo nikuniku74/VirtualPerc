@@ -368,13 +368,6 @@ private:
     std::atomic<int>   lastPhraseBar { 0 };
     std::atomic<float> lastEvidenceTrust { 1.0f };
     std::atomic<float> lastGridTauSec { 0.0f };
-    std::atomic<float> lastMotionBridgeAuthority { 0.0f };
-    std::atomic<float> lastMotionShapeBpm { 0.0f };
-    std::atomic<float> lastMotionShapeEvidence { 0.0f };
-    std::atomic<float> lastMotionShapeVsHinge { 0.0f };
-    std::atomic<int>   lastMotionShapeModel { 0 };
-    std::atomic<int>   lastMotionShapeWins { 0 };
-    std::atomic<int>   lastMotionShapeQuarantine { 0 };
     std::atomic<float> lastFastTempoDeviation { 0.0f };
     std::atomic<float> lastFastIntervalDeviation { 0.0f };
     std::atomic<int>   lastFastTempoEvidence { 0 };

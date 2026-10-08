@@ -427,22 +427,8 @@ public:
             tempoTransitionIntervals = 0;
         }
 
-        /** Tempo-motion shadow and shape diagnostics, same copy/clear contract
-            as the transition scalars above. Nothing consumes them as authority. */
-        float motionShadowBpm = 0.0f;
-        float motionShadowPeriodDelta = 0.0f;
-        float motionShadowUncertainty = 1.0f;
-        float motionShadowAuthority = 0.0f;
-        float motionBridgeAuthority = 0.0f;
-        int   motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
-        int   motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
-        bool  motionFirstStrictProof = false;
-        int   motionShapeModel = static_cast<int> (TempoMotionShapeModel::insufficient);
-        float motionShapeBpm = 0.0f;
-        float motionShapeQuadraticVsHinge = 0.0f;
-        float motionShapeEvidenceMargin = 0.0f;
-        int   motionShapeQuadraticWins = 0;
-        int   motionShapeQuarantineBeats = 0;
+        /** Direct-feed motion diagnostics, same copy/clear contract as the
+            transition scalars above. Nothing consumes them as authority. */
         float fastTempoDeviation = 0.0f;
         float fastIntervalDeviation = 0.0f;
         int   fastTempoEvidence = 0;
@@ -452,20 +438,6 @@ public:
         {
             const BeatHypothesis cleared {};
             const BeatHypothesis& h = latest != nullptr && latest->valid ? *latest : cleared;
-            motionShadowBpm = h.motionShadowBpm;
-            motionShadowPeriodDelta = h.motionShadowPeriodDelta;
-            motionShadowUncertainty = h.motionShadowUncertainty;
-            motionShadowAuthority = h.motionShadowAuthority;
-            motionBridgeAuthority = h.motionBridgeAuthority;
-            motionShadowState = h.motionShadowState;
-            motionShadowVeto = h.motionShadowVeto;
-            motionFirstStrictProof = h.motionFirstStrictProof;
-            motionShapeModel = h.motionShapeModel;
-            motionShapeBpm = h.motionShapeBpm;
-            motionShapeQuadraticVsHinge = h.motionShapeQuadraticVsHinge;
-            motionShapeEvidenceMargin = h.motionShapeEvidenceMargin;
-            motionShapeQuadraticWins = h.motionShapeQuadraticWins;
-            motionShapeQuarantineBeats = h.motionShapeQuarantineBeats;
             fastTempoDeviation = h.fastTempoDeviation;
             fastIntervalDeviation = h.fastIntervalDeviation;
             fastTempoEvidence = h.fastTempoEvidence;

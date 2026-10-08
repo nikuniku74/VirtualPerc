@@ -116,3 +116,7 @@ hosts. Anything else failing is a regression. `--level` and `--octave` take
   start; a song already playing at launch is not covered (item 88) - test it
   with `VPTrack` without silence when touching entry.
 - Thresholds measured before 2026-10-02 used the old network's activations.
+- Removing code that is ever active cannot be bit-identical to HEAD. Check the
+  removal bit for bit against a worktree of HEAD with that code forced off,
+  then judge off vs on with `cmp`/`truth` as any change (item 94: the motion
+  bridge acted in 14-18 of 54 files; every diff started on its first frame).

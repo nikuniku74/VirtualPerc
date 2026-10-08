@@ -5213,7 +5213,7 @@ Segnalazione: «sembra ancora che le percussioni suonino sempre leggerissimament
   ora le legge dall'inizio vero del colpo, con valori identici a prima a 12 ms. `--percussion` 17/0.
 - [ ] Ascolto su iPad (BRANO), poi dal vivo. Se ora sembra «davanti», 8–9 ms è la via di mezzo.
 
-### 94. Pulizia del core: le «porte» del decoder via; ponte di moto e canale cassa da decidere 🟡 (2026-10-06, misurato — da ascoltare)
+### 94. Pulizia del core: le «porte» del decoder e il ponte di moto via, il canale cassa resta 🟡 (2026-10-06/08, misurato — da ascoltare)
 
 Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non serve più e quindi meglio rimuovere».
 - [x] Inventario: nessun interruttore sperimentale né codice spento nel tree (a parte i due temporanei di questa verifica,
@@ -5228,12 +5228,34 @@ Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non 
   `BeatDecoder`): identiche bit per bit alla versione spenta, in isolamento, 16/16. Banco sintetico `probe_motion_matrix
   --quick`: fisso identico, gradino 30.3 → 30.2 ms, **continuo 38.8/95.0 → 54.1/119.1 ms** (la famiglia per cui erano nate).
   `VPTests` `--bar` 13/0, `--new-input` 16/0, `--transport` 6/0, `--state-timing`, `--phase-lock` 20/0.
-- [ ] **Ponte di moto** (`TempoMotionShape` + `TempoMotionTracker`, classificatore di forma e autorità del ponte, ~1500
-  righe fra decoder, tracker, motore, DEBUG, 2 file di test, 3 sonde): attivo lo 0.14–0.16% del tempo sui brani veri;
-  spento, tutte le metriche identiche in BRANO e MIXER. **Da togliere** (decisione dell'utente, 2026-10-08), a patto
-  che non ci siano regressioni: banco veloce bit per bit identico in BRANO e MIXER −12 (e −6/−18), `stop_song.py`,
-  `VPAlign --steps/--ramps`, `VPTests --tempo-step --tempo-slow --bar --new-input --transport --phase-lock`.
-  Cambia lo strumento `compare_motion_matrix.py`, che pretende autorità sul continuo. Da fare in una nuova chat.
+- [x] **Ponte di moto tolto** (2026-10-08, decisione dell'utente): `TempoMotionShape` + `TempoMotionTracker`
+  (8 file, ~2100 righe), `motionBridgeAuthority`/`bridgedMotionTarget`, `kGridTauProvenMotion`, i campi diagnostici
+  in ipotesi, tracker, motore e DEBUG (la riga «moto»), il flag `VPTests --tempo-motion`. Dove il decoder azzerava
+  l'ombra resta solo ciò che faceva davvero: `dropIoiLead()`. I 3 test del follower ancora validi (hint «provato»,
+  ora dato solo dall'IOI lead) sono passati in `VPTests --evidence` (5/0). Il `.pul` di `VPTrack` perde la 15ª
+  colonna; il CSV di `probe_motion_matrix` le colonne `curve`/`recovery_violations`/`authority_frames`;
+  `compare_motion_matrix.py` ora chiede fisso/gradino identici e continuo non peggiore (self-test PASS).
+  - **Bit per bit identico a prima: no, e non può esserlo.** Su 54 file il ponte prendeva autorità in 14 (BRANO),
+    18 (−6), 16 (−12), 16 (−18); ogni differenza comincia esattamente al primo frame con autorità, tutti gli altri file
+    sono identici. Il controllo giusto è quello usato per le porte: un worktree di HEAD (`b4d95ad`) con l'autorità
+    forzata a 0. **Rimozione = ponte spento bit per bit: 216/216** (BRANO, MIXER −6/−12/−18), e identici anche
+    `stop_song.py` e `VPAlign --ramps`.
+  - **Ponte spento contro acceso** (riferimento `r0*`, nuovo `r1*` in `~/vp-bench`):
+
+    | | giusto % | disp ms | >25 ms % | uno % | scatti/min | uscite/min | file peggiori (`cmp`) |
+    |---|---:|---:|---:|---:|---:|---:|---|
+    | BRANO | 81.7 → 81.7 | 12.1 → 12.1 | 19.3 → 19.3 | 75.0 → 75.0 | 0.18 → 0.18 | 1.92 → 1.92 | nessuno |
+    | MIXER −6 | 74.5 → 74.5 | 10.9 → 10.9 | 16.4 → 16.5 | 71.6 → 71.6 | 0.23 → 0.23 | 1.93 → 1.93 | nessuno |
+    | MIXER −12 | 81.0 → 81.1 | 11.8 → 11.8 | 18.4 → 18.4 | 78.8 → 78.8 | 0.24 → 0.23 | 2.08 → 2.08 | nessuno |
+    | MIXER −18 | 84.0 → 84.0 | 13.7 → 13.7 | 20.6 → 20.6 | 81.2 → 81.2 | 0.27 → 0.27 | 2.04 → 2.02 | nessuno |
+
+    Per file solo decimi nei due sensi (es. UMBRELLA 48k BRANO >25 ms 16.8 → 18.6%, WRECKING BALL 44k −12 dB
+    36.3 → 32.9%, FLAMINGO 1200 BRANO tempo giusto 91.2 → 92.7%).
+  - `stop_song.py change` identico; `inside` STOP 4 s sbagliata totale 45.8 → 45.9 s (p90 e mediane identiche).
+    `VPAlign --steps` identico; `--ramps` MIXER media 30 s 19.8 → 19.5, 12 s 35.5 → 36.1, 120→132 26.3 → 26.1 ms,
+    peggio invariato, tutti PASS. `probe_motion_matrix --quick`: hash identici (lì il ponte non prendeva mai autorità).
+  - `VPTests` `--tempo-step` 14/0, `--tempo-slow` 13/0, `--bar` 13/0, `--new-input` 16/0, `--transport` 6/0,
+    `--phase-lock` 20/0, `--state-timing` PASS, `--evidence` 5/0.
 - [x] **Canale cassa separato** (`KickOnsetDetector`, tasto CASSA, ~300 righe): **resta** (decisione dell'utente,
   2026-10-08: «potrebbe servire»). Spento di default; dal vivo oggi si usa il mix completo.
 - [ ] Ascolto: con le porte tolte la parte dovrebbe «scattare» meno, soprattutto nei brani lenti e dal vivo.

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "AI/TempoMotionTracker.h"
 #include "Core/Types.h"
 
 #include <atomic>
@@ -89,24 +88,6 @@ struct BeatHypothesis
     float    motionFitImprovement = 0.0f;
     int      motionFitEvidence = 0;
     int      motionFitDirection = 0;
-    /** Bounded tempo-motion model output. The scalar shadow remains diagnostic.
-        `motionBridgeAuthority` reports the separate residual-shape decision
-        that may already have contributed a railed target through `commit()`;
-        the audio-thread clock still consumes only the ordinary published BPM. */
-    float    motionShadowBpm = 0.0f;
-    float    motionShadowPeriodDelta = 0.0f;
-    float    motionShadowUncertainty = 1.0f;
-    float    motionShadowAuthority = 0.0f;
-    int      motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
-    int      motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
-    bool     motionFirstStrictProof = false;
-    int      motionShapeModel = static_cast<int> (TempoMotionShapeModel::insufficient);
-    float    motionShapeBpm = 0.0f;
-    float    motionShapeQuadraticVsHinge = 0.0f;
-    float    motionShapeEvidenceMargin = 0.0f;
-    int      motionShapeQuadraticWins = 0;
-    int      motionShapeQuarantineBeats = 0;
-    float    motionBridgeAuthority = 0.0f;
     /** True while the decoder leads the clock from a recent interval
         reading (`ioiClockLead`). The clock may use the existing motion tau;
         it does not choose a tempo. */

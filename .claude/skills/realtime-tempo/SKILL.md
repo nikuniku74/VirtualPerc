@@ -90,6 +90,10 @@ and precise, so there are several:
   (2-4 quarters leaving the 8-beat line by `k*step`), wide non-octave steps on a
   line feed. Under a sounding part on a direct feed every step also needs the
   comb to agree (`stepLacksComb`).
+- **Ramps**: followed by the short fit, the direct-feed motion evidence that
+  releases FISSO (`motionFit*`, `fastTempo*`) and the IOI lead (`ioiLead`). The
+  residual-shape bridge (`TempoMotionTracker`) was removed (item 94: active
+  0.15% of the time, real-song metrics unchanged without it).
 - **Published phase under a sounding part**: the line through the newest
   `kPhaseLineBeats` (6) accepted beats, direct feed, FISSO/VIVO only.
 - **Entry**: the part enters only when decoder tempo and comb agree within
@@ -109,7 +113,7 @@ and precise, so there are several:
   own (`BeatTracker::setInputEpoch`, `staleIntroLock`, TODO item 96; held-out
   MIXER right tempo +4.7).
 
-## 4. Where the precision goes (measured 2026-10-02/06, items 87, 90, 100)
+## 4. Where the precision goes (measured 2026-10-02/08, items 87, 90, 100, 94)
 
 Against the offline teacher (Beat This!) on the real-song bench:
 
@@ -120,10 +124,10 @@ Against the offline teacher (Beat This!) on the real-song bench:
 | causal line over last 8 peaks | 10.2 | 13.8% |
 | clock after phase line + glide (current) | ~11.8 | ~18.7% |
 
-Decisions, current model (2026-10-06, 54 files): right tempo/octave 81.6% of
-beats on loaded files and 81.0% on the MIXER at -12 dB (1.2.6: 78.3 / 76.7%),
-right one 75.0 / 78.8% (item 106; 69.5 / 75.7 before), scatter 12.1 / 11.8 ms, beats > 25 ms 19.3 / 18.6%,
-rate surges 0.18 / 0.24 per minute; no drift between the first and the last
+Decisions, current model (2026-10-08, 54 files): right tempo/octave 81.7% of
+beats on loaded files and 81.1% on the MIXER at -12 dB (1.2.6: 78.3 / 76.7%),
+right one 75.0 / 78.8% (item 106; 69.5 / 75.7 before), scatter 12.1 / 11.8 ms, beats > 25 ms 19.3 / 18.4%,
+rate surges 0.18 / 0.23 per minute; no drift between the first and the last
 quarter of a song (median < 1 ms). **Phase is near the network's ceiling; the open problems
 are decisions (octave, the one, entry), not precision.** Any threshold measured
 before 2026-10-02 was measured on the old network's activations.

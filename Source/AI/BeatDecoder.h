@@ -3,7 +3,6 @@
 #include "AI/BeatHypothesis.h"
 #include "AI/BeatHmm.h"
 #include "AI/TempoEstimator.h"
-#include "AI/TempoMotionTracker.h"
 #include "Tracking/PhaseTrust.h"
 
 namespace vp
@@ -106,22 +105,6 @@ public:
         float motionFitImprovement = 0.0f;
         int   motionFitEvidence = 0;
         int   motionFitDirection = 0;
-        /** Scalar shadow diagnostics. Shape fields below explain the separate
-            bounded authority reported by `motionBridgeAuthority`. */
-        float motionShadowBpm = 0.0f;
-        float motionShadowPeriodDelta = 0.0f;
-        float motionShadowUncertainty = 1.0f;
-        float motionShadowAuthority = 0.0f;
-        int   motionShadowState = static_cast<int> (TempoMotionShadowState::idle);
-        int   motionShadowVeto = static_cast<int> (TempoMotionVeto::none);
-        bool  motionFirstStrictProof = false;
-        int   motionShapeModel = static_cast<int> (TempoMotionShapeModel::insufficient);
-        float motionShapeBpm = 0.0f;
-        float motionShapeQuadraticVsHinge = 0.0f;
-        float motionShapeEvidenceMargin = 0.0f;
-        int   motionShapeQuadraticWins = 0;
-        int   motionShapeQuarantineBeats = 0;
-        float motionBridgeAuthority = 0.0f;
         bool  levelSettled = false;
         int   userOctave = 0;
         /** Median grid-index step of the fitted beats: 1 on a grid at the pulse,
@@ -294,10 +277,9 @@ private:
     /** The beats behind us belong to a grid that has just moved: forget them
         and the fits built on them, or the fit pulls the grid straight back. */
     void  dropBeatHistory() noexcept;
-    void  updateMotionShadow() noexcept;
-    void  refreshMotionBridgeAuthority() noexcept;
-    void  resetMotionShadow (bool full, TempoMotionVeto reason) noexcept;
-    float bridgedMotionTarget (float ordinaryTarget) const noexcept;
+    /** Every boundary (input epoch, octave/grid, discontinuity, transition,
+        stale beats) ends an IOI lead. */
+    void  dropIoiLead() noexcept;
     void  updateTempo() noexcept;
     float foldToPeriod (float ioiSec, float reference) const noexcept;
     /** Direct-feed unknown: the committed pulse is the one the on-grid
@@ -561,16 +543,11 @@ private:
     float motionFitImprovement = 0.0f;
     int   motionFitEvidence = 0;
     int   motionFitDirection = 0;
-    TempoMotionTracker motionTracker;
-    TempoMotionOutput motionShadow {};
-    uint32_t motionObservedBeatSerial = 0;
-    float motionBridgeAuthority = 0.0f;
-    float motionBridgeAnchorBpm = 0.0f;
     bool  ioiClockLead = false;
     int   ioiClockLeadBeats = 0;
     /** Set only when the four-term long-fit phase gate opens. Cleared
         when fast motion is no longer current, including a beat train that
-        `resetMotionShadow` has already dropped `ioiClockLead` from, and
+        `dropIoiLead` has already dropped `ioiClockLead` from, and
         on `declarePulseHere` (that command sets lastBeat to now, so fast
         motion would otherwise keep the pre-button period). Does not arm
         `ioiLead` or the 0.01 s tau. */

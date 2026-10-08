@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
+"""A/B of two `probe_motion_matrix --csv` runs.
+
+    compare_motion_matrix.py CONTROL.csv CANDIDATE.csv
+    compare_motion_matrix.py --self-test
+
+fisso and gradino must keep their trace hash (bit for bit the same clock); the
+continuo family must not get worse in mean or p95 phase. Until 2026-10-08 the
+continuo row also had to show bridge authority and beat the control: the
+residual-shape bridge it was written for was removed (docs/TODO.md item 94).
+"""
 import csv
 import io
 import sys
 
-FIELDS = {
-    "offset", "family", "mean", "p95", "p995", "trace_hash",
-    "recovery_violations", "authority_frames"
-}
+FIELDS = {"offset", "family", "mean", "p95", "p995", "trace_hash"}
 
 CSV_HEADER = (
     "offset,family,runs,mean,p95,p995,over50,bpm_error,bpm_over4,releases,"
-    "curve,trace_hash,recovery_violations,authority_frames"
+    "trace_hash"
 )
 
 
@@ -37,64 +44,38 @@ def compare(control, candidate):
         if family in ("fisso", "gradino"):
             if before["trace_hash"] != after["trace_hash"]:
                 failures.append(f"{key}: traccia cambiata")
-            if int(after["authority_frames"]) != 0:
-                failures.append(f"{key}: autorita' non nulla")
         if family == "continuo":
-            if not float(after["mean"]) < float(before["mean"]):
-                failures.append(f"{key}: media non migliorata")
-            if not float(after["p95"]) < float(before["p95"]):
-                failures.append(f"{key}: p95 non migliorato")
-            if int(after["authority_frames"]) <= 0:
-                failures.append(f"{key}: autorita' non positiva")
-            if int(after["recovery_violations"]) != 0:
-                failures.append(f"{key}: rientro oltre due beat")
+            if float(after["mean"]) > float(before["mean"]):
+                failures.append(f"{key}: media peggiorata")
+            if float(after["p95"]) > float(before["p95"]):
+                failures.append(f"{key}: p95 peggiorato")
     return failures
 
 
-def _fixture_rows(continuo_mean, continuo_p95, continuo_recovery="0",
-                  continuo_authority="7"):
+def _fixture_rows(continuo_mean, continuo_p95, fisso_hash="fissohash"):
     return (
         f"{CSV_HEADER}\n"
-        "0,fisso,16,10.0,20.0,30.0,0,0,0,0,0,fissohash,0,0\n"
-        "0,gradino,16,11.0,21.0,31.0,0,0,0,0,0,gradhash,0,0\n"
-        f"0,continuo,16,{continuo_mean},{continuo_p95},200.0,0,0,0,0,0,"
-        f"conthash,{continuo_recovery},{continuo_authority}\n"
+        f"0,fisso,16,10.0,20.0,30.0,0,0,0,0,{fisso_hash}\n"
+        "0,gradino,16,11.0,21.0,31.0,0,0,0,0,gradhash\n"
+        f"0,continuo,16,{continuo_mean},{continuo_p95},200.0,0,0,0,0,conthash\n"
     )
 
 
 def run_self_test():
     control = load_stream(io.StringIO(_fixture_rows("50.0", "100.0")))
-
-    improved = load_stream(io.StringIO(_fixture_rows("40.0", "90.0")))
-    pass_failures = compare(control, improved)
-    if pass_failures:
-        print("self-test FAIL: valid candidate should pass", file=sys.stderr)
-        for failure in pass_failures:
-            print(f"  {failure}", file=sys.stderr)
-        return 1
-
-    equal = load_stream(io.StringIO(_fixture_rows("50.0", "100.0")))
-    equal_failures = compare(control, equal)
-    expected = {
-        "(0, 'continuo'): media non migliorata",
-        "(0, 'continuo'): p95 non migliorato",
-    }
-    if set(equal_failures) != expected:
-        print("self-test FAIL: equal continuo should fail mean and p95 only",
-              file=sys.stderr)
-        print(f"  got: {equal_failures}", file=sys.stderr)
-        return 1
-
-    zero_authority = load_stream(io.StringIO(
-        _fixture_rows("40.0", "90.0", continuo_authority="0")))
-    zero_authority_failures = compare(control, zero_authority)
-    expected = ["(0, 'continuo'): autorita' non positiva"]
-    if zero_authority_failures != expected:
-        print("self-test FAIL: zero-authority continuo should fail",
-              file=sys.stderr)
-        print(f"  got: {zero_authority_failures}", file=sys.stderr)
-        return 1
-
+    cases = [
+        ("equal passes", _fixture_rows("50.0", "100.0"), []),
+        ("better passes", _fixture_rows("40.0", "90.0"), []),
+        ("worse continuo fails", _fixture_rows("51.0", "101.0"),
+         ["(0, 'continuo'): media peggiorata", "(0, 'continuo'): p95 peggiorato"]),
+        ("moved fisso fails", _fixture_rows("50.0", "100.0", "otherhash"),
+         ["(0, 'fisso'): traccia cambiata"]),
+    ]
+    for name, rows, expected in cases:
+        got = compare(control, load_stream(io.StringIO(rows)))
+        if got != expected:
+            print(f"self-test FAIL: {name}: got {got}", file=sys.stderr)
+            return 1
     print("PASS compare_motion_matrix self-test")
     return 0
 

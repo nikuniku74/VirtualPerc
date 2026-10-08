@@ -76,10 +76,12 @@ public:
     void setBeatGapHold (bool on) noexcept { beatGapHold = on; }
     /** The decoder has a clean short fit moving away from a held direct-feed
         tempo. This does not select a tempo; it only lets phase drift build the
-        existing rate trim faster. `proven` means the residual-shape path has
-        already supplied two independent quadratic wins, so the follower need
-        not demand three more signs before using one fresh phase interval or
-        reapply the stale constant-fit trust penalty to that curved motion. */
+        existing rate trim faster. `proven` means the decoder already leads
+        from a recent interval reading (`BeatHypothesis::ioiLead`), so the
+        follower need not demand three more signs before using one fresh phase
+        interval or reapply the stale constant-fit trust penalty to it. (Until
+        2026-10-08 a residual-shape bridge set it too; removed, docs/TODO.md
+        item 94.) */
     void setTempoMotionHint (bool on, bool proven = false) noexcept
     {
         tempoMotionHint = on;
@@ -103,8 +105,8 @@ public:
 
         A direct feed may keep a candidate across missed quarter detections:
         its propagation path is stable, while a room needs the tighter window.
-        On a direct feed, either full residual-shape proof or an established
-        live regime outside abrupt-change refit may shorten only the serial
+        On a direct feed, an established live regime outside abrupt-change
+        refit may shorten only the serial
         independence window. `allowOneShotRecovery` is false while a stable
         direct feed is following normally: its phase servo owns that job. It is
         true again for an actual tracker dropout/re-entry. */

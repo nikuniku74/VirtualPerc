@@ -755,10 +755,9 @@ void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, i
             const float rateGain = tempoMotionHint
                                        ? std::clamp (strength * 0.20f, 0.20f, 0.40f)
                                        : std::clamp (strength * 0.08f, 0.10f, 0.28f);
-            // Full residual-shape authority already contains two consecutive
-            // multi-beat quadratic decisions and an explicit rejection of a
-            // hinge/step. Requiring three additional phase-drift signs here
-            // repeats that proof after the decoder has finished it. One fresh
+            // A proven hint (the decoder's IOI lead) has already read the new
+            // interval. Requiring three additional phase-drift signs here
+            // repeats that reading after the decoder has finished it. One fresh
             // phase interval is still mandatory; only its agreement multiplier
             // is made whole. Provisional motion and every ordinary/fixed path
             // retain the three-observation filter.
@@ -831,11 +830,11 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
 {
     // The ordinary trust score comes from a constant-tempo fit. A genuinely
     // curved beat trajectory can lower that score precisely because the band
-    // is moving. Once the independent residual-shape path has proved that
-    // motion twice, using the linear-fit penalty here would reintroduce up to
+    // is moving. Once the decoder leads from a recent interval reading
+    // (proven hint), using the linear-fit penalty here would reintroduce up to
     // 2.5 seconds of lag after recognition. This override is local to the
     // follower controls; it neither changes the decoded target nor survives
-    // loss of full shape authority.
+    // the end of that lead.
     const float controlTrust = tempoMotionProven ? 1.0f : tempoTrust;
     constexpr float kFarTarget = 0.06f;
     // A live line feed normally gets the responsive phase loop even when its

@@ -367,15 +367,6 @@ struct EngineSnapshot
     float shortFitBpm          = 0.0f;
     float longFitBpm           = 0.0f;
     float shortFitResidual     = 1.0f;
-    /** Residual-shape bridge diagnostics. These are display-only copies of the
-        worker publication and never feed back into the audio path. */
-    float motionBridgeAuthority = 0.0f;
-    float motionShapeBpm        = 0.0f;
-    float motionShapeEvidence   = 0.0f;
-    float motionShapeVsHinge    = 0.0f;
-    int   motionShapeModel      = 0;
-    int   motionShapeWins       = 0;
-    int   motionShapeQuarantine = 0;
     /** Display-only causal evidence behind the direct-feed FISSO release. */
     float fastTempoDeviation    = 0.0f;
     float fastIntervalDeviation = 0.0f;

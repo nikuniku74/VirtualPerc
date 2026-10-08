@@ -1406,7 +1406,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         follower.observeRecoveryBeat (
             wrapCentered (follower.beatPhase() - songPhase), hyp.beatSerial,
             ! speakerFollow,
-            hyp.motionBridgeAuthority >= 0.999f || directLivePhaseFollow,
+            directLivePhaseFollow,
             ! stableDirectFeed || currentState == TrackingState::recovering);
     }
 
@@ -1465,12 +1465,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                   && directTempoMotionHint (hyp.regime,
                                                             hyp.fastTempoDeviation,
                                                             hyp.shortFitResidual,
-                                                            hyp.motionBridgeAuthority,
                                                             hyp.fastTempoEvidence,
                                                             hyp.motionFitImprovement,
                                                             hyp.ioiLead);
-    follower.setTempoMotionHint (
-        cleanTempoMotion, hyp.motionBridgeAuthority >= 0.999f || hyp.ioiLead);
+    follower.setTempoMotionHint (cleanTempoMotion, hyp.ioiLead);
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
     {
@@ -1880,9 +1878,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                     : directLivePhaseFollow ? kGridTauMotion
                     : (haveHyp && hyp.regime == TempoRegime::fixed
                        && hyp.transitionRefitBeats > 0) ? kGridTauMotion
-                    : gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
-                                         ? kGridTauProvenMotion
-                                         : hyp.ioiLead ? kGridTauIoiLead
+                    : gridPhaseTau (hyp.ioiLead ? kGridTauIoiLead
                                          : cleanTempoMotion ? kGridTauMotion
                                                             : kGridTauHolding,
                                     holding, evidence.trust());
@@ -2113,9 +2109,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.kickTrusted = kickTrusted;
     out.drumsOut = evidence.drumsAreOut();
     out.evidenceTrust = evidence.trust();
-    out.gridTauSec = gridPhaseTau (hyp.motionBridgeAuthority >= 0.999f
-                                                    ? kGridTauProvenMotion
-                                                    : hyp.ioiLead ? kGridTauIoiLead
+    out.gridTauSec = gridPhaseTau (hyp.ioiLead ? kGridTauIoiLead
                                                     : cleanTempoMotion ? kGridTauMotion
                                                                        : kGridTauHolding,
                                        holding, evidence.trust());

@@ -241,6 +241,26 @@ fired on two fixed and three step rows (trace hashes changed) and broke one
 recovery. It was removed whole; the classifier and diagnostics stay, and
 `compare_motion_matrix.py` now rejects a vacuous zero-authority "pass".
 
+**The whole bridge is gone (2026-10-08, docs/TODO.md item 94).**
+`TempoMotionShape`, `TempoMotionTracker`, `motionBridgeAuthority`,
+`bridgedMotionTarget` and `kGridTauProvenMotion` were removed from the decoder,
+tracker, engine, DEBUG, tests and probes (the `.pul` lost its 15th column, the
+matrix CSV its `curve`/`recovery_violations`/`authority_frames`). On real songs
+it held authority 0.14-0.16% of the time, in 14 of 54 files in BRANO and 16 at
+MIXER -12 dB. The removal is bit for bit the same as HEAD with the authority
+forced to 0 (216/216 bench runs at BRANO and MIXER -6/-12/-18, `stop_song.py`,
+`VPAlign --ramps`); against the bridge on, the teacher means are unchanged to
+0.1 at all four levels (BRANO 81.7% right, 12.1 ms, 19.3% > 25 ms, the one
+75.0%), no file worse on `cmp`, per-file moves of a few tenths both ways.
+`VPAlign --ramps` MIXER: 30 s 19.8 -> 19.5, 12 s 35.5 -> 36.1, 120->132 26.3 ->
+26.1 ms mean, worst unchanged, all PASS; `--steps` identical;
+`probe_motion_matrix --quick` hashes identical (it never gained authority
+there). What remains of "motion" is the decoder's own direct-feed evidence
+(`motionFit*`, `fastTempo*`) and the IOI lead (`ioiLead`, which now alone sets
+the follower's `proven` hint). Every place that used to reset the shadow now
+calls `BeatDecoder::dropIoiLead()`. Do not reintroduce a shape classifier for
+ramps without a real-song gain: on this bench it had none.
+
 **Same-beat direct-feed release ordering (2026-09-17).** The decoder observes
 the accepted beat before deciding whether `FISSO` must become `VIVO`. A retained
 quadratic shape could therefore be decisive on the release beat but still see

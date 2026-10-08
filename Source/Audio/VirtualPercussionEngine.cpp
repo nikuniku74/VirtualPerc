@@ -1982,18 +1982,6 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
     lastGridTauSec.store (tr.gridTauSec, std::memory_order_relaxed);
-    lastMotionBridgeAuthority.store (tr.motionBridgeAuthority,
-                                     std::memory_order_relaxed);
-    lastMotionShapeBpm.store (tr.motionShapeBpm, std::memory_order_relaxed);
-    lastMotionShapeEvidence.store (tr.motionShapeEvidenceMargin,
-                                   std::memory_order_relaxed);
-    lastMotionShapeVsHinge.store (tr.motionShapeQuadraticVsHinge,
-                                  std::memory_order_relaxed);
-    lastMotionShapeModel.store (tr.motionShapeModel, std::memory_order_relaxed);
-    lastMotionShapeWins.store (tr.motionShapeQuadraticWins,
-                               std::memory_order_relaxed);
-    lastMotionShapeQuarantine.store (tr.motionShapeQuarantineBeats,
-                                     std::memory_order_relaxed);
     lastFastTempoDeviation.store (tr.fastTempoDeviation,
                                   std::memory_order_relaxed);
     lastFastIntervalDeviation.store (tr.fastIntervalDeviation,
@@ -2152,15 +2140,6 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.phraseBar = lastPhraseBar.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
     s.gridTauSec = lastGridTauSec.load (std::memory_order_relaxed);
-    s.motionBridgeAuthority =
-        lastMotionBridgeAuthority.load (std::memory_order_relaxed);
-    s.motionShapeBpm = lastMotionShapeBpm.load (std::memory_order_relaxed);
-    s.motionShapeEvidence = lastMotionShapeEvidence.load (std::memory_order_relaxed);
-    s.motionShapeVsHinge = lastMotionShapeVsHinge.load (std::memory_order_relaxed);
-    s.motionShapeModel = lastMotionShapeModel.load (std::memory_order_relaxed);
-    s.motionShapeWins = lastMotionShapeWins.load (std::memory_order_relaxed);
-    s.motionShapeQuarantine =
-        lastMotionShapeQuarantine.load (std::memory_order_relaxed);
     s.fastTempoDeviation = lastFastTempoDeviation.load (std::memory_order_relaxed);
     s.fastIntervalDeviation =
         lastFastIntervalDeviation.load (std::memory_order_relaxed);

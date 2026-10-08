@@ -35,12 +35,6 @@ constexpr float kGridTauMotion = 0.30f;
     0.42 and 0.54. See BeatTracker::process and docs/TODO.md item 69. */
 constexpr float kTransitionJumpConfidence = 0.75f;
 
-/** Once the residual shape has proved continuous motion twice, the clock may
-    see phase sooner. A first strong verdict uses kGridTauMotion instead. This
-    still averages several 6 Hz publications and never snaps or rewinds the
-    grid. */
-constexpr float kGridTauProvenMotion = 0.15f;
-
 /** A held direct-feed tempo is only called musically in motion once the
     responsive fit is two percent away and still tightly placed. These are the
     same two facts that earn the decoder's early fixed-regime release; below
@@ -74,18 +68,14 @@ inline bool strainedDirectTempoMotionHint (int fastEvidence,
 inline bool directTempoMotionHint (TempoRegime regime,
                                    float fastDeviation,
                                    float shortResidual,
-                                   float bridgeAuthority,
                                    int fastEvidence,
                                    float motionImprovement,
                                    bool ioiLead = false) noexcept
 {
-    if (bridgeAuthority > 0.0f)
-        return true;
     // The decoder has already moved onto a recent interval reading
     // (`ioiClockLead`). The 0.90 s hold tau would otherwise leave the
     // clock on the late grid while the target has moved. Call sites use kGridTauIoiLead
-    // (0.01 s, the setGridPhase floor) for this flag; quadratic
-    // authority still gets kGridTauProvenMotion.
+    // (0.01 s, the setGridPhase floor) for this flag.
     if (ioiLead)
         return true;
     if (regime != TempoRegime::fixed)

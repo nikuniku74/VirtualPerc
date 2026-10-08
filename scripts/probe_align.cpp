@@ -1263,12 +1263,10 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                 && vp::directTempoMotionHint (hy.regime,
                                               hy.fastTempoDeviation,
                                               hy.shortFitResidual,
-                                              hy.motionBridgeAuthority,
                                               hy.fastTempoEvidence,
                                               hy.motionFitImprovement,
                                               hy.ioiLead);
-            clock.setTempoMotionHint (
-                cleanTempoMotion, hy.motionBridgeAuthority >= 0.999f || hy.ioiLead);
+            clock.setTempoMotionHint (cleanTempoMotion, hy.ioiLead);
             if (hy.bpm > 50.0f)
                 clock.setTargetTempo (hy.bpm, hy.confidence);
             if (hy.beatSerial != lastSerial && hy.confidence > 0.25f)
@@ -1299,9 +1297,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                 clock.snapPhase (hy.beatPhase, true);
             else
             {
-                const float phaseTau = hy.motionBridgeAuthority >= 0.999f
-                                           ? vp::kGridTauProvenMotion
-                                           : hy.ioiLead ? vp::kGridTauIoiLead
+                const float phaseTau = hy.ioiLead ? vp::kGridTauIoiLead
                                            : cleanTempoMotion ? vp::kGridTauMotion
                                            : (hy.regime == vp::TempoRegime::fixed
                                               && hy.transitionRefitBeats > 0)
@@ -1352,7 +1348,7 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
             {
                 lastPrinted = sec;
                 std::printf ("   t=%-4d vero=%-7.2f dec=%-7.2f corto=%-7.2f lungo=%-7.2f "
-                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% auth=%.2f/%d trans=%d/%d/%d clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
+                             "curva=%-7.2f/%+5.2f/r%.3f/g%.2f/e%d%+d comb=%-7.2f resS=%.3f %-6s moto=%d/%+d/%+.2f%% ioi=%+.2f%% trans=%d/%d/%d clock=%-7.2f trim=%+6.3f  fase %+7.1f ms "
                              "(decoder %+7.1f)\n",
                              sec, bpmAt (t), static_cast<double> (lastHypBpm),
                              static_cast<double> (lastShortBpm),
@@ -1368,8 +1364,6 @@ RampPhase rampPhase (float fromBpm, float toBpm, double atSec, double rampSec,
                              hy.fastTempoEvidence, hy.fastTempoDirection,
                              static_cast<double> (hy.fastTempoDeviation * 100.0f),
                              static_cast<double> (hy.fastIntervalDeviation * 100.0f),
-                             static_cast<double> (hy.motionBridgeAuthority),
-                             hy.motionShapeQuadraticWins,
                              lastTransitionState, lastTransitionReason,
                              lastTransitionIntervals,
                              static_cast<double> (clock.currentTempo()),

@@ -4860,22 +4860,6 @@ void MainComponent::paint (juce::Graphics& g)
 
     if (debugOpen)
     {
-        const auto shape = static_cast<vp::TempoMotionShapeModel> (
-            snap.motionShapeModel);
-        const char* shapeName = "IN ATTESA";
-        switch (shape)
-        {
-            case vp::TempoMotionShapeModel::invalid:           shapeName = "INVALIDA"; break;
-            case vp::TempoMotionShapeModel::insufficient:      shapeName = "IN ATTESA"; break;
-            case vp::TempoMotionShapeModel::affine:            shapeName = "LINEARE"; break;
-            case vp::TempoMotionShapeModel::quadratic:         shapeName = "CURVA"; break;
-            case vp::TempoMotionShapeModel::hinge:             shapeName = "GRADINO"; break;
-            case vp::TempoMotionShapeModel::affineWithOutlier: shapeName = "PICCO ISOLATO"; break;
-        }
-        const char* bridgeName = snap.motionBridgeAuthority >= 0.999f
-                                     ? "PIENO"
-                                     : (snap.motionBridgeAuthority > 0.0f
-                                            ? "AVVIO" : "SPENTO");
         auto dbg = getLocalBounds().reduced (24).removeFromTop (330);
         g.setColour (panel().withAlpha (0.97f));
         g.fillRoundedRectangle (dbg.toFloat(), 12.0f);
@@ -4936,14 +4920,6 @@ void MainComponent::paint (juce::Graphics& g)
                    + " " + juce::String (snap.tempoTransitionBpm, 1)
                    + "@" + juce::String (snap.tempoTransitionConfidence, 2)
                    + " x" + juce::String (snap.tempoTransitionIntervals));
-        lines.add ("moto  " + juce::String (bridgeName)
-                   + " " + juce::String (snap.motionBridgeAuthority, 2)
-                   + "  " + juce::String (shapeName)
-                   + " x" + juce::String (snap.motionShapeWins)
-                   + "  bpm " + juce::String (snap.motionShapeBpm, 2)
-                   + "  bic " + juce::String (snap.motionShapeEvidence, 2)
-                   + "/" + juce::String (snap.motionShapeVsHinge, 2)
-                   + "  q " + juce::String (snap.motionShapeQuarantine));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
                    + juce::String (snap.leadMs, 1) + " ms");

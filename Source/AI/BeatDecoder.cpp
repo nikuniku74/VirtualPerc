@@ -681,7 +681,7 @@ void BeatDecoder::reset() noexcept
     haveAcceptedIndex = false;
     lastAcceptedIndex = 0;
     gridSerial = 0;
-    resetMotionShadow (true, TempoMotionVeto::inputEpoch);
+    dropIoiLead();
     tempoRegime = TempoRegime::unknown;
     fastDriftBeats = 0;
     fastDriftLargeBeats = 0;
@@ -796,7 +796,7 @@ void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
     enterRegime (TempoRegime::unknown);
     // Regime exit revokes authority with a generic tenure reset first. Publish
     // the causal boundary last so diagnostics retain the octave/grid reason.
-    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+    dropIoiLead();
 }
 
 float BeatDecoder::foldToAnchor (float bpmValue) const noexcept
@@ -895,13 +895,6 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
         stepFourHoldBpm = 0.0f;
     stepFourStraddleHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
-    // A residual curve is meaningful only inside one uninterrupted fixed
-    // tenure. Seed it from the accepted entry beat while leaving the scalar
-    // interval tracker unanchored; carrying an interval across this boundary
-    // made a preceding step look like continuous motion in the quick banks.
-    // Seeding changes no tempo, grid or serial. Only a later quadratic verdict
-    // retained into VIVO may contribute a bounded commit target; shape alone
-    // must never release FISSO.
     if (r == TempoRegime::fixed)
     {
         // A direct-feed release proof belongs to one fixed tenure. Carrying
@@ -914,37 +907,8 @@ void BeatDecoder::enterRegime (TempoRegime r) noexcept
         fastDriftSign = 0;
         lastFastDeviation = 0.0f;
         lastIntervalDeviation = 0.0f;
-        motionBridgeAuthority = 0.0f;
-        motionBridgeAnchorBpm = 0.0f;
-        const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
-        if (beatFilled > 0)
-        {
-            motionTracker.beginFixedTenure (beatTime[newest], bpm);
-            motionShadow = motionTracker.output();
-            motionObservedBeatSerial = beatSerial;
-        }
-        else
-        {
-            resetMotionShadow (true, TempoMotionVeto::none);
-        }
-    }
-    else if (previous == TempoRegime::fixed)
-    {
-        // The residual-shape tenure was seeded from the FISSO entry beat. A
-        // gradual change commonly triggers the ordinary release before the
-        // second quadratic win; retain that evidence into VIVO. Every actual
-        // boundary (transition, octave/grid, input epoch, discontinuity or
-        // stale beats) still calls resetMotionShadow and revokes it.
-        motionBridgeAuthority = 0.0f;
-        motionBridgeAnchorBpm = 0.0f;
-        // updateMotionShadow() runs before the regime decision. Its shape
-        // verdict therefore belongs to this same accepted beat but was gated
-        // while the decoder still said FISSO. Re-evaluate only the authority
-        // predicate now that the existing release has entered VIVO; observing
-        // the beat again would double-count evidence and is deliberately not
-        // done. This removes one whole beat of response without weakening a
-        // proof, moving the grid or restarting the clock.
-        refreshMotionBridgeAuthority();
+        if (beatFilled == 0)
+            dropIoiLead();
     }
 }
 
@@ -961,20 +925,6 @@ BeatDecoder::Diagnostics BeatDecoder::diagnostics() const noexcept
     d.motionFitImprovement = motionFitImprovement;
     d.motionFitEvidence = motionFitEvidence;
     d.motionFitDirection = motionFitDirection;
-    d.motionShadowBpm = motionShadow.predictedBpm;
-    d.motionShadowPeriodDelta = motionShadow.periodDeltaPerBeat;
-    d.motionShadowUncertainty = motionShadow.uncertainty;
-    d.motionShadowAuthority = motionShadow.authority;
-    d.motionShadowState = static_cast<int> (motionShadow.state);
-    d.motionShadowVeto = static_cast<int> (motionShadow.veto);
-    d.motionFirstStrictProof = motionShadow.firstStrictProof;
-    d.motionShapeModel = static_cast<int> (motionShadow.shapeModel);
-    d.motionShapeBpm = motionShadow.shapePredictedBpm;
-    d.motionShapeQuadraticVsHinge = motionShadow.shapeQuadraticVsHinge;
-    d.motionShapeEvidenceMargin = motionShadow.shapeEvidenceMargin;
-    d.motionShapeQuadraticWins = motionShadow.shapeQuadraticWins;
-    d.motionShapeQuarantineBeats = motionShadow.shapeQuarantineBeats;
-    d.motionBridgeAuthority = motionBridgeAuthority;
     d.longFit = longFitBpm;
     d.shortFit = shortFitBpm;
     d.residual = lastFitResidual;
@@ -1070,7 +1020,7 @@ void BeatDecoder::notifyDiscontinuity (double lostSeconds) noexcept
     // across it - and the splice would supply exactly the sort of odd interval
     // this detector is built to notice.
     clearTempoTransition (TempoTransitionReason::reset);
-    resetMotionShadow (false, TempoMotionVeto::discontinuity);
+    dropIoiLead();
     stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
     barTempoHoldBeats = 0;
@@ -1153,7 +1103,7 @@ void BeatDecoder::notifyInputRestart (bool preserveComb) noexcept
     provisionalStrength = 0.0f;
     clearTempoTransition (TempoTransitionReason::reset);
     enterRegime (TempoRegime::unknown);
-    resetMotionShadow (true, TempoMotionVeto::inputEpoch);
+    dropIoiLead();
 }
 
 float BeatDecoder::foldToPeriod (float ioiSec, float reference) const noexcept
@@ -1657,7 +1607,7 @@ void BeatDecoder::checkGridPhase (float periodSec) noexcept
         lastBeatSec += shift;   // so the gate starts admitting the beats it was refusing
     foldPhaseBeats = 0;
     ++gridSerial;
-    resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+    dropIoiLead();
 
     // The beats behind us were the wrong ones. Keeping them would have the fit
     // pulling the grid straight back to where it was, which is the same trap
@@ -1714,7 +1664,7 @@ void BeatDecoder::declarePulseHere (bool halfBeat) noexcept
         if (lastBeatSec >= 0.0)
             lastBeatSec -= half;
         foldPhaseBeats = 0;
-        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+        dropIoiLead();
         dropBeatHistory();
         longFitPeriodHeld = false;
         barTempoHoldBeats = kShortFit;
@@ -1920,8 +1870,6 @@ void BeatDecoder::publishDivided (float naturalPhase) noexcept
     hyp.shortFitBpm *= inv;
     hyp.longFitBpm *= inv;
     hyp.motionFitBpm *= inv;
-    hyp.motionShadowBpm *= inv;
-    hyp.motionShapeBpm *= inv;
     hyp.transitionBpm *= inv;
     hyp.periodSec *= static_cast<float> (divisor);
     hyp.beatPhase = (static_cast<float> (m) + naturalPhase) * inv;
@@ -2381,7 +2329,7 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
             transitionLastSec = eventTimeSec;
             transitionLastStrength = strength;
             ++transitionSerial;
-            resetMotionShadow (false, TempoMotionVeto::transition);
+            dropIoiLead();
             return true;
         }
 
@@ -2467,10 +2415,6 @@ bool BeatDecoder::observeTempoTransition (double eventTimeSec, float strength,
     }
 
     transitionState = TempoTransitionState::suspected;
-    motionTracker.quarantineShape();
-    motionShadow = motionTracker.output();
-    motionBridgeAuthority = 0.0f;
-    motionBridgeAnchorBpm = 0.0f;
     transitionReason = TempoTransitionReason::candidateStarted;
     transitionFirstSec = prevEvent;
     transitionLastSec = eventTimeSec;
@@ -2678,7 +2622,7 @@ bool BeatDecoder::observeGridStep() noexcept
         transitionFirstSec = keepTime[0];
         transitionLastSec = keepTime[m];
         ++transitionSerial;
-        resetMotionShadow (false, TempoMotionVeto::transition);
+        dropIoiLead();
         return true;
     }
     return false;
@@ -2968,135 +2912,10 @@ bool BeatDecoder::tryFastAcquire() noexcept
     return true;
 }
 
-void BeatDecoder::updateMotionShadow() noexcept
+void BeatDecoder::dropIoiLead() noexcept
 {
-    if (motionObservedBeatSerial == beatSerial || beatFilled < 1)
-        return;
-    motionObservedBeatSerial = beatSerial;
-
-    const int newest = (beatWrite - 1 + kBeatHistory) % kBeatHistory;
-    int steps = 1;
-    if (beatFilled >= 2)
-    {
-        const int previous = (newest - 1 + kBeatHistory) % kBeatHistory;
-        const double elapsed = beatTime[newest] - beatTime[previous];
-        const double reference = 60.0 / std::max (kMinBpm, bpm);
-        steps = std::clamp (static_cast<int> (std::llround (elapsed / reference)),
-                            1, 4);
-    }
-
-    TempoMotionObservation o;
-    o.beatTimeSec = beatTime[newest];
-    o.beatStrength = beatStrength[newest];
-    o.gridQuarterSteps = steps;
-    o.committedBpm = bpm;
-    o.shortFitBpm = shortFitBpm;
-    o.longFitBpm = longFitBpm;
-    o.shortFitResidual = shortFitResidual;
-    o.fitCoverage = lastFitCoverage;
-    o.fitIndexGap = lastFitIndexGap;
-    o.intervalJitter = recentIntervalJitter();
-    o.transitionState = transitionState;
-    o.transitionRefitBeats = transitionRefitBeats;
-    o.lineFeed = lineFeed;
-    o.fixedRegime = tempoRegime == TempoRegime::fixed;
-    motionShadow = motionTracker.observe (o);
-
-    refreshMotionBridgeAuthority();
-}
-
-void BeatDecoder::refreshMotionBridgeAuthority() noexcept
-{
-
-    // Model selection says which residual shape best explains the fixed-entry
-    // window; it does not by itself guarantee that its endpoint extrapolation
-    // points the same way as the newest causal tempo estimate. On real music a
-    // quadratic briefly won while both short and long fits were slowing, yet
-    // its endpoint predicted an acceleration and the bridge pushed the clock
-    // away from the band. A professional follower may lead a proven direction,
-    // never contradict the responsive fit that is already observing it.
-    const float shapeDelta = motionShadow.shapePredictedBpm - bpm;
-    const float shortDelta = shortFitBpm - bpm;
-    const bool shapeDirectionAgrees = std::isfinite (shortFitBpm)
-                                       && shortFitBpm >= kMinBpm
-                                       && shortFitBpm <= kMaxBpm
-                                       && std::fabs (shortDelta) > 1.0e-6f
-                                       && shapeDelta * shortDelta > 0.0f;
-    const bool shapeCanLead = lineFeed
-                              && tempoRegime == TempoRegime::live
-                              && transitionState == TempoTransitionState::stable
-                              && transitionRefitBeats == 0
-                              && motionShadow.shapeModel
-                                     == TempoMotionShapeModel::quadratic
-                              && motionShadow.shapeQuadraticWins >= 2
-                              && motionShadow.shapeEvidenceMargin
-                                     >= TempoMotionShape::kEvidenceMarginBic
-                              && motionShadow.shapeQuadraticVsHinge
-                                     >= TempoMotionShape::kEvidenceMarginBic
-                              && shapeDirectionAgrees
-                              && motionShadow.shapeQuarantineBeats == 0
-                              && std::isfinite (motionShadow.shapePredictedBpm)
-                              && motionShadow.shapePredictedBpm >= kMinBpm
-                              && motionShadow.shapePredictedBpm <= kMaxBpm;
-    if (shapeCanLead)
-    {
-        if (motionBridgeAuthority == 0.0f)
-            motionBridgeAnchorBpm = bpm;
-        // One quadratic window can briefly beat the hinge after an ordinary
-        // step release (offset-0 gradino accumulated 17 frames of 35%
-        // authority from that first verdict). Two consecutive wins is the
-        // same rule that already reserved the full rail; it is still a
-        // model-selection count, not a song or seed threshold. The 12 s
-        // MIXER ramp already had auth=0 through its lag, so this does not
-        // wait extra on the measured ramps. Neither level may jump:
-        // bridgedMotionTarget() owns the hard rails.
-        motionBridgeAuthority = 1.0f;
-    }
-    else
-    {
-        motionBridgeAuthority = 0.0f;
-        motionBridgeAnchorBpm = 0.0f;
-    }
-}
-
-void BeatDecoder::resetMotionShadow (bool full, TempoMotionVeto reason) noexcept
-{
-    motionTracker.reset (full, reason);
-    motionShadow = motionTracker.output();
-    motionObservedBeatSerial = beatSerial;
-    motionBridgeAuthority = 0.0f;
-    motionBridgeAnchorBpm = 0.0f;
     ioiClockLead = false;
     ioiClockLeadBeats = 0;
-}
-
-float BeatDecoder::bridgedMotionTarget (float ordinaryTarget) const noexcept
-{
-    if (motionBridgeAuthority <= 0.0f
-        || motionBridgeAnchorBpm < kMinBpm
-        || ! std::isfinite (ordinaryTarget)
-        || ! std::isfinite (motionShadow.shapePredictedBpm))
-        return ordinaryTarget;
-
-    const float totalRail = 0.04f * motionBridgeAnchorBpm;
-    const float predicted = std::clamp (motionShadow.shapePredictedBpm,
-                                        motionBridgeAnchorBpm - totalRail,
-                                        motionBridgeAnchorBpm + totalRail);
-    // Limit the *additional* motion contribution. The ordinary live fit keeps
-    // its existing freedom; once it has already caught up, this bridge must
-    // neither hold it at the four-percent rail nor pull it backwards.
-    const float ordinaryDelta = ordinaryTarget - bpm;
-    const float predictedDelta = predicted - bpm;
-    if (predictedDelta * ordinaryDelta < 0.0f
-        || std::fabs (predictedDelta) <= std::fabs (ordinaryDelta))
-        return ordinaryTarget;
-
-    const float beatRail = 0.0075f * std::max (kMinBpm, bpm);
-    const float correction = std::clamp (
-        motionBridgeAuthority * (predicted - ordinaryTarget), -beatRail, beatRail);
-    return std::clamp (ordinaryTarget + correction,
-                       std::max (kMinBpm, bpm - beatRail),
-                       std::min (kMaxBpm, bpm + beatRail));
 }
 
 void BeatDecoder::updateTempo() noexcept
@@ -3736,7 +3555,7 @@ void BeatDecoder::updateTempo() noexcept
         longFitBpm = 0.0f;
         shortFitBpm = 0.0f;
         shortFitResidual = 1.0f;
-        resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+        dropIoiLead();
         return;
         }
     }
@@ -3829,7 +3648,7 @@ void BeatDecoder::updateTempo() noexcept
             shortFitBpm = 0.0f;
             shortFitResidual = 1.0f;
             enterRegime (TempoRegime::unknown);
-            resetMotionShadow (true, TempoMotionVeto::octaveOrGrid);
+            dropIoiLead();
             return;
         }
     }
@@ -4027,7 +3846,6 @@ void BeatDecoder::updateTempo() noexcept
             fixedWalkRun = 0;
     }
 
-    updateMotionShadow();
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
     if (! haveShort)
@@ -4668,7 +4486,7 @@ void BeatDecoder::updateTempo() noexcept
                         kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                     transitionLastSec = gridAnchorSec;
                     ++transitionSerial;
-                    resetMotionShadow (false, TempoMotionVeto::transition);
+                    dropIoiLead();
                     stepFourHoldBpm = 0.0f;
     liveFourHoldBpm = 0.0f;
                     return;
@@ -4735,7 +4553,7 @@ void BeatDecoder::updateTempo() noexcept
                             kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                         transitionLastSec = gridAnchorSec;
                         ++transitionSerial;
-                        resetMotionShadow (false, TempoMotionVeto::transition);
+                        dropIoiLead();
                         return;
                     }
                     stepFourHoldBpm = pass ? fourBpm : 0.0f;
@@ -4825,7 +4643,7 @@ void BeatDecoder::updateTempo() noexcept
                             kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                         transitionLastSec = gridAnchorSec;
                         ++transitionSerial;
-                        resetMotionShadow (false, TempoMotionVeto::transition);
+                        dropIoiLead();
                         return;
                     }
                     stepFourStraddleHoldBpm = pass ? fourBpm : 0.0f;
@@ -5123,7 +4941,7 @@ void BeatDecoder::updateTempo() noexcept
                             kShortFit + (lineFeed ? kTransitionCombLagBeats : 0);
                         transitionLastSec = gridAnchorSec;
                         ++transitionSerial;
-                        resetMotionShadow (false, TempoMotionVeto::transition);
+                        dropIoiLead();
                         return;
                     }
                     if (confirmed)
@@ -5194,13 +5012,8 @@ void BeatDecoder::updateTempo() noexcept
                 far = false;
             if (leftFixedBeats > 0)
                 --leftFixedBeats;
-            const float motionTarget = bridgedMotionTarget (wanted);
-            const bool shapeLeads = motionBridgeAuthority > 0.0f
-                                    && std::fabs (motionTarget - wanted) > 1.0e-6f;
-            commit (motionTarget,
-                    shapeLeads ? 1.0f
-                               : (liveFourAim ? kRateLive
-                                  : (far ? kRateAcquiring : kRateLive)));
+            commit (wanted, liveFourAim ? kRateLive
+                                        : (far ? kRateAcquiring : kRateLive));
             break;
         }
 
@@ -5876,7 +5689,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     // have it set. Gated: continuo 35.571/87.276, those two p95
     // unchanged (147.0, 121.9). Same 1.5-period current test as below.
     //
-    // resetMotionShadow clears ioiClockLead on that 1.5-period boundary
+    // dropIoiLead clears ioiClockLead on that 1.5-period boundary
     // and on other boundaries, while the next beats often keep
     // fastMotionCurrent true and longFitBpm still valid. Publishing
     // 60/longFitBpm on every fast-motion frame (no ioiLead) was
@@ -5961,13 +5774,12 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.shortFitBpm = shortFitBpm;
     hyp.longFitBpm = longFitBpm;
     hyp.shortFitResidual = shortFitResidual;
-    // `updateTempo` only runs on an accepted beat. Its last motion reading is
-    // useful between ordinary beats, but after one and a half expected periods
-    // it describes an onset train that is no longer present. Publish silence,
-    // not stale authority, so a drummer dropout cannot leave the faster clock
-    // loop armed until the next accepted peak happens to arrive.
-    if (! fastMotionCurrent && motionShadow.veto != TempoMotionVeto::staleBeats)
-        resetMotionShadow (false, TempoMotionVeto::staleBeats);
+    // `updateTempo` only runs on an accepted beat. After one and a half
+    // expected periods its IOI lead describes an onset train that is no
+    // longer present: drop it, so a drummer dropout cannot leave the faster
+    // clock loop armed until the next accepted peak happens to arrive.
+    if (! fastMotionCurrent)
+        dropIoiLead();
     hyp.fastTempoDeviation = fastMotionCurrent ? lastFastDeviation : 0.0f;
     hyp.fastIntervalDeviation = fastMotionCurrent ? lastIntervalDeviation : 0.0f;
     hyp.fastTempoEvidence = fastMotionCurrent ? fastDriftBeats : 0;
@@ -5978,32 +5790,6 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.motionFitImprovement = fastMotionCurrent ? motionFitImprovement : 0.0f;
     hyp.motionFitEvidence = fastMotionCurrent ? motionFitEvidence : 0;
     hyp.motionFitDirection = fastMotionCurrent ? motionFitDirection : 0;
-    hyp.motionShadowBpm = fastMotionCurrent ? motionShadow.predictedBpm : 0.0f;
-    hyp.motionShadowPeriodDelta =
-        fastMotionCurrent ? motionShadow.periodDeltaPerBeat : 0.0f;
-    hyp.motionShadowUncertainty = fastMotionCurrent ? motionShadow.uncertainty : 1.0f;
-    hyp.motionShadowAuthority = fastMotionCurrent ? motionShadow.authority : 0.0f;
-    hyp.motionShadowState =
-        fastMotionCurrent ? static_cast<int> (motionShadow.state)
-                          : static_cast<int> (TempoMotionShadowState::idle);
-    hyp.motionShadowVeto =
-        fastMotionCurrent ? static_cast<int> (motionShadow.veto)
-                          : static_cast<int> (TempoMotionVeto::staleBeats);
-    hyp.motionFirstStrictProof = fastMotionCurrent
-                                     ? motionShadow.firstStrictProof : false;
-    hyp.motionShapeModel =
-        fastMotionCurrent ? static_cast<int> (motionShadow.shapeModel)
-                          : static_cast<int> (TempoMotionShapeModel::insufficient);
-    hyp.motionShapeBpm = fastMotionCurrent ? motionShadow.shapePredictedBpm : 0.0f;
-    hyp.motionShapeQuadraticVsHinge =
-        fastMotionCurrent ? motionShadow.shapeQuadraticVsHinge : 0.0f;
-    hyp.motionShapeEvidenceMargin =
-        fastMotionCurrent ? motionShadow.shapeEvidenceMargin : 0.0f;
-    hyp.motionShapeQuadraticWins =
-        fastMotionCurrent ? motionShadow.shapeQuadraticWins : 0;
-    hyp.motionShapeQuarantineBeats =
-        fastMotionCurrent ? motionShadow.shapeQuarantineBeats : 0;
-    hyp.motionBridgeAuthority = fastMotionCurrent ? motionBridgeAuthority : 0.0f;
     hyp.ioiLead = fastMotionCurrent && ioiClockLead;
     // One and a half periods with no accepted beat, or the kick body has
     // been gone long enough that the crests still arriving are hats and

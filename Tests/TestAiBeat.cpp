@@ -9500,6 +9500,66 @@ void vpRunEvidenceTrustTest (int& passed, int& failed)
             "a clean recent fit releases stale long-window bend memory");
     expect (diffuse.trust() < 0.60f,
             "a recent fit that is also poor does not bypass protection");
+
+    // A proven motion hint (the decoder's IOI lead) bypasses the stale
+    // constant-fit trust penalty and the three-sign drift wait. Moved here
+    // from the tempo-motion bridge tests when the bridge was removed
+    // (docs/TODO.md item 94); the follower behaviour stays.
+    auto phaseTrimAfterOneInterval = [] (bool proven, float trust = 1.0f)
+    {
+        vp::TempoFollower follower;
+        follower.prepare (48000.0);
+        follower.forceTempo (100.0f);
+        follower.setLocked (true);
+        follower.setTempoTrimEnabled (true);
+        follower.setTempoMotionHint (true, proven);
+        follower.setTempoTrust (trust);
+        follower.observeOnsetPhase (0.0f, 1.0f, 1);
+        follower.advance (28800);
+        follower.observeOnsetPhase (0.02f, 1.0f, 1);
+        return follower.tempoTrimBpm();
+    };
+    expect (std::fabs (phaseTrimAfterOneInterval (false)) < 1.0e-6f
+                && std::fabs (phaseTrimAfterOneInterval (true)) > 0.10f
+                && std::fabs (phaseTrimAfterOneInterval (true, 0.30f)) > 0.10f,
+            "proven motion hint removes duplicate phase-drift wait");
+
+    auto tempoAfterHalfSecond = [] (bool proven)
+    {
+        vp::TempoFollower follower;
+        follower.prepare (48000.0);
+        follower.forceTempo (100.0f);
+        follower.setLocked (true);
+        follower.setTempoTrust (0.30f);
+        follower.setTempoMotionHint (true, proven);
+        follower.setTargetTempo (101.0f, 1.0f);
+        follower.advance (24000);
+        return follower.currentTempo();
+    };
+    const float ordinary = tempoAfterHalfSecond (false);
+    const float proven = tempoAfterHalfSecond (true);
+    expect (proven > 100.75f && proven > ordinary + 0.50f,
+            "proven motion hint bypasses stale linear-fit glide penalty");
+
+    auto recoveryAfterTwoBeats = [] (bool armFromDropout)
+    {
+        vp::TempoFollower follower;
+        follower.prepare (48000.0);
+        follower.forceTempo (100.0f);
+        follower.setLocked (true);
+        if (armFromDropout)
+        {
+            follower.setTempoTrust (0.30f);
+            follower.advance (12000); // 250 ms: exceeds the dropout arm time.
+            follower.setTempoTrust (1.0f);
+        }
+        follower.observeRecoveryBeat (0.08f, 1u, true, true);
+        follower.advance (28800);
+        follower.observeRecoveryBeat (0.08f, 2u, true, true);
+        return follower.phaseRecoveryActive();
+    };
+    expect (! recoveryAfterTwoBeats (false) && recoveryAfterTwoBeats (true),
+            "direct motion avoids one-shot recovery unless dropout re-entry arms it");
 }
 
 // ===========================================================================
