@@ -39,6 +39,9 @@ public:
     bool run (const float* features, int dim, float* logits, int numLogits);
 
     const char* lastError() const noexcept { return error; }
+    /** The session was built with the CoreML provider (it falls back to the
+        CPU when CoreML refuses the model). */
+    bool usesCoreMl() const noexcept { return config.useCoreMlOnIos; }
 
 private:
     bool beginLoad (const OnnxModelConfig& cfg);

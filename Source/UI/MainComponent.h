@@ -466,29 +466,6 @@ private:
     void setStageDim (bool dim);
     void wakeFromStageDim();
 
-    /** STOP is a press-and-hold: a stray thumb mid-song cannot end the set.
-        START fires on touch-down (it is harmless and should feel instant); once
-        armed, the same button fills left to right over 0.5 s and only a full
-        hold calls stopPressed(). Lift early and nothing happens. */
-    struct StopHold final : juce::MouseListener
-    {
-        explicit StopHold (MainComponent& o) : owner (o) {}
-        void mouseDown (const juce::MouseEvent&) override;
-        void mouseDrag (const juce::MouseEvent&) override;
-        void mouseUp (const juce::MouseEvent&) override;
-        void cancel();
-    private:
-        /** Runs on the display's refresh (60 or 120 Hz), not on a 30 Hz timer:
-            the red fill moves every frame, so it reads as smooth. */
-        void tick();
-        MainComponent& owner;
-        double downMs = 0.0;
-        bool fired = false;
-        std::unique_ptr<juce::VBlankAttachment> vblank;
-    };
-    StopHold stopHold { *this };
-    /** The press that armed the player must not also start the hold-to-stop. */
-    bool startFiredOnPress = false;
 
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { "CASSA NO" };
@@ -570,6 +547,15 @@ private:
     /** Input peak with a slow release, so the meter can be read against its
         target band instead of flickering. Updated on the UI timer. */
     float micHold = 0.0f;
+    /** The page wash's input level, eased over about a second, and the step
+        (0-8) it is drawn at. UI timer only. */
+    float washEnergy = 0.0f;
+    int washStep = 0;
+    int lastMicStep = -1;
+    /** What the last timer tick painted, so the next one repaints only what
+        moved (see the end of timerCallback). */
+    std::array<juce::int64, 6> lastPageKey {};
+    std::array<juce::int64, 15> lastStageKey {};
     /** Smoothed copy of the tempo orb. `lead` is −1 behind the clock (drawn
         left) and +1 ahead (drawn right); it eases in both directions so the
         bloom slides instead of jumping. UI timer only — the audio thread

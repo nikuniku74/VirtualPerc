@@ -38,6 +38,9 @@ public:
     /** Input samples fed to the analysis but not yet analysed, live. Safe from
         any thread; see BeatTracker::analysisBacklog for what it is for. */
     int analysisBacklog() const noexcept { return tracker.analysisBacklog(); }
+    float analysisInferMs() const noexcept { return tracker.analysisInferMs(); }
+    float analysisLoadPercent() const noexcept { return tracker.analysisLoadPercent(); }
+    bool analysisUsesCoreMl() const noexcept { return tracker.analysisUsesCoreMl(); }
     int64_t analysisCompletedSamples() const noexcept
     {
         return tracker.analysisCompletedSamples();

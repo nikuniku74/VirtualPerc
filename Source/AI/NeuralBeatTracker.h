@@ -123,6 +123,14 @@ public:
 
     bool running() const noexcept { return armed.load (std::memory_order_relaxed); }
     bool usingOnnx() const noexcept { return onnxFlag.load (std::memory_order_relaxed); }
+    bool usingCoreMl() const noexcept { return coreMlFlag.load (std::memory_order_relaxed); }
+    /** What one network call costs on this device, ms, averaged over about a
+        second. The frame budget is 20 ms; CoreML against the CPU is decided
+        on this number (VP_NO_COREML). */
+    float inferMs() const noexcept { return inferMsAvg.load (std::memory_order_relaxed); }
+    /** Share of one core the worker spent working (not sleeping) over the
+        last second, percent: features, network and decoder together. */
+    float loadPercent() const noexcept { return loadPct.load (std::memory_order_relaxed); }
 
     /** Total samples handed to feed(). Subtracting a hypothesis's
         analysisSample from this gives the pipeline delay in samples, measured
@@ -174,6 +182,9 @@ private:
     std::atomic<bool> stopFlag { false };
     std::atomic<bool> armed { false };
     std::atomic<bool> onnxFlag { false };
+    std::atomic<bool> coreMlFlag { false };
+    std::atomic<float> inferMsAvg { 0.0f };
+    std::atomic<float> loadPct { 0.0f };
     std::atomic<int64_t> fedTotal { 0 };
     std::atomic<int64_t> completedTotal { 0 };
     std::atomic<int64_t> gapCount { 0 };

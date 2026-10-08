@@ -18,6 +18,7 @@ public:
 
     const char* lastError() const noexcept { return session.lastError(); }
     bool ready() const noexcept { return loaded; }
+    bool usesCoreMl() const noexcept { return loaded && session.usesCoreMl(); }
 
 private:
     OnnxSession session;

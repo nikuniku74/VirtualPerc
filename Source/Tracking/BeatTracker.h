@@ -509,6 +509,9 @@ public:
         by the host's scheduler, and the same build measures differently from
         one run to the next. */
     int analysisBacklog() const noexcept { return neural.backlog(); }
+    float analysisInferMs() const noexcept { return neural.inferMs(); }
+    float analysisLoadPercent() const noexcept { return neural.loadPercent(); }
+    bool analysisUsesCoreMl() const noexcept { return neural.usingCoreMl(); }
     int64_t analysisCompletedSamples() const noexcept
     {
         return neural.completedSamples();

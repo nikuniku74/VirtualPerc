@@ -34,8 +34,8 @@ shared) — don't add per-unit mutable state there.
   snaps); light mode uses ~55–60 % of the dark alphas.
 - Button looks via property `btnStyle`: 1 segment track, 2 pill with dot, 3 transport.
 - START: black (dark) / ink (light) pill with play triangle, fires on touch-down. STOP: fuchsia
-  pill with stop square, press-and-hold 0.5 s (red fill, VBlank-driven), pulses on the beat while
-  armed.
+  pill with stop square, also fires on touch-down (the 0.5 s hold was removed 2026-10-08, user's
+  call), pulses on the beat while armed.
 - Voices and effects are vertical faders (`VoiceKnob`, tap = mute/fire/EDIT, drag = level,
   drag sensitivity 380 px); dragging shows `FaderZoom` in the middle of the screen.
 - Haptics: `vp::haptic()` in `Platform/IosMicPermission.{h,mm,cpp}` (no-op off iOS).
@@ -47,7 +47,7 @@ shared) — don't add per-unit mutable state there.
 - [ ] Fonts resolve (Futura Condensed Medium on iOS; BPM in Futura Bold, faux-bold offsets ok)
 - [ ] Phone width: hero card, orb above the number, 1-2-3-4 in the lit beat, ÷2/TAP/×2 squares
 - [ ] Style rows 40 pt, pencil (36 pt) after SWING, segments/pills readable
-- [ ] START/STOP colours both themes; hold fill smooth; beat pulse not distracting
+- [ ] START/STOP colours both themes; beat pulse not distracting
 - [ ] Bloom: fades not snaps; tap-on-the-one fuchsia flash; light mode not a stain
 - [ ] Fader zoom: grows/shrinks smoothly, value tracks finger, tap still mutes/fires
 - [ ] Settings page and sound modal in both themes

@@ -5399,6 +5399,21 @@ Segnalato dall'utente dopo la prima compilazione del restyle (`docs/UI_RESTYLE_H
 - [x] **Scheda BPM uguale al tema scuro** (richiesta utente): in `paintStage` la scheda e tutto quello che c'è dentro (numero, orb, BPM, riga del tempo, quattro quarti) si disegnano con i colori scuri anche nel tema chiaro; tolti gli alfa ridotti per il chiaro (bloom ×0.55, alone 0.16).
 - [ ] Guardare sul dispositivo nel tema chiaro. Restano col tema chiaro: i pulsanti ±/BPM sotto FISSO (dentro la scheda, sono componenti) e il colore di stato del bloom (verde/ambra/rosso nella versione chiara, leggermente più scura).
 
+### 108. Consumo: niente ridisegno a tutto schermo a 15 Hz; CoreML contro CPU e carico dell'analisi misurabili 🟡 (2026-10-08, compila iOS e Mac — da misurare sul dispositivo)
+
+- [x] **Ridisegno mirato** (`MainComponent::timerCallback`, in fondo). Prima un `repaint()` incondizionato ridisegnava tutta la finestra (sfumature della pagina, card, tutti i fader) 15 volte al secondo anche a band ferma, con il renderer CPU di iOS. Ora due chiavi: *pagina* (gradino del bagliore, colore di stato, flash del tap, tema, DEBUG) → tutta la finestra; *palco* (stato, BPM al decimo, orb, bloom, riga del tempo, l'1 dichiarato, parte) → solo `stageArea()`; niente cambiato → niente. MIC, fader `hitLit` e la pagina SETUP si ridisegnano da soli quando cambiano. Ciò che `paint`/`paintStage` legge dal timer deve entrare nella sua chiave, altrimenti si aggiorna solo quando si muove altro.
+- [x] Il bagliore della pagina segue il livello mediato su ~1 s in 8 gradini (prima il picco grezzo di ogni tick, che obbligava al ridisegno totale a ogni tick con la band che suona).
+- [x] **CoreML contro CPU**: mai misurato. `VP_NO_COREML=1` (schema Xcode → Environment Variables) costruisce la sessione solo CPU. DEBUG mostra `rete X ms CoreML|CPU` (media ~1 s del tempo di una chiamata della rete; budget 20 ms per frame), anche nella riga di log `VPLAG`.
+- [x] **Carico dell'analisi sul dispositivo**: DEBUG (e `VPLAG`) mostra anche `analisi N% core`, la quota di un core che il worker passa a lavorare (feature + rete + decoder) nell'ultimo secondo, accanto a `lead` e `rete`. Se `lead` cresce durante il set, questi due dicono se è la rete, il resto dell'analisi o la termica (item 74).
+- [x] **Tensori della rete creati una volta** (`OnnxSession::run`): ingresso e stato LSTM (h, c, hn, cn) sono `OrtValue` costruiti alla prima chiamata e riusati; prima 3 tensori creati e 3 uscite allocate a ogni frame. Solo i logits restano allocati da ONNX Runtime (la forma è del modello). Attivazioni identiche bit per bit su 3,000 frame (`VPActivations` prima/dopo); sul Mac il tempo non cambia (0.23 s utente entrambi): il guadagno, se c'è, è sul dispositivo e si legge in `rete`.
+- [ ] Sul dispositivo: Instruments (Time Profiler / Energy) prima e dopo il ridisegno mirato, a band ferma e con la band; guardare che nulla resti «vecchio» sullo schermo (BPM, orb, stato, MIC, fader one-shot, SETUP, rotazione).
+- [ ] Sul dispositivo: `rete` con e senza `VP_NO_COREML`, a freddo e dopo 20 minuti; tenere il più veloce e stabile come predefinito.
+
+### 109. STOP immediato: tolto il «tieni premuto» 🟡 (2026-10-08, compila — da provare sul dispositivo)
+
+Richiesta utente: STOP si deve fermare subito al tocco. Prima era un press-and-hold di 0.5 s con la barra rossa (`StopHold`, pensato contro il pollice vagante a metà brano). Tolti `StopHold`, `startFiredOnPress`, la barra `holdProgress` e la scritta «TIENI PREMUTO»: lo stesso pulsante ora fa START o STOP al tocco (`setTriggeredOnMouseDown`). Il battito sul pulsante armato resta.
+- [ ] Sul dispositivo: un tocco ferma; un doppio tocco veloce su START non deve fermare subito (se succede, serve un piccolo intervallo minimo dopo START).
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

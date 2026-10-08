@@ -411,8 +411,9 @@ void MainComponent::paint (juce::Graphics& g)
     const auto full = getLocalBounds().toFloat();
     g.fillAll (bg());
 
-    const float energy = juce::jlimit (0.0f, 1.0f,
-                                       std::sqrt (juce::jmax (0.0f, snap.inputPeak)) * 3.2f);
+    // Eased and stepped on the timer, so a steady band does not force a
+    // full-window repaint every tick.
+    const float energy = static_cast<float> (washStep) / 8.0f;
     const float follow = stateIsHot (snap.followBar) ? 1.0f : 0.42f;
     const float wash = 0.12f + 0.20f * energy * follow;
 
@@ -500,7 +501,10 @@ void MainComponent::paint (juce::Graphics& g)
                    + " x" + juce::String (snap.tempoTransitionIntervals));
         lines.add ("state " + juce::String (vp::toString (snap.state)));
         lines.add ("callback " + juce::String (snap.callbackMs, 2) + " ms  lead "
-                   + juce::String (snap.leadMs, 1) + " ms");
+                   + juce::String (snap.leadMs, 1) + " ms  rete "
+                   + juce::String (engine.analysisInferMs(), 2) + " ms "
+                   + (engine.analysisUsesCoreMl() ? "CoreML" : "CPU")
+                   + "  analisi " + juce::String (engine.analysisLoadPercent(), 1) + "% core");
         lines.add ("sr " + juce::String (snap.sampleRate, 0)
                    + "  mic " + juce::String (snap.inputPeak, 4)
                    + "  analysis " + juce::String (snap.analysisPeak, 4));

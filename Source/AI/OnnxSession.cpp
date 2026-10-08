@@ -28,6 +28,18 @@ struct OnnxSession::Impl
     std::vector<float> c;
     std::vector<int64_t> inShape;
     std::vector<int64_t> stateShape;
+    // Built once on the first run and reused: they wrap the buffers above,
+    // which never reallocate after beginLoad. The state comes back into its
+    // own pair (ONNX Runtime may still read h/c while it writes hn/cn) and is
+    // copied over after the call. Only the logits are still allocated by
+    // ONNX Runtime per call: their shape is the model's to choose.
+    std::vector<float> hn;
+    std::vector<float> cn;
+    OrtValue* inT = nullptr;
+    OrtValue* hT = nullptr;
+    OrtValue* cT = nullptr;
+    OrtValue* hnT = nullptr;
+    OrtValue* cnT = nullptr;
     bool loaded = false;
 };
 
@@ -53,6 +65,8 @@ void OnnxSession::releaseOrtHandles()
     if (impl == nullptr || impl->api == nullptr)
         return;
     const OrtApi* api = impl->api;
+    for (OrtValue** v : { &impl->inT, &impl->hT, &impl->cT, &impl->hnT, &impl->cnT })
+        if (*v != nullptr) { api->ReleaseValue (*v); *v = nullptr; }
     if (impl->session != nullptr) { api->ReleaseSession (impl->session); impl->session = nullptr; }
     if (impl->options != nullptr) { api->ReleaseSessionOptions (impl->options); impl->options = nullptr; }
     if (impl->mem != nullptr) { api->ReleaseMemoryInfo (impl->mem); impl->mem = nullptr; }
@@ -113,6 +127,8 @@ bool OnnxSession::beginLoad (const OnnxModelConfig& cfg)
     impl->input.assign (static_cast<size_t> (std::max (1, cfg.timeSteps) * cfg.featureDim), 0.0f);
     impl->h.assign (static_cast<size_t> (std::max (1, cfg.lstmLayers) * cfg.lstmHidden), 0.0f);
     impl->c.assign (impl->h.size(), 0.0f);
+    impl->hn.assign (impl->h.size(), 0.0f);
+    impl->cn.assign (impl->h.size(), 0.0f);
     return true;
 }
 
@@ -216,76 +232,44 @@ bool OnnxSession::run (const float* features, int dim, float* logits, int numLog
         std::memcpy (impl->input.data() + (T - 1) * F, features, static_cast<size_t> (F) * sizeof (float));
     }
 
-    OrtValue* inTensor = nullptr;
-    OrtValue* hIn = nullptr;
-    OrtValue* cIn = nullptr;
-    OrtStatus* st = api->CreateTensorWithDataAsOrtValue (
-        impl->mem, impl->input.data(), impl->input.size() * sizeof (float),
-        impl->inShape.data(), impl->inShape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &inTensor);
-    if (st != nullptr)
+    // Every status is checked: ignoring one leaks the status object and then
+    // hands Run a null value. A tensor that would not build is retried on the
+    // next call rather than cached as null.
+    const auto wrap = [&] (OrtValue*& v, std::vector<float>& buf, const std::vector<int64_t>& shape)
     {
-        api->ReleaseStatus (st);
-        return false;
-    }
-
-    const char* inputNames[3];
-    const OrtValue* inputs[3];
-    size_t nIn = 1;
-    inputNames[0] = config.inputName;
-    inputs[0] = inTensor;
-
-    if (config.hasLstmState)
-    {
-        // Both statuses are checked. Ignoring them leaks the status object on
-        // failure and then hands Run a null input, which fails anyway - so the
-        // cost of not looking was a leak per frame, fifty times a second, for
-        // as long as whatever went wrong lasted.
-        OrtStatus* sh = api->CreateTensorWithDataAsOrtValue (
-            impl->mem, impl->h.data(), impl->h.size() * sizeof (float),
-            impl->stateShape.data(), impl->stateShape.size(),
-            ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &hIn);
-        OrtStatus* sc = api->CreateTensorWithDataAsOrtValue (
-            impl->mem, impl->c.data(), impl->c.size() * sizeof (float),
-            impl->stateShape.data(), impl->stateShape.size(),
-            ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &cIn);
-        if (sh != nullptr) api->ReleaseStatus (sh);
-        if (sc != nullptr) api->ReleaseStatus (sc);
-        if (hIn == nullptr || cIn == nullptr)
+        if (v != nullptr)
+            return true;
+        OrtStatus* s = api->CreateTensorWithDataAsOrtValue (
+            impl->mem, buf.data(), buf.size() * sizeof (float),
+            shape.data(), shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &v);
+        if (s != nullptr)
         {
-            api->ReleaseValue (inTensor);
-            if (hIn != nullptr) api->ReleaseValue (hIn);
-            if (cIn != nullptr) api->ReleaseValue (cIn);
-            return false;
+            api->ReleaseStatus (s);
+            v = nullptr;
         }
-        inputNames[1] = config.stateInH;
-        inputNames[2] = config.stateInC;
-        inputs[1] = hIn;
-        inputs[2] = cIn;
-        nIn = 3;
-    }
+        return v != nullptr;
+    };
+    if (! wrap (impl->inT, impl->input, impl->inShape))
+        return false;
+    if (config.hasLstmState
+        && ! (wrap (impl->hT, impl->h, impl->stateShape) && wrap (impl->cT, impl->c, impl->stateShape)
+              && wrap (impl->hnT, impl->hn, impl->stateShape) && wrap (impl->cnT, impl->cn, impl->stateShape)))
+        return false;
 
-    const char* outputNames[3];
-    OrtValue* outputs[3] { nullptr, nullptr, nullptr };
-    size_t nOut = 1;
-    outputNames[0] = config.outputName;
-    if (config.hasLstmState)
-    {
-        outputNames[1] = config.stateOutH;
-        outputNames[2] = config.stateOutC;
-        nOut = 3;
-    }
+    const char* inputNames[3] { config.inputName, config.stateInH, config.stateInC };
+    const OrtValue* inputs[3] { impl->inT, impl->hT, impl->cT };
+    const char* outputNames[3] { config.outputName, config.stateOutH, config.stateOutC };
+    // The state outputs are ours (preallocated); only outputs[0] is ONNX Runtime's to free.
+    OrtValue* outputs[3] { nullptr, impl->hnT, impl->cnT };
+    const size_t n = config.hasLstmState ? 3 : 1;
 
-    st = api->Run (impl->session, nullptr, inputNames, inputs, nIn, outputNames, nOut, outputs);
-    api->ReleaseValue (inTensor);
-    if (hIn != nullptr) api->ReleaseValue (hIn);
-    if (cIn != nullptr) api->ReleaseValue (cIn);
+    OrtStatus* st = api->Run (impl->session, nullptr, inputNames, inputs, n, outputNames, n, outputs);
     if (st != nullptr)
     {
         api->ReleaseStatus (st);
-        // A failed Run may still have filled some of the output slots.
-        for (size_t i = 0; i < nOut; ++i)
-            if (outputs[i] != nullptr)
-                api->ReleaseValue (outputs[i]);
+        // A failed Run may still have filled the logits slot.
+        if (outputs[0] != nullptr)
+            api->ReleaseValue (outputs[0]);
         return false;
     }
 
@@ -308,30 +292,19 @@ bool OnnxSession::run (const float* features, int dim, float* logits, int numLog
         const size_t want = static_cast<size_t> (config.numClasses);
         if (elem < want)
         {
-            for (size_t i = 0; i < nOut; ++i)
-                if (outputs[i] != nullptr)
-                    api->ReleaseValue (outputs[i]);
+            api->ReleaseValue (outputs[0]);
             return false;
         }
         std::memcpy (logits, outData + (elem - want), want * sizeof (float));
     }
 
-    if (config.hasLstmState && outputs[1] != nullptr && outputs[2] != nullptr)
+    if (config.hasLstmState)
     {
-        float* hn = nullptr;
-        float* cn = nullptr;
-        api->GetTensorMutableData (outputs[1], reinterpret_cast<void**> (&hn));
-        api->GetTensorMutableData (outputs[2], reinterpret_cast<void**> (&cn));
-        if (hn != nullptr)
-            std::memcpy (impl->h.data(), hn, impl->h.size() * sizeof (float));
-        if (cn != nullptr)
-            std::memcpy (impl->c.data(), cn, impl->c.size() * sizeof (float));
+        std::memcpy (impl->h.data(), impl->hn.data(), impl->h.size() * sizeof (float));
+        std::memcpy (impl->c.data(), impl->cn.data(), impl->c.size() * sizeof (float));
     }
 
-    for (size_t i = 0; i < nOut; ++i)
-        if (outputs[i] != nullptr)
-            api->ReleaseValue (outputs[i]);
-
+    api->ReleaseValue (outputs[0]);
     return true;
 }
 

@@ -152,7 +152,10 @@ void NeuralBeatTracker::workerLoop()
     {
         auto onnx = std::make_unique<OnnxBeatModel>();
         if (loadDefaultBeatModel (*onnx))
+        {
+            coreMlFlag.store (onnx->usesCoreMl(), std::memory_order_relaxed);
             model = std::move (onnx);
+        }
         else
             model = std::make_unique<StubBeatModel>();
     }
@@ -171,8 +174,12 @@ void NeuralBeatTracker::workerLoop()
         onnxFlag.store (model->usesOnnx(), std::memory_order_relaxed);
     }
 
+    using Clock = std::chrono::steady_clock;
+    auto loadWindowStart = Clock::now();
+    Clock::duration busyInWindow {};
     while (! stopFlag.load (std::memory_order_relaxed))
     {
+        const auto busyStart = Clock::now();
         decoder.setUserOctave (wantedOctave.load (std::memory_order_relaxed),
                                wantedManual.load (std::memory_order_relaxed));
         decoder.setLineFeed (wantedLineFeed.load (std::memory_order_relaxed));
@@ -284,8 +291,15 @@ void NeuralBeatTracker::workerLoop()
 
             while (features.popFrame (frame))
             {
+                const auto t0 = std::chrono::steady_clock::now();
                 const bool inferred = model != nullptr
                                       && model->infer (frame, LogSpectFeatures::kDim, act);
+                {
+                    const float ms = std::chrono::duration<float, std::milli> (
+                                         std::chrono::steady_clock::now() - t0).count();
+                    const float avg = inferMsAvg.load (std::memory_order_relaxed);
+                    inferMsAvg.store (avg + (ms - avg) * 0.02f, std::memory_order_relaxed);
+                }
                 // One consumed feature frame is one step of decoder time.
                 // Skipping a failed inference compressed that time by 20 ms;
                 // every later publication then carried a permanently early
@@ -330,6 +344,19 @@ void NeuralBeatTracker::workerLoop()
             auto h = decoder.current();
             h.analysisSample = analysisSampleFor (h.frameIndex);
             slot.publish (h);
+        }
+
+        {
+            const auto now = Clock::now();
+            busyInWindow += now - busyStart;
+            if (now - loadWindowStart >= std::chrono::seconds (1))
+            {
+                loadPct.store (100.0f * std::chrono::duration<float> (busyInWindow).count()
+                                   / std::chrono::duration<float> (now - loadWindowStart).count(),
+                               std::memory_order_relaxed);
+                busyInWindow = {};
+                loadWindowStart = now;
+            }
         }
 
         // Wait for about as much new audio as it takes to make one more frame.

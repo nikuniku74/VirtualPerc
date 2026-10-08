@@ -24,7 +24,9 @@ OnnxModelConfig defaultBeatOnnxConfig() noexcept
     cfg.lstmLayers = 2;
     cfg.lstmHidden = 150;
 #if defined(VP_ORT_COREML)
-    cfg.useCoreMlOnIos = true;
+    // VP_NO_COREML=1 (Xcode scheme, Environment Variables) runs the network
+    // on the CPU only, to compare the two on the device: DEBUG shows "rete".
+    cfg.useCoreMlOnIos = std::getenv ("VP_NO_COREML") == nullptr;
 #else
     cfg.useCoreMlOnIos = false;
 #endif

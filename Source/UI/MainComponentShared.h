@@ -562,8 +562,7 @@ namespace
 
         if (style == 3)
         {
-            // START: a solid light pill. STOP: an outline that fills red while
-            // it is held (hold progress, see StopHold).
+            // START: a solid pill; STOP: fuchsia, pulsing on the beat.
             juce::Path pill;
             pill.addRoundedRectangle (body, round);
             const float pulse = static_cast<float> (button.getProperties().getWithDefault ("pulse", 0.0));
@@ -574,15 +573,6 @@ namespace
             {
                 g.setColour (juce::Colours::white.withAlpha (0.55f * pulse));
                 g.drawRoundedRectangle (body.reduced (1.0f), round, 1.0f + 2.0f * pulse);
-            }
-            const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
-            if (hold > 0.0f)
-            {
-                g.saveState();
-                g.reduceClipRegion (pill);
-                g.setColour (stateLost().darker (0.35f));
-                g.fillRect (bounds.withWidth (bounds.getWidth() * hold));
-                g.restoreState();
             }
             // Black on a near-black page needs its edge.
             if (fill.getBrightness() < 0.14f)

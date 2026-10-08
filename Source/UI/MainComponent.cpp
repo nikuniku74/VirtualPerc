@@ -102,14 +102,14 @@ MainComponent::MainComponent()
     setupBtn (sub8, ink());
     setupBtn (sub16, ink());
 
+    // One press, on touch-down, both ways: START starts and STOP stops at
+    // once (the user's call, 2026-10-08: the 0.5 s hold-to-stop is gone).
     startButton.onClick = [this]
     {
-        // Armed: a tap does nothing. STOP is the hold handled by stopHold.
-        if (! userWantsArmed)
-        {
-            startFiredOnPress = true;
+        if (userWantsArmed)
+            stopPressed();
+        else
             startPressed();
-        }
     };
     startButton.setTriggeredOnMouseDown (true);
     // Shared looks: see buttonStyle() in the look-and-feel.
@@ -120,7 +120,6 @@ MainComponent::MainComponent()
     naturalButton.getProperties().set ("btnStyle", 2);
     swingButton.getProperties().set ("btnStyle", 2);
     startButton.getProperties().set ("btnStyle", 3);
-    startButton.addMouseListener (&stopHold, false);
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
     fixedButton.onClick = [this] { applyTempoFollow (false); };
@@ -560,7 +559,6 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
-    startButton.removeMouseListener (&stopHold);
     savePrefs();
     trackTransport.stop();
     trackTransport.setSource (nullptr);
@@ -976,15 +974,10 @@ void MainComponent::refreshTempoModeButtons()
 
 void MainComponent::refreshStartButton()
 {
-    // START is the solid, light button; STOP is quiet until you hold it and
-    // fills red as you do. Fuchsia is not used here any more - it means "the one".
     // START: black with white lettering (the text colour in light mode, so it
-    // still reads as the dark key); STOP: fuchsia, which then fills darker red
-    // as it is held. The play triangle and stop square are drawn by the look.
-    startButton.setButtonText (userWantsArmed
-                                   ? juce::String (juce::CharPointer_UTF8 ("STOP  \xc2\xb7  TIENI PREMUTO"))
-                                   : juce::String ("START"));
-    startButton.getProperties().set ("holdProgress", 0.0);
+    // still reads as the dark key); STOP: fuchsia. The play triangle and stop
+    // square are drawn by the look.
+    startButton.setButtonText (userWantsArmed ? "STOP" : "START");
     startButton.setColour (juce::TextButton::buttonColourId,
                            userWantsArmed ? fuchsia()
                                           : (gDarkMode ? juce::Colours::black : text()));
@@ -992,64 +985,6 @@ void MainComponent::refreshStartButton()
     startButton.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     startButton.setToggleState (userWantsArmed, juce::dontSendNotification);
     startButton.repaint();
-}
-
-void MainComponent::StopHold::mouseDown (const juce::MouseEvent&)
-{
-    if (owner.startFiredOnPress)
-    {
-        owner.startFiredOnPress = false;
-        return;
-    }
-    if (! owner.userWantsArmed)
-        return;
-    fired = false;
-    downMs = juce::Time::getMillisecondCounterHiRes();
-    vblank = std::make_unique<juce::VBlankAttachment> (&owner.startButton, [this] { tick(); });
-}
-
-void MainComponent::StopHold::mouseDrag (const juce::MouseEvent& e)
-{
-    if (! owner.startButton.getLocalBounds().expanded (16)
-             .contains (e.getEventRelativeTo (&owner.startButton).getPosition()))
-        cancel();
-}
-
-void MainComponent::StopHold::mouseUp (const juce::MouseEvent&)
-{
-    owner.startFiredOnPress = false;
-    cancel();
-}
-
-void MainComponent::StopHold::cancel()
-{
-    vblank.reset();
-    owner.startButton.getProperties().set ("holdProgress", 0.0);
-    owner.startButton.repaint();
-}
-
-void MainComponent::StopHold::tick()
-{
-    if (fired)
-        return;
-    constexpr double kHoldMs = 500.0;
-    const double p = (juce::Time::getMillisecondCounterHiRes() - downMs) / kHoldMs;
-    if (p >= 1.0)
-    {
-        // Do not tear the attachment down from inside its own callback.
-        fired = true;
-        juce::Component::SafePointer<MainComponent> safe (&owner);
-        juce::MessageManager::callAsync ([this, safe]
-        {
-            if (safe == nullptr)
-                return;
-            cancel();
-            owner.stopPressed();
-        });
-        return;
-    }
-    owner.startButton.getProperties().set ("holdProgress", juce::jlimit (0.0, 1.0, p));
-    owner.startButton.repaint();
 }
 
 void MainComponent::ensureMicrophone()
@@ -2669,6 +2604,9 @@ void MainComponent::timerCallback()
                  + "  lead " + juce::String (snap.leadMs, 0) + " ms"
                  + "  coda " + juce::String (snap.analysisBacklog * 1000.0 / sr, 0) + " ms"
                  + "  callback " + juce::String (snap.callbackMs, 2) + " ms"
+                 + "  rete " + juce::String (engine.analysisInferMs(), 2) + " ms"
+                 + (engine.analysisUsesCoreMl() ? " CoreML" : " CPU")
+                 + "  analisi " + juce::String (engine.analysisLoadPercent(), 1) + "%"
                  + "  buchi " + juce::String (snap.analysisGaps)
                  + "  restart " + juce::String (snap.analysisRestarts)
                  + "  bpm " + juce::String (snap.bpm, 1)
@@ -2739,7 +2677,10 @@ void MainComponent::timerCallback()
     // the status bar, the octave buttons off the tempo, and "L'1 e QUI" on top
     // of the dots. Lay out again the moment the number changes.
     if (const auto safe = effectiveSafeArea(); safe != laidOutSafeArea)
+    {
         resized();
+        repaint();
+    }
 
     // Peak hold with a slow release. The raw block peak of a band is a
     // flickering thing at fifteen frames a second - a snare hit and the gap
@@ -2750,6 +2691,15 @@ void MainComponent::timerCallback()
     const float peak = juce::jmax (0.0f, snap.inputPeak);
     micHold = peak > micHold ? peak : juce::jmax (peak, micHold * 0.79f);
     inputGainSlider.getProperties().set ("micHold", (double) micHold);
+    if (const int micStep = juce::roundToInt (meterPosition (micHold) * 256.0f); micStep != lastMicStep)
+    {
+        lastMicStep = micStep;
+        inputGainSlider.repaint();
+    }
+    // The page wash follows the level of the playing, not of the last block:
+    // eased over about a second (0.06 at 15 Hz) and held to eight steps.
+    washEnergy += (juce::jlimit (0.0f, 1.0f, std::sqrt (peak) * 3.2f) - washEnergy) * 0.06f;
+    washStep = juce::roundToInt (washEnergy * 8.0f);
     {
         const auto look = micLevelLook (micHold);
         inputGainLabel.setColour (juce::Label::textColourId,
@@ -2916,13 +2866,49 @@ void MainComponent::timerCallback()
     refreshTempoModeButtons();
     if (engine.settings().grooveAuto.load())
         refreshStyleButtons();
-    absorbVolSlider.getProperties().set ("hitLit",
-        hitVoices[0].sounding.load (std::memory_order_relaxed));
-    hornVolSlider.getProperties().set ("hitLit",
-        hitVoices[1].sounding.load (std::memory_order_relaxed));
-    uplifterVolSlider.getProperties().set ("hitLit",
-        hitVoices[2].sounding.load (std::memory_order_relaxed));
-    riserVolSlider.getProperties().set ("hitLit",
-        hitVoices[3].sounding.load (std::memory_order_relaxed));
-    repaint();
+    {
+        juce::Slider* hitKnobs[] = { &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider };
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool lit = hitVoices[i].sounding.load (std::memory_order_relaxed);
+            if ((bool) hitKnobs[i]->getProperties().getWithDefault ("hitLit", false) != lit)
+            {
+                hitKnobs[i]->getProperties().set ("hitLit", lit);
+                hitKnobs[i]->repaint();
+            }
+        }
+    }
+
+    // Repaint only what moved. A blanket repaint() here redrew the whole
+    // window - page gradients, every card, every fader - fifteen times a
+    // second on a CPU renderer, with the band silent too. The page key is
+    // what paint() draws across the window; the stage key is what paintStage
+    // draws. Anything new that paint or paintStage reads from the timer must
+    // join its key, or it will only show when something else moves.
+    {
+        const auto q = [] (float v) { return static_cast<juce::int64> (juce::roundToInt (v * 256.0f)); };
+        const std::array<juce::int64, 6> page {
+            washStep, static_cast<juce::int64> (stateSmooth.getARGB()),
+            stateIsHot (snap.followBar) ? 1 : 0, tapFlash > 0 ? 1 : 0,
+            gDarkMode ? 1 : 0, debugOpen ? 1 : 0
+        };
+        const std::array<juce::int64, 15> stage {
+            static_cast<juce::int64> (snap.followBar), juce::roundToInt (snap.bpm * 10.0f),
+            q (tempoBloomLead), q (tempoBloomAmount), q (heroBloomAmt), q (tapAlignFlash),
+            snap.tempoFollow ? 1 : 0, snap.levelSettled ? 1 : 0, snap.tempoRegime,
+            snap.tempoOctave, snap.tempoOctaveAuto ? 1 : 0, snap.barDeclared ? 1 : 0,
+            snap.grooveStyle, q (snap.grooveStyleConfidence),
+            engine.settings().grooveAuto.load() ? 1 : 0
+        };
+        // The debug panel prints live numbers over the stage: repaint it all.
+        if (debugOpen || page != lastPageKey)
+            repaint();
+        else if (stage != lastStageKey)
+            repaint (stageArea().expanded (24));
+        lastPageKey = page;
+        lastStageKey = stage;
+    }
+    // The settings page shows live numbers (latency, tempo, part).
+    if (settingsOverlay.isVisible())
+        settingsOverlay.repaint();
 }
