@@ -4297,8 +4297,8 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
         }
     };
 
-    const int rowH2 = juce::jmin (56, (body.getHeight() - gap) / 2);
-    if (body.getWidth() < 640 && rowH2 >= 36)
+    const int rowH2 = juce::jmin (40, (body.getHeight() - gap) / 2);
+    if (body.getWidth() < 640 && rowH2 >= 32)
     {
         auto block = body.withSizeKeepingCentre (body.getWidth(), rowH2 * 2 + gap);
         auto top = block.removeFromTop (rowH2);
@@ -4312,7 +4312,7 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
     }
 
     auto row = body.withSizeKeepingCentre (body.getWidth(),
-        juce::jmin (body.getHeight(), clampW (40, 56, body.getHeight())));
+        juce::jmin (body.getHeight(), clampW (36, 46, body.getHeight())));
     styleSelect.setBounds (row.removeFromLeft (clampW (110, 170, row.getWidth() / 5)));
     row.removeFromLeft (gap);
     placeSeg (row.removeFromLeft (clampW (200, 280, row.getWidth() * 30 / 100)));
@@ -4395,7 +4395,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
     constexpr int kChrome = 12;      // compact card padding (no title strip)
-    constexpr int kMisureRow = 48 * 2 + 8;   // "come suona": two rows of 48 pt
+    constexpr int kMisureRow = 40 * 2 + 8;   // two rows of 40 pt
     const int misureH = kChrome + kMisureRow;
     const int knobsH = kChrome + 190;   // voices over effects, two rows of faders
     // On a phone the squares (MISURE, seven across) and the knobs (FEEL, four
@@ -5057,7 +5057,10 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                 g.setColour (fuchsia());
                 g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
                 g.setColour (juce::Colours::white);
-                g.fillEllipse (x - rr * 0.38f, y - rr * 0.38f, rr * 0.76f, rr * 0.76f);
+                g.setFont (fontUi (rr * 1.25f, true));
+                g.drawText (juce::String (i + 1),
+                            juce::Rectangle<float> (x - rr, y - rr, rr * 2.0f, rr * 2.0f),
+                            juce::Justification::centred, false);
             }
             else
             {
