@@ -424,6 +424,26 @@ private:
         effects (each with its own level, same tap/drag logic as a voice) live in
         a sheet from the bottom behind this button, because they are fired now
         and then rather than played all song. Tap outside the sheet closes it. */
+    /** STOP is a press-and-hold: a stray thumb mid-song cannot end the set.
+        START fires on touch-down (it is harmless and should feel instant); once
+        armed, the same button fills left to right over 0.5 s and only a full
+        hold calls stopPressed(). Lift early and nothing happens. */
+    struct StopHold final : juce::MouseListener, private juce::Timer
+    {
+        explicit StopHold (MainComponent& o) : owner (o) {}
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDrag (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void cancel();
+    private:
+        void timerCallback() override;
+        MainComponent& owner;
+        double downMs = 0.0;
+    };
+    StopHold stopHold { *this };
+    /** The press that armed the player must not also start the hold-to-stop. */
+    bool startFiredOnPress = false;
+
     juce::TextButton fxButton { "FX" };
     bool fxSheetOpen = false;
     juce::Rectangle<int> fxSheetRect;

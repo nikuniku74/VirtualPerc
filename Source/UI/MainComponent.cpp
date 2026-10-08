@@ -482,9 +482,20 @@ namespace
                              && fill.getSaturation() > 0.35f && fill.getBrightness() > 0.35f;
         const bool active = button.getToggleState() || down || hotFill;
 
-        g.setColour ((hotFill || (down && ! chipFill)) ? fuchsia()
-                                                     : (voiceOn || chipFill ? fill : ink()));
+        // START/STOP carry their own fill (see refreshStartButton) and a hold
+        // progress; they are neither "hot" nor underlined.
+        const bool solid = (bool) button.getProperties().getWithDefault ("solidFill", false);
+        const bool transport = button.getProperties().contains ("holdProgress");
+        g.setColour (solid ? fill
+                           : ((hotFill || (down && ! chipFill && ! transport)) ? fuchsia()
+                                                                                : (voiceOn || chipFill ? fill : ink())));
         g.fillRect (bounds);
+        const float hold = static_cast<float> (button.getProperties().getWithDefault ("holdProgress", 0.0));
+        if (hold > 0.0f)
+        {
+            g.setColour (stateLost().withAlpha (0.85f));
+            g.fillRect (bounds.withWidth (bounds.getWidth() * hold));
+        }
 
         // MISURE is a row of squares: without an edge they read as
         // one bar. START/STOP stay flush - they are wide enough to be a pair.
@@ -495,7 +506,7 @@ namespace
             g.drawRect (bounds.reduced (0.5f), 1.0f);
         }
 
-        if (active)
+        if (active && ! transport)
         {
             const float h = 3.0f;
             g.setColour (hotFill || down ? juce::Colours::white : fuchsia());
@@ -1117,9 +1128,15 @@ MainComponent::MainComponent()
 
     startButton.onClick = [this]
     {
-        if (userWantsArmed) stopPressed();
-        else                startPressed();
+        // Armed: a tap does nothing. STOP is the hold handled by stopHold.
+        if (! userWantsArmed)
+        {
+            startFiredOnPress = true;
+            startPressed();
+        }
     };
+    startButton.setTriggeredOnMouseDown (true);
+    startButton.addMouseListener (&stopHold, false);
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
     fixedButton.onClick = [this] { applyTempoFollow (false); };
@@ -1544,6 +1561,7 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    startButton.removeMouseListener (&stopHold);
     savePrefs();
     trackTransport.stop();
     trackTransport.setSource (nullptr);
@@ -1956,13 +1974,65 @@ void MainComponent::refreshTempoModeButtons()
 
 void MainComponent::refreshStartButton()
 {
-    startButton.setButtonText (userWantsArmed ? "STOP" : "START");
-    startButton.setColour (juce::TextButton::buttonColourId, userWantsArmed ? fuchsia() : ink());
-    // White reads on the fuchsia fill and nowhere else.
-    startButton.setColour (juce::TextButton::textColourOffId,
-                           userWantsArmed ? juce::Colours::white : text());
-    startButton.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    // START is the solid, light button; STOP is quiet until you hold it and
+    // fills red as you do. Fuchsia is not used here any more - it means "the one".
+    startButton.setButtonText (userWantsArmed
+                                   ? juce::String (juce::CharPointer_UTF8 ("STOP  \xc2\xb7  TIENI PREMUTO"))
+                                   : juce::String ("START"));
+    startButton.getProperties().set ("solidFill", ! userWantsArmed);
+    startButton.getProperties().set ("holdProgress", 0.0);
+    startButton.setColour (juce::TextButton::buttonColourId, userWantsArmed ? ink() : text());
+    startButton.setColour (juce::TextButton::textColourOffId, userWantsArmed ? text() : bg());
+    startButton.setColour (juce::TextButton::textColourOnId, text());
     startButton.setToggleState (userWantsArmed, juce::dontSendNotification);
+    startButton.repaint();
+}
+
+void MainComponent::StopHold::mouseDown (const juce::MouseEvent&)
+{
+    if (owner.startFiredOnPress)
+    {
+        owner.startFiredOnPress = false;
+        return;
+    }
+    if (! owner.userWantsArmed)
+        return;
+    downMs = juce::Time::getMillisecondCounterHiRes();
+    startTimerHz (30);
+}
+
+void MainComponent::StopHold::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! owner.startButton.getLocalBounds().expanded (16)
+             .contains (e.getEventRelativeTo (&owner.startButton).getPosition()))
+        cancel();
+}
+
+void MainComponent::StopHold::mouseUp (const juce::MouseEvent&)
+{
+    owner.startFiredOnPress = false;
+    cancel();
+}
+
+void MainComponent::StopHold::cancel()
+{
+    stopTimer();
+    owner.startButton.getProperties().set ("holdProgress", 0.0);
+    owner.startButton.repaint();
+}
+
+void MainComponent::StopHold::timerCallback()
+{
+    constexpr double kHoldMs = 500.0;
+    const double p = (juce::Time::getMillisecondCounterHiRes() - downMs) / kHoldMs;
+    if (p >= 1.0)
+    {
+        cancel();
+        owner.stopPressed();
+        return;
+    }
+    owner.startButton.getProperties().set ("holdProgress", juce::jlimit (0.0, 1.0, p));
+    owner.startButton.repaint();
 }
 
 void MainComponent::ensureMicrophone()
