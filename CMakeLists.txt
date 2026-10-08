@@ -271,6 +271,10 @@ target_sources (VirtualPercussionist PRIVATE
     ${VP_CORE_SOURCES}
     Source/App/Main.cpp
     Source/UI/MainComponent.cpp
+    Source/UI/MainComponentLookAndFeel.cpp
+    Source/UI/MainComponentLayout.cpp
+    Source/UI/MainComponentPaint.cpp
+    Source/UI/MainComponentWidgets.cpp
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
