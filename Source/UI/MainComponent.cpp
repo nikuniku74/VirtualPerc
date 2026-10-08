@@ -207,15 +207,15 @@ namespace
         static const CondensedFace face = []
         {
             struct Candidate { const char* family; const char* bold; const char* text; float scale; };
-            // Condensed faces run small for their em: scale so a 12 pt caption
-            // still reads at the 12 pt the design asks for.
+            // Scale below 1: these faces stand tall for their em, and 1.14 made
+            // every label look too high. Widths stay narrow either way.
             // Medium weights on purpose: ExtraBold and Impact read as shouting
             // at 12-17 pt on the stand. Hierarchy comes from size and colour.
             constexpr Candidate candidates[] = {
-                { "Futura",                "Condensed Medium",    "Condensed Medium", 1.14f },
-                { "Avenir Next Condensed", "Demi Bold",           "Medium",           1.10f },
-                { "DIN Condensed",         "Bold",                "Bold",             1.20f },
-                { "Arial Narrow",          "Bold",                "Regular",          1.12f },
+                { "Futura",                "Condensed Medium",    "Condensed Medium", 0.94f },
+                { "Avenir Next Condensed", "Demi Bold",           "Medium",           0.94f },
+                { "DIN Condensed",         "Bold",                "Bold",             1.00f },
+                { "Arial Narrow",          "Bold",                "Regular",          0.96f },
             };
             const auto families = juce::Font::findAllTypefaceNames();
             for (const auto& c : candidates)
@@ -1087,14 +1087,9 @@ MainComponent::MainComponent()
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
     addChildComponent (soundMenu);
-    addChildComponent (fxSheetOverlay);
     addChildComponent (wakeGuard);
     addMouseListener (this, true);   // every touch anywhere resets the stage-mode clock
     lastTouchMs = juce::Time::getMillisecondCounterHiRes();
-    setupBtn (fxButton, ink());
-    fxButton.setTitle ("Effetti");
-    fxButton.onClick = [this] { setFxSheetOpen (! fxSheetOpen); };
-    fxButton.setVisible (false);
 
     // Pressing the level you are already on is the way back to AUTO: the same
     // idiom the bar button used to use, and the only way out that does not need
@@ -3650,7 +3645,8 @@ void MainComponent::setStageDim (bool dim)
     juce::Component* secondary[] = {
         &styleSelect, &sub4, &sub8, &sub16, &dynamicsButton, &naturalButton, &swingButton,
         &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
-        &fxButton, &editSoundsButton
+        &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider,
+        &editSoundsButton
     };
     for (auto* c : secondary)
         c->setAlpha (dim ? 0.45f : 1.0f);
@@ -3670,7 +3666,7 @@ void MainComponent::timerCallback()
     {
         const bool wantDim = isCompact() && userWantsArmed
                              && ! settingsOverlay.isVisible()
-                             && ! styleMenu.isOpen() && ! soundMenu.isOpen() && ! fxSheetOpen
+                             && ! styleMenu.isOpen() && ! soundMenu.isOpen()
                              && juce::Time::getMillisecondCounterHiRes() - lastTouchMs > 8000.0;
         if (wantDim != stageDim)
             setStageDim (wantDim);
@@ -4083,7 +4079,6 @@ void MainComponent::applyCompactVisibility()
     // SETUP stays visible on a phone too - it is the only way into the settings
     // page, and the compact layout gives it the status row's right side.
     settingsButton.setVisible (true);
-    fxButton.setVisible (compact);
     followButton.setVisible (true);
     fixedButton.setVisible (true);
     startNowButton.setVisible (true);
@@ -4177,21 +4172,27 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
     for (auto* l : labels) l->setVisible (false);
     for (auto* v : values) v->setVisible (false);
 
-    const int gap = 8;
-    // FX is as tall as the faders: a 56 pt wide column, never a small chip.
-    const int fxW = juce::jlimit (48, 64, body.getWidth() / 7);
-    fxButton.setBounds (body.removeFromRight (fxW));
-    if (body.getWidth() > gap)
-        body.removeFromRight (gap);
-    const int colW = juce::jmax (1, (body.getWidth() - gap * 3) / 4);
-    for (int i = 0; i < 4; ++i)
+    juce::Component* hits[] = { &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider };
+    // Two rows of four, 14 pt between faders so a thumb can pick one without
+    // brushing its neighbour. The voices get a little more height: they are
+    // the ones ridden during the song; the effects are fired.
+    const int gapX = 14;
+    const int gapY = 10;
+    auto voiceRow = body.removeFromTop (juce::jmax (1, (body.getHeight() - gapY) * 56 / 100));
+    body.removeFromTop (gapY);
+    const auto placeRow = [gapX] (juce::Rectangle<int> row, juce::Component* const* cells)
     {
-        voices[i]->setBounds (body.removeFromLeft (colW));
-        voices[i]->setVisible (true);
-        if (i < 3 && body.getWidth() > gap)
-            body.removeFromLeft (gap);
-    }
-    fxButton.setVisible (true);
+        const int w = juce::jmax (1, (row.getWidth() - gapX * 3) / 4);
+        for (int i = 0; i < 4; ++i)
+        {
+            cells[i]->setBounds (row.removeFromLeft (w));
+            cells[i]->setVisible (true);
+            if (i < 3)
+                row.removeFromLeft (gapX);
+        }
+    };
+    placeRow (voiceRow, voices);
+    placeRow (body, hits);
 
     if (! cards.isEmpty())
     {
@@ -4200,66 +4201,6 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
         editSoundsButton.setVisible (true);
         editSoundsButton.toFront (false);
     }
-}
-
-void MainComponent::setFxSheetOpen (bool open)
-{
-    fxSheetOpen = open && isCompact();
-    layoutFxSheet();
-    repaint();
-}
-
-void MainComponent::layoutFxSheet()
-{
-    juce::Slider* hits[] = { &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider };
-    if (! isCompact())
-    {
-        // The full page keeps all eight in its own grid.
-        fxSheetOpen = false;
-        fxSheetOverlay.setVisible (false);
-        return;
-    }
-
-    const bool show = fxSheetOpen;
-    fxSheetOverlay.setVisible (show);
-    for (auto* h : hits)
-        h->setVisible (show);
-    if (! show)
-        return;
-
-    fxSheetOverlay.setBounds (getLocalBounds());
-    const int bottomInset = effectiveSafeArea().getBottom();
-    const int titleH = 44;
-    const int faderH = 150;
-    const int sheetH = titleH + faderH + 24 + bottomInset;
-    fxSheetRect = getLocalBounds().removeFromBottom (juce::jmin (sheetH, getHeight()));
-    auto row = fxSheetRect.withTrimmedTop (titleH).withTrimmedBottom (24 + bottomInset).reduced (16, 0);
-    const int gap = 10;
-    const int w = juce::jmax (1, (row.getWidth() - gap * 3) / 4);
-    for (int i = 0; i < 4; ++i)
-    {
-        hits[i]->setBounds (row.removeFromLeft (w));
-        if (row.getWidth() > gap)
-            row.removeFromLeft (gap);
-    }
-    fxSheetOverlay.toFront (false);
-    for (auto* h : hits)
-        h->toFront (false);
-}
-
-void MainComponent::paintFxSheet (juce::Graphics& g)
-{
-    g.fillAll (juce::Colours::black.withAlpha (gDarkMode ? 0.66f : 0.42f));
-    // The sheet runs 24 pt past the bottom edge so only its top corners round.
-    const auto r = fxSheetRect.toFloat().withHeight (static_cast<float> (fxSheetRect.getHeight()) + 24.0f);
-    g.setColour (panel());
-    g.fillRoundedRectangle (r, 24.0f);
-    g.setColour (border());
-    g.drawRoundedRectangle (r.reduced (0.5f), 24.0f, 1.0f);
-    g.setColour (mute());
-    g.setFont (fontUi (13.0f));
-    g.drawText (juce::String (juce::CharPointer_UTF8 ("EFFETTI  \xc2\xb7  TOCCA = SPARA  \xc2\xb7  TRASCINA = VOLUME")),
-                fxSheetRect.withHeight (44).reduced (20, 0), juce::Justification::centredLeft, false);
 }
 
 void MainComponent::layoutFeelKnobs (juce::Rectangle<int> body)
@@ -4367,7 +4308,7 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     constexpr int kChrome = 22;      // compact card title strip + padding
     constexpr int kMisureRow = 48 * 2 + 5;   // "come suona": two rows of 48 pt
     const int misureH = kChrome + kMisureRow;
-    const int knobsH = kChrome + 132;   // one row of faders, FX behind a button
+    const int knobsH = kChrome + 190;   // voices over effects, two rows of faders
     // On a phone the squares (MISURE, seven across) and the knobs (FEEL, four
     // across) are limited by their *width*, so handing their cards extra height
     // only floats them in empty space - which is where a tall portrait screen
@@ -4399,10 +4340,10 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     g.transport = {};
     g.misure = r.removeFromTop (takeAtMost (r.getHeight(), misH));
     if (r.getHeight() > gap) r.removeFromTop (gap);
-    // Faders stop growing at 200 pt: past that a tall phone gets a longer
+    // Faders stop growing at 270 pt: past that a tall phone gets a longer
     // throw and nothing else. What is left stays empty above START, which is
     // the clear space the transport wants round it anyway.
-    g.knobs = r.removeFromTop (juce::jmin (r.getHeight(), 200));
+    g.knobs = r.removeFromTop (juce::jmin (r.getHeight(), 270));
     return g;
 }
 
@@ -4663,7 +4604,6 @@ void MainComponent::resized()
     }
 
     applyCompactVisibility();
-    layoutFxSheet();
     if (stageDim)
         setStageDim (true);   // re-fit the guard to the new geometry (drops out if no longer compact)
     layoutTrackWaveform();
@@ -4761,7 +4701,7 @@ void MainComponent::layoutCompact()
     };
 
     layoutMisure (card (g.misure, "COME SUONA"));
-    layoutVoicesRow (card (g.knobs, "VOCI"));
+    layoutVoicesRow (card (g.knobs, "FEEL"));
 }
 
 
@@ -5628,8 +5568,25 @@ void MainComponent::StyleMenuOverlay::dismiss()
 
 void MainComponent::StyleMenuOverlay::mouseDown (const juce::MouseEvent& e)
 {
-    if (! list.getBounds().contains (e.getPosition()))
+    const auto inside = owner.isCompact() ? sheet : list.getBounds();
+    if (! inside.contains (e.getPosition()))
         dismiss();
+}
+
+void MainComponent::StyleMenuOverlay::paint (juce::Graphics& g)
+{
+    if (! owner.isCompact() || sheet.isEmpty())
+        return;
+    g.fillAll (juce::Colours::black.withAlpha (gDarkMode ? 0.66f : 0.42f));
+    // Runs 24 pt past the bottom edge so only the top corners round.
+    const auto r = sheet.toFloat().withHeight (static_cast<float> (sheet.getHeight()) + 24.0f);
+    g.setColour (panel());
+    g.fillRoundedRectangle (r, 24.0f);
+    g.setColour (border());
+    g.drawRoundedRectangle (r.reduced (0.5f), 24.0f, 1.0f);
+    g.setColour (mute());
+    g.setFont (fontUi (13.0f));
+    g.drawText ("STILE", sheet.withHeight (44).reduced (20, 0), juce::Justification::centredLeft, false);
 }
 
 void MainComponent::StyleMenuOverlay::resized()
@@ -5639,20 +5596,40 @@ void MainComponent::StyleMenuOverlay::resized()
 
     auto anchor = getLocalArea (&owner.styleSelect, owner.styleSelect.getLocalBounds());
     const int n = kCount;
-    const int gap = 0;
-    const int maxH = juce::jmax (1, getHeight() - 12);
-    const int itemH = juce::jlimit (24, juce::jmax (24, anchor.getHeight()),
-                                    maxH / n);
-    const int listH = n * itemH + gap * (n - 1);
-    const int listW = juce::jmax (anchor.getWidth(), 120);
-    int y = anchor.getBottom();
-    if (y + listH > getHeight() - 4)
-        y = juce::jmax (4, anchor.getY() - listH);
-    int x = anchor.getX();
-    if (x + listW > getWidth() - 4)
-        x = juce::jmax (4, getWidth() - listW - 4);
-
-    list.setBounds (x, y, listW, listH);
+    const bool sheetMode = owner.isCompact();
+    juce::Rectangle<int> cell[kCount];
+    int itemH = 0;
+    if (sheetMode)
+    {
+        // Two columns, 52 pt rows, row-major: AUTO and MARCHA, ROCK and DANCE...
+        const int cols = 2, gapS = 8, titleH = 44, rowH = 52;
+        const int rows = (n + cols - 1) / cols;
+        const int listH = rows * rowH + (rows - 1) * gapS;
+        const int bottomInset = owner.effectiveSafeArea().getBottom();
+        const int sheetH = titleH + listH + 20 + bottomInset;
+        sheet = getLocalBounds().removeFromBottom (juce::jmin (sheetH, getHeight()));
+        list.setBounds (sheet.getX() + 16, sheet.getY() + titleH, sheet.getWidth() - 32, listH);
+        const int cellW = juce::jmax (1, (list.getWidth() - gapS) / cols);
+        for (int i = 0; i < n; ++i)
+            cell[i] = { (i % cols) * (cellW + gapS), (i / cols) * (rowH + gapS), cellW, rowH };
+    }
+    else
+    {
+        sheet = {};
+        const int gap = 0;
+        const int maxH = juce::jmax (1, getHeight() - 12);
+        itemH = juce::jlimit (24, juce::jmax (24, anchor.getHeight()), maxH / n);
+        const int listH = n * itemH + gap * (n - 1);
+        const int listW = juce::jmax (anchor.getWidth(), 120);
+        int y = anchor.getBottom();
+        if (y + listH > getHeight() - 4)
+            y = juce::jmax (4, anchor.getY() - listH);
+        int x = anchor.getX();
+        if (x + listW > getWidth() - 4)
+            x = juce::jmax (4, getWidth() - listW - 4);
+        list.setBounds (x, y, listW, listH);
+    }
+    repaint();
 
     auto row = list.getLocalBounds();
     const bool autoOn = owner.engine.settings().grooveAuto.load();
@@ -5661,8 +5638,7 @@ void MainComponent::StyleMenuOverlay::resized()
 
     for (int i = 0; i < n; ++i)
     {
-        auto r = row.removeFromTop (itemH);
-        items[i].setBounds (r);
+        items[i].setBounds (sheetMode ? cell[i] : row.removeFromTop (itemH));
         const bool on = (i == 0) ? autoOn
                                  : (! autoOn && cur == i - 1);
         // Under AUTO the detected style is tinted, not selected. DUE-UNO is
