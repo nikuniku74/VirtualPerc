@@ -235,6 +235,9 @@ private:
         /** Compact only: the SETUP button rides the status row's right side,
             because a phone has no title row to put it in. */
         juce::Rectangle<int> settings;
+        /** Compact only: the MIC level bar on the status row, between the
+            state and SETUP. Dragging it sideways is the input gain. */
+        juce::Rectangle<int> meter;
     };
     StageRows stageRows (juce::Rectangle<int> area) const;
     StageRows compactTempoRows (juce::Rectangle<int> area) const;

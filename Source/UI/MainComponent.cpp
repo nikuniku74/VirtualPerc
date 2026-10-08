@@ -824,6 +824,44 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
         ? micLevelLook (static_cast<float> (slider.getProperties().getWithDefault ("micHold", 0.0)))
         : MicLevelLook{};
 
+    if (micMeter && (bool) slider.getProperties().getWithDefault ("micBar", false))
+    {
+        // Phone-width status row: the same meter laid flat, with the gain as a
+        // marker you drag sideways. Fuchsia inside the analysis band, then
+        // amber and red once it is too hot - the colours the disc used.
+        const auto full = juce::Rectangle<int> (x, y, width, height).toFloat();
+        const float barH = 12.0f;
+        const auto bar = full.withSizeKeepingCentre (juce::jmax (8.0f, full.getWidth() - 10.0f), barH);
+        const float rr = barH * 0.5f;
+        const float a = slider.isEnabled() ? 1.0f : 0.45f;
+        g.setColour (sliderTrack().withMultipliedAlpha (a));
+        g.fillRoundedRectangle (bar, rr);
+
+        const float bandFrom = meterPosition (kInputLowPeak);
+        const float bandTo = meterPosition (kInputHighPeak);
+        g.setColour (fuchsia().withAlpha ((gDarkMode ? 0.22f : 0.18f) * a));
+        g.fillRect (bar.getX() + bar.getWidth() * bandFrom, bar.getY(),
+                    bar.getWidth() * (bandTo - bandFrom), bar.getHeight());
+
+        if (micLook.amount > 0.012f)
+        {
+            juce::ColourGradient grad (fuchsia(), bar.getX(), 0.0f,
+                                       juce::Colour (0xffff3b30), bar.getRight(), 0.0f, false);
+            grad.addColour (0.62, fuchsia());
+            grad.addColour (0.82, juce::Colour (0xffffa726));
+            g.saveState();
+            g.reduceClipRegion (bar.withWidth (bar.getWidth() * micLook.amount).toNearestInt());
+            g.setGradientFill (grad);
+            g.fillRoundedRectangle (bar, rr);
+            g.restoreState();
+        }
+
+        const float mx = bar.getX() + bar.getWidth() * sliderPos;
+        g.setColour (text().withMultipliedAlpha (a));
+        g.fillRoundedRectangle (mx - 3.0f, full.getCentreY() - 14.0f, 6.0f, 28.0f, 3.0f);
+        return;
+    }
+
     if (micMeter)
     {
         const float span = rotaryEndAngle - rotaryStartAngle;
@@ -4271,6 +4309,14 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         s.settings = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
+        // The level bar takes the right-hand part of what is left, as long as
+        // the state keeps ~90 pt for its dot and word.
+        const int meterW = clampW (72, 130, s.pill.getWidth() * 3 / 10);
+        if (s.pill.getWidth() > meterW + 90)
+        {
+            s.meter = s.pill.removeFromRight (meterW);
+            s.pill.removeFromRight (8);
+        }
     }
     area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
     const int bpmH = px (kCompactBpmH);
@@ -4467,9 +4513,25 @@ void MainComponent::resized()
         const int strip = juce::jmin (52, juce::jmax (0, full.getHeight() / 8));
         auto row = full.removeFromBottom (strip).reduced (10, 4);
         const int side = juce::jmax (1, row.getHeight());
-        inputGainSlider.setBounds (row.removeFromRight (side));
-        if (row.getWidth() > 8)
-            row.removeFromRight (8);
+        // Phone width: the MIC level and gain live on the status row, so START
+        // has the whole strip to itself and nothing touchable sits beside it.
+        const auto meterBar = isCompact() ? compactTempoRows (compactGeom().tempo).meter
+                                          : juce::Rectangle<int>();
+        const bool gainInBar = ! meterBar.isEmpty();
+        inputGainSlider.getProperties().set ("micBar", gainInBar);
+        inputGainSlider.setSliderStyle (gainInBar ? juce::Slider::RotaryHorizontalDrag
+                                                  : juce::Slider::RotaryVerticalDrag);
+        inputGainSlider.setMouseDragSensitivity (gainInBar ? 220 : 600);
+        if (gainInBar)
+        {
+            inputGainSlider.setBounds (meterBar);
+        }
+        else
+        {
+            inputGainSlider.setBounds (row.removeFromRight (side));
+            if (row.getWidth() > 8)
+                row.removeFromRight (8);
+        }
         startButton.setBounds (row);
         inputGainLabel.setVisible (false);
         inputGainValue.setVisible (false);
