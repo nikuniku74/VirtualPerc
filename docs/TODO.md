@@ -88,7 +88,7 @@ brano nuovo). `resetAnalysisLevelState` non azzera più l'epoch da sé: lo fanno
 
 ---
 
-### 4. Drift guard (muto se è esageratamente fuori tempo)
+### 4. Drift guard (muto se è esageratamente fuori tempo) — fatto nella voce 118
 
 Se la parte è **esageratamente fuori tempo** rispetto al brano, **non deve suonare nulla** e deve **riprendere appena rientra** sul tempo. È una **guardia**, non un riallineamento: non sposta l'1 e non cambia il BPM; tace e riattacca.
 
@@ -5260,7 +5260,7 @@ Richiesta: «verifica se c'è qualcos'altro da fare a livello di core o che non 
   2026-10-08: «potrebbe servire»). Spento di default; dal vivo oggi si usa il mix completo.
 - [ ] Ascolto: con le porte tolte la parte dovrebbe «scattare» meno, soprattutto nei brani lenti e dal vivo.
 
-### 95. Cambio suoni dei knob: pulsante EDIT e modale al posto del long-press 🟡 (2026-10-06, compila — da provare sul dispositivo)
+### 95. Cambio suoni dei knob: pulsante EDIT e modale al posto del long-press — superato dalla voce 120 🟡 (2026-10-06, compila — da provare sul dispositivo)
 
 Il tenere premuto 450 ms su un knob apriva il menu dei suoni; si apriva per sbaglio mentre si cercava di regolare il volume. Ora il cambio è un'azione esplicita: **EDIT** in alto a destra nella scheda FEEL.
 
@@ -5485,6 +5485,96 @@ Dopo la voce 114 (l'uno è l'unica leva grande di una rete migliore), provate du
 - **C:** il migliore in media (uno +2.6 BRANO, +1.2 MIXER; livello BRANO +3.8, MIXER −0.6), ma è meno della variazione fra i semi (uno MIXER 78–83). Nessun modello C batte quello dell'app (A seme 0: 81.7 / 85.7 / 75.0 / 81.4) in entrambi i modi.
 - **D seme 2** è il migliore sul MIXER (livello 85.6, uno 85.0) ma il peggiore in BRANO (72.6 / 70.7): sceglierlo sarebbe scegliere un seme fortunato sul banco.
 - **Conclusione:** con questi dati e questa rete la variazione fra i semi (5–8 punti) è più grande di qualsiasi guadagno della ricetta; il tetto dell'oracolo (uno 88–91%) non si avvicina riaddestrando BeatNet. Il modello dell'app resta. Opzioni `--kdsplit` e `--dbw` lasciate nello script, spente di default. Modelli in `~/vp-train/models` (`uB_s*`, `uC_s*`, `uD_s*`, `m1k3o03s2/3`).
+
+### 116. Brani lenti al doppio: il quadro dopo la voce 112, nessuna correzione globale 🔴 (2026-10-09, misurato — nessun cambiamento all'app)
+
+- [x] **Stato attuale** (basi `brF`, `mF12`; quota del tempo con la parte che suona): al doppio per più di metà brano solo in BRANO: UN ORA SOLA 44k/48k (100%), VIVERE 44k (90%; la 48k giusta). Sul MIXER −12 sono giusti (UN ORA SOLA 97–99%, VIVERE 85%). GARDEN 1500 non è un'ottava: l'app legge 105 contro 70 (3:2), in entrambi i modi.
+- [x] **Dipende dal livello d'ingresso, in entrambi i percorsi:** tempo finale UN ORA SOLA 44k: BRANO 0/−6/−12 dB 153/151/77; MIXER 0/−6/−12/−18/−30 153/153/77/77/77; VIVERE uguale. **Non è il livello visto dalla rete:** portando anche i segnali forti a 0.20 (`VP_MAKEUP_SYM`, interruttore tolto) nulla cambia; a −6 e −12 dB il segnale dopo il guadagno è identico (traccia `dopoG`).
+- [x] **Meccanismo (UN ORA SOLA, traccia):** fra 10 e 19 s il pettine dice 76 (giusto: maestro 76.1–76.9) e il decoder 72.5–73.9; la parte non entra (pettine e decoder fuori del 3%; in BRANO anche il cancello `lineLocked`, conf > 0.80 per 4 s, che con un brano senza silenzio iniziale è l'unica via: conf 0.69–0.72). A 19–21 s entra un ritmo più fitto, pettine e decoder passano a 152 e la parte entra a 153, a ogni livello. A −12 dB la parte poi esce (30 s) e rientra a 76: per questo il banco la segnava giusta.
+- [x] Tolleranza d'entrata 3% → 5% / 7% (`VP_ENTRY_AGREE`, tolto): nessun effetto su questi brani (resta il cancello `lineLocked`).
+- [x] **Sul banco il caso è raro:** «tempo giusto disponibile nei 10 s prima dell'entrata, entrata a un livello sbagliato» in 2/54 file BRANO e 4/54 MIXER. Correggerlo allentando i cancelli sarebbe una taratura su un brano (vedi voci 97–100). Non fatto.
+- [ ] Osservato di passaggio, per la voce sull'inizio che oscilla: all'istante d'entrata il tempo pubblicato è a più del 4% dal maestro (né giusto né ottava) in ~17–19 file su 54.
+
+### 117. Il verde a schermo non dice se si è a tempo: semaforo onesto e battito sulla scheda 🟡 (2026-10-09, misurato, compila su Mac — da provare sul dispositivo)
+
+Domanda dell'utente: senza cuffia, guardare lo schermo e sapere se START è sicuro e se la parte sta uscendo. `VPTrack --pulses` ora scrive anche `stato conf pettine resid copert residCorto fiducia` (colonne 15–21, in coda: gli script esistenti leggono per posizione e non cambiano). Base `~/vp-bench/ui2` (BRANO) e `ui2m` (MIXER −12), identiche a `brF` sulle colonne vecchie.
+- [x] **Oggi il colore non informa.** Con la parte che suona, dopo 20 s: verde il 99.6% del tempo (BRANO) e 99.8% (MIXER −12); degli errori di tempo contro il maestro (18.3% / 14.3% dei battiti) il **98.7% / 99.4% è a schermo verde**, ottave comprese (99.7% / 100%). Il rosso (`weakFollow`, `recalin`) compare per lo 0.2–0.4% del tempo. Il pallino della fase: con tempo giusto, 0–10 ms → 13.5% dei battiti oltre 25 ms dal maestro, 25–58 ms → 39.5%, oltre 58 ms → 68%: dice qualcosa, ma solo sulla fase.
+- [x] **Nessun segnale interno separa bene** (AUC, 0.5 = caso): confidenza 0.66 sul tempo sbagliato / 0.61 sull'ottava / 0.69 sulla fase oltre 30 ms; minimo della confidenza sugli ultimi 4 s 0.68 / 0.62 / 0.70; `shortFitResidual` 0.69 / 0.64 / **0.75**; pallino 0.62 / 0.51 / 0.68; scarto di velocità del clock < 0.55. **L'ottava sbagliata è invisibile all'app** (se la vedesse, la correggerebbe). Una parte del «tempo sbagliato» è rumore del maestro (item 110: ~4.5 punti su 9.8).
+- [x] **Un semaforo combinato è informativo, non una garanzia.** «Buono» = tempo giusto e fase entro 30 ms dal maestro: 70% dei battiti. Scelto su metà titoli (A), provato sull'altra (B, mai vista): `residCorto > 0.05` segna il 5–9% del tempo e lì è buono solo il **16%** (stesso valore a 0.08: soglia in una zona piatta); verde = minimo confidenza 4 s ≥ 0.80: copre il 75% del tempo con **79%** buono (A 78.1, B 79.2); fuori dal verde buono il 37%. Quindi: rosso = «sta uscendo» quasi certo, ambra = «controlla», verde = «probabilmente sì», mai «garantito».
+- [x] **Semaforo (scelta dell'utente: a + b).** `vp::tempoTrust` in `Core/Types.h` (solo display, una funzione sola per UI e probe: il banco misura proprio quello che si vede). Dove il tracker segue, il colore e la parola sono la fiducia: verde `SEGUENDO`, ambra `CONTROLLA`, rosso `STA USCENDO`; prima di START (non in silenzio) `AGGANCIATO - PUOI PARTIRE` / `IN ASCOLTO - ASPETTA` / `IN ASCOLTO - NON ANCORA`; gli altri stati invariati. Colonna `fiducia` contro il maestro (buono = tempo giusto e fase entro 30 ms; A/B = metà titoli):
+
+| | BRANO quota | buono (A / B) | MIXER −12 quota | buono (A / B) |
+|---|---|---|---|---|
+| verde | 76.7% | 78.7 (78.2 / 79.3) | 80.7% | 80.2 (79.7 / 80.8) |
+| ambra | 16.7% | 51.6 (54.7 / 47.4) | 14.9% | 57.3 (57.2 / 57.6) |
+| rosso | 6.6% | 15.4 (14.0 / 16.4) | 4.3% | 15.5 (14.5 / 16.5) |
+
+  Per brano torna con quanto si sa: UMBRELLA e SPLENDIDA GIORNATA 96–97% verde, WRECKING BALL 04 e UN ORA SOLA (al doppio, item 116) 29–38% verde. Nel verde resta il 5–7% di ottava sbagliata: per quella c'è il battito.
+- [x] **Battito sulla scheda.** Tutta la scheda del BPM lampeggia sul quarto nel colore del semaforo (90 ms pieno, 90 ms metà, l'1 più forte, bordo spesso + velo), dallo stesso clock compensato dei pallini (`updateBeatDots`, a ogni fotogramma): il lampo cade quando il colpo si sente. A gradini, così la scheda si ridisegna 3 volte per battito e non a ogni fotogramma (item 108). Spento quando nulla è seguito.
+- [x] App macOS compilata senza avvisi nuovi. **Non visto a schermo:** sul Mac di sviluppo il dispositivo audio non parte («device open but never prepared», ingresso 0 canali, anche a 44.1k), quindi il clock è fermo.
+- [ ] Sul dispositivo: il lampo coincide con cassa/rullante (anche con AirPods); a 120 BPM si legge da un metro; prima di START la parola diventa `AGGANCIATO - PUOI PARTIRE` dopo ~4 s di band; consumo con il lampo (Instruments, item 108).
+- [ ] Dopo: (c) misura indipendente dalla rete, attacchi dell'ingresso contro il clock (attenzione: le risultanti di prima armonica leggono lo swing come «fuori», vedi `tempo-bench` › Traps).
+- [x] **Forma d'onda sopra ÷2 / TAP / ×2 (Mac, 834×945, `17_UMBRELLA_44k` caricato da SETUP).** Causa: con un brano `stageRows` aggiunge la riga della forma d'onda (72 + 6 pt); a 945 pt il naturale passa da ~381 a ~459 pt su ~396, `fit` ≈ 0.86 e tutte le righe salgono. Il disegno e `layoutTrackWaveform` rileggono `stageRows`, ma pulsanti, `tapZone` e barra MIC li piazza solo `layoutFull` da `resized()`, che il caricamento non chiamava (`relayoutSettings` sposta solo la forma d'onda): riga TAP rimasta a 310–366, forma d'onda a 321–375. Ora `loadInternalTrack` chiama `resized()`. Seconda causa trovata nella prova: `resized()` portava START, barra MIC e SETUP sopra la pagina SETUP aperta (la barra copriva metà di CHIUDI, succedeva già ridimensionando la finestra con SETUP aperto); ora la pagina torna davanti e la forma d'onda viene piazzata dopo. Visto sul Mac: SETUP pulito con il brano, palco con ÷2 / TAP / ×2 interi e la forma d'onda sotto.
+- [ ] Sull'iPad: stesso percorso (CARICA con SETUP aperto, poi CHIUDI) in verticale e orizzontale; ruotare con SETUP aperto non deve far comparire START sopra la pagina.
+
+### 117. Inizio che oscilla: dove si concentra, nessuna correzione globale 🔴 (2026-10-09, misurato — nessun cambiamento all'app)
+
+- [x] **Quadro** (basi `brF`, `mF12`; primi 8 s dopo l'entrata contro il maestro): almeno uno dei primi 4 colpi oltre 80 ms in 26/54 entrate BRANO e 15/53 MIXER; tempo fuori più del 3% in 13 e 8. Tre tipi: **levare costante** (THE REASON −295 ms, SALLY −275, VITA +200…+237); **tempo sbagliato all'entrata** (4:3 / 3:2: WRECKING BALL 04, FEEL 48k, DEJAVU 44k, UNA CANZONE, GARDEN 1500, VIVERE 48k); **ritardo 50–100 ms che rientra** (BLUE SKY, UN ORA SOLA, SPLENDIDA, WRECKING BALL 2).
+- [x] **Assestamento generale piccolo:** sui brani che entrano a tempo giusto (41 BRANO, 43 MIXER), errore dal valore stabile per secondo dopo l'entrata: BRANO 18–22 ms e 43–47% oltre 25 ms nei primi 2 s, poi 12–19 ms / 25–41% come a regime; MIXER piatto (10–18 ms) da subito. La mediana di 35 ms nei primi 8 s viene dai pochi brani che entrano sul levare o a tempo sbagliato.
+- [x] **Levare, meccanismo:** nei primi ~5 s la rete segna il levare quanto o più del battere (THE REASON 0.36 contro 0.30, SALLY 0.22/0.19, VITA 0.48/0.57), la griglia si ancora lì; da ~5–10 s la rete dice netto il battere (0.84–0.90 contro 0.00–0.15) ma il cancello sulla griglia rifiuta i battiti veri e la piega (`checkGridPhase`, 12 s, spenta sotto la parte) gira solo a ~17 s. THE REASON: griglia a −0.42 battiti da 4 a 16 s, parte entrata a 6.8 s.
+- [x] Piega su finestra corta (`VP_FOLD_PHASE_SEC` 3/4/6 s, interruttore tolto): VITA 6 → 0 colpi sul levare, THE REASON e SALLY invariati (entrano prima che la rete sia chiara); banco 4 s: primi colpi storti 26 → 23 BRANO, 15 → 14 MIXER, ma **livello giusto BRANO 81.7 → 78.4%** (la stessa piega decide anche altro). Respinta.
+- [x] **Rilevatore del levare dopo l'entrata** (simulato fuori dall'app, uscite della rete + griglia del banco; ultimi 3 s, levare > 2× battere e > soglia per 3 controlli): soglia 0.30 prende 3/3 levare veri (THE REASON ×2 dopo 2.5 s, SALLY dopo 7 s) con 0 falsi allarmi, ma a 0.25 falsi allarmi (ASPETTANDO MIXER ×2, VIVERE 44k, UNA CANZONE 44k) e a 0.40 nessuna presa: la soglia sta su un bordo, casi veri 2 brani. Non portato nell'app: spostare la metà sotto la parte su un falso allarme è peggio del difetto; il rimedio resta «L'1 è QUI» a metà battito (voce 90).
+
+### 118. Protezione: la parte tace quando il rosso dura 🟡 (2026-10-09, misurato e confrontato con la simulazione — da provare dal vivo)
+
+Richiesta dell'utente: quando è rosso non deve suonare, con un messaggio che dica perché, non per un attimo. È la voce 4. `VirtualPercussionEngine::processBlock`, accanto a `standingDown`: con la parte che suona, il rosso del semaforo (`followBarJudged` + `tempoOut`, lo stesso che si vede) tenuto **3 s senza interruzioni** (`kGuardEnterSec`) la zittisce subito; rientra alla **prima battuta dopo 1 s fuori dal rosso** (`kGuardLeaveSec`), la regola d'ingresso di DINAMICA. Solo l'uscita: tracker, clock e frase continuano. Spenta in FISSO (il tempo è dell'utente). Interruttore **PAUSA SE FUORI** in SETUP › TEMPO, acceso di default, salvato (`driftGuard`). A schermo: `FUORI TEMPO - IN PAUSA`, poi `RIENTRA ALLA BATTUTA`; sotto il BPM «percussioni in pausa finché il tempo non torna»; la scheda continua a lampeggiare rossa sul clock.
+- [x] **Simulata prima di scriverla** sulle colonne del banco (`ui2`, `ui2m`): rosso continuo e contatore con perdita danno lo stesso risultato (il rosso arriva a blocchi), quindi la regola semplice. Entrata 1–4 s × uscita 1–2 s: 3 s / 1 s + battuta tiene l'1% dei battiti giusti persi.
+- [x] **Misurata** (`ui3` → ora `ui7`, `ui3m`; colonna `protetto` del probe identica alla simulazione, 0.000% di righe diverse):
+
+| | BRANO | MIXER −12 |
+|---|---|---|
+| tempo con la parte zittita | 7.1% | 5.3% |
+| di quel tempo, a tempo (maestro) | 18.9% | 20.0% |
+| battiti sbagliati zittiti | 14.6% | 10.7% |
+| battiti giusti persi | 1.5% | 0.9% |
+| interventi | 0.47/min | 0.32/min |
+
+  I più zittiti sono quelli dove la parte è davvero storta: GARDEN 1500 (3:2) 37–44% con 0% a tempo, GARDEN 2400 (cambio seguito dopo 80 s) 25–41%, FLAMINGO 5400 31–47%, WRECKING BALL 04 25–31%. Falsi allarmi soprattutto in WRECKING BALL 2 (31–40% a tempo nel muto).
+- [x] **Le colonne del tempo cambiano in 2 file su 108** (WRECKING BALL 04, entrambe le copie, da 102 s): un rientro cade su un salto di livello del brano e il controllo di livello lo attribuisce alla parte (`ownStepSamples`), quindi niente ripartenza dell'analisi. Stesso meccanismo dei rientri di DINAMICA e START. Medie contro il maestro identiche (giusto 81.7%, disp 12.1 ms, p90 37.9 → 38.4); `bench_fast cmp` nessun file peggiore.
+- [x] Porte `--bar --phase-lock --state-timing --tempo-step --tempo-slow --new-input --transport --harmonic-entry --percussion --loops` passano. **`--leak` 46/3 e `--makeup` 86/6 falliscono uguali con la protezione spenta** (binario con `driftGuard` false): fallimenti già presenti, non noti nella skill `tempo-bench` («a feed that carries no leak is left alone…», «every scripted run at this tempo followed the record…», «the steady-band run really did carry our part back»). Da guardare a parte.
+- [ ] Dal vivo: un'uscita vera tace dopo ~3 s e la parte rientra sulla battuta; la scritta si legge; nessun buco su un brano che va bene.
+
+### 119. Il clap sull'1 e sul 3 all'inizio del brano: aspetta che l'1 stia fermo 🟡 (2026-10-09, misurato — da ascoltare)
+
+Segnalato dall'utente: a volte il clap (2 e 4) cade sull'1 e sul 3 del brano perché l'app non ha ancora capito il primo quarto. Il clap suona solo con `barTrusted`, che però resta acceso per tutto il brano una volta guadagnato, ed è spesso già acceso quando la parte entra. Conta solo l'1 sbagliato di **un** quarto (o tre): a mezza battuta il clap resta su 2 e 4. Colonne nuove del probe: `unoFidato rullSide cassaSide rotazioni clapOk`.
+- [x] **Dove succede** (BRANO, uni veri con tempo giusto, secondi dall'entrata della parte): clap sull'1 e sul 3, quando suona, 0–5 s **28%**, 5–10 s 20%, 10–20 s 10%, oltre 40 s 4.5%.
+- [x] **Rullante e cassa sulla battuta** (`StyleDetector`, segni nuovi `backbeatSide`/`kickSide` in `Features`, solo diagnostica): il segno del rullante (150–600 Hz) non serve, quasi sempre vicino a zero e, quando forte, al contrario (la banda tiene anche basso, cassa e voce); la cassa netta sul 2 e sul 4 del clock dà 1 dispari nel 50% dei casi, ma solo nel 2.5% del tempo. Non usati.
+- [x] **Tenuto: il clap aspetta l'1 fermo per 6 battute** (`kClapSteadyBars`), dall'entrata della parte e da ogni rotazione automatica **di uno o tre quarti** (`barOddRotations`, nuovo nell'uscita del tracker: mezza battuta lascia il clap su 2 e 4); con l'1 dichiarato a mano entra subito. Simulato per 0/2/4/6/8 battute e per un'attesa a tempo (6–20 s); le due metà del banco migliorano entrambe.
+- [x] **Corretto subito dopo** (segnalato dall'utente: «a volte il clap non suona anche se i quarti sono giusti»): la prima versione ripartiva a ogni rotazione, anche di mezza battuta; con l'1 giusto il clap taceva il 13% delle battute (dopo 60 s il 7.6%, di cui 6.6 l'attesa e 1.0 `barTrusted` spento, già prima). Nell'app (`ui7`, colonna `clapOk` uguale alla simulazione al 99.9%, colonne del tempo identiche):
+
+| | prima di oggi | attesa a ogni rotazione | attesa solo sulle dispari |
+|---|---|---|---|
+| primi 20 s: clap che suona / sull'1 e sul 3 | 74.7% / 15.0% | 25.8% / 6.9% | 25.8% / **5.9%** |
+| dopo 20 s: clap che suona / sull'1 e sul 3 | 97.8% / 4.6% | 90.1% / 4.5% | **94.4%** / 4.3% |
+| dopo 20 s: 1 giusto ma clap spento | 1.2% | ~9% | 4.3% |
+
+  4 battute lasciano l'inizio al 10%, 8 spengono di più (5.9% con l'1 giusto).
+
+  Con il clap acceso e in attesa, sotto il BPM: «clap in attesa dell'1». Il resto (4.5% fermo su un 1 sbagliato) resta il limite della rete (voci 114–115): si corregge toccando la scheda del BPM sull'1 del brano, ora che la scheda lampeggia più forte sull'1.
+- [x] `--percussion`, `--bar`, `--transport`, `--new-input` passano.
+- [ ] Ascolto: il clap entra dopo ~12 s a 120 BPM («clap in attesa dell'1» sotto il BPM); non deve sembrare che manchi.
+
+### 120. Cambio suono: di nuovo la pressione lunga, ma solo a dito fermo; via EDIT 🟡 (2026-10-09, compila su Mac — da provare sul dispositivo)
+
+Richiesta dell'utente: il menu dei suoni torna sulla pressione lunga, solo se il dito resta fermo; se trascina è il volume con lo zoom, come ora; niente tratteggi, si apre direttamente la modale. `VoiceKnob` (tutti e otto i knob, voci e one-shot): pressione ferma **600 ms** (`kHoldMs`, prima 450) → vibrazione `select` e modale `SoundMenuOverlay` per quel knob; **qualunque spostamento oltre 6 px** (`kHoldSlopPx`) annulla la pressione lunga, oltre 8 px è il trascinamento (volume + zoom). Il vecchio long-press (voce 95) si annullava solo con un trascinamento vero e si apriva mentre il dito si fermava prima di trascinare. Tolti il pulsante matita EDIT, `soundEditMode`/`setSoundEditMode`, gli anelli tratteggiati (`editMode`) e il disegno della matita (`pencilIcon`); le pillole DINAMICA/NATURALE/SWING prendono anche lo spazio della matita.
+- [ ] Sul dispositivo: tenere fermo un knob apre la modale; premere, fermarsi e poi trascinare (oltre 6 px prima dei 600 ms) regola il volume senza aprirla; un tocco breve fa ancora mute / one-shot.
+
+### 121. L'1 giusto che passa sul 3 e poi torna: perché 🔴 (2026-10-09, misurato — nessun cambiamento all'app)
+
+Domanda dell'utente: a volte l'1 è giusto, l'app lo sposta sul 3 e dopo un po' lo riallinea. **Meccanismo** (`BeatTracker::tryAlignFrom`): la rete vota l'uno a ogni battito; i voti hanno memoria corta (`kVoteDecay` 0.95, ~20 battiti, scelta della voce 106 per seguire l'uno che si sposta davvero). Con la parte che suona, uno spostamento di **mezza battuta** basta che il 3 vinca sui voti della rete con margine 0.20 (`kBarWinMarginPlaying`): non serve una seconda fonte, mentre lo spostamento di un quarto la chiede (voce 61). La rete confonde soprattutto 1 e 3 (55–78% dei suoi errori, voce 106): un tratto di qualche battuta in cui il 3 «sembra» un 1 (stacco, piatto, cambio d'accordo o frase di due battute che partono sul 3) vince la memoria corta; finito il tratto i voti tornano e l'uno torna giusto.
+- [x] Banco `ui7` (203 minuti di parte che suona, contro il maestro): rotazioni di mezza battuta **21 correggono, 11 rompono un 1 giusto** (una rottura ogni ~18 minuti); dopo una rottura l'1 torna giusto in mediana 10 s, p90 30 s, 4 volte non torna nel tratto (LET ME LOVE YOU 219 s, EVERYTIME 82 s, entrambe le copie). Di un quarto: 29 correggono, 2 rompono. Il clap non se ne accorge (resta su 2 e 4, voce 119); cambiano il conteggio della frase, i fill e le figure di congas legate alla battuta, e il lampo forte sulla scheda.
+- [x] Proposta dell'utente: due pallini invece di quattro. Scartata: nasconde l'errore a schermo ma non nel suonato (figure di congas legate alla battuta: la spinta di MARCHA dentro la battuta dopo, il «post» sul 3 di REGGAE, gli accenti `accent[4]` dello shaker, il fill ogni 8 battute) e toglie l'unico modo di vederlo e correggerlo con un tocco sulla scheda.
+- [ ] Possibile, non provato: chiedere che il 3 vinca per qualche battuta di seguito prima di spostare (persistenza) solo per la mezza battuta. Costa ritardo anche sulle 21 correzioni; serve il banco della voce 106 (voti per battito registrati) e la verifica sulla metà mai vista.
 
 ## Standby
 

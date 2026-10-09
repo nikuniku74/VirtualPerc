@@ -44,7 +44,13 @@ public:
         whatever it was already playing. */
     float confidence() const noexcept { return score; }
 
-    struct Features { float evenKick, alternation, offHigh, syncopation, occupancy; };
+    /** `backbeatSide` and `kickSide` are the signed forms of the alternation,
+        -1..1: positive when the snare's attacks sit on the clock's 2 and 4 and
+        the kick's on its 1 and 3. Unlike the rest these do depend on which
+        beat the clock calls one - that is what they are for (docs/TODO.md
+        item 119). */
+    struct Features { float evenKick, alternation, offHigh, syncopation, occupancy,
+                      backbeatSide, kickSide; };
     Features features() const noexcept { return lastFeatures; }
 
 private:

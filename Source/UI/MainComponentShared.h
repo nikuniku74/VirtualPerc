@@ -323,6 +323,40 @@ namespace
         return mute();
     }
 
+    /** The colour the stage shows: the trust light (item 117) wherever the
+        tracker is following, or before START could be; the state family
+        everywhere else. */
+    juce::Colour shownColour (const vp::EngineSnapshot& s, vp::TempoTrust t)
+    {
+        switch (t)
+        {
+            case vp::TempoTrust::sure:  return stateLocked();
+            case vp::TempoTrust::check: return stateSearching();
+            case vp::TempoTrust::out:   return stateLost();
+            case vp::TempoTrust::none:  break;
+        }
+        return stateColour (s.followBar);
+    }
+
+    /** And the word beside it. A red "SEGUENDO" would contradict itself, so
+        while following the word is the trust; before START it says whether
+        pressing it is safe. The other states keep their own words. */
+    const char* shownLabel (const vp::EngineSnapshot& s, vp::TempoTrust t)
+    {
+        using B = vp::FollowBar;
+        using T = vp::TempoTrust;
+        // The guard has the part silent: say so, and say when it is on its
+        // way back, so a gap never reads as the app having broken.
+        if (s.driftGuarded)
+            return t == T::out ? "FUORI TEMPO - IN PAUSA" : "RIENTRA ALLA BATTUTA";
+        if (s.followBar == B::paused && t != T::none)
+            return t == T::sure ? "AGGANCIATO - PUOI PARTIRE"
+                 : t == T::check ? "IN ASCOLTO - ASPETTA" : "IN ASCOLTO - NON ANCORA";
+        if (s.followBar == B::following || s.followBar == B::followingListen)
+            return t == T::out ? "STA USCENDO" : t == T::check ? "CONTROLLA" : "SEGUENDO";
+        return vp::toBarString (s.followBar);
+    }
+
     bool stateIsHot (vp::FollowBar b)
     {
         using B = vp::FollowBar;
@@ -670,17 +704,6 @@ namespace
         g.drawText (valueText,
                     area.withTop (area.getBottom() - valueH * 1.8f).toNearestInt(),
                     juce::Justification::centred, false);
-
-        // EDIT is on: tapping opens the sound modal. Dashed rim, as the discs had.
-        if ((bool) slider.getProperties().getWithDefault ("editMode", false))
-        {
-            juce::Path ring, dashed;
-            ring.addRoundedRectangle (area, radius);
-            const float dashes[] = { 5.0f, 4.0f };
-            juce::PathStrokeType (1.0f).createDashedStroke (dashed, ring, dashes, 2);
-            g.setColour (text());
-            g.strokePath (dashed, juce::PathStrokeType (1.4f));
-        }
     }
 }
 

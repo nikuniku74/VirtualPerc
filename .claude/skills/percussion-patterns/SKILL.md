@@ -193,10 +193,19 @@ voice has: `clapOn && barTrustedFlag`. `barTrustedFlag`
 (`GrooveEngine::setBarTrusted`) is set once per block from
 `BeatTracker::Output::barTrusted`: the listener's lock is trusted outright;
 during a post-cut re-entry window the clap is muted; otherwise the downbeat
-histogram has to name beat zero with a coming-in margin. A wrong automatic
-guess therefore cannot put the clap on the song's 1 and 3. `step` is already
-the app's believed position, so once the rotation is right the clap is right
-for free. See `docs/TODO.md` item 2.
+histogram has to name beat zero with a coming-in margin. That trust latches
+for the song and is often already on when the part comes in, so a wrong
+automatic guess **does** put the clap on the song's 1 and 3: measured against
+the teacher, 28% of bars in the first 5 s after entry, 15% in the first 20 s,
+4.5% later. Only a count off by one or three quarters does it; half a bar
+leaves the clap on 2 and 4. So the engine adds a third gate
+(`VirtualPercussionEngine::processBlock`, `kClapSteadyBars = 6`): the one must
+also have stood still for 6 bars since the part came in and since the last
+rotation by an odd number of quarters (`BeatTracker::Output::barOddRotations`);
+a one the listener declared skips the wait. First 20 s 15% -> 5.9%, later
+4.6% -> 4.3%; the UI says "clap in attesa dell'1". The snare's 150-600 Hz band
+folded on the bar cannot tell which pair is the backbeat (bass and voice live
+there too). See `docs/TODO.md` items 2 and 119.
 
 Both voices' output gain is looked up by stroke identity in
 `PercussionEngine::render`'s voice-mixing loop, next to `shakerVolume` /
@@ -338,6 +347,10 @@ half of this: any fader can play quieter; only a player plays **less**.
   is ever dropped, at any dynamic.
 - Below the floor the engine **stops**, at a bar line, and comes back when the
   band does (`BandDynamics::wantsSilence`; the UI reads IN ASCOLTO).
+- The drift guard is the other silence (`docs/TODO.md` item 118): the tempo
+  light red for 3 s without a break stops the part at once; it comes back on
+  the first bar line after 1 s out of red. Output only, like the stand-down;
+  off in FISSO and with PAUSA SE FUORI off. The UI reads FUORI TEMPO - IN PAUSA.
 
 Two structural facts about the input, from `BandDynamics.h`, worth knowing
 before you try to improve it:

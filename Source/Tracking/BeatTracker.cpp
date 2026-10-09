@@ -289,6 +289,7 @@ void BeatTracker::reset() noexcept
     voteBeats = 0.0f;
     barTrustEstablished = false;
     barRotations = 0;
+    barOddRotations = 0;
     barReentrySamples = 0;
     barReentryHalfOnly = false;
     quantizeWaitSamples = 0;
@@ -1082,6 +1083,8 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
 
     follower.rotateBarIndex (-best);
     ++barRotations;
+    if (best % 2 != 0)
+        ++barOddRotations;
     // The same evidence that was strong enough to place the one establishes
     // it, including when harmony answered because the network could not.
     // Otherwise the next chord change could move that newly placed one by
@@ -2089,6 +2092,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.analysisBacklog = neural.backlog();
     out.beatsElapsed = follower.beatsElapsed();
     out.barRotations = barRotations;
+    out.barOddRotations = barOddRotations;
     out.barTrusted = barIsTrustedNow();
     out.barReentry = barReentrySamples > 0;
     out.harmonicChanges = harmonicChangeCount;

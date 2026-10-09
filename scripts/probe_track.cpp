@@ -173,9 +173,10 @@ int main (int argc, char** argv)
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     std::FILE* outFile = outPath.empty() ? nullptr : std::fopen (outPath.c_str(), "wb");
     if (pulseFile != nullptr)
-        std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust rete target trim trans recover\n");
+        std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust rete target trim trans recover stato conf pettine resid copert residCorto fiducia protetto unoFidato rullSide cassaSide rotazioni clapOk rotDispari\n");
 
     double lastTrace = -1.0e9, rightSince = -1.0, firstRight = -1.0;
+    double trustLowAt = 0.0;   // as MainComponent keeps it for vp::tempoTrust
     double rightSeconds = 0.0, offSeconds = 0.0;
     int pos = 0, inHop = 0, restartsSeen = 0;
     std::vector<double> restartAt;
@@ -238,6 +239,10 @@ int main (int argc, char** argv)
         eng.process (ins, 1, outs, 2, take);
         s = eng.snapshot();
         const double t = pos / sr;
+        if (s.confidence < vp::kTrustConf || s.state != vp::TrackingState::following)
+            trustLowAt = t;
+        const auto trust = vp::tempoTrust (s, t - trustLowAt >= vp::kTrustSteadySec,
+                                           std::max (s.inputPeak, s.analysisPeak) < 0.0012f);
         if (outFile != nullptr)
             std::fwrite (oL.data(), sizeof (float), static_cast<size_t> (take), outFile);
 
@@ -261,13 +266,19 @@ int main (int argc, char** argv)
         }
 
         if (pulseFile != nullptr)
-            std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d %+.5f %d %.3f %.3f %.3f %+.3f %d %u\n", t,
+            std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d %+.5f %d %.3f %.3f %.3f %+.3f %d %u %d %.3f %.3f %.4f %.3f %.4f %d %d %d %+.3f %+.3f %d %d %d\n", t,
                           (double) s.beatPhase, (double) s.barPhase, (double) s.bpm,
                           (double) s.clockBpm, s.percussionAudible ? 1 : 0,
                           (double) s.phaseErrorBeats, s.tempoRegime,
                           (double) s.evidenceTrust, (double) s.neuralBpm,
                           (double) s.targetBpm, (double) s.tempoTrimBpm,
-                          (int) s.tempoTransitionState, s.phaseRecoveryEvents);
+                          (int) s.tempoTransitionState, s.phaseRecoveryEvents,
+                          (int) s.followBar, (double) s.confidence,
+                          (double) s.combBpm, (double) s.fitResidual,
+                          (double) s.fitCoverage, (double) s.shortFitResidual,
+                          (int) trust, s.driftGuarded ? 1 : 0, s.barTrusted ? 1 : 0,
+                          (double) s.styleBackbeatSide, (double) s.styleKickSide,
+                          s.barRotations, s.clapAllowed ? 1 : 0, s.barOddRotations);
 
         if (trace && t >= lastTrace + traceStep)
         {

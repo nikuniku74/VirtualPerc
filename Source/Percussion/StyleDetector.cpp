@@ -249,8 +249,14 @@ void StyleDetector::decide() noexcept
             if ((binKick[i] + binBody[i] + binHigh[i]) > kOccupied * loudest)
                 ++occupancy;
 
+    const float kickTotal = quarterKick[0] + quarterKick[1] + quarterKick[2] + quarterKick[3];
+    const float backbeatSide = bodyTotal > 1.0e-9f
+        ? ((quarterBody[1] + quarterBody[3]) - (quarterBody[0] + quarterBody[2])) / bodyTotal : 0.0f;
+    const float kickSide = kickTotal > 1.0e-9f
+        ? ((quarterKick[0] + quarterKick[2]) - (quarterKick[1] + quarterKick[3])) / kickTotal : 0.0f;
+
     lastFeatures = { evenKick, alternation, offHigh, syncopation,
-                     static_cast<float> (occupancy) };
+                     static_cast<float> (occupancy), backbeatSide, kickSide };
 
     // Ordered by how unambiguous each test is, most first - and rebuilt around
     // the two measurements that survived being scored.

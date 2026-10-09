@@ -142,6 +142,7 @@ void MainComponent::applyCompactVisibility()
     followButton.setVisible (true);
     fixedButton.setVisible (true);
     startNowButton.setVisible (true);
+    guardButton.setVisible (true);
     // Visible on a phone too: it now has its own row under the dots instead of
     // having to share their width.
     barButton.setVisible (false);
@@ -174,14 +175,6 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
     };
     const auto placePills = [this, gap, &pills] (juce::Rectangle<int> r)
     {
-        // The EDIT pencil rides at the end of the pills: small, same height.
-        {
-            auto pen = r.removeFromRight (36);
-            r.removeFromRight (gap);
-            editSoundsButton.setBounds (pen);
-            editSoundsButton.setVisible (true);
-            editSoundsButton.toFront (false);
-        }
         const int w = juce::jmax (1, (r.getWidth() - gap * 2) / 3);
         for (int i = 0; i < 3; ++i)
         {
@@ -229,8 +222,6 @@ void MainComponent::layoutVoicesRow (juce::Rectangle<int> body)
     // Two rows of four, 14 pt between faders so a thumb can pick one without
     // brushing its neighbour. The voices get a little more height: they are
     // the ones ridden during the song; the effects are fired.
-    // The EDIT pencil has a 44 pt rail of its own on the right, centred on the
-    // two rows: a real tap target, and no title strip needed to hold it.
     const int gapX = 14;
     const int gapY = 10;
     auto voiceRow = body.removeFromTop (juce::jmax (1, (body.getHeight() - gapY) * 56 / 100));
@@ -599,10 +590,14 @@ void MainComponent::resized()
     }
 
     applyCompactVisibility();
-    layoutTrackWaveform();
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.
     settingsButton.toFront (false);
+    // ...but an open SETUP page stays above START, the MIC bar and SETUP
+    // itself; the waveform then goes on top, inside the page or on the stage.
+    if (settingsOverlay.isVisible())
+        settingsOverlay.toFront (false);
+    layoutTrackWaveform();
     if (styleMenu.isOpen())
         styleMenu.setBounds (getLocalBounds());
     if (soundMenu.isOpen())
@@ -827,7 +822,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     {
         auto body = card (take (h[kTempo]), "TEMPO");
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &followButton, &fixedButton, &startNowButton });
+                   { &followButton, &fixedButton, &startNowButton, &guardButton });
     }
 
     {

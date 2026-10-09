@@ -56,9 +56,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // same fact the colour already carries.
     if (! rows.pill.isEmpty())
     {
-        const auto stCol = stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth;
-        const bool hot = stateIsHot (snap.followBar);
-        const juce::String label (juce::CharPointer_UTF8 (vp::toBarString (snap.followBar)));
+        const auto stCol = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
+        const bool hot = stateIsHot (snap.followBar) || trust == vp::TempoTrust::sure;
+        const juce::String label (juce::CharPointer_UTF8 (shownLabel (snap, trust)));
         const bool bigPill = rows.pill.getHeight() >= 40;
         const auto f = bigPill ? fontUi (17.0f)
                                : fontUi (rows.pill.getHeight() < 28 ? 11.0f : 12.0f, false);
@@ -102,6 +102,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             if (! part.isEmpty())
                 hero = hero.getUnion (part);
         const auto card = hero.expanded (0, 10).toFloat();
+        heroCard = card.toNearestInt();
         juce::Path cardPath;
         cardPath.addRoundedRectangle (card, 24.0f);
         g.setColour (panel());
@@ -120,6 +121,17 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                          big * 0.80f, bloom, 0.46f * heroBloomAmt);
             paintRadial (g, numberR.getCentre().toFloat(), big * 0.42f, bloom, 0.30f * heroBloomAmt);
             g.restoreState();
+        }
+        if (heroFlash > 0.0f)
+        {
+            // The beat on the whole card (updateBeatDots), in the trust
+            // colour: one glance gives both whether it lands with the
+            // drummer and how far the app vouches for it.
+            const auto fc = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
+            g.setColour (fc.withAlpha (0.20f * heroFlash));
+            g.fillPath (cardPath);
+            g.setColour (fc.withAlpha (0.95f * heroFlash));
+            g.drawRoundedRectangle (card.reduced (2.0f), 24.0f, 2.0f + 3.0f * heroFlash);
         }
         g.setColour (border());
         g.drawRoundedRectangle (card.reduced (0.5f), 24.0f, 1.0f);
@@ -144,8 +156,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // The state colour is the first thing read from a metre away: a halo
         // behind the tempo in green / amber / red, the digits dimmed when the
         // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
-        const auto heroCol = stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth;
-        const bool heroLost = stateColour (snap.followBar) == stateLost();
+        const auto heroCol = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
+        const bool heroLost = shownColour (snap, trust) == stateLost();
         // The offset copy behind the digits glows on the dark card.
         g.setColour (heroCol.withAlpha (0.40f));
         g.drawText (bpmText, numberR.translated (0, 3),
@@ -207,6 +219,10 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // Notes only when there is one; otherwise the line says what a tap on
         // the number does. The state itself is the pill's job, not this line's.
         juce::StringArray parts;
+        if (snap.driftGuarded)
+            parts.add (juce::String (juce::CharPointer_UTF8 ("percussioni in pausa finch\xc3\xa9 il tempo non torna")));
+        else if (snap.percussionAudible && ! snap.clapAllowed && engine.settings().clapEnabled.load())
+            parts.add ("clap in attesa dell'1");
         if (userFixed)
             parts.add ("TEMPO FISSO");
         else if (! snap.levelSettled)
@@ -429,7 +445,7 @@ void MainComponent::paint (juce::Graphics& g)
     // tap, as the flash.
     paintRadial (g, { stage.toFloat().getCentreX(), full.getY() + 28.0f },
                  full.getWidth() * 0.60f,
-                 stateSmooth.getAlpha() == 0 ? stateColour (snap.followBar) : stateSmooth, wash * 0.45f * (gDarkMode ? 1.0f : 0.6f));
+                 stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth, wash * 0.45f * (gDarkMode ? 1.0f : 0.6f));
     if (tapFlash > 0)
         paintRadial (g, { full.getCentreX(), full.getBottom() - 80.0f },
                      full.getWidth() * 0.45f, fuchsia(), 0.22f);

@@ -179,6 +179,9 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
     harmony.prepare (sampleRate);
     standingDown = false;
     wantStandDown = false;
+    driftGuarded = false;
+    guardOutSec = guardInSec = 0.0;
+    clapSteadyBars = 0;
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -1831,7 +1834,30 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     else if (tr.levelSettled)
         playedOnSettledLevel = true;
 
-    percussion.setBarTrusted (tr.barTrusted);
+    // The clap is the one voice that says where the one is: on a count off by
+    // a beat it lands on the band's 1 and 3. Trust in the one is often already
+    // latched when the part comes in, and the one is still moved in the first
+    // seconds after that - with the part playing, on the bench the clap was on
+    // the band's 1 and 3 for 28% of the bars in the first 5 s and 15% in the
+    // first 20, against 4.5% after 40. So it also waits for the one to stand
+    // still for kClapSteadyBars, from the part coming in and from every
+    // automatic rotation by one or three quarters; one the listener declared
+    // needs no wait. Half a bar is not counted: it leaves the clap on 2 and 4,
+    // and restarting on it silenced the clap for ~9% of the bars where the one
+    // was right. First 20 s 15% -> 5.9%; after that 4.6% -> 4.3%, both halves
+    // of the bench, with the clap playing 94% of the time instead of 98%.
+    // 4 bars left the start at 10%, 8 silenced more. docs/TODO.md item 119.
+    {
+        constexpr int kClapSteadyBars = 6;
+        if (! tr.percussionShouldPlay || tr.barOddRotations != clapRotationsSeen)
+            clapSteadyBars = 0;
+        else if (tr.clock.wrappedBar)
+            clapSteadyBars = std::min (clapSteadyBars + 1, kClapSteadyBars);
+        clapRotationsSeen = tr.barOddRotations;
+        const bool clapAllowed = tr.barTrusted && (tr.barLocked || clapSteadyBars >= kClapSteadyBars);
+        percussion.setBarTrusted (clapAllowed);
+        lastClapAllowed.store (clapAllowed, std::memory_order_relaxed);
+    }
     if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
         cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
     // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
@@ -1898,6 +1924,37 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         }
     }
 
+    // The drift guard. A part that has been out for seconds is worse than a
+    // gap: it stops then, and comes back on a bar line once the tempo has been
+    // back for a second - the entrance rule of the stand-down above. Only the
+    // output: tracker, clock and phrase run on, so nothing here changes what
+    // the analysis hears or decides. The red is the light the player sees
+    // (vp::tempoOut on a judged state), so the screen never says one thing
+    // while the part does another. docs/TODO.md item 118.
+    {
+        const double blockSec = static_cast<double> (numSamples) / sampleRate;
+        if (! tr.percussionShouldPlay || ! cfg.driftGuard.load (std::memory_order_relaxed)
+            || ! cfg.tempoFollow.load (std::memory_order_relaxed))
+        {
+            driftGuarded = false;
+            guardOutSec = guardInSec = 0.0;
+        }
+        else if (followBarJudged (tr.followBar) && tempoOut (tr.state, tr.shortFitResidual))
+        {
+            guardOutSec += blockSec;
+            guardInSec = 0.0;
+            if (guardOutSec >= kGuardEnterSec)
+                driftGuarded = true;
+        }
+        else
+        {
+            guardOutSec = 0.0;
+            guardInSec += blockSec;
+            if (driftGuarded && guardInSec >= kGuardLeaveSec && tr.clock.wrappedBar)
+                driftGuarded = false;
+        }
+    }
+    const bool partAudible = tr.percussionShouldPlay && ! standingDown && ! driftGuarded;
 
 #if defined(VP_ENABLE_RECORDED_LOOPS) && VP_ENABLE_RECORDED_LOOPS
     // The recorded percussionist. With the flag off - which is the default -
@@ -1907,7 +1964,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     HybridPercussionRenderer::Input hin;
     hin.tick = tr.clock;
     hin.regime = tr.regime;
-    hin.audible = tr.percussionShouldPlay && ! standingDown;
+    hin.audible = partAudible;
     hin.bpm = tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
                                         : (tr.bpm > 40.0f ? tr.bpm : 120.0f);
     hin.style = chosen;
@@ -1924,7 +1981,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
 #else
     percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
-                       tr.percussionShouldPlay && ! standingDown);
+                       partAudible);
 #endif
 
     const bool monitorClick = clickEnabled.load (std::memory_order_relaxed);
@@ -1978,6 +2035,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     cfg.barLocked.store (tr.barLocked, std::memory_order_relaxed);
     lastGaps.store (static_cast<int> (tr.analysisGaps), std::memory_order_relaxed);
     lastBarRotations.store (tr.barRotations, std::memory_order_relaxed);
+    lastBarOddRotations.store (tr.barOddRotations, std::memory_order_relaxed);
     lastBarTrusted.store (tr.barTrusted, std::memory_order_relaxed);
     lastBarReentry.store (tr.barReentry, std::memory_order_relaxed);
     lastKickOnsets.store (tr.kickOnsets, std::memory_order_relaxed);
@@ -1989,6 +2047,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastDynamics.store (followDynamics ? bandDynamics.level() : 1.0f,
                         std::memory_order_relaxed);
     lastStandingDown.store (standingDown, std::memory_order_relaxed);
+    lastDriftGuarded.store (driftGuarded, std::memory_order_relaxed);
     lastSections.store (sectionCount, std::memory_order_relaxed);
     lastPhraseBar.store (percussion.phraseBar(), std::memory_order_relaxed);
     lastEvidenceTrust.store (tr.evidenceTrust, std::memory_order_relaxed);
@@ -2050,6 +2109,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         const auto f = styleDetector.features();
         lastStyleEvenKick.store (f.evenKick, std::memory_order_relaxed);
         lastStyleBackbeat.store (f.alternation, std::memory_order_relaxed);
+        lastStyleBackbeatSide.store (f.backbeatSide, std::memory_order_relaxed);
+        lastStyleKickSide.store (f.kickSide, std::memory_order_relaxed);
         lastStyleOffHigh.store (f.offHigh, std::memory_order_relaxed);
         lastStyleSync.store (f.syncopation, std::memory_order_relaxed);
         lastStyleOccupancy.store (f.occupancy, std::memory_order_relaxed);
@@ -2108,6 +2169,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.barDeclared = lastBarDeclared.load (std::memory_order_relaxed);
     s.barLocked = lastBarLocked.load (std::memory_order_relaxed);
     s.barRotations = lastBarRotations.load (std::memory_order_relaxed);
+    s.barOddRotations = lastBarOddRotations.load (std::memory_order_relaxed);
     s.barTrusted = lastBarTrusted.load (std::memory_order_relaxed);
     s.barReentry = lastBarReentry.load (std::memory_order_relaxed);
     s.latencyMs = latencyMs.load (std::memory_order_relaxed);
@@ -2147,6 +2209,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.bandDynamics = lastDynamics.load (std::memory_order_relaxed);
     s.dynamicsFollow = cfg.dynamicsFollow.load (std::memory_order_relaxed);
     s.standingDown = lastStandingDown.load (std::memory_order_relaxed);
+    s.driftGuarded = lastDriftGuarded.load (std::memory_order_relaxed);
+    s.clapAllowed = lastClapAllowed.load (std::memory_order_relaxed);
     s.sectionChanges = lastSections.load (std::memory_order_relaxed);
     s.phraseBar = lastPhraseBar.load (std::memory_order_relaxed);
     s.evidenceTrust = lastEvidenceTrust.load (std::memory_order_relaxed);
@@ -2189,6 +2253,8 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.grooveStyleConfidence = lastStyleConf.load (std::memory_order_relaxed);
     s.styleEvenKick = lastStyleEvenKick.load (std::memory_order_relaxed);
     s.styleBackbeat = lastStyleBackbeat.load (std::memory_order_relaxed);
+    s.styleBackbeatSide = lastStyleBackbeatSide.load (std::memory_order_relaxed);
+    s.styleKickSide = lastStyleKickSide.load (std::memory_order_relaxed);
     s.styleOffHigh = lastStyleOffHigh.load (std::memory_order_relaxed);
     s.styleSync = lastStyleSync.load (std::memory_order_relaxed);
     s.styleOccupancy = lastStyleOccupancy.load (std::memory_order_relaxed);

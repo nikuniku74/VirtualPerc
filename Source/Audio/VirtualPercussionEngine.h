@@ -329,6 +329,7 @@ private:
     /** The bar rotations the automatic alignment has made, and how much the
         analysis is being believed. Diagnostics; see BeatTracker::Output. */
     std::atomic<int>   lastBarRotations { 0 };
+    std::atomic<int>   lastBarOddRotations { 0 };
     /** The kick channel, when the listener has assigned one. The detector runs
         on the raw channel before any of the analysis conditioning: the leak
         canceller and the high-pass exist to protect a *microphone* from the
@@ -366,6 +367,17 @@ private:
     bool               wantStandDown = false;
     std::atomic<float> lastDynamics { 1.0f };
     std::atomic<bool>  lastStandingDown { false };
+    /** The drift guard (kGuardEnterSec in Core/Types.h): how long the red has
+        held, how long since it went, and whether the part is held silent. */
+    bool               driftGuarded = false;
+    double             guardOutSec = 0.0;
+    double             guardInSec = 0.0;
+    std::atomic<bool>  lastDriftGuarded { false };
+    /** Bars the one has stood still with the part playing, the rotation count
+        it is measured from, and whether the clap may play (item 119). */
+    int                clapSteadyBars = 0;
+    int                clapRotationsSeen = 0;
+    std::atomic<bool>  lastClapAllowed { false };
     /** Section boundaries found, and where the eight-bar sentence has got to. */
     int                sectionCount = 0;
     std::atomic<int>   lastSections { 0 };
@@ -402,6 +414,8 @@ private:
     std::atomic<float> lastStyleConf { 0.0f };
     std::atomic<float> lastStyleEvenKick { 0.0f };
     std::atomic<float> lastStyleBackbeat { 0.0f };
+    std::atomic<float> lastStyleBackbeatSide { 0.0f };
+    std::atomic<float> lastStyleKickSide { 0.0f };
     std::atomic<float> lastStyleOffHigh { 0.0f };
     std::atomic<float> lastStyleSync { 0.0f };
     std::atomic<float> lastStyleOccupancy { 0.0f };

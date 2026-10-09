@@ -313,6 +313,7 @@ struct EngineSnapshot
         song (1 down to 0.3), with the constant the clock is therefore
         averaging its phase over. Diagnostics. */
     int   barRotations         = 0;
+    int   barOddRotations      = 0;   // by one or three quarters (item 119)
     /** Whether the one is believed enough for the clap (item 2 / 10). */
     bool  barTrusted           = false;
     bool  barReentry           = false;
@@ -383,6 +384,12 @@ struct EngineSnapshot
     bool  tempoOctaveAuto      = true;
     /** False when the listener has locked a BPM (FISSO). Default true (SEGUI). */
     bool  tempoFollow          = true;
+    /** The drift guard is holding the part silent (kGuardEnterSec of red, see
+        VirtualPercussionEngine::processBlock). */
+    bool  driftGuarded         = false;
+    /** The clap may play: the one is trusted and has stood still long enough
+        (VirtualPercussionEngine::processBlock, item 119). */
+    bool  clapAllowed          = false;
 
     /** The recorded percussionist: whether a recording is what is being heard,
         how far its audio is from where the clock says it should be, and how
@@ -396,10 +403,82 @@ struct EngineSnapshot
     float grooveStyleConfidence = 0.0f;
     float styleEvenKick        = 0.0f;
     float styleBackbeat        = 0.0f;
+    /** Signed: snare attacks on the clock's 2 and 4 (+) or on its 1 and 3 (-),
+        and kick attacks on 1 and 3 (+) or 2 and 4 (-). Diagnostics, item 119. */
+    float styleBackbeatSide    = 0.0f;
+    float styleKickSide        = 0.0f;
     float styleOffHigh         = 0.0f;
     float styleSync            = 0.0f;
     float styleOccupancy       = 0.0f;
 };
+
+/**
+    How far the screen vouches for the part being in time, for a player with
+    no headphones (docs/TODO.md item 117). Display only: nothing in the engine
+    reads it.
+
+    The old colour was green 99.6% of the time the part played, and showed
+    98.7% of the teacher's tempo errors green. No signal the app has separates
+    right from wrong well (best AUC 0.75), and a wrong octave is invisible to it
+    by construction, so `sure` is a likelihood, never a guarantee. Measured on
+    the bench against the teacher (tempo right and within 30 ms), thresholds
+    chosen on half the titles and checked on the other half:
+
+      sure   confidence >= kTrustConf, following, for kTrustSteadySec   ~79%
+      check  following, but not steady that long                        ~37%
+      out    short fit not closing, or the tracker unsure                ~16%
+
+    `steady` is kept by the caller, since it is a span of time: confidence at
+    or above kTrustConf with the tracker following, without a break, for
+    kTrustSteadySec. Before START (paused) it says whether START is safe, but
+    not over silence, where there is nothing to be in time with.
+*/
+enum class TempoTrust : int { none = 0, sure, check, out };
+
+constexpr float  kTrustConf      = 0.80f;
+constexpr double kTrustSteadySec = 4.0;
+// 5-9% of the time above it, and in time there 16%; the same at 0.08, so the
+// line sits in a flat stretch rather than on the edge of a few cases.
+constexpr float  kTrustOutResidual = 0.05f;
+
+/** The states the light judges while the part is armed. Waiting to come in and
+    a tap being held are not a tempo being followed, so they are not red. */
+inline bool followBarJudged (FollowBar b) noexcept
+{
+    return b == FollowBar::following || b == FollowBar::followingListen
+        || b == FollowBar::weakFollow || b == FollowBar::recalin;
+}
+
+/** The red: the tracker has lost the tempo, or its short fit no longer closes. */
+inline bool tempoOut (TrackingState st, float shortFitResidual) noexcept
+{
+    return st == TrackingState::lowConfidence || st == TrackingState::recovering
+        || (st == TrackingState::following && shortFitResidual > kTrustOutResidual);
+}
+
+inline TempoTrust tempoTrust (const EngineSnapshot& s, bool steady, bool silent) noexcept
+{
+    if (! followBarJudged (s.followBar) && ! (s.followBar == FollowBar::paused && ! silent))
+        return TempoTrust::none;
+    if (tempoOut (s.state, s.shortFitResidual))
+        return TempoTrust::out;
+    if (s.state != TrackingState::following)
+        return TempoTrust::none;
+    return steady ? TempoTrust::sure : TempoTrust::check;
+}
+
+/**
+    The drift guard (docs/TODO.md items 4 and 118): with the part playing, the
+    red held for kGuardEnterSec without a break silences it; it comes back on
+    the first bar line after kGuardLeaveSec out of the red. Simulated on the
+    bench before it was written, then run: silent for 7.0% of the playing time
+    (MIXER -12 dB: 5.3%), and the part was in time for only 18% (20%) of that;
+    1.4% (0.9%) of the in-time playing is lost; one stop every ~2 (~3) minutes.
+    The red is contiguous on the bench - a leaky count gave exactly what an
+    unbroken run gives - so the plain run is the rule.
+*/
+constexpr double kGuardEnterSec = 3.0;
+constexpr double kGuardLeaveSec = 1.0;
 
 struct EngineSettings
 {
@@ -448,6 +527,10 @@ struct EngineSettings
     // are what stops the part playing to an empty room or entering an intro
     // on a tempo the song does not have (docs/TODO.md items 29, 87, 88).
     std::atomic<bool>  startImmediately { false };
+    // PAUSA SE FUORI (SETUP, TEMPO card): the drift guard, kGuardEnterSec above.
+    // On by default - a wrong part is worse than a gap. Not in FISSO, where the
+    // tempo is the listener's and the red describes the analysis, not the clock.
+    std::atomic<bool>  driftGuard      { true };
     // Two more voices, each its own enable and volume - see item 10 in
     // docs/TODO.md. Off by default: turning either on is a choice, not a
     // change to how the app already sounds on upgrade.

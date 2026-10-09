@@ -116,6 +116,8 @@ private:
     void applyShakerNatural (bool on);
     void refreshNaturalButton();
     void applyStartImmediately (bool on);
+    void applyDriftGuard (bool on);
+    void refreshGuardButton();
     void refreshStartNowButton();
     /** Swing is a switch, not a quantity: straight, or the triplet. See
         docs/TODO.md item 7 and `GrooveEngine::humanDelay`. */
@@ -125,7 +127,7 @@ private:
     void refreshThemeColours();
     void refreshBarButton();
     /** FEEL voice knobs: on/off is a tap, volume is a drag. Off is the same
-        knob, slightly faded. With EDIT on, a tap opens the sound modal instead. */
+        knob, slightly faded. A press held still opens the sound modal. */
     void refreshVoiceKnobs();
     void assignKitSound (int slot, vp::KitSound sound);
     std::atomic<int>& kitSoundAtomic (int slot) noexcept;
@@ -347,6 +349,7 @@ private:
     juce::TextButton followButton { "SEGUI" };
     juce::TextButton fixedButton { "FISSO" };
     juce::TextButton startNowButton { "START SUBITO" };
+    juce::TextButton guardButton { "PAUSA SE FUORI" };
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
     juce::Label      bpmEdit;
@@ -413,7 +416,7 @@ private:
 
     static constexpr int kHitSampleCount = 6;
     /** Modal with the sounds (or, for the one-shot knobs, the samples) that no
-        knob is using yet. Opened by a tap on a knob while EDIT is on. */
+        knob is using yet. Opened by holding a knob still (VoiceKnob). */
     struct SoundMenuOverlay final : juce::Component
     {
         explicit SoundMenuOverlay (MainComponent& o);
@@ -435,11 +438,6 @@ private:
         juce::TextButton items[kCount];
     };
     SoundMenuOverlay soundMenu { *this };
-    /** Top-right of the FEEL card. Off: knobs are played. On: a tap on a knob
-        opens the modal to swap its sound, and the knobs wear a dashed ring. */
-    juce::TextButton editSoundsButton { "EDIT" };
-    bool soundEditMode = false;
-    void setSoundEditMode (bool on);
 
     /** Phone width: FEEL is two fader rows, the four voices over the four
         effects, all present - effects are fired mid-song, so no sheet. */
@@ -460,23 +458,38 @@ private:
     juce::Slider intensitySlider;
     juce::Label  intensityLabel { {}, "ENERGIA" };
     juce::Label  intensityValue { {}, "50%" };
-    /** Volume knob that also arms the voice: a tap (no drag) flips the
-        enable (or, with EDIT on, opens the sound modal), a vertical drag is
-        still the level. */
-    struct VoiceKnob final : juce::Slider
+    /** Volume knob that also arms the voice. A tap flips the enable (or fires
+        the one-shot); a vertical drag is the level, with the zoom; a press held
+        still for kHoldMs opens the sound modal. The old hold (450 ms, cancelled
+        only by a full drag) opened the menu while a finger paused before
+        dragging, which is why EDIT replaced it (docs/TODO.md item 95): now any
+        movement past kHoldSlopPx cancels it, so only a finger that stays put
+        gets the menu, and a drag is always the volume (item 120). */
+    struct VoiceKnob final : juce::Slider, private juce::Timer
     {
+        static constexpr int   kHoldMs = 600;
+        static constexpr float kHoldSlopPx = 6.0f;
         std::function<void()> onTap;
+        std::function<void()> onHold;
         std::function<void (bool)> onZoom;
         void mouseDown (const juce::MouseEvent& e) override
         {
+            held = false;
             dragged = false;
             juce::Slider::mouseDown (e);
+            if (onHold != nullptr)
+                startTimer (kHoldMs);
         }
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            if (held)
+                return;
+            const float moved = e.getDistanceFromDragStart();
+            if (moved > kHoldSlopPx)
+                stopTimer();
             // A press that stays put is the sample (or the mute). The slider
             // otherwise treats that press as a drag and the tap never fires.
-            if (e.getDistanceFromDragStart() <= 8.0f)
+            if (moved <= 8.0f)
                 return;
             if (! dragged && onZoom != nullptr)
                 onZoom (true);
@@ -485,12 +498,21 @@ private:
         }
         void mouseUp (const juce::MouseEvent& e) override
         {
+            stopTimer();
             juce::Slider::mouseUp (e);
             if (dragged && onZoom != nullptr)
                 onZoom (false);
-            if (! dragged && onTap != nullptr)
+            if (! held && ! dragged && onTap != nullptr)
                 onTap();
         }
+        void timerCallback() override
+        {
+            stopTimer();
+            held = true;
+            if (onHold != nullptr)
+                onHold();
+        }
+        bool held = false;
         bool dragged = false;
     };
     /** While a fader is being dragged, a large copy of it grows from the
@@ -535,7 +557,7 @@ private:
     /** What the last timer tick painted, so the next one repaints only what
         moved (see the end of timerCallback). */
     std::array<juce::int64, 6> lastPageKey {};
-    std::array<juce::int64, 15> lastStageKey {};
+    std::array<juce::int64, 18> lastStageKey {};
     /** Smoothed copy of the tempo orb. `lead` is −1 behind the clock (drawn
         left) and +1 ahead (drawn right); it eases in both directions so the
         bloom slides instead of jumping. UI timer only — the audio thread
@@ -547,10 +569,22 @@ private:
     float heroConf = 0.0f;        // eased tracker confidence, drives bloom strength
     float tapAlignFlash = 0.0f;   // fuchsia flash after declaring the one
     float armedPulse = 0.0f;      // START/STOP pulse on the beat
+    /** How far the screen vouches for the part being in time (vp::tempoTrust,
+        docs/TODO.md item 117), and when the confidence last broke, which its
+        `steady` is counted from. UI timer only. */
+    vp::TempoTrust trust = vp::TempoTrust::none;
+    juce::uint32 trustLowMs = 0;
+    /** The whole hero card flashes on each quarter, harder on the one, in the
+        trust colour: from the stand the eye holds it against kick and snare,
+        and a doubled tempo flashes twice per drummer's beat. Set per screen
+        frame in updateBeatDots; `heroLive` (timer) says anything is being
+        followed at all. */
+    float heroFlash = 0.0f;
+    bool heroLive = false;
     VoiceKnob inputGainSlider;   // a VoiceKnob only for the drag zoom; no onTap
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
-    /** One-shot samples. Tap starts or restarts; with EDIT on, a tap assigns an unused sample. */
+    /** One-shot samples. Tap starts or restarts; a press held still picks an unused sample. */
     VoiceKnob absorbVolSlider;
     juce::Label absorbHitLabel { {}, "ABSORB" };
     juce::Label absorbHitValue { {}, "100%" };
@@ -593,6 +627,8 @@ private:
     /** Where the beat dots are drawn, kept so the timer can repaint that strip
         alone rather than the whole console. */
     juce::Rectangle<int> beatStrip;
+    /** The hero card, kept the same way for the beat flash. */
+    juce::Rectangle<int> heroCard;
     /** The lit dot is re-decided on every screen frame, from the clock less
         the output path, so it lights when the stroke is heard. The 15 Hz
         timer alone lit it up to 67 ms late, by a different amount each

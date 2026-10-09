@@ -489,6 +489,9 @@ public:
             held still, and therefore the moment worth asking what else that
             hold is stopping. */
         int           barRotations = 0;
+        /** The rotations by one or three quarters: the ones that move a clap
+            from 2 and 4 onto 1 and 3. Half a bar leaves it where it was. */
+        int           barOddRotations = 0;
         /** True when the one has been established for quarter-specific voices
             (the clap on 2 and 4). A weak later vote does not revoke the
             established bar; a new source or a bar re-entry does. */
@@ -652,6 +655,7 @@ private:
     float voteBeats = 0.0f;
     bool  barTrustEstablished = false;
     int   barRotations = 0;
+    int   barOddRotations = 0;
     /** Samples remaining in the post-cut coming-in window. Zero is closed. */
     int   barReentrySamples = 0;
     /** Set when a pause re-opens the window on a bar that was already

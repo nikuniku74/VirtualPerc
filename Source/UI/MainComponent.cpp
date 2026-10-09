@@ -47,11 +47,6 @@ MainComponent::MainComponent()
     settingsButton.getProperties().set ("gearIcon", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
-    setupBtn (editSoundsButton, ink());
-    editSoundsButton.setButtonText ({});
-    editSoundsButton.setTitle ("Modifica suoni");
-    editSoundsButton.getProperties().set ("pencilIcon", true);
-    editSoundsButton.onClick = [this] { vp::haptic (vp::Haptic::select); setSoundEditMode (! soundEditMode); };
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
@@ -124,6 +119,7 @@ MainComponent::MainComponent()
     {
         applyStartImmediately (! engine.settings().startImmediately.load());
     };
+    guardButton.onClick = [this] { applyDriftGuard (! engine.settings().driftGuard.load()); };
     bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
     bpmNudgeUp.onClick = [this] { nudgeFixedBpm (1.0f); };
     debugButton.onClick = [this] {
@@ -292,26 +288,33 @@ MainComponent::MainComponent()
         refreshVoiceKnobs();
         savePrefs();
     };
-    // With EDIT on, a tap on a knob is "change this one" (the sound modal),
-    // not the mute or the one-shot. Drag is still the level either way.
-    auto tapOrEdit = [this] (int slot, bool hits, std::function<void()> act)
+    // A tap plays the knob (the mute, or the one-shot); a press held still
+    // opens the modal to change its sound (VoiceKnob); a drag is the level.
+    auto tapped = [] (std::function<void()> act)
     {
-        return [this, slot, hits, act = std::move (act)]
+        return [act = std::move (act)]
         {
             vp::haptic (vp::Haptic::light);
-            if (! soundEditMode)
-            {
-                act();
-                return;
-            }
+            act();
+        };
+    };
+    auto heldFor = [this] (int slot, bool hits)
+    {
+        return [this, slot, hits]
+        {
+            vp::haptic (vp::Haptic::select);
             styleMenu.dismiss();
             soundMenu.showFor (slot, hits);
         };
     };
-    shakerVolSlider.onTap  = tapOrEdit (0, false, [this, tapVoice] { tapVoice (engine.settings().shakerEnabled); });
-    congaVolSlider.onTap   = tapOrEdit (1, false, [this, tapVoice] { tapVoice (engine.settings().congasEnabled); });
-    cembaloVolSlider.onTap = tapOrEdit (2, false, [this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); });
-    clapVolSlider.onTap    = tapOrEdit (3, false, [this, tapVoice] { tapVoice (engine.settings().clapEnabled); });
+    shakerVolSlider.onTap  = tapped ([this, tapVoice] { tapVoice (engine.settings().shakerEnabled); });
+    congaVolSlider.onTap   = tapped ([this, tapVoice] { tapVoice (engine.settings().congasEnabled); });
+    cembaloVolSlider.onTap = tapped ([this, tapVoice] { tapVoice (engine.settings().cembaloEnabled); });
+    clapVolSlider.onTap    = tapped ([this, tapVoice] { tapVoice (engine.settings().clapEnabled); });
+    shakerVolSlider.onHold  = heldFor (0, false);
+    congaVolSlider.onHold   = heldFor (1, false);
+    cembaloVolSlider.onHold = heldFor (2, false);
+    clapVolSlider.onHold    = heldFor (3, false);
     setupFader (inputGainSlider, inputGainLabel, inputGainValue, "MIC",
                 0.0, 4.0, 1.00,
                 [this] (float v) { engine.settings().inputGain.store (v); },
@@ -383,10 +386,14 @@ MainComponent::MainComponent()
         if (on) faderZoom.show (inputGainSlider);
         else    faderZoom.hide();
     };
-    absorbVolSlider.onTap = tapOrEdit (0, true, fireHit (0));
-    hornVolSlider.onTap = tapOrEdit (1, true, fireHit (1));
-    uplifterVolSlider.onTap = tapOrEdit (2, true, fireHit (2));
-    riserVolSlider.onTap = tapOrEdit (3, true, fireHit (3));
+    absorbVolSlider.onTap = tapped (fireHit (0));
+    hornVolSlider.onTap = tapped (fireHit (1));
+    uplifterVolSlider.onTap = tapped (fireHit (2));
+    riserVolSlider.onTap = tapped (fireHit (3));
+    absorbVolSlider.onHold = heldFor (0, true);
+    hornVolSlider.onHold = heldFor (1, true);
+    uplifterVolSlider.onHold = heldFor (2, true);
+    riserVolSlider.onHold = heldFor (3, true);
     setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
                 0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
@@ -434,6 +441,7 @@ MainComponent::MainComponent()
     setupPageBtn (followButton, ink());
     setupPageBtn (fixedButton, ink());
     setupPageBtn (startNowButton, ink());
+    setupPageBtn (guardButton, ink());
     setupPageBtn (settingsClose, ink());
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
@@ -531,6 +539,7 @@ MainComponent::MainComponent()
     refreshSubdivisionButtons();
     refreshNaturalButton();
     refreshStartNowButton();
+    refreshGuardButton();
     refreshSwingButton();
     refreshOctaveButtons();
     refreshLoopModeButton();
@@ -668,9 +677,6 @@ void MainComponent::refreshThemeColours()
         button->setColour (juce::TextButton::textColourOffId, text());
         button->setColour (juce::TextButton::textColourOnId, text());
     }
-    // EDIT has its own text colours. Without this it kept the ones from
-    // construction, before the theme was applied: dark text on a dark card.
-    setSoundEditMode (soundEditMode);
 
     auto paintVoiceKnob = [] (juce::Slider& s, juce::Colour fill)
     {
@@ -706,6 +712,7 @@ void MainComponent::refreshThemeColours()
     refreshSubdivisionButtons();
     refreshNaturalButton();
     refreshStartNowButton();
+    refreshGuardButton();
     refreshSwingButton();
     refreshBarButton();
     refreshTempoModeButtons();
@@ -752,27 +759,6 @@ void MainComponent::assignKitSound (int slot, vp::KitSound sound)
     kitSoundAtomic (slot).store (want);
     refreshVoiceKnobs();
     savePrefs();
-}
-
-void MainComponent::setSoundEditMode (bool on)
-{
-    soundEditMode = on;
-    if (! on)
-        soundMenu.dismiss();
-    editSoundsButton.setToggleState (on, juce::dontSendNotification);
-    // A bare pencil, so the colour is the whole state: text colour when
-    // the knobs are played, fuchsia while they are being edited.
-    editSoundsButton.setColour (juce::TextButton::textColourOffId, text());
-    editSoundsButton.setColour (juce::TextButton::textColourOnId, fuchsia());
-    juce::Slider* knobs[] = {
-        &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
-        &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider
-    };
-    for (auto* k : knobs)
-    {
-        k->getProperties().set ("editMode", on);
-        k->repaint();
-    }
 }
 
 void MainComponent::refreshVoiceKnobs()
@@ -1532,9 +1518,11 @@ void MainComponent::loadInternalTrack (juce::URL url)
     // blocks after PLAY so a full-file pass cannot hold the BPM display.
     buildTrackWaveform();
     refreshInternalTrackButtons();
-    relayoutSettings();
-    if (settingsOverlay.isVisible())
-        repaint();
+    // A loaded track adds the waveform row to stageRows, so every stage row
+    // moves: the buttons, the tap zone and the MIC bar need a full layout.
+    // relayoutSettings alone placed only the picture, over the old TAP row.
+    resized();
+    repaint();
 }
 
 void MainComponent::layoutTrackWaveform()
@@ -1864,6 +1852,7 @@ void MainComponent::loadPrefs()
         prefs->getBoolValue ("shakerNatural", engine.settings().shakerNatural.load()));
     engine.settings().startImmediately.store (
         prefs->getBoolValue ("startImmediately", false));
+    engine.settings().driftGuard.store (prefs->getBoolValue ("driftGuard", true));
 
     const bool recordedLoops = loopBankReady
                                && prefs->getBoolValue ("recordedLoops", true);
@@ -2037,6 +2026,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("clapSound", engine.settings().clapSound.load());
     prefs->setValue ("shakerNatural", engine.settings().shakerNatural.load());
     prefs->setValue ("startImmediately", engine.settings().startImmediately.load());
+    prefs->setValue ("driftGuard", engine.settings().driftGuard.load());
     prefs->setValue ("recordedLoops", engine.recordedLoopsEnabled());
     prefs->setValue ("shakerVolume",
                      static_cast<double> (engine.settings().shakerVolume.load()));
@@ -2203,6 +2193,20 @@ void MainComponent::refreshStartNowButton()
     startNowButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
+void MainComponent::applyDriftGuard (bool on)
+{
+    engine.settings().driftGuard.store (on);
+    refreshGuardButton();
+    savePrefs();
+}
+
+void MainComponent::refreshGuardButton()
+{
+    guardButton.setToggleState (engine.settings().driftGuard.load(), juce::dontSendNotification);
+    guardButton.setColour (juce::TextButton::buttonColourId, ink());
+    guardButton.setColour (juce::TextButton::textColourOffId, text());
+}
+
 void MainComponent::refreshNaturalButton()
 {
     const bool on = engine.settings().shakerNatural.load();
@@ -2261,6 +2265,20 @@ void MainComponent::updateBeatDots()
     float bar = engine.clockBarPhase() - delayBars;
     bar -= std::floor (bar);
     const int beat = juce::jlimit (0, 3, static_cast<int> (bar * 4.0f));
+    {
+        // The hero card flashes with the quarter the stroke is heard on: 90 ms
+        // full, 90 ms half, the one harder. Stepped rather than a decay, so
+        // the card repaints three times a beat, not every frame (item 108).
+        const float msInto = (bar * 4.0f - std::floor (bar * 4.0f)) * 60000.0f / bpm;
+        const float step = msInto < 90.0f ? 1.0f : (msInto < 180.0f ? 0.45f : 0.0f);
+        const float flash = heroLive ? step * (beat == 0 ? 1.0f : 0.6f) : 0.0f;
+        if (std::abs (flash - heroFlash) > 0.001f)
+        {
+            heroFlash = flash;
+            if (! heroCard.isEmpty())
+                repaint (heroCard.expanded (4));
+        }
+    }
     {
         const float frac = bar * 4.0f - std::floor (bar * 4.0f);
         const float pulse = userWantsArmed ? std::exp (-frac * 3.2f) : 0.0f;
@@ -2602,14 +2620,26 @@ void MainComponent::timerCallback()
     // of a second — a slide, not a snap, and not so slow that a real lean
     // arrives after the bar has already moved on.
     {
+        // The trust light (item 117): confidence and state are re-read every
+        // tick, and any break restarts the steady count.
+        const auto nowMs = juce::Time::getMillisecondCounter();
+        if (snap.confidence < vp::kTrustConf || snap.state != vp::TrackingState::following)
+            trustLowMs = nowMs;
+        const bool silent = juce::jmax (snap.inputPeak, snap.analysisPeak) < kInputSilentPeak;
+        trust = vp::tempoTrust (snap, nowMs - trustLowMs >= static_cast<juce::uint32> (vp::kTrustSteadySec * 1000.0),
+                                silent);
+    }
+    {
         const auto bloom = tempoBloomFor (snap);
         tempoBloomLead += (bloom.lead - tempoBloomLead) * 0.22f;
         tempoBloomAmount += (bloom.amount - tempoBloomAmount) * 0.35f;
 
         // The state colour and its bloom fade rather than switch.
-        const auto target = stateColour (snap.followBar);
-        const bool neutral = snap.followBar == vp::FollowBar::ready
-                          || snap.followBar == vp::FollowBar::paused;
+        const auto target = shownColour (snap, trust);
+        const bool neutral = (snap.followBar == vp::FollowBar::ready
+                              || snap.followBar == vp::FollowBar::paused)
+                          && trust == vp::TempoTrust::none;
+        heroLive = ! neutral && snap.bpm > 40.0f;
         stateSmooth = stateSmooth.getAlpha() == 0 ? target : stateSmooth.interpolatedWith (target, 0.10f);
         // Green is earned: a locked tracker with low confidence blooms
         // half-strength, so a drifting grid reads before it turns amber.
@@ -2844,13 +2874,15 @@ void MainComponent::timerCallback()
             stateIsHot (snap.followBar) ? 1 : 0, tapFlash > 0 ? 1 : 0,
             gDarkMode ? 1 : 0, debugOpen ? 1 : 0
         };
-        const std::array<juce::int64, 15> stage {
+        const std::array<juce::int64, 18> stage {
             static_cast<juce::int64> (snap.followBar), juce::roundToInt (snap.bpm * 10.0f),
             q (tempoBloomLead), q (tempoBloomAmount), q (heroBloomAmt), q (tapAlignFlash),
             snap.tempoFollow ? 1 : 0, snap.levelSettled ? 1 : 0, snap.tempoRegime,
             snap.tempoOctave, snap.tempoOctaveAuto ? 1 : 0, snap.barDeclared ? 1 : 0,
             snap.grooveStyle, q (snap.grooveStyleConfidence),
-            engine.settings().grooveAuto.load() ? 1 : 0
+            engine.settings().grooveAuto.load() ? 1 : 0, static_cast<juce::int64> (trust),
+            snap.driftGuarded ? 1 : 0,
+            snap.clapAllowed ? 1 : (engine.settings().clapEnabled.load() ? 2 : 0)
         };
         // The debug panel prints live numbers over the stage: repaint it all.
         if (debugOpen || page != lastPageKey)

@@ -48,26 +48,6 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     if (w > room && w > 1.0f)
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
 
-    if ((bool) button.getProperties().getWithDefault ("pencilIcon", false))
-    {
-        // EDIT: a pencil drawn as a path, tip bottom-left - tip, body and
-        // eraser as three pieces so the gaps read at 16 pt. Off/on colours
-        // come from the button (see setSoundEditMode).
-        juce::Path pencil;
-        pencil.startNewSubPath (0.0f, 0.0f);
-        pencil.lineTo (0.22f, -0.13f);
-        pencil.lineTo (0.22f, 0.13f);
-        pencil.closeSubPath();
-        pencil.addRectangle (0.27f, -0.13f, 0.52f, 0.26f);
-        pencil.addRoundedRectangle (0.84f, -0.13f, 0.16f, 0.26f, 0.04f);
-        pencil.applyTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::pi * 0.25f));
-        auto box = button.getLocalBounds().toFloat().reduced (13.0f);
-        g.setColour (button.findColour (button.getToggleState() ? juce::TextButton::textColourOnId
-                                                                : juce::TextButton::textColourOffId));
-        g.fillPath (pencil, pencil.getTransformToScaleToFit (box, true));
-        return;
-    }
-
     if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
     {
         static juce::Image gear;
@@ -153,19 +133,9 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           const juce::Colour& backgroundColour,
                                                           bool, bool shouldDrawButtonAsDown)
 {
-    // The gear and the EDIT pencil are bare icons: no fill, no edge, no bar.
+    // The gear is a bare icon: no fill, no edge, no bar.
     if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
         return;
-    if ((bool) button.getProperties().getWithDefault ("pencilIcon", false))
-    {
-        // EDIT: a quiet tile that lights its rim when the mode is on.
-        const auto tile = button.getLocalBounds().toFloat().reduced (0.5f);
-        g.setColour (ink());
-        g.fillRoundedRectangle (tile, 12.0f);
-        g.setColour (button.getToggleState() ? fuchsia() : border());
-        g.drawRoundedRectangle (tile, 12.0f, button.getToggleState() ? 1.6f : 1.0f);
-        return;
-    }
 
     if ((bool) button.getProperties().getWithDefault ("circle", false))
     {
@@ -552,18 +522,5 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
                     juce::Rectangle<float> (centre.x - innerR * 0.78f, top + th + 1.0f,
                                             innerR * 1.56f, nameH).toNearestInt(),
                     juce::Justification::centred, false);
-    }
-
-    // EDIT is on: this knob will open the sound modal. A dashed ring just
-    // outside the arc says "tappable to change" without touching the fills.
-    if ((bool) slider.getProperties().getWithDefault ("editMode", false))
-    {
-        juce::Path ring, dashed;
-        const float rr = radius + 1.5f;
-        ring.addEllipse (centre.x - rr, centre.y - rr, rr * 2.0f, rr * 2.0f);
-        const float dashes[] = { 5.0f, 4.0f };
-        juce::PathStrokeType (1.0f).createDashedStroke (dashed, ring, dashes, 2);
-        g.setColour (fuchsia());
-        g.strokePath (dashed, juce::PathStrokeType (1.0f));
     }
 }
