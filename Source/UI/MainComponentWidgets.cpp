@@ -1,5 +1,6 @@
 // MainComponent: track waveform, style select and the two overlays.
 #include "UI/MainComponentShared.h"
+#include "VpBrandData.h"
 
 double MainComponent::TrackWaveform::proportionFromX (float x) const
 {
@@ -477,4 +478,67 @@ void MainComponent::SoundMenuOverlay::resized()
         items[i].setColour (juce::TextButton::textColourOnId, juce::Colours::white);
     }
     repaint();
+}
+
+// ---------------------------------------------------------------------------
+// The landing screen.
+
+namespace
+{
+    // Assets/Brand/LaunchScreen.storyboard: the same ground, the same share of
+    // the short side, both centred on the whole screen rather than the safe
+    // area, so iOS's launch picture and this one are the same frame.
+    const juce::Colour kSplashGround { 0xff0f0e12 };
+    constexpr float kSplashLogoShare = 0.62f;
+    constexpr double kSplashHoldMs = 1100.0;
+    constexpr double kSplashFadeMs = 550.0;
+}
+
+MainComponent::SplashOverlay::SplashOverlay()
+{
+    setOpaque (false);
+    setInterceptsMouseClicks (true, false);
+    logo = juce::ImageCache::getFromMemory (VpBrandData::LaunchLogo_png, VpBrandData::LaunchLogo_pngSize);
+    startMs = juce::Time::getMillisecondCounterHiRes();
+    fadeFromMs = startMs + kSplashHoldMs;
+    startTimerHz (60);
+}
+
+void MainComponent::SplashOverlay::paint (juce::Graphics& g)
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const float t = static_cast<float> (juce::jlimit (0.0, 1.0, (now - fadeFromMs) / kSplashFadeMs));
+    // Ease out: the fade starts at once and settles; the logo grows 8% as it
+    // goes, which reads as the app opening towards the player.
+    const float e = 1.0f - (1.0f - t) * (1.0f - t);
+    const float alpha = 1.0f - e;
+    g.fillAll (kSplashGround.withAlpha (alpha));
+    if (! logo.isValid())
+        return;
+    const auto area = getLocalBounds().toFloat();
+    const float side = juce::jmin (area.getWidth(), area.getHeight()) * kSplashLogoShare * (1.0f + 0.08f * e);
+    g.setOpacity (alpha);
+    g.drawImage (logo, area.withSizeKeepingCentre (side, side), juce::RectanglePlacement::centred);
+}
+
+void MainComponent::SplashOverlay::mouseDown (const juce::MouseEvent&)
+{
+    // A tap goes straight to the fade rather than cutting: the console
+    // appears the same way, only sooner.
+    fadeFromMs = juce::jmin (fadeFromMs, juce::Time::getMillisecondCounterHiRes());
+}
+
+void MainComponent::SplashOverlay::timerCallback()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now >= fadeFromMs + kSplashFadeMs)
+    {
+        stopTimer();
+        setVisible (false);
+        logo = {};
+        return;
+    }
+    // Only the fade moves; the hold is a still frame.
+    if (now >= fadeFromMs)
+        repaint();
 }

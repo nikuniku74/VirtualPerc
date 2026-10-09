@@ -134,6 +134,10 @@ juce_add_gui_app (VirtualPercussionist
     VERSION ${PROJECT_VERSION}
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/AppIcon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/AppIcon.png"
+    # The dark logo on the dark ground, centred, while iOS loads the app. The
+    # in-app landing (MainComponent::SplashOverlay) opens on the same picture,
+    # so the hand-over is seamless. The image itself is a bundle resource below.
+    LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchScreen.storyboard"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
@@ -304,6 +308,22 @@ target_compile_definitions (VirtualPercussionist PRIVATE
     # one it does have, the device reports it, and the engine prepares at it.
     "JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES=44100.0,48000.0,88200.0,96000.0"
 )
+
+# The logo: loose in the iOS bundle for the launch storyboard (it can only
+# name a bundle image), embedded for the landing screen drawn by the app.
+set (VP_LAUNCH_LOGO "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchLogo.png")
+juce_add_binary_data (VpBrandData
+    HEADER_NAME VpBrandData.h
+    NAMESPACE VpBrandData
+    SOURCES "${VP_LAUNCH_LOGO}"
+)
+target_link_libraries (VirtualPercussionist PRIVATE VpBrandData)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_sources (VirtualPercussionist PRIVATE "${VP_LAUNCH_LOGO}")
+    set_source_files_properties ("${VP_LAUNCH_LOGO}" PROPERTIES
+        HEADER_FILE_ONLY TRUE
+        MACOSX_PACKAGE_LOCATION "Resources")
+endif()
 
 target_link_libraries (VirtualPercussionist PRIVATE
     juce::juce_audio_utils

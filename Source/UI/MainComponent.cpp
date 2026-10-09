@@ -547,6 +547,10 @@ MainComponent::MainComponent()
 
     startTimerHz (15);
     beatVBlank = juce::VBlankAttachment (this, [this] { updateBeatDots(); });
+    // The window already has its size by now; resized() keeps it full-bounds.
+    addAndMakeVisible (splash);
+    splash.setBounds (getLocalBounds());
+    splash.toFront (false);
 
     {
         juce::Component::SafePointer<MainComponent> safeReset (this);

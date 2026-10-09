@@ -69,6 +69,8 @@ mic / line in
   The network's downbeat votes forget at `kVoteDecay` 0.95 per beat (half in
   ~3.5 bars, item 106): the app was already at the best fixed one-per-song,
   and the true one moves mid-song; 0.982 kept it wrong for ten bars.
+  A half-bar move under a sounding part must also win 8 beats running
+  (`kHalfBarPersistBeats`, item 121): half the breaks of a right one.
 
 ## 3. How the decoder works, in one page
 

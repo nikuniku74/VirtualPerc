@@ -226,6 +226,22 @@ private:
     };
     SettingsOverlay settingsOverlay { *this };
 
+    /** The landing: the launch screen's own picture (Assets/Brand, the dark
+        logo at 62% of the short side on #0F0E12, as LaunchScreen.storyboard
+        draws it), held a moment, then grown a little and faded onto the
+        console. A tap skips it. Above every other child until it is gone. */
+    struct SplashOverlay final : juce::Component, private juce::Timer
+    {
+        SplashOverlay();
+        void paint (juce::Graphics& g) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void timerCallback() override;
+        juce::Image logo;
+        double startMs = 0.0;
+        double fadeFromMs = 0.0;
+    };
+    SplashOverlay splash;
+
     /** The parts of the settings page that are drawn rather than placed: the
         heading, the sentence under each group saying what the choice costs, and
         the block of numbers the hardware actually came back with. Computed in

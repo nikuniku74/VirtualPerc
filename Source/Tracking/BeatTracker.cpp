@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 
 namespace vp
 {
@@ -212,9 +211,6 @@ void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
 void BeatTracker::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
-    // EXPERIMENT (item 121): beats a half-bar move must keep winning first.
-    if (const char* v = std::getenv ("VP_HALF_PERSIST"))
-        halfPersistBeats = std::max (0, std::atoi (v));
     halfBarStreak = 0;
     follower.prepare (sampleRate);
     harmonicTempo.prepare (sampleRate);
@@ -1089,11 +1085,19 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         }
         if (barTrustEstablished && best != 2 && ! corroborated)
             return false;
-        // EXPERIMENT (item 121): half a bar must win this many beats running.
-        if (best == 2 && halfPersistBeats > 0)
+        // Half a bar must keep winning for kHalfBarPersistBeats in a row. A
+        // passage where the 3 sounds like a 1 (a stop, a crash, a chord change
+        // or a phrase restarting mid-bar) wins the short vote memory for a few
+        // bars and then lets go: on the bench those moves broke a right one
+        // 11 (MIXER 15) times against 21 (23) corrections. Two bars of
+        // persistence: 6 (5) breaks, 20 (21) corrections, right one within
+        // half a point on both halves; four bars stopped the breaks but lost
+        // corrections and a point of the one. docs/TODO.md item 121.
+        constexpr int kHalfBarPersistBeats = 8;
+        if (best == 2)
         {
             halfCandidateThisBeat = true;
-            if (++halfBarStreak < halfPersistBeats)
+            if (++halfBarStreak < kHalfBarPersistBeats)
                 return false;
         }
         halfBarStreak = 0;

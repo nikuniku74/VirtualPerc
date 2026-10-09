@@ -656,8 +656,7 @@ private:
     bool  barTrustEstablished = false;
     int   barRotations = 0;
     int   barOddRotations = 0;
-    int   halfPersistBeats = 0;     // EXPERIMENT item 121, VP_HALF_PERSIST
-    int   halfBarStreak = 0;
+    int   halfBarStreak = 0;        // beats the half-bar move has kept winning (item 121)
     bool  halfCandidateThisBeat = false;
     /** Samples remaining in the post-cut coming-in window. Zero is closed. */
     int   barReentrySamples = 0;

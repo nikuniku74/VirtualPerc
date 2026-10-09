@@ -4,6 +4,18 @@ Moved verbatim from SKILL.md section 3 on 2026-10-07. Chronological log: newest 
 
 ## 3. Phase: the part that is easy to get wrong
 
+**Kept (2026-10-09), half-bar moves need 8 beats of persistence (docs/TODO.md item 121).**
+With the part playing, a half-bar rotation needed only the network's votes to
+clear the playing margin, and the short memory (0.95) let a passage where the 3
+sounds like a 1 win for a few bars: 11 of 32 half-bar moves (MIXER 15 of 38)
+broke a right one, which came back in a median 10 s. `kHalfBarPersistBeats` 8:
+the move must win 8 beats running (`halfBarStreak`). Breaks 11 -> 6 / 15 -> 5,
+corrections 21 -> 20 / 23 -> 21, right one within half a point on both halves
+(77.8 -> 77.5 / 82.3 -> 82.4). 16 beats stopped nearly all breaks but cost
+corrections and a point of the one. Rejected the same day: a per-beat
+"centred" mark (green and network-clock error < 5-15 ms) is right against the
+teacher only 77-80% of the time, whatever the threshold.
+
 **Kept (2026-10-07), shorter memory for the network's downbeat votes (docs/TODO.md item 106).**
 Measured against the offline teacher on the 54-file bench, from the votes the app
 actually receives (per-beat dump, removed): the app's one was already at the best

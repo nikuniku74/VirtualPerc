@@ -539,7 +539,8 @@ void MainComponent::resized()
     layoutMode = newMode;
     const auto isOverlay = [this] (const juce::Component* c)
     {
-        return c == &settingsOverlay || c == &styleMenu || c == &soundMenu || c == &faderZoom;
+        return c == &settingsOverlay || c == &styleMenu || c == &soundMenu || c == &faderZoom
+            || c == &splash;
     };
     juce::Array<std::pair<juce::Component*, juce::Rectangle<int>>> before;
     if (animateMode)
@@ -602,6 +603,11 @@ void MainComponent::resized()
         styleMenu.setBounds (getLocalBounds());
     if (soundMenu.isOpen())
         soundMenu.setBounds (getLocalBounds());
+    if (splash.isVisible())
+    {
+        splash.setBounds (getLocalBounds());
+        splash.toFront (false);
+    }
 
     if (animateMode)
     {
