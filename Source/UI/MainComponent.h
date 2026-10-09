@@ -33,8 +33,6 @@ public:
 private:
     void timerCallback() override;
     void darkModeSettingChanged() override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
     void startPressed();
     void stopPressed();
     void tapPressed();
@@ -156,7 +154,7 @@ private:
     int layoutMode = -1;
     juce::ComponentAnimator layoutAnimator;
     /** Controls being faded in by a layout change, with the alpha they end at
-        (stage mode dims some to 0.45); restored if the fade is cut short. */
+        restored if the fade is cut short. */
     juce::Array<std::pair<juce::Component::SafePointer<juce::Component>, float>> layoutFadeIns;
     double layoutFadeStartMs = 0.0;
     bool layoutFading = false;
@@ -447,24 +445,6 @@ private:
         effects, all present - effects are fired mid-song, so no sheet. */
     void layoutVoicesRow (juce::Rectangle<int> body);
 
-    /** Stage mode, phone width, while playing: after 8 s without a touch the
-        controls that are not needed mid-song (style, subdivision, switches,
-        voices, FX) fall to 45%, and a transparent guard sits over them. The
-        first touch only wakes them - it never lands on a fader or a switch -
-        so a blind thumb cannot change the sound. The tempo, TAP, the octave
-        buttons and START stay fully live and fully lit. */
-    struct WakeGuard final : juce::Component
-    {
-        explicit WakeGuard (MainComponent& o) : owner (o) { setOpaque (false); }
-        void paint (juce::Graphics&) override {}
-        void mouseDown (const juce::MouseEvent&) override { owner.wakeFromStageDim(); }
-        MainComponent& owner;
-    };
-    WakeGuard wakeGuard { *this };
-    double lastTouchMs = 0.0;
-    bool stageDim = false;
-    void setStageDim (bool dim);
-    void wakeFromStageDim();
 
 
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
@@ -567,7 +547,7 @@ private:
     float heroConf = 0.0f;        // eased tracker confidence, drives bloom strength
     float tapAlignFlash = 0.0f;   // fuchsia flash after declaring the one
     float armedPulse = 0.0f;      // START/STOP pulse on the beat
-    juce::Slider inputGainSlider;
+    VoiceKnob inputGainSlider;   // a VoiceKnob only for the drag zoom; no onTap
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
     /** One-shot samples. Tap starts or restarts; with EDIT on, a tap assigns an unused sample. */

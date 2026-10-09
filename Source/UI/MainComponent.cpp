@@ -63,9 +63,6 @@ MainComponent::MainComponent()
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
     addChildComponent (soundMenu);
-    addChildComponent (wakeGuard);
-    addMouseListener (this, true);   // every touch anywhere resets the stage-mode clock
-    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
 
     // Pressing the level you are already on is the way back to AUTO: the same
     // idiom the bar button used to use, and the only way out that does not need
@@ -381,6 +378,11 @@ MainComponent::MainComponent()
             else    faderZoom.hide();
         };
     }
+    inputGainSlider.onZoom = [this] (bool on)
+    {
+        if (on) faderZoom.show (inputGainSlider);
+        else    faderZoom.hide();
+    };
     absorbVolSlider.onTap = tapOrEdit (0, true, fireHit (0));
     hornVolSlider.onTap = tapOrEdit (1, true, fireHit (1));
     uplifterVolSlider.onTap = tapOrEdit (2, true, fireHit (2));
@@ -2517,59 +2519,9 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
 }
 
-void MainComponent::mouseDown (const juce::MouseEvent&)
-{
-    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
-    if (stageDim)
-        setStageDim (false);
-}
-
-void MainComponent::mouseDrag (const juce::MouseEvent&)
-{
-    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
-}
-
-void MainComponent::wakeFromStageDim()
-{
-    lastTouchMs = juce::Time::getMillisecondCounterHiRes();
-    setStageDim (false);
-}
-
-void MainComponent::setStageDim (bool dim)
-{
-    // Only the phone-width page has a stage mode, and only while a set is on.
-    dim = dim && isCompact();
-    stageDim = dim;
-
-    juce::Component* secondary[] = {
-        &styleSelect, &sub4, &sub8, &sub16, &dynamicsButton, &naturalButton, &swingButton,
-        &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
-        &absorbVolSlider, &hornVolSlider, &uplifterVolSlider, &riserVolSlider,
-        &editSoundsButton
-    };
-    for (auto* c : secondary)
-        c->setAlpha (dim ? 0.45f : 1.0f);
-
-    wakeGuard.setVisible (dim);
-    if (dim)
-    {
-        const auto geom = compactGeom();
-        wakeGuard.setBounds (geom.misure.getUnion (geom.knobs));
-        wakeGuard.toFront (false);
-    }
-}
-
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
-    {
-        const bool wantDim = isCompact() && userWantsArmed
-                             && ! settingsOverlay.isVisible()
-                             && ! styleMenu.isOpen() && ! soundMenu.isOpen()
-                             && juce::Time::getMillisecondCounterHiRes() - lastTouchMs > 8000.0;
-        if (wantDim != stageDim)
-            setStageDim (wantDim);
-    }
     if (restartLogPending
         && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
     {

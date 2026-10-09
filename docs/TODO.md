@@ -5414,6 +5414,43 @@ Segnalato dall'utente dopo la prima compilazione del restyle (`docs/UI_RESTYLE_H
 Richiesta utente: STOP si deve fermare subito al tocco. Prima era un press-and-hold di 0.5 s con la barra rossa (`StopHold`, pensato contro il pollice vagante a metà brano). Tolti `StopHold`, `startFiredOnPress`, la barra `holdProgress` e la scritta «TIENI PREMUTO»: lo stesso pulsante ora fa START o STOP al tocco (`setTriggeredOnMouseDown`). Il battito sul pulsante armato resta.
 - [ ] Sul dispositivo: un tocco ferma; un doppio tocco veloce su START non deve fermare subito (se succede, serve un piccolo intervallo minimo dopo START).
 
+### 110. Precisione nel seguire il tempo: dove si perde oggi 🔴 (2026-10-08, misurato — nessun cambiamento all'app)
+
+Base `p0` = `r1` (identica: le modifiche UI/consumo non toccano il tempo). BRANO giusto 81.7%, ottava 8.5%, sbagl 9.8%, dispersione 12.1 ms, >25 ms 19.3%, uno 75.0%; MIXER −12: 81.1 / 9.2 / 9.7 / 11.8 / 18.4 / 78.8.
+- [x] **Fase:** clock 12.1 ms contro griglia del decoder 11.8 e retta causale ideale ~10 ms (rete 7): siamo al tetto causale, niente di grosso da prendere senza una rete migliore.
+- [x] **«anticipo» per brano (20–46 ms contro il maestro) non è un errore dell'app:** contro gli attacchi della batteria (`onset_fit` `typ`) lo scarto costante per brano ha deviazione 2.8 ms (maestro 7.1), correlazione fra i due 0.21. È la taratura del maestro che cambia da brano a brano. Non tarare per brano.
+- [x] **I battiti «sbagliati» (9.8%)**, classificati contro il tempo di sezione del maestro (mediana su 32 battiti): 4.5% rumore del maestro (clock sul tempo della sezione, il maestro salta in stacchi e fill: BLUE SKY, FEEL, ASPETTANDO, I WANNA DANCE 100–118 s); **1.7% cambio di tempo non seguito** (NONSOULFUNKY: +8% a 202 s seguito dopo ~18 s, +16% a 442 s dopo ~14 s; GARDEN_2400: 165 → 108 a 114 s, seguito dopo **80 s**); **1.4% rapporto 3:2 o 4:3** (quasi tutto in GARDEN_1500, GARDEN_600, FLAMINGO_2400, WRECKING BALL intro: materiale ternario/lento dal vivo); 2.2% altro.
+- [x] Scelta dell'utente: **cambi di tempo**, anche cambio di brano senza STOP («dipende» se preme STOP).
+- [x] **Meccanismo del gradino (NONSOULFUNKY 117 → 127 a 200 s):** il pettine è su 124–127 già a 206–207 s, ma fit corto e lungo restano su 117.5 fino a 218 s: i battiti veri escono dalla griglia vecchia e vengono scartati, la confidenza cade a 0 tre volte, `resS` 0.015 → 0.085, il decoder si riaggancia su 117. Un +8.2% cade in un buco: in FISSO la spinta del pettine è 35% del divario con passo massimo `kFixedMaxStep` 1.5% (qui servirebbe 2.9%, quindi non si applica), e il cane da guardia della griglia vecchia parte da `kStaleGridThreshold` 8.7%. Sopra (+16% a 442 s) il cane da guardia rifà l'acquisizione da zero: 14 s.
+- [x] **Regola «pettine tenuto» (non scritta, solo misurata sulle tracce):** passo quando il pettine, piegato sull'ottava del clock, resta fra 3.2% e 19% per H secondi. H ≤ 4 s: scatti sbagliati nell'intro di WRECKING BALL 04 (pettine 169–185 contro 162 vero a ×2) e in SALLY; H = 6 s nessuno sbagliato, ma anticipa di soli 2–7 s e solo in 2 file (NONSOULFUNKY, GARDEN_2400). La salute della griglia (confidenza, residuo) non separa i casi: anche nell'intro di WRECKING BALL la griglia arranca. Non generalizza → non scritta.
+- [x] **Banco nuovo «cambio di brano senza STOP»** (`scripts/analysis/song_change.py`, `~/vp-bench/chg`): 32 coppie di brani del banco a 48k, A = 60 s, poi 3 s di silenzio (`gap`) o niente (`seg`), B = primi 90 s; MIXER −12 dB. Base `c0`: segue B in mediana **21.7 s**, giusto su B dopo 20 s **78.1%**, **10/64 mai**. Con STOP tenuto 3.5 s a fine A (gesto dell'item 92, `cstop`): 13.6 s, 83.9%, 3 mai (con la pausa 11.1 s). I casi bloccati hanno rapporti di ogni tipo (0.75, 0.80, 0.87, 0.90, 0.93): non c'è un solo buco.
+- [x] **Provato e scartato: ripartenza automatica come lo STOP tenuto, senza STOP** (`VP_AUTO_SONG_GAP=N`: parte che suona e N s senza battiti accettati → `inputRestartPending`). Coppie N=2: 21.7 → 20.1 s, giusto su B 78.1 → **86.6%**, mai 10 → 5 (N=3 simile, N=4 meno). Ma banco normale MIXER: giusto 81.1 → 82.3%, tempo >4% fuori 450 → 256 s, **scatti 0.23 → 0.77/min**, dispersione 11.8 → 12.4 ms, 7 file peggiori: dentro un brano 2 s senza battiti accettati sono comuni (EVERYTIME: la parte si zittisce e riparte 8 volte). Con lo STOP la specificità la dà il gesto dell'utente. Interruttore tolto dal codice.
+- [x] **Decisione dell'utente (2026-10-08): fermarsi qui.** Dal vivo, a fine brano, STOP tenuto almeno 3 s quando serve (item 92). Idee non provate, se si riprende: fine brano da silenzio vero sulla mandata + nessun battito; acquisizione in parallelo che sostituisce la vecchia solo se discorda e regge. `song_change.py make` rigenera le coppie (cancellate per spazio).
+
+### 111. Tolta la modalità palco (scurimento dopo 8 s) 🟢 (2026-10-09)
+
+Richiesta utente: a telefono, set acceso, dopo 8 s senza tocchi stile, suddivisioni, switch, voci ed effetti scendevano al 45% con un velo che mangiava il primo tocco (commit `8b4ef1f`). Tolti `WakeGuard`, `setStageDim`, `lastTouchMs` e il `mouseDown`/`mouseDrag` di `MainComponent` che servivano solo a quello. Senza velo, un tocco involontario a metà brano può cambiare un fader o uno switch.
+- [ ] Sul dispositivo: nessuno scurimento a set acceso; fader e switch rispondono al primo tocco.
+
+### 112. MIXER con mandata bassa: la parte suonava a tratti 🟡 (2026-10-09)
+
+Segnalato dall'utente: con il volume d'ingresso basso le percussioni a volte non suonano, o solo a tratti (anche con DINAMICA spento). **Meccanismo:** il guadagno automatico prima della rete (`applyAnalysisMakeup`) aveva il tetto a ×24; a MIXER, mentre la parte suona, punta a 0.40. Una mandata bassa non ci arriva, la rete lavora debole, perde la griglia, la parte esce; l'obiettivo torna a 0.20 e la parte rientra. **Correzione:** tetto ×400 solo a MIXER (`kMakeupMaxGainMixer`); BRANO resta a ×24 (lì ×400 costa giusto 81.7 → 76.1%, tempo >4% fuori 67 → 546 s).
+
+| MIXER, ingresso | parte che suona ×24 → ×400 | file sotto metà | giusto% (maestro) |
+|---|---|---|---|
+| −12 dB | 87.8 → 87.1% | 2 → 2 | 81.1 → 85.7 (ottava 9.2 → 5.2; tempo >4% fuori 450 → 97 s; >25 ms 18.4 → 19.8%, saltati 1 → 4) |
+| −40 dB | 60.3 → 73.8% | 17 → 6 | 80.6 → 84.7 |
+| −50 dB | 25.4 → 65.9% | 45 → 12 | 86.2 → 87.2 |
+
+×48 e ×96 stanno in mezzo (−50 dB: 42.9 e 55.1% di parte che suona). Metà del banco mai vista: a −12 dB +6.2 e +3.6 punti di giusto, nessun file peggiore di 3 punti; a −40 dB +10.2 e +11.3. BRANO bit-identico (54/54 file); MIXER definitivo identico alla prova. Porte `--bar --phase-lock --state-timing --tempo-step --tempo-slow --new-input --transport --harmonic-entry` passano. Basi nuove: `~/vp-bench/brF` (BRANO), `~/vp-bench/mF12` (MIXER −12).
+- [x] `VPTests --level`: 11/5, gli stessi 5 casi già noti (91 BPM in saturazione; 168 BPM a −12 dB e in saturazione). Nessun caso nuovo.
+- [ ] Ascolto dal vivo con mandata bassa: la parte deve restare dentro.
+
+### 113. Zoom anche sul volume MIC mentre si trascina 🟢 (2026-10-09)
+
+Richiesta utente: come i fader di voci ed effetti (commit `c5ecdc5`), anche il MIC, trascinandolo, si apre grande al centro. `inputGainSlider` è ora un `VoiceKnob` (senza `onTap`); `FaderZoom::paint` lo disegna col suo aspetto (`drawRotarySlider`): disco quadrato, oppure a telefono la barra piatta larga l'86% dello schermo e alta 96 px, con il misuratore che continua a muoversi.
+- [ ] Sul dispositivo: trascinando il MIC compare lo zoom e si chiude al rilascio; il doppio tocco riporta ancora a 100%.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

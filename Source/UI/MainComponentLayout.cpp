@@ -599,8 +599,6 @@ void MainComponent::resized()
     }
 
     applyCompactVisibility();
-    if (stageDim)
-        setStageDim (true);   // re-fit the guard to the new geometry (drops out if no longer compact)
     layoutTrackWaveform();
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.

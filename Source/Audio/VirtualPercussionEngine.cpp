@@ -44,6 +44,15 @@ namespace
     // it, which is the case this stage exists for.
     constexpr float kMakeupFloor = 0.0004f;
     constexpr float kMakeupMaxGain = 24.0f;
+    // The MIXER's ceiling. A send that arrives low never reached the target
+    // under x24 - least of all the playing target, 0.40 - so the network ran
+    // weak, lost the grid and the part dropped out and came back. Bench MIXER
+    // path (docs/TODO.md item 112), x24 -> x400, part sounding / right level:
+    // -12 dB 87.8 -> 87.1% / 81.1 -> 85.7%, time >4% off 450 -> 97 s;
+    // -40 dB 60.3 -> 73.8% / 80.6 -> 84.7%; -50 dB 25.4 -> 65.9% / 86.2 ->
+    // 87.2%; both halves of the bench gain. x48 and x96 lie in between. Not on
+    // a loaded file: there x400 cost right level 81.7 -> 76.1%.
+    constexpr float kMakeupMaxGainMixer = 400.0f;
 
     // This stage was boost-only - clamped to a floor of 1.0 - so an input that
     // already arrives hotter than the target peak (a line-level feed, or the
@@ -1057,7 +1066,8 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
 }
 
 void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak,
-                                                   bool levelJumped, float targetPeak) noexcept
+                                                   bool levelJumped, float targetPeak,
+                                                   float maxGain) noexcept
 {
     // BeatNet's features are log10(magnitude + 1), which is not scale
     // invariant: the +1 knee means the level the analysis signal arrives at is
@@ -1085,7 +1095,7 @@ void VirtualPercussionEngine::applyAnalysisMakeup (int numSamples, float rawPeak
     if (peakEnv < targetPeak)
     {
         if (peakEnv >= kMakeupFloor)
-            wanted = std::clamp (targetPeak / peakEnv, 1.0f, kMakeupMaxGain);
+            wanted = std::clamp (targetPeak / peakEnv, 1.0f, maxGain);
     }
     else if (peakEnv > kMakeupClipGuardPeak)
         wanted = std::clamp (kMakeupClipGuardPeak / peakEnv, kMakeupMinGain, 1.0f);
@@ -1753,7 +1763,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     const bool mixerPlaying = source == FollowSource::kitMic
                               && lastAudible.load (std::memory_order_relaxed);
     applyAnalysisMakeup (numSamples, postPeak, levelJumped,
-                         mixerPlaying ? kMakeupPlayingPeak : kMakeupTargetPeak);
+                         mixerPlaying ? kMakeupPlayingPeak : kMakeupTargetPeak,
+                         source == FollowSource::kitMic ? kMakeupMaxGainMixer : kMakeupMaxGain);
     float analysisPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
         analysisPeak = std::max (analysisPeak, std::abs (mono[static_cast<size_t> (i)]));

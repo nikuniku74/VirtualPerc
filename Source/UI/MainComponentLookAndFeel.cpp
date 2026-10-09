@@ -306,15 +306,31 @@ void MainComponent::FaderZoom::paint (juce::Graphics& g)
     g.setColour (juce::Colours::black.withAlpha (0.58f * e));
     g.fillRect (b);
 
-    const float w = juce::jlimit (130.0f, 190.0f, b.getWidth() * 0.42f);
-    const float h = juce::jmin (b.getHeight() * 0.64f, 460.0f);
+    auto& s = *knob;
+    // The MIC trim keeps its own look: a disc, or at phone width a flat bar.
+    const bool mic = (bool) s.getProperties().getWithDefault ("micMeter", false);
+    const bool micBar = mic && (bool) s.getProperties().getWithDefault ("micBar", false);
+    float w = juce::jlimit (130.0f, 190.0f, b.getWidth() * 0.42f);
+    float h = juce::jmin (b.getHeight() * 0.64f, 460.0f);
+    if (micBar)
+        { w = b.getWidth() * 0.86f; h = 96.0f; }
+    else if (mic)
+        w = h = juce::jmin (b.getWidth() * 0.70f, b.getHeight() * 0.50f, 320.0f);
     const auto to = juce::Rectangle<float> (w, h).withCentre (b.getCentre());
     const auto lerp = [e] (float a, float z) { return a + (z - a) * e; };
     const juce::Rectangle<float> r (lerp (from.getX(), to.getX()), lerp (from.getY(), to.getY()),
                                     lerp (from.getWidth(), to.getWidth()),
                                     lerp (from.getHeight(), to.getHeight()));
 
-    auto& s = *knob;
+    if (mic)
+    {
+        const auto rp = s.getRotaryParameters();
+        const auto ri = r.toNearestInt();
+        owner.getLookAndFeel().drawRotarySlider (g, ri.getX(), ri.getY(), ri.getWidth(), ri.getHeight(),
+                                                 static_cast<float> (s.valueToProportionOfLength (s.getValue())),
+                                                 rp.startAngleRadians, rp.endAngleRadians, s);
+        return;
+    }
     const bool voiceOff = ! (bool) s.getProperties().getWithDefault ("voiceEnabled", true);
     const bool hitKnob = s.getProperties().contains ("hitLit");
     const bool hitLit = (bool) s.getProperties().getWithDefault ("hitLit", false);
