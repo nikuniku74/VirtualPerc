@@ -23,13 +23,12 @@ OnnxModelConfig defaultBeatOnnxConfig() noexcept
     cfg.hasLstmState = true;
     cfg.lstmLayers = 2;
     cfg.lstmHidden = 150;
-#if defined(VP_ORT_COREML)
-    // VP_NO_COREML=1 (Xcode scheme, Environment Variables) runs the network
-    // on the CPU only, to compare the two on the device: DEBUG shows "rete".
-    cfg.useCoreMlOnIos = std::getenv ("VP_NO_COREML") == nullptr;
-#else
+    // CPU only. CoreML takes 15 of the 23 nodes in 6 partitions, so every
+    // frame crosses between CoreML and the CPU, and on a network this small the
+    // crossing costs more than the maths. iPad Air M3, Release, a song playing
+    // for 4-6 min (docs/TODO.md item 108): one call 1.93 ms with CoreML,
+    // 0.36 ms CPU only; the analysis worker 11.5% of a core against 3.7%.
     cfg.useCoreMlOnIos = false;
-#endif
     cfg.useNnapiOnAndroid = false;
     return cfg;
 }

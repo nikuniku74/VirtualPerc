@@ -2,6 +2,7 @@
 """Fine-tune BeatNet (GTZAN weights) on the teacher's beats, for live mixer-send audio.
 
     train_beatnet_finetune.py NAME [--steps N] [--kd W] [--lr X] [--kdoff W] [--balance P] [--seed S] [--data DIR]
+                              [--kdsplit 0|1] [--dbw W]
 
 Data (docs/TODO.md item 87), per recording in DIR (default ~/vp-train/wav):
   X.f32            the app's own 272-d frames (`VPActivations --features`), so the
@@ -106,7 +107,8 @@ def main():
         print(__doc__)
         return 1
     name = args[0]
-    opt = dict(steps=3000, kd=1.0, kdoff=-1.0, lr=1e-4, balance=1.0, seed=0, data=os.path.expanduser('~/vp-train/wav'))
+    opt = dict(steps=3000, kd=1.0, kdoff=-1.0, lr=1e-4, balance=1.0, seed=0, kdsplit=0, dbw=1.0,
+               data=os.path.expanduser('~/vp-train/wav'))
     for a, v in zip(args[1::2], args[2::2]):
         key = a.lstrip('-')
         opt[key] = type(opt[key])(v) if key != 'data' else v
@@ -153,7 +155,16 @@ def main():
         h = torch.zeros(2, batch, 150, device=dev)
         lg, _, _ = model.sequence(x, h, h.clone())
         logp = F.log_softmax(lg, -1)
-        kl = (o * (o.log() - logp)).sum(-1)
+        if opt['kdsplit']:
+            # --kdsplit 1: anchor only "a beat or not" to the original outputs.
+            # The full anchor also held BeatNet's beat/one split, and the one is
+            # the decision a better network would move most (docs/TODO.md item
+            # 114: right one 75/81% today, 88-91% with the teacher's ones).
+            ob = o[..., 0] + o[..., 1]
+            lb = torch.logsumexp(logp[..., :2], -1)
+            kl = ob * (ob.log() - lb) + o[..., 2] * (o[..., 2].log() - logp[..., 2])
+        else:
+            kl = (o * (o.log() - logp)).sum(-1)
         if opt['kdoff'] >= 0:
             # --kdoff W: hold the original outputs (weight --kd) only within three
             # frames of a teacher beat, W elsewhere. The anchor keeps the peak
@@ -164,7 +175,11 @@ def main():
             kl = kl * torch.where(near, opt['kd'], opt['kdoff'])
         else:
             kl = kl * opt['kd']
-        loss = -(y * logp).sum(-1).mean() + kl.mean()
+        ce = -(y * logp)
+        if opt['dbw'] != 1.0:
+            # --dbw W: a missed one costs W times a missed beat.
+            ce = ce * torch.tensor([1.0, opt['dbw'], 1.0], device=dev)
+        loss = ce.sum(-1).mean() + kl.mean()
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

@@ -125,8 +125,8 @@ public:
     bool usingOnnx() const noexcept { return onnxFlag.load (std::memory_order_relaxed); }
     bool usingCoreMl() const noexcept { return coreMlFlag.load (std::memory_order_relaxed); }
     /** What one network call costs on this device, ms, averaged over about a
-        second. The frame budget is 20 ms; CoreML against the CPU is decided
-        on this number (VP_NO_COREML). */
+        second. The frame budget is 20 ms; CoreML against the CPU was decided
+        on this number (CPU, docs/TODO.md item 108). */
     float inferMs() const noexcept { return inferMsAvg.load (std::memory_order_relaxed); }
     /** Share of one core the worker spent working (not sleeping) over the
         last second, percent: features, network and decoder together. */

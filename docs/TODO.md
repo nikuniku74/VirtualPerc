@@ -5407,7 +5407,8 @@ Segnalato dall'utente dopo la prima compilazione del restyle (`docs/UI_RESTYLE_H
 - [x] **Carico dell'analisi sul dispositivo**: DEBUG (e `VPLAG`) mostra anche `analisi N% core`, la quota di un core che il worker passa a lavorare (feature + rete + decoder) nell'ultimo secondo, accanto a `lead` e `rete`. Se `lead` cresce durante il set, questi due dicono se è la rete, il resto dell'analisi o la termica (item 74).
 - [x] **Tensori della rete creati una volta** (`OnnxSession::run`): ingresso e stato LSTM (h, c, hn, cn) sono `OrtValue` costruiti alla prima chiamata e riusati; prima 3 tensori creati e 3 uscite allocate a ogni frame. Solo i logits restano allocati da ONNX Runtime (la forma è del modello). Attivazioni identiche bit per bit su 3,000 frame (`VPActivations` prima/dopo); sul Mac il tempo non cambia (0.23 s utente entrambi): il guadagno, se c'è, è sul dispositivo e si legge in `rete`.
 - [ ] Sul dispositivo: Instruments (Time Profiler / Energy) prima e dopo il ridisegno mirato, a band ferma e con la band; guardare che nulla resti «vecchio» sullo schermo (BPM, orb, stato, MIC, fader one-shot, SETUP, rotazione).
-- [ ] Sul dispositivo: `rete` con e senza `VP_NO_COREML`, a freddo e dopo 20 minuti; tenere il più veloce e stabile come predefinito.
+- [x] **Misurato sull'iPad Air 13 M3** (Release, brano caricato, 4–6 min ciascuno, `devicectl --console`, righe `VPLAG`): CoreML `rete` **1.93 ms**, `analisi` **11.5%** di un core; solo CPU **0.36 ms**, **3.7%**; in entrambi xrun 0, buchi 0, coda ~8 ms stabile. CoreML prende solo 15 nodi su 23 in 6 partizioni: ogni frame passa avanti e indietro fra CoreML e CPU. **CPU ora predefinita** (`ModelLocator.cpp`, tolto `VP_NO_COREML`; il codice CoreML in `OnnxSession` resta, spento).
+- [ ] Dopo 20 minuti di set (termica) non misurato; Instruments Energy non misurato.
 
 ### 109. STOP immediato: tolto il «tieni premuto» 🟡 (2026-10-08, compila — da provare sul dispositivo)
 
@@ -5450,6 +5451,40 @@ Segnalato dall'utente: con il volume d'ingresso basso le percussioni a volte non
 
 Richiesta utente: come i fader di voci ed effetti (commit `c5ecdc5`), anche il MIC, trascinandolo, si apre grande al centro. `inputGainSlider` è ora un `VoiceKnob` (senza `onTap`); `FaderZoom::paint` lo disegna col suo aspetto (`drawRotarySlider`): disco quadrato, oppure a telefono la barra piatta larga l'86% dello schermo e alta 96 px, con il misuratore che continua a muoversi.
 - [ ] Sul dispositivo: trascinando il MIC compare lo zoom e si chiude al rilascio; il doppio tocco riporta ancora a 100%.
+
+### 114. Quanto renderebbe una rete nuova: misura con una rete «oracolo» 🔴 (2026-10-09, misurato — nessun cambiamento all'app)
+
+Domanda dell'utente: vale la pena una rete nostra (causale, addestrata sul maestro)? Misurato il **tetto**: al posto della rete un modello finto (`OracleBeatModel`, interruttore `VP_ORACLE_ACT`/`VP_ORACLE_DIR` nel probe, tolto) che restituisce frame per frame i battiti e gli uno del maestro, come campane (σ 0.7 frame) centrate sul tempo vero −46.5 ms (stessa convenzione dell'addestramento; anticipo risultante 24.6 ms, come la rete vera). Non è un prodotto: il maestro sente tutto il brano, nessuna rete in tempo reale ci arriva. Tre varianti: **P** perfetta; **J** «realistica» (battiti con scarto 7 ms e 13% mancanti come i picchi grezzi di oggi, uno giusto); **N** battiti perfetti senza nessuna informazione sull'uno.
+
+| BRANO / MIXER −12 | rete di oggi | P | J | N |
+|---|---|---|---|---|
+| livello giusto % | 81.7 / 85.7 | 84.8 / 85.5 | 81.7 / 82.3 | 84.8 / 85.5 |
+| uno % | 75.0 / 81.4 | **91.4 / 91.4** | 88.0 / 88.2 | 26.0 / 28.5 |
+| disp ms | 12.1 / 12.4 | 10.2 / 10.1 | 11.5 / 11.0 | 10.2 / 10.1 |
+| >25 ms % | 19.3 / 19.8 | 10.6 / 10.5 | 16.3 / 15.3 | 10.6 / 10.5 |
+| parte che suona % | 93.1 / 87.1 | 95.3 / 93.0 | 94.7 / 91.1 | 95.3 / 93.0 |
+
+- **Ottava:** anche una rete perfetta dà al massimo +3 / −0.2 punti. La scelta del livello non si risolve con una rete migliore (brani con sezioni a metà tempo, decisione nel decoder); J non guadagna niente.
+- **Uno:** l'unica leva grande. Viene tutto dall'uscita «uno» della rete (N ≈ caso, 26%); con l'uno giusto si va a 88–91% contro 75/81. Ma il tetto è ottimistico: all'inizio di un brano nessuna rete causale sa dov'è l'uno.
+- **Fase:** con battiti come quelli di oggi (J) >25 ms scende di 3–4 punti; il resto lo dà solo la perfezione.
+- **Decisione:** una rete nuova varrebbe soprattutto per l'uno (+7–13 punti al massimo, realisticamente meno), poco per ottava e fase. Costo alto e incerto (voci 102, 104: più dati non hanno battuto la rete di oggi). Non avviata.
+- Errore trovato e corretto nella prova: l'oracolo azzerava il contatore dei frame a ogni `model->reset()` (ripartenza dell'analisi dopo il silenzio iniziale) e scivolava di 100–290 ms sui brani dal vivo.
+
+### 115. Rete riaddestrata per l'uno: nessun modello migliore di quello dell'app 🔴 (2026-10-09, misurato — nessun cambiamento all'app)
+
+Dopo la voce 114 (l'uno è l'unica leva grande di una rete migliore), provate due modifiche alla ricetta del modello dell'app (`--data ~/vp-train/old --steps 1000 --kd 3 --kdoff 0.3`, che `train_beatnet_finetune.py` rifà bit per bit anche con le opzioni nuove spente): **`--kdsplit 1`** (l'ancora alle uscite originali tiene solo «battito o no», lascia libera la divisione battito/uno) e **`--dbw 3`** (un uno mancato costa 3 volte un battito). 4 semi per gruppo, banco intero contro la verità, media [min–max]:
+
+| | livello giusto BRANO | MIXER −12 | uno BRANO | uno MIXER | disp BRANO / MIXER ms | >25 ms BRANO / MIXER |
+|---|---|---|---|---|---|---|
+| A ricetta di oggi | 75.0 [72–82] | 82.7 [81–86] | 72.3 [71–75] | 79.9 [78–81] | 12.0 / 13.2 | 18.9 / 20.5 |
+| B `--kdsplit 1` | 75.5 [72–78] | **77.8** [74–81] | 75.0 [73–77] | 79.5 [78–80] | 13.9 / 12.7 | 20.8 / 18.9 |
+| C `--dbw 3` | 78.8 [76–82] | 82.1 [81–84] | 74.9 [74–76] | 81.1 [78–83] | 12.7 / 13.0 | 19.6 / 20.2 |
+| D B + C | 74.0 [72–76] | 80.6 [78–86] | 72.2 [71–74] | 81.0 [79–85] | 13.2 / 12.6 | 19.9 / 19.2 |
+
+- **B:** liberare l'uno dall'ancora costa ~5 punti di livello sul MIXER (il modo dal vivo) senza guadagnare uno sul MIXER. Respinto.
+- **C:** il migliore in media (uno +2.6 BRANO, +1.2 MIXER; livello BRANO +3.8, MIXER −0.6), ma è meno della variazione fra i semi (uno MIXER 78–83). Nessun modello C batte quello dell'app (A seme 0: 81.7 / 85.7 / 75.0 / 81.4) in entrambi i modi.
+- **D seme 2** è il migliore sul MIXER (livello 85.6, uno 85.0) ma il peggiore in BRANO (72.6 / 70.7): sceglierlo sarebbe scegliere un seme fortunato sul banco.
+- **Conclusione:** con questi dati e questa rete la variazione fra i semi (5–8 punti) è più grande di qualsiasi guadagno della ricetta; il tetto dell'oracolo (uno 88–91%) non si avvicina riaddestrando BeatNet. Il modello dell'app resta. Opzioni `--kdsplit` e `--dbw` lasciate nello script, spente di default. Modelli in `~/vp-train/models` (`uB_s*`, `uC_s*`, `uD_s*`, `m1k3o03s2/3`).
 
 ## Standby
 
