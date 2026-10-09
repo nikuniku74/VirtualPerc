@@ -656,6 +656,9 @@ private:
     bool  barTrustEstablished = false;
     int   barRotations = 0;
     int   barOddRotations = 0;
+    int   halfPersistBeats = 0;     // EXPERIMENT item 121, VP_HALF_PERSIST
+    int   halfBarStreak = 0;
+    bool  halfCandidateThisBeat = false;
     /** Samples remaining in the post-cut coming-in window. Zero is closed. */
     int   barReentrySamples = 0;
     /** Set when a pause re-opens the window on a bar that was already

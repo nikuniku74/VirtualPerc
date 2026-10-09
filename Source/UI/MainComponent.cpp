@@ -2295,6 +2295,21 @@ void MainComponent::updateBeatDots()
         if (! beatStrip.isEmpty())
             repaint (beatStrip.expanded (8));
     }
+    {
+        // The ball hopping between the dots moves on every frame, so only its
+        // strip is repainted, and at most ~60 times a second: a ProMotion
+        // screen calls this 120 times. One more repaint when it stops, so the
+        // ball does not stay frozen in the air.
+        beatPos = bar * 4.0f;
+        const bool animate = heroLive || snap.barDeclared;
+        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        if ((animate || beatAnimating) && nowMs - lastBeatAnimMs >= 15.0 && ! beatAnimArea.isEmpty())
+        {
+            lastBeatAnimMs = nowMs;
+            beatAnimating = animate;
+            repaint (beatAnimArea);
+        }
+    }
 }
 
 void MainComponent::applyLatencyFromDevice()

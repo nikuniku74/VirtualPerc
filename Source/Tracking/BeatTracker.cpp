@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace vp
 {
@@ -211,6 +212,10 @@ void BeatTracker::setBeatModel (std::unique_ptr<IBeatModel> m)
 void BeatTracker::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
+    // EXPERIMENT (item 121): beats a half-bar move must keep winning first.
+    if (const char* v = std::getenv ("VP_HALF_PERSIST"))
+        halfPersistBeats = std::max (0, std::atoi (v));
+    halfBarStreak = 0;
     follower.prepare (sampleRate);
     harmonicTempo.prepare (sampleRate);
     neural.start (sampleRate);
@@ -915,6 +920,12 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // than three bars away.
     if (barLocked)
         return;
+    halfCandidateThisBeat = false;
+    struct StreakReset
+    {
+        BeatTracker& t;
+        ~StreakReset() { if (! t.halfCandidateThisBeat) t.halfBarStreak = 0; }
+    } streakReset { *this };
 
     // Two sources, asked in order, and the order is the whole design.
     //
@@ -1078,6 +1089,14 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         }
         if (barTrustEstablished && best != 2 && ! corroborated)
             return false;
+        // EXPERIMENT (item 121): half a bar must win this many beats running.
+        if (best == 2 && halfPersistBeats > 0)
+        {
+            halfCandidateThisBeat = true;
+            if (++halfBarStreak < halfPersistBeats)
+                return false;
+        }
+        halfBarStreak = 0;
         downbeatHoldSamples = static_cast<int> (sampleRate * kBarMoveHoldSeconds);
     }
 

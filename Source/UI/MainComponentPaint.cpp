@@ -257,8 +257,29 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float rad = juce::jmin (24.0f, static_cast<float> (rows.beats.getHeight()) * 0.27f);
         const float y = static_cast<float> (band.getCentreY());
         const float step = static_cast<float> (band.getWidth()) / 4.0f;
-        const int beatIdx = juce::jlimit (0, 3, dotBeat);
-        const bool running = snap.bpm > 40.0f || snap.barDeclared;
+        const bool running = (snap.bpm > 40.0f || snap.barDeclared) && (heroLive || snap.barDeclared);
+        const auto dotX = [&band, step] (int i)
+        {
+            return static_cast<float> (band.getX()) + step * (static_cast<float> (i) + 0.5f);
+        };
+
+        // A ball hops from dot to dot and lands on each one exactly when the
+        // quarter is heard (beatPos is the clock less the output path, like
+        // the dots always were): the landing is the beat, so the eye can hold
+        // it against the drummer. The dot it lands on flares and fades while
+        // the ball is in the air, the next one warms as it comes down, a ring
+        // runs out from every landing - wider and brighter on the one - and
+        // the hop from four back to one is the high one, the bar turning over.
+        const float ballR = rad * 0.40f;
+        const float hopLow = rad * 1.30f, hopHigh = rad * 2.10f;
+        beatAnimArea = rows.beats.expanded (static_cast<int> (rad * 2.0f),
+                                            static_cast<int> (hopHigh + ballR * 3.4f) + 4);
+        const float pos = std::fmod (juce::jmax (0.0f, beatPos), 4.0f);
+        const int at = juce::jlimit (0, 3, static_cast<int> (pos));
+        const float f = juce::jlimit (0.0f, 1.0f, pos - static_cast<float> (at));
+        const int next = (at + 1) & 3;
+        const float lit = running ? std::pow (1.0f - f, 1.6f) : 0.0f;
+        const float coming = running ? juce::jlimit (0.0f, 1.0f, (f - 0.72f) / 0.28f) : 0.0f;
 
         g.setColour (text().withAlpha (0.10f));
         g.fillRoundedRectangle (static_cast<float> (band.getX()) + step * 0.5f, y - 1.0f,
@@ -266,27 +287,27 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
 
         for (int i = 0; i < 4; ++i)
         {
-            const float x = static_cast<float> (band.getX()) + step * (static_cast<float> (i) + 0.5f);
-            const bool on = running && beatIdx == i;
+            const float x = dotX (i);
             const bool one = i == 0;
             const float rr = one ? rad : rad * 0.82f;
-            if (on)
+            g.setColour (text().withAlpha (0.10f));
+            g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
+            const float warm = i == next ? coming : 0.0f;
+            g.setColour (text().withAlpha (one ? 0.35f : 0.18f).interpolatedWith (fuchsia(), warm * 0.8f));
+            g.drawEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f, 1.4f + warm * 1.2f);
+            if (i == at && lit > 0.01f)
             {
-                paintRadial (g, { x, y }, rr * 3.4f, fuchsia(), 0.60f);
-                g.setColour (fuchsia());
+                paintRadial (g, { x, y }, rr * 3.4f, fuchsia(), 0.60f * lit);
+                g.setColour (fuchsia().withAlpha (lit));
                 g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
-                g.setColour (juce::Colours::white);
-                g.setFont (fontUi (rr * 1.25f, true));
-                g.drawText (juce::String (i + 1),
-                            juce::Rectangle<float> (x - rr, y - rr, rr * 2.0f, rr * 2.0f),
-                            juce::Justification::centred, false);
-            }
-            else
-            {
-                g.setColour (text().withAlpha (0.10f));
-                g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
-                g.setColour (text().withAlpha (one ? 0.35f : 0.18f));
-                g.drawEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f, 1.4f);
+                if (lit > 0.30f)
+                {
+                    g.setColour (juce::Colours::white.withAlpha (juce::jmin (1.0f, lit * 1.4f)));
+                    g.setFont (fontUi (rr * 1.25f, true));
+                    g.drawText (juce::String (i + 1),
+                                juce::Rectangle<float> (x - rr, y - rr, rr * 2.0f, rr * 2.0f),
+                                juce::Justification::centred, false);
+                }
             }
 
             // A tap on the one redraws the bar under the player's hands, and a
@@ -298,6 +319,59 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                 g.setColour (fuchsia());
                 g.drawEllipse (x - hr, y - hr, hr * 2.0f, hr * 2.0f, 2.2f);
             }
+        }
+
+        if (running)
+        {
+            // The ring from the landing: out to twice the dot (more on the
+            // one) over a little over half a beat, fading as it goes.
+            const float ringT = f / 0.55f;
+            if (ringT < 1.0f)
+            {
+                const bool one = at == 0;
+                const float rr = one ? rad : rad * 0.82f;
+                const float grow = rr * (1.0f + (one ? 1.9f : 1.25f) * std::sqrt (ringT));
+                const float fade = (1.0f - ringT) * (1.0f - ringT);
+                if (one)
+                    paintRadial (g, { dotX (0), y }, rad * 3.6f, fuchsia(), 0.45f * fade);
+                g.setColour (fuchsia().brighter (one ? 0.35f : 0.0f).withAlpha ((one ? 0.95f : 0.70f) * fade));
+                g.drawEllipse (dotX (at) - grow, y - grow, grow * 2.0f, grow * 2.0f, one ? 3.0f : 2.0f);
+            }
+
+            const float hop = next == 0 ? hopHigh : hopLow;
+            const auto ballAt = [&] (float ff)
+            {
+                ff = juce::jlimit (0.0f, 1.0f, ff);
+                const float x0 = dotX (at), x1 = dotX (next);
+                return juce::Point<float> (x0 + (x1 - x0) * ff, y - hop * 4.0f * ff * (1.0f - ff));
+            };
+            // The trail: where the ball was over the last few frames.
+            for (int k = 6; k >= 1; --k)
+            {
+                const float ff = f - 0.022f * static_cast<float> (k);
+                if (ff <= 0.0f)
+                    continue;
+                const auto p = ballAt (ff);
+                const float r = ballR * (1.0f - 0.09f * static_cast<float> (k));
+                g.setColour (fuchsia().withAlpha (0.32f * (1.0f - static_cast<float> (k) / 7.0f)));
+                g.fillEllipse (p.x - r, p.y - r, r * 2.0f, r * 2.0f);
+            }
+            // The ball, squashed for a moment as it lands so the hit reads
+            // as a hit; white so it shows over the lit dot it sits on.
+            auto p = ballAt (f);
+            float sx = 1.0f, sy = 1.0f;
+            if (f < 0.10f)
+            {
+                const float s = 1.0f - f / 0.10f;
+                sx = 1.0f + 0.40f * s;
+                sy = 1.0f - 0.32f * s;
+            }
+            p.y += ballR * (1.0f - sy);
+            paintRadial (g, p, ballR * 3.4f, fuchsia(), 0.60f);
+            g.setColour (juce::Colours::white);
+            g.fillEllipse (p.x - ballR * sx, p.y - ballR * sy, ballR * sx * 2.0f, ballR * sy * 2.0f);
+            g.setColour (fuchsia().withAlpha (0.55f));
+            g.drawEllipse (p.x - ballR * sx, p.y - ballR * sy, ballR * sx * 2.0f, ballR * sy * 2.0f, 1.2f);
         }
     }
 

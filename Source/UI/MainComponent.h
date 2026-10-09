@@ -636,6 +636,14 @@ private:
         ~150-250 ms). */
     juce::VBlankAttachment beatVBlank;
     int dotBeat = -1;
+    /** Where the clock is in the bar, 0..4 in quarters, as heard (the same
+        compensated phase the dots use). The ball between the dots is drawn
+        from it every frame while something is being followed; `beatAnimArea`
+        is the strip plus the height of its hop and glow. */
+    float beatPos = 0.0f;
+    juce::Rectangle<int> beatAnimArea;
+    double lastBeatAnimMs = 0.0;
+    bool beatAnimating = false;
     float outputLatencyMs = 0.0f;
     void updateBeatDots();
     juce::Rectangle<int> tapStrip;
