@@ -237,8 +237,14 @@ private:
         void mouseDown (const juce::MouseEvent&) override;
         void timerCallback() override;
         juce::Image logo;
-        double startMs = 0.0;
-        double fadeFromMs = 0.0;
+        /** The animation's own clock, advanced only while the splash is on
+            screen and by at most one frame's worth per tick: at launch iOS
+            keeps the message thread busy (mic permission, the audio device,
+            the network loading), and a wall clock ran the whole animation
+            out before the first frame was shown. */
+        double animMs = 0.0;
+        double lastTickMs = 0.0;
+        double growFromMs = 0.0;
     };
     SplashOverlay splash;
 

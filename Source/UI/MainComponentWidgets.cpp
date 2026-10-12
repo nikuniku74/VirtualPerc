@@ -487,11 +487,21 @@ namespace
 {
     // Assets/Brand/LaunchScreen.storyboard: the same ground, the same share of
     // the short side, both centred on the whole screen rather than the safe
-    // area, so iOS's launch picture and this one are the same frame.
+    // area, so the first frame here is iOS's launch picture.
     const juce::Colour kSplashGround { 0xff0f0e12 };
+    const juce::Colour kSplashFuchsia { 0xffff2ec8 };
     constexpr float kSplashLogoShare = 0.62f;
-    constexpr double kSplashHoldMs = 1100.0;
-    constexpr double kSplashFadeMs = 550.0;
+    // Where the pink disc sits in LaunchLogo.png, as shares of its side
+    // (measured on the 1024 px image: centre 522/565, radius 274).
+    constexpr float kDiscX = 0.510f, kDiscY = 0.552f, kDiscR = 0.268f;
+    constexpr double kSplashHoldMs = 1900.0;   // the animation while the app starts
+    constexpr double kSplashGrowMs = 380.0;    // the logo grows past the screen
+    constexpr double kSplashBeatMs = 480.0;    // the hop between the dots, 125 BPM
+
+    float ramp (double t, double from, double to) noexcept
+    {
+        return static_cast<float> (juce::jlimit (0.0, 1.0, (t - from) / (to - from)));
+    }
 }
 
 MainComponent::SplashOverlay::SplashOverlay()
@@ -499,46 +509,162 @@ MainComponent::SplashOverlay::SplashOverlay()
     setOpaque (false);
     setInterceptsMouseClicks (true, false);
     logo = juce::ImageCache::getFromMemory (VpBrandData::LaunchLogo_png, VpBrandData::LaunchLogo_pngSize);
-    startMs = juce::Time::getMillisecondCounterHiRes();
-    fadeFromMs = startMs + kSplashHoldMs;
+    growFromMs = kSplashHoldMs;
     startTimerHz (60);
 }
 
 void MainComponent::SplashOverlay::paint (juce::Graphics& g)
 {
-    const double now = juce::Time::getMillisecondCounterHiRes();
-    const float t = static_cast<float> (juce::jlimit (0.0, 1.0, (now - fadeFromMs) / kSplashFadeMs));
-    // Ease out: the fade starts at once and settles; the logo grows 8% as it
-    // goes, which reads as the app opening towards the player.
-    const float e = 1.0f - (1.0f - t) * (1.0f - t);
-    const float alpha = 1.0f - e;
+    const double t = animMs;
+    // The exit: an ease-in grow, quick, the ground and the logo going as it
+    // passes the edges, so the console is what is left.
+    const float grow = ramp (t, growFromMs, growFromMs + kSplashGrowMs);
+    const float growE = grow * grow * grow;
+    const float scale = 1.0f + 1.8f * growE;
+    const float alpha = 1.0f - ramp (grow, 0.35, 1.0);
     g.fillAll (kSplashGround.withAlpha (alpha));
-    if (! logo.isValid())
+    if (! logo.isValid() || alpha <= 0.0f)
         return;
+
     const auto area = getLocalBounds().toFloat();
-    const float side = juce::jmin (area.getWidth(), area.getHeight()) * kSplashLogoShare * (1.0f + 0.08f * e);
+    const float side0 = juce::jmin (area.getWidth(), area.getHeight()) * kSplashLogoShare;
+    const float side = side0 * scale;
+    const auto logoR = area.withSizeKeepingCentre (side, side);
     g.setOpacity (alpha);
-    g.drawImage (logo, area.withSizeKeepingCentre (side, side), juce::RectanglePlacement::centred);
+    g.drawImage (logo, logoR, juce::RectanglePlacement::centred);
+
+    const juce::Point<float> disc { logoR.getX() + side * kDiscX, logoR.getY() + side * kDiscY };
+    const float r = side * kDiscR;
+    const float glassIn = ramp (t, 0.0, 450.0) * alpha;
+
+    // A light running along the arc of ticks, from the lower left over the top
+    // to the lower right (the ticks leave the bottom open), every 1.3 s.
+    {
+        const float u = static_cast<float> (std::fmod (t, 1300.0) / 1300.0);
+        const float a = juce::degreesToRadians (125.0f + 290.0f * u);
+        const float ring = r * 1.47f;
+        const juce::Point<float> p { disc.x + ring * std::cos (a), disc.y + ring * std::sin (a) };
+        const float ends = juce::jmin (1.0f, u / 0.12f, (1.0f - u) / 0.12f);
+        juce::ColourGradient glow (kSplashFuchsia.brighter (0.4f).withAlpha (0.70f * glassIn * ends), p.x, p.y,
+                                   kSplashFuchsia.withAlpha (0.0f), p.x, p.y + r * 0.30f, true);
+        g.setGradientFill (glow);
+        g.fillEllipse (p.x - r * 0.30f, p.y - r * 0.30f, r * 0.60f, r * 0.60f);
+    }
+
+    // Glass on the disc: a sheen on its upper half, a lit rim on the upper
+    // left, and a band of light crossing it.
+    {
+        // The disc without its hole: glass over a hole would grey it.
+        juce::Path discPath;
+        discPath.setUsingNonZeroWinding (false);
+        discPath.addEllipse (disc.x - r, disc.y - r, r * 2.0f, r * 2.0f);
+        const float hole = r * 0.22f;
+        discPath.addEllipse (disc.x - hole, disc.y - hole, hole * 2.0f, hole * 2.0f);
+        g.saveState();
+        g.reduceClipRegion (discPath);
+
+        juce::ColourGradient sheen (juce::Colours::white.withAlpha (0.30f * glassIn), disc.x, disc.y - r,
+                                    juce::Colours::white.withAlpha (0.0f), disc.x, disc.y - r * 0.05f, false);
+        g.setGradientFill (sheen);
+        g.fillEllipse (disc.x - r * 0.82f, disc.y - r * 1.02f, r * 1.64f, r * 1.05f);
+
+        // The band: 0.35 r wide, tilted, from the left edge to the right
+        // between 0.35 and 1.15 s, and once more, fainter, before the exit.
+        const auto band = [&] (float u, float strength)
+        {
+            if (u <= 0.0f || u >= 1.0f)
+                return;
+            const float x = disc.x - r * 1.6f + r * 3.2f * u;
+            g.saveState();
+            g.addTransform (juce::AffineTransform::rotation (0.52f, x, disc.y));
+            const float w = r * 0.35f;
+            juce::ColourGradient light (juce::Colours::white.withAlpha (0.0f), x - w, disc.y,
+                                        juce::Colours::white.withAlpha (0.0f), x + w, disc.y, false);
+            light.addColour (0.5, juce::Colours::white.withAlpha (strength * alpha));
+            g.setGradientFill (light);
+            g.fillRect (x - w, disc.y - r * 1.6f, w * 2.0f, r * 3.2f);
+            g.restoreState();
+        };
+        band (ramp (t, 350.0, 1150.0), 0.62f);
+        band (ramp (t, 1350.0, 1850.0), 0.34f);
+        g.restoreState();
+
+        juce::Path rim;
+        rim.addCentredArc (disc.x, disc.y, r * 0.985f, r * 0.985f, 0.0f,
+                           -juce::MathConstants<float>::pi * 0.62f, -juce::MathConstants<float>::pi * 0.08f, true);
+        g.setColour (juce::Colours::white.withAlpha (0.45f * glassIn));
+        g.strokePath (rim, juce::PathStrokeType (juce::jmax (1.0f, r * 0.018f), juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+    }
+
+    // The four quarters under the logo, with the ball hopping across them as
+    // it does on the console: the app counting itself in while it starts.
+    {
+        const float show = ramp (t, 150.0, 450.0) * (1.0f - ramp (grow, 0.0, 0.3));
+        if (show > 0.0f)
+        {
+            const float dotR = side0 * 0.017f;
+            const float step = side0 * 0.11f;
+            const float y = juce::jmin (area.getCentreY() + side0 * 0.60f, area.getBottom() - dotR * 6.0f);
+            const auto dotX = [&] (int i) { return area.getCentreX() + step * (static_cast<float> (i) - 1.5f); };
+            const float pos = static_cast<float> (std::fmod (t / kSplashBeatMs, 4.0));
+            const int at = juce::jlimit (0, 3, static_cast<int> (pos));
+            const float f = pos - static_cast<float> (at);
+            const int next = (at + 1) & 3;
+            for (int i = 0; i < 4; ++i)
+            {
+                const float rr = i == 0 ? dotR * 1.2f : dotR;
+                const float lit = i == at ? std::pow (1.0f - f, 1.6f) : 0.0f;
+                g.setColour (juce::Colours::white.withAlpha (0.12f * show));
+                g.fillEllipse (dotX (i) - rr, y - rr, rr * 2.0f, rr * 2.0f);
+                g.setColour (kSplashFuchsia.withAlpha (lit * show));
+                g.fillEllipse (dotX (i) - rr, y - rr, rr * 2.0f, rr * 2.0f);
+            }
+            const float ringT = f / 0.55f;
+            if (ringT < 1.0f)
+            {
+                const float rr = (at == 0 ? dotR * 1.2f : dotR) * (1.0f + 1.6f * std::sqrt (ringT));
+                g.setColour (kSplashFuchsia.withAlpha ((1.0f - ringT) * (1.0f - ringT) * 0.8f * show));
+                g.drawEllipse (dotX (at) - rr, y - rr, rr * 2.0f, rr * 2.0f, 1.6f);
+            }
+            const float hop = step * (next == 0 ? 0.55f : 0.32f);
+            const float bx = dotX (at) + (dotX (next) - dotX (at)) * f;
+            const float by = y - hop * 4.0f * f * (1.0f - f);
+            const float br = dotR * 0.8f;
+            juce::ColourGradient halo (kSplashFuchsia.withAlpha (0.55f * show), bx, by,
+                                       kSplashFuchsia.withAlpha (0.0f), bx, by + br * 3.4f, true);
+            g.setGradientFill (halo);
+            g.fillEllipse (bx - br * 3.4f, by - br * 3.4f, br * 6.8f, br * 6.8f);
+            g.setColour (juce::Colours::white.withAlpha (show));
+            g.fillEllipse (bx - br, by - br, br * 2.0f, br * 2.0f);
+        }
+    }
 }
 
 void MainComponent::SplashOverlay::mouseDown (const juce::MouseEvent&)
 {
-    // A tap goes straight to the fade rather than cutting: the console
-    // appears the same way, only sooner.
-    fadeFromMs = juce::jmin (fadeFromMs, juce::Time::getMillisecondCounterHiRes());
+    // A tap goes straight to the grow: the console appears the same way,
+    // only sooner.
+    growFromMs = juce::jmin (growFromMs, animMs);
 }
 
 void MainComponent::SplashOverlay::timerCallback()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
-    if (now >= fadeFromMs + kSplashFadeMs)
+    if (! isShowing())
+    {
+        lastTickMs = 0.0;
+        return;
+    }
+    if (lastTickMs > 0.0)
+        animMs += juce::jmin (now - lastTickMs, 50.0);
+    lastTickMs = now;
+    if (animMs >= growFromMs + kSplashGrowMs)
     {
         stopTimer();
         setVisible (false);
         logo = {};
         return;
     }
-    // Only the fade moves; the hold is a still frame.
-    if (now >= fadeFromMs)
-        repaint();
+    repaint();
 }
