@@ -406,6 +406,10 @@ private:
     /** The (i) on the INPUT card: opens the explanation of the input modes. */
     juce::TextButton infoButton { "i" };
     InfoPopup inputInfo;
+    /** The input explanation, once, on the first launch ("Got it"); afterwards
+        only from the (i). */
+    void showInputInfo (bool firstRun);
+    bool inputInfoChecked = false;
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };

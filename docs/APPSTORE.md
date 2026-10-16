@@ -47,6 +47,14 @@ provarlo»).
 
 ### Uso gratuito e regali
 
+- **Build personale completa (2026-10-16)**: `cmake -S . -B build-ios -DVP_UNLOCKED=ON`
+  e Run da Xcode sui tuoi dispositivi, anche in Release (la più veloce, quella
+  da palco). Nessun paywall; il pulsante in alto nelle impostazioni dice **FULL**
+  invece di PRO. Compila (verificato su Mac con l'opzione accesa). **Mai per un
+  archivio per TestFlight o App Store**: avvisa con un warning a ogni configure.
+  Per la versione dello store, il lifetime gratuito si ottiene con un codice
+  offerta (sotto).
+
 - **Tu**: una Run da Xcode in Debug non ha paywall. Con la build dello store: un
   **codice offerta** gratuito sul lifetime per il tuo ID Apple, oppure
   TestFlight (acquisti di prova gratuiti, 90 giorni per build). Nessuna porta

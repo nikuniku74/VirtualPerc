@@ -4,6 +4,14 @@
 #ifndef VP_PAYWALL_ENFORCED
  #define VP_PAYWALL_ENFORCED 0
 #endif
+#ifndef VP_UNLOCKED
+ #define VP_UNLOCKED 0
+#endif
+// VP_UNLOCKED: a personal build with no paywall at all (CMakeLists.txt).
+#if VP_UNLOCKED
+ #undef VP_PAYWALL_ENFORCED
+ #define VP_PAYWALL_ENFORCED 0
+#endif
 
 #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
  #include "VpDemoData.h"
@@ -459,12 +467,17 @@ MainComponent::MainComponent()
     setupPageBtn (infoButton, ink());
     infoButton.getProperties().set ("circle", true);
     infoButton.setTitle (vpui::L ("Info: input modes", "Info: modalita' d'ingresso"));
-    settingsOverlay.addChildComponent (inputInfo);
-    infoButton.onClick = [this]
+    infoButton.onClick = [this] { showInputInfo (false); };
+    // A child of the whole page, not of the settings: on the first launch it
+    // comes up over the console. The splash is added after it and stays above.
+    addChildComponent (inputInfo);
+    inputInfo.onClosed = [this]
     {
-        inputInfo.setContent (vpui::L ("INPUT MODES", "MODALITA' D'INGRESSO"), inputNote());
-        inputInfo.setBounds (settingsOverlay.getLocalBounds());
-        inputInfo.open();
+        if (prefs != nullptr)
+        {
+            prefs->setValue ("inputInfoSeen", true);
+            prefs->saveIfNeeded();
+        }
     };
     accountButton.onClick = [this] { showPaywall (true); };
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
@@ -2668,6 +2681,12 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
 void MainComponent::timerCallback()
 {
     snap = engine.snapshot();
+    if (! inputInfoChecked && ! splash.isVisible() && ! paywall.isVisible())
+    {
+        inputInfoChecked = true;
+        if (prefs != nullptr && ! prefs->getBoolValue ("inputInfoSeen", false))
+            showInputInfo (true);
+    }
     if (restartLogPending
         && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
     {
@@ -3025,6 +3044,14 @@ void MainComponent::timerCallback()
         settingsOverlay.repaint();
 }
 
+void MainComponent::showInputInfo (bool firstRun)
+{
+    inputInfo.setContent (vpui::L ("INPUT MODES", "MODALIT\xc3\x80 D'INGRESSO"), inputNote());
+    inputInfo.setConfirmText (firstRun ? vpui::L ("GOT IT", "HO CAPITO") : juce::String());
+    inputInfo.setBounds (getLocalBounds());
+    inputInfo.open();
+}
+
 // ---- subscription -----------------------------------------------------------
 
 bool MainComponent::hasAccess() const noexcept
@@ -3068,7 +3095,11 @@ void MainComponent::onSubscriptionStatus (const vp::store::Status& s)
 {
     subscription = s;
     paywall.setStatus (s);
+   #if VP_UNLOCKED
+    accountButton.setButtonText ("FULL");   // not a subscription: a personal build
+   #else
     accountButton.setButtonText (s.access == vp::store::Access::trial ? "TRIAL" : "PRO");
+   #endif
 
    #if VP_PAYWALL_ENFORCED
     if (s.access == vp::store::Access::locked)

@@ -540,7 +540,7 @@ void MainComponent::resized()
     const auto isOverlay = [this] (const juce::Component* c)
     {
         return c == &settingsOverlay || c == &styleMenu || c == &soundMenu || c == &faderZoom
-            || c == &splash || c == &paywall;
+            || c == &splash || c == &paywall || c == &inputInfo;
     };
     juce::Array<std::pair<juce::Component*, juce::Rectangle<int>>> before;
     if (animateMode)
@@ -550,6 +550,7 @@ void MainComponent::resized()
     laidOutSafeArea = effectiveSafeArea();
     settingsOverlay.setBounds (getLocalBounds());
     paywall.setBounds (getLocalBounds());
+    inputInfo.setBounds (getLocalBounds());
     paywall.setSafeArea (laidOutSafeArea);
     if (settingsOverlay.isVisible())
         layoutSettings (settingsOverlay.getLocalBounds());
@@ -734,7 +735,6 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // full-screen too, and its close button is the first thing a Dynamic Island
     // would sit on.
     auto r = safePadded (area);
-    inputInfo.setBounds (area);
 
     auto head = r.removeFromTop (34);
     settingsClose.setBounds (head.removeFromRight (head.getHeight()).reduced (4));

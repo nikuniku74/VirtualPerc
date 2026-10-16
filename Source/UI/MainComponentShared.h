@@ -763,20 +763,20 @@ namespace
             "then red, and nothing more is gained.\n\n"
             "PROC. OFF removes iOS automatic gain and echo cancelling: that is what the "
             "analysis wants.",
-            "PER IL LIVE USA MIXER. E' la modalita' piu' precisa. L'app deve ricevere il "
+            "PER IL LIVE USA MIXER. È la modalità più precisa. L'app deve ricevere il "
             "segnale e inviare il suono delle percussioni nello stesso momento, quindi "
             "collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita: "
             "ascolta il tempo e manda le percussioni in tempo reale.\n\n"
-            "MIXER e' per un microfono vicino o una mandata del banco. IPAD e' per il "
+            "MIXER è per un microfono vicino o una mandata del banco. IPAD è per il "
             "microfono che sente la stanza; qui l'app toglie shaker e congas da quello "
             "che ascolta.\n\n"
             "BRANO legge un file e lo manda sia all'analisi sia all'uscita, anche nelle "
             "AirPods. CARICA sceglie il file; l'onda (sotto, o sul palco) si trascina per "
             "saltare. PLAY mette in pausa.\n\n"
-            "MIC regola quanto sente l'analisi: alzalo finche' l'anello del knob entra "
+            "MIC regola quanto sente l'analisi: alzalo finché l'anello del knob entra "
             "nella fascia fucsia. Sotto, l'analisi sbaglia il tempo; sopra, ambra e poi "
-            "rosso, e non guadagna piu' niente.\n\n"
-            "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che vuole "
+            "rosso, e non guadagna più niente.\n\n"
+            "ELAB. OFF toglie guadagno automatico ed eco di iOS: è quello che vuole "
             "l'analisi.");
     }
 

@@ -343,8 +343,17 @@ target_sources (VirtualPercussionist PRIVATE
 # it in Debug: cmake -DVP_PAYWALL_DEBUG=ON, with the StoreKit file
 # Assets/StoreKit/VirtualPercussionist.storekit set in the scheme.
 option (VP_PAYWALL_DEBUG "Enforce the paywall in Debug builds too" OFF)
+# A personal build with everything unlocked, whatever the configuration: a
+# Release build (fast, what a gig wants) on the developer's own devices, without
+# buying a subscription. The account button says FULL so it cannot be mistaken
+# for the real thing. NEVER for an App Store / TestFlight archive.
+option (VP_UNLOCKED "Personal build: no paywall in any configuration (never for the store)" OFF)
+if (VP_UNLOCKED)
+    message (WARNING "VP_UNLOCKED=ON: this build has no paywall. Do not archive or upload it.")
+endif()
 target_compile_definitions (VirtualPercussionist PRIVATE
-    VP_PAYWALL_ENFORCED=$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<BOOL:${VP_PAYWALL_DEBUG}>>,1,0>)
+    VP_PAYWALL_ENFORCED=$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<BOOL:${VP_PAYWALL_DEBUG}>>,1,0>
+    VP_UNLOCKED=$<BOOL:${VP_UNLOCKED}>)
 target_sources (VirtualPercussionist PRIVATE Source/Platform/Subscription.cpp)
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")

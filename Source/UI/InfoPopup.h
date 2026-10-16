@@ -16,8 +16,12 @@ public:
     ~InfoPopup() override;
 
     void setContent (const juce::String& title, const juce::String& text);
+    /** A filled button under the text ("Got it"); empty = only the cross. */
+    void setConfirmText (const juce::String&);
     void open();
     void close();
+    /** Called whenever the popup closes, by whichever control. */
+    std::function<void()> onClosed;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -25,10 +29,12 @@ public:
 
 private:
     class CrossButton;
+    class ConfirmButton;
 
     juce::String title;
     juce::TextEditor body;
     std::unique_ptr<CrossButton> closeButton;
+    std::unique_ptr<ConfirmButton> confirmButton;
     juce::Rectangle<int> card, titleArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InfoPopup)

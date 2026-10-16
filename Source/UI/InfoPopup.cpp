@@ -27,6 +27,23 @@ public:
     }
 };
 
+class InfoPopup::ConfirmButton final : public juce::Button
+{
+public:
+    ConfirmButton() : juce::Button ({}) {}
+    juce::String text;
+
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        const auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (fuchsia().withMultipliedBrightness (down ? 0.85f : (over ? 0.93f : 1.0f)));
+        g.fillRoundedRectangle (r, juce::jmin (r.getHeight() * 0.5f, 16.0f));
+        g.setColour (juce::Colours::white);
+        g.setFont (fontUi (17.0f));
+        g.drawText (text, getLocalBounds(), juce::Justification::centred, true);
+    }
+};
+
 InfoPopup::InfoPopup()
 {
     setOpaque (false);
@@ -37,6 +54,10 @@ InfoPopup::InfoPopup()
     closeButton->setTitle ("Close");
     closeButton->onClick = [this] { close(); };
     addAndMakeVisible (*closeButton);
+
+    confirmButton = std::make_unique<ConfirmButton>();
+    confirmButton->onClick = [this] { close(); };
+    addChildComponent (*confirmButton);
 
     body.setMultiLine (true, true);
     body.setReadOnly (true);
@@ -56,6 +77,14 @@ void InfoPopup::setContent (const juce::String& t, const juce::String& text)
     repaint();
 }
 
+void InfoPopup::setConfirmText (const juce::String& text)
+{
+    confirmButton->text = text;
+    confirmButton->setTitle (text);
+    confirmButton->setVisible (text.isNotEmpty());
+    resized();
+}
+
 void InfoPopup::open()
 {
     body.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
@@ -73,7 +102,10 @@ void InfoPopup::open()
 
 void InfoPopup::close()
 {
+    const bool wasShowing = isVisible();
     setVisible (false);
+    if (wasShowing && onClosed)
+        onClosed();
 }
 
 void InfoPopup::mouseDown (const juce::MouseEvent& e)
@@ -98,14 +130,17 @@ void InfoPopup::resized()
     layout.createLayout (a, static_cast<float> (juce::jmax (40, textW)));
     const int textH = static_cast<int> (std::ceil (layout.getHeight())) + 24;
     const int head = 56;
-    const int height = juce::jmin (area.getHeight(), head + textH + 16);
+    const int foot = confirmButton->isVisible() ? 64 : 0;
+    const int height = juce::jmin (area.getHeight(), head + textH + 16 + foot);
 
     card = juce::Rectangle<int> (width, height).withCentre (area.getCentre());
     auto inner = card.reduced (20, 14);
     auto top = inner.removeFromTop (head - 14);
     closeButton->setBounds (top.removeFromRight (30).withSizeKeepingCentre (30, 30));
     titleArea = top;
-    body.setBounds (inner.withTrimmedTop (4));
+    if (foot > 0)
+        confirmButton->setBounds (inner.removeFromBottom (48).reduced (0, 0));
+    body.setBounds (inner.withTrimmedTop (4).withTrimmedBottom (foot > 0 ? 12 : 0));
 }
 
 void InfoPopup::paint (juce::Graphics& g)
