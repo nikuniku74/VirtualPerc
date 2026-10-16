@@ -91,4 +91,9 @@ void manage()
     [VPStore.shared manage];
 }
 
+void redeemCode()
+{
+    [VPStore.shared redeemCode];
+}
+
 } // namespace vp::store

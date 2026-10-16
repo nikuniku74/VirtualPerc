@@ -40,6 +40,8 @@ void restore (std::function<void (bool)> done)
 }
 
 void manage() {}
+
+void redeemCode() {}
 #endif
 
 } // namespace vp::store

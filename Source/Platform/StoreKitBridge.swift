@@ -201,6 +201,17 @@ import UIKit
         }
     }
 
+    @objc public func redeemCode() {
+        Task {
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+            guard let scene = scene else { return }
+            try? await AppStore.presentOfferCodeRedeemSheet(in: scene)
+            await refresh()   // the redeemed purchase also comes through Transaction.updates
+        }
+    }
+
     @objc public func manage() {
         Task {
             let scene = UIApplication.shared.connectedScenes

@@ -45,6 +45,22 @@ provarlo»).
   creato in App Store Connect anche il prodotto lifetime
   (`com.virtualpercussionist.app.pro.lifetime`).
 
+### Uso gratuito e regali
+
+- **Tu**: una Run da Xcode in Debug non ha paywall. Con la build dello store: un
+  **codice offerta** gratuito sul lifetime per il tuo ID Apple, oppure
+  TestFlight (acquisti di prova gratuiti, 90 giorni per build). Nessuna porta
+  segreta nell'app.
+- **Regali**: *Offer Codes* in App Store Connect (valgono anche per acquisti
+  singoli come il lifetime; codici monouso con scadenza massima di 6 mesi,
+  1 milione a trimestre, max 10 offerte attive). Verificare in App Store
+  Connect se il prezzo di un codice sul lifetime può essere zero. Chi li riceve
+  li riscatta da un link `apps.apple.com/redeem?...`, dalla scheda dell'App
+  Store o **dentro l'app** dal link «Riscatta codice» della pagina
+  dell'abbonamento (`AppStore.presentOfferCodeRedeemSheet`, aggiunto
+  2026-10-16, mai provato con un codice vero). L'acquisto arriva come una
+  normale transazione verificata.
+
 ## 2. Da fare in App Store Connect (non automatizzabile)
 
 Testi pronti da incollare (EN/IT: descrizione, parole chiave, abbonamenti, note

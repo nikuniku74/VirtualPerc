@@ -281,6 +281,7 @@ PaywallOverlay::PaywallOverlay()
     for (auto& b : planButtons)
         b = std::make_unique<PlanButton>();
     restoreLink = std::make_unique<LinkButton>();
+    redeemLink = std::make_unique<LinkButton>();
     termsLink = std::make_unique<LinkButton>();
     privacyLink = std::make_unique<LinkButton>();
     licensesLink = std::make_unique<LinkButton>();
@@ -294,6 +295,7 @@ PaywallOverlay::PaywallOverlay()
                                 static_cast<juce::Component*> (planButtons[1].get()),
                                 static_cast<juce::Component*> (planButtons[2].get()),
                                 static_cast<juce::Component*> (restoreLink.get()),
+                                static_cast<juce::Component*> (redeemLink.get()),
                                 static_cast<juce::Component*> (termsLink.get()),
                                 static_cast<juce::Component*> (privacyLink.get()),
                                 static_cast<juce::Component*> (licensesLink.get()),
@@ -326,6 +328,7 @@ PaywallOverlay::PaywallOverlay()
             }
         };
     restoreLink->onClick = [this] { if (! busy && onRestore) onRestore(); };
+    redeemLink->onClick = [this] { if (! busy && onRedeem) onRedeem(); };
     retryLink->onClick = [this] { if (onRetry) onRetry(); };
     manageLink->onClick = [this] { if (onManage) onManage(); };
     termsLink->onClick = [] { juce::URL (kTermsUrl).launchInDefaultBrowser(); };
@@ -622,18 +625,21 @@ void PaywallOverlay::refreshControls()
     }
 
     restoreLink->text = t ("Restore purchases", "Ripristina acquisti");
+    redeemLink->text = t ("Redeem code", "Riscatta codice");
     termsLink->text = t ("Terms of Use", "Condizioni d'uso");
     privacyLink->text = t ("Privacy Policy", "Privacy");
     licensesLink->text = t ("Licenses", "Licenze");
     retryLink->text = t ("Try again", "Riprova");
     manageLink->text = {};
-    for (auto* l : { restoreLink.get(), termsLink.get(), privacyLink.get(), licensesLink.get(), retryLink.get() })
+    for (auto* l : { restoreLink.get(), redeemLink.get(), termsLink.get(), privacyLink.get(), licensesLink.get(), retryLink.get() })
     {
         l->scale = s;
         l->setTitle (l->text);
     }
     restoreLink->setEnabled (! busy);
     restoreLink->setVisible (true);
+    redeemLink->setVisible (static_cast<bool> (onRedeem));
+    redeemLink->setEnabled (! busy);
     termsLink->setVisible (true);
     privacyLink->setVisible (true);
     licensesLink->setVisible (true);
@@ -733,7 +739,7 @@ void PaywallOverlay::layoutAll()
         right.add ({ nullptr, static_cast<int> (8 * s) });
         right.add ({ &g.legal, textHeight (legalText(), F (10.5f, false), colW) });
         right.add ({ nullptr, static_cast<int> (6 * s) });
-        right.add ({ &g.links, static_cast<int> (28 * s) });
+        right.add ({ &g.links, static_cast<int> (56 * s) });   // two rows
 
         auto sum = [] (const juce::Array<Item>& v) { int n = 0; for (auto& i : v) n += i.h; return n; };
         leftH = sum (left);
@@ -781,10 +787,15 @@ void PaywallOverlay::layoutAll()
     for (int i = 0; i < 3; ++i)
         planButtons[i]->setBounds (geo.planRect[i]);
 
-    auto row = geo.links;
-    const int cell = colW / 4;
-    for (auto* l : { restoreLink.get(), termsLink.get(), privacyLink.get(), licensesLink.get() })
-        l->setBounds (row.removeFromLeft (cell));
+    // Two rows: the page's own actions, then the legal links.
+    auto links = geo.links;
+    auto actions = links.removeFromTop (links.getHeight() / 2);
+    const int half = colW / 2;
+    for (auto* l : { restoreLink.get(), redeemLink.get() })
+        l->setBounds (actions.removeFromLeft (half));
+    const int third = colW / 3;
+    for (auto* l : { termsLink.get(), privacyLink.get(), licensesLink.get() })
+        l->setBounds (links.removeFromLeft (third));
     retryLink->setBounds (geo.statusCard.withSizeKeepingCentre (150, 30).translated (0, 28));
 
     refreshControls();

@@ -106,6 +106,7 @@ int main (int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI gui;
 
     PaywallOverlay p;
+    p.onRedeem = [] {};   // the link is shown when the store can take a code
     p.setClock ([] { return kNow; });
     p.setItalian (false);
 
@@ -182,32 +183,36 @@ int main (int argc, char** argv)
 
         for (const bool it : { false, true })
         {
-            p.setItalian (it);
+            // a fresh page per language: the licences page stays open once shown
+            PaywallOverlay q;
+            q.onRedeem = [] {};
+            q.setClock ([] { return kNow; });
+            q.setItalian (it);
             const juce::String L = it ? "it-" : "en-";
-            shoot (p, offer (true), dir, L + "1-offer-trial-phone", 393, 852, phoneSafe, true);
-            shoot (p, offer (true), dir, L + "1-offer-trial-phone-light", 393, 852, phoneSafe, false);
-            shoot (p, offer (true), dir, L + "2-offer-trial-ipad", 820, 1180, padSafe, true);
-            shoot (p, offer (true), dir, L + "3-offer-trial-phone-landscape", 852, 393, phoneLandSafe, true);
-            shoot (p, offer (false, true), dir, L + "4-offer-ended-phone", 393, 852, phoneSafe, true);
-            shoot (p, inTrial(), dir, L + "5-status-trial-phone", 393, 852, phoneSafe, true);
-            shoot (p, subscribed (true), dir, L + "6-status-subscribed-phone", 393, 852, phoneSafe, true);
-            shoot (p, subscribed (false), dir, L + "7-status-cancelled-phone", 393, 852, phoneSafe, true);
+            shoot (q, offer (true), dir, L + "1-offer-trial-phone", 393, 852, phoneSafe, true);
+            shoot (q, offer (true), dir, L + "1-offer-trial-phone-light", 393, 852, phoneSafe, false);
+            shoot (q, offer (true), dir, L + "2-offer-trial-ipad", 820, 1180, padSafe, true);
+            shoot (q, offer (true), dir, L + "3-offer-trial-phone-landscape", 852, 393, phoneLandSafe, true);
+            shoot (q, offer (false, true), dir, L + "4-offer-ended-phone", 393, 852, phoneSafe, true);
+            shoot (q, inTrial(), dir, L + "5-status-trial-phone", 393, 852, phoneSafe, true);
+            shoot (q, subscribed (true), dir, L + "6-status-subscribed-phone", 393, 852, phoneSafe, true);
+            shoot (q, subscribed (false), dir, L + "7-status-cancelled-phone", 393, 852, phoneSafe, true);
 
             vp::store::Status loading;
-            shoot (p, loading, dir, L + "8-loading-phone", 393, 852, phoneSafe, true);
+            shoot (q, loading, dir, L + "8-loading-phone", 393, 852, phoneSafe, true);
             vp::store::Status failed;
             failed.access = vp::store::Access::locked;
             failed.productsFailed = true;
-            shoot (p, failed, dir, L + "9-offline-phone", 393, 852, phoneSafe, true);
+            shoot (q, failed, dir, L + "9-offline-phone", 393, 852, phoneSafe, true);
 
-            p.setStatus (offer (true));
-            p.setNotice (PaywallOverlay::Notice::pending);
-            shoot (p, offer (true), dir, L + "10-pending-phone", 393, 852, phoneSafe, true);
-            p.setNotice (PaywallOverlay::Notice::none);
-            p.setStatus (offer (true));
-            p.setSize (393, 852);
-            p.showLicenses();
-            shoot (p, offer (true), dir, L + "11-licenses-phone", 393, 852, phoneSafe, true);
+            q.setStatus (offer (true));
+            q.setNotice (PaywallOverlay::Notice::pending);
+            shoot (q, offer (true), dir, L + "10-pending-phone", 393, 852, phoneSafe, true);
+            q.setNotice (PaywallOverlay::Notice::none);
+            q.setStatus (offer (true));
+            q.setSize (393, 852);
+            q.showLicenses();
+            shoot (q, offer (true), dir, L + "11-licenses-phone", 393, 852, phoneSafe, true);
         }
         std::printf ("screens written to %s\n", dir.getFullPathName().toRawUTF8());
     }

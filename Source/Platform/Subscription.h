@@ -87,4 +87,8 @@ void restore (std::function<void (bool ok)> done);
 /** Apple's own Manage Subscriptions sheet (cancel, change plan). */
 void manage();
 
+/** Apple's offer-code sheet: where a gift or promotional code is typed in. The
+    purchase then arrives like any other, through the transaction updates. */
+void redeemCode();
+
 } // namespace vp::store

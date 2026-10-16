@@ -573,6 +573,9 @@ MainComponent::MainComponent()
     paywall.onClose = [this] { showPaywall (false); };
     paywall.onRetry = [] { vp::store::reloadProducts(); };
     paywall.onManage = [] { vp::store::manage(); };
+   #if defined (VP_STOREKIT)
+    paywall.onRedeem = [] { vp::store::redeemCode(); };   // no store, no code sheet
+   #endif
     paywall.onPurchase = [this] (const std::string& id)
     {
         paywall.setNotice (PaywallOverlay::Notice::none);

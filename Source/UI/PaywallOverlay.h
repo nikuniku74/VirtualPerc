@@ -41,6 +41,8 @@ public:
     std::function<void()> onClose;
     std::function<void (const std::string& planId)> onPurchase;
     std::function<void()> onRestore, onManage, onRetry;
+    /** Opens the offer-code sheet. The "Redeem code" link is shown only when set. */
+    std::function<void()> onRedeem;
 
     /** What the main button says and does, for tests. */
     juce::String ctaText() const;
@@ -79,7 +81,7 @@ private:
 
     std::unique_ptr<PillButton> closeButton, ctaButton;
     std::unique_ptr<PlanButton> planButtons[3];
-    std::unique_ptr<LinkButton> restoreLink, termsLink, privacyLink, licensesLink, retryLink, manageLink;
+    std::unique_ptr<LinkButton> restoreLink, redeemLink, termsLink, privacyLink, licensesLink, retryLink, manageLink;
     std::unique_ptr<LicensesPage> licensesPage;
 
     struct Geometry
