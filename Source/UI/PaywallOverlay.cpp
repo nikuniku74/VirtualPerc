@@ -702,10 +702,10 @@ void PaywallOverlay::layoutAll()
         {
             const char* const en[] = { "Follows the tempo of the band, live",
                                        "Shaker, congas, clap and more, in the right groove",
-                                       "Works on a mixer feed, the mic or a loaded track" };
+                                       "Most precise on a mixer feed; also the mic or a loaded track" };
             const char* const it[] = { "Segue il tempo della band, dal vivo",
                                        "Shaker, conga, clap e altro, nel groove giusto",
-                                       "Funziona con il mix, il microfono o un brano caricato" };
+                                       "Massima precisione dal mixer; anche microfono o brano caricato" };
             g.bulletCount = 3;
             for (int i = 0; i < 3; ++i)
                 left.add ({ &g.bullets[i], juce::jmax (static_cast<int> (26 * s),
@@ -833,10 +833,10 @@ void PaywallOverlay::paint (juce::Graphics& g)
     {
         const char* const en[] = { "Follows the tempo of the band, live",
                                    "Shaker, congas, clap and more, in the right groove",
-                                   "Works on a mixer feed, the mic or a loaded track" };
+                                   "Most precise on a mixer feed; also the mic or a loaded track" };
         const char* const it[] = { "Segue il tempo della band, dal vivo",
                                    "Shaker, conga, clap e altro, nel groove giusto",
-                                   "Funziona con il mix, il microfono o un brano caricato" };
+                                   "Massima precisione dal mixer; anche microfono o brano caricato" };
         for (int i = 0; i < geo.bulletCount; ++i)
         {
             auto r = geo.bullets[i];

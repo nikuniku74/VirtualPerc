@@ -748,6 +748,10 @@ namespace
     juce::String inputNote()
     {
         return vpui::L (
+            "FOR LIVE USE MIXER: it is the most precise mode. The app has to receive the "
+            "signal and send the percussion out at the same time, so connect an audio "
+            "interface or mixer that gives it an input and an output: it listens to the "
+            "tempo and plays the percussion in real time. "
             "MIXER for a close microphone or a desk send, IPAD for the microphone that "
             "hears the room. TRACK reads a file and sends it to both the analysis and "
             "the output, AirPods included. LOAD chooses the file; drag the waveform "
@@ -757,6 +761,10 @@ namespace
             "the analysis gets the tempo wrong; above it, amber and then red, and "
             "nothing more is gained. PROC. OFF removes iOS automatic gain and echo "
             "cancelling: that is what the analysis wants.",
+            "PER IL LIVE USA MIXER: e' la modalita' piu' precisa. L'app deve ricevere il "
+            "segnale e inviare il suono delle percussioni nello stesso momento, quindi "
+            "collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita: "
+            "ascolta il tempo e manda le percussioni in tempo reale. "
             "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
             "microfono che sente la stanza. BRANO legge un file e lo manda sia "
             "all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il "

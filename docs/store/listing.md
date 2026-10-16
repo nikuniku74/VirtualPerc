@@ -38,6 +38,9 @@ A percussionist that listens to your band and plays along, in time.
 
 Virtual Percussionist follows the tempo of what you play - live, from a mixer feed, from the microphone, or from a track you load - and adds shaker, congas, clap, tambourine and triangle in the right groove. When the band speeds up or slows down, it follows. When the band stops, it stops.
 
+BEST RESULTS: MIXER MODE
+For live use, choose MIXER mode: it is the most precise. The app needs to receive the signal and send the percussion out at the same time, so connect an audio interface or mixer that gives it both an input and an output. It listens to the tempo of the band and plays the percussion in real time.
+
 MADE FOR PLAYING LIVE
 - Finds the tempo and the first beat of the bar by itself and keeps them, without a click track.
 - One big START / STOP, a tap tempo, and a few knobs you can reach in the dark.
@@ -76,6 +79,9 @@ Privacy Policy: [SITO]/privacy
 Un percussionista che ascolta la tua band e suona insieme a lei, a tempo.
 
 Virtual Percussionist segue il tempo di quello che suoni - dal vivo, dal mix del mixer, dal microfono o da un brano che carichi - e aggiunge shaker, conga, clap, tamburello e triangolo nel groove giusto. Se la band accelera o rallenta, lo segue. Se la band si ferma, si ferma.
+
+LA MIGLIORE PRECISIONE: MODALITA' MIXER
+Per il live scegli la modalita' MIXER: e' la piu' precisa. L'app deve ricevere il segnale e inviare il suono delle percussioni nello stesso momento, quindi collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita. Ascolta il tempo della band e manda le percussioni in tempo reale.
 
 PENSATO PER SUONARE DAL VIVO
 - Trova da solo il tempo e il primo battere della battuta e li mantiene, senza metronomo.
@@ -125,6 +131,8 @@ Screenshot di revisione per ciascun prodotto: `docs/paywall/en-1-offer-trial-pho
 
 ```
 Virtual Percussionist is a live percussion companion: it listens to a band (microphone, line input from a mixer, or a track loaded in the app) and plays shaker, congas and other percussion in time.
+
+For real use, MIXER mode is the most precise (the app receives the band's signal and sends the percussion out at the same time, through an audio interface or mixer); the demo below needs none of that.
 
 To try it without a band: open the app, tap SETUP, then PLAY in the INPUT section. With nothing loaded, PLAY loads a built-in demo song (about 35 seconds) and the percussion follows it; tap START on the main screen to hear the part. The microphone is only needed for live use; the demo needs no permission.
 
