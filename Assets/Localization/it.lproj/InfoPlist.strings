@@ -1,0 +1,3 @@
+/* Il permesso del microfono, in italiano. */
+"NSMicrophoneUsageDescription" = "Virtual Percussionist ascolta la tua band dal microfono o dall'ingresso audio per suonare insieme a tempo. L'audio viene analizzato sul dispositivo e non viene mai registrato o inviato.";
+"CFBundleDisplayName" = "Virtual Percussionist";

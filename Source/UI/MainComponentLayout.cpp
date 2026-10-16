@@ -748,9 +748,9 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     const int noteGap = 8;
     const int rowH = 58;
 
-    auto card = [&] (juce::Rectangle<int> bounds, const char* title)
+    auto card = [&] (juce::Rectangle<int> bounds, const juce::String& title)
     {
-        settingsCards.add ({ bounds, juce::String (title) });
+        settingsCards.add ({ bounds, title });
         return bounds.reduced (12, padY).withTrimmedTop (titleH);
     };
 
@@ -848,7 +848,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     }
 
     {
-        auto body = card (take (h[kInput]), "INGRESSO");
+        auto body = card (take (h[kInput]), vpui::L ("INPUT", "INGRESSO"));
         buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
                    { &sourceButton, &trackLoadButton, &trackPlayButton,
                      &procButton, &kickButton });
@@ -877,7 +877,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         placeKnob (reverbLabel, reverbSlider);
     }
 
-    buttonRow (card (take (h[kTests]), "PERCUSSIONI / PROVE"),
+    buttonRow (card (take (h[kTests]), vpui::L ("PERCUSSION / TESTS", "PERCUSSIONI / PROVE")),
                { &themeButton, &clickButton, &latencyButton });
 
     layoutTrackWaveform();

@@ -162,7 +162,7 @@ MainComponent::MainComponent()
             return;
         }
         engine.startLatencyMeasurement();
-        latencyButton.setButtonText ("MISURO...");
+        latencyButton.setButtonText (vpui::L ("MEASURING...", "MISURO..."));
     };
 
     // Which input the kick is on, cycled rather than typed: on a stage this is
@@ -227,7 +227,7 @@ MainComponent::MainComponent()
     sub16.onClick   = [this] { vp::haptic (vp::Haptic::select); applySubdivision (vp::Subdivision::sixteenth); };
 
     auto setupFader = [this] (juce::Slider& s, juce::Label& name, juce::Label& value,
-                              const char* title, double minV, double maxV, double initial,
+                              const juce::String& title, double minV, double maxV, double initial,
                               std::function<void (float)> apply,
                               std::function<juce::String (float)> fmt = {})
     {
@@ -281,7 +281,7 @@ MainComponent::MainComponent()
     setupFader (congaVolSlider, congaVolLabel, congaVolValue, "CONGAS",
                 0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().congaVolume.store (v); });
-    setupFader (cembaloVolSlider, cembaloVolLabel, cembaloVolValue, "CEMBALO",
+    setupFader (cembaloVolSlider, cembaloVolLabel, cembaloVolValue, vpui::kitName (vp::KitSound::cembalo),
                 0.0, 1.0, 1.00,
                 [this] (float v) { engine.settings().cembaloVolume.store (v); });
     setupFader (clapVolSlider, clapVolLabel, clapVolValue, "CLAP",
@@ -402,7 +402,7 @@ MainComponent::MainComponent()
     hornVolSlider.onHold = heldFor (1, true);
     uplifterVolSlider.onHold = heldFor (2, true);
     riserVolSlider.onHold = heldFor (3, true);
-    setupFader (intensitySlider, intensityLabel, intensityValue, "ENERGIA",
+    setupFader (intensitySlider, intensityLabel, intensityValue, vpui::L ("ENERGY", "ENERGIA"),
                 0.0, 1.0, 0.50,
                 [this] (float v) { engine.settings().intensity.store (v); });
     setupFader (reverbSlider, reverbLabel, reverbValue, "REVERB",
@@ -454,7 +454,7 @@ MainComponent::MainComponent()
     settingsClose.setButtonText ({});
     settingsClose.getProperties().set ("circle", true);
     settingsClose.getProperties().set ("closeIcon", true);
-    settingsClose.setTitle ("Chiudi");
+    settingsClose.setTitle (vpui::L ("Close", "Chiudi"));
     setupPageBtn (accountButton, ink());
     accountButton.onClick = [this] { showPaywall (true); };
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
@@ -854,8 +854,8 @@ void MainComponent::refreshVoiceKnobs()
         const auto fill = colourForKitSound (sound);
         s.setColour (juce::Slider::rotarySliderFillColourId, fill);
         name.setColour (juce::Label::textColourId, fill);
-        name.setText (vp::toString (sound), juce::dontSendNotification);
-        s.getProperties().set ("knobName", vp::toString (sound));
+        name.setText (vpui::kitName (sound), juce::dontSendNotification);
+        s.getProperties().set ("knobName", vpui::kitName (sound));
         name.setAlpha (on ? 1.0f : 0.42f);
         s.repaint();
     };
@@ -1463,7 +1463,8 @@ void MainComponent::refreshBufferButtons()
 
 void MainComponent::refreshProcButton()
 {
-    procButton.setButtonText (inputProcessing ? "ELAB.  ON" : "ELAB.  OFF");
+    procButton.setButtonText (inputProcessing ? vpui::L ("PROC.  ON", "ELAB.  ON")
+                                              : vpui::L ("PROC.  OFF", "ELAB.  OFF"));
     paintChoice (procButton, inputProcessing);
 }
 
@@ -1473,7 +1474,8 @@ void MainComponent::refreshSourceButton()
         engine.settings().followSource.load());
     const bool speaker = source == vp::FollowSource::speaker;
     const bool internal = source == vp::FollowSource::internalPlayer;
-    sourceButton.setButtonText (internal ? "BRANO" : (speaker ? "IPAD" : "MIXER"));
+    sourceButton.setButtonText (internal ? vpui::L ("TRACK", "BRANO")
+                                         : juce::String (speaker ? "IPAD" : "MIXER"));
     paintChoice (sourceButton, speaker || internal);
     refreshInternalTrackButtons();
 
@@ -1482,8 +1484,8 @@ void MainComponent::refreshSourceButton()
     // at all, and the tracker works that out for itself - see
     // BeatTracker::kickIsTrusted.
     const int kickCh = engine.settings().kickChannel.load();
-    kickButton.setButtonText (kickCh < 0 ? "CASSA NO"
-                                         : "CASSA " + juce::String (kickCh + 1));
+    kickButton.setButtonText (kickCh < 0 ? vpui::L ("NO KICK", "CASSA NO")
+                                         : vpui::L ("KICK ", "CASSA ") + juce::String (kickCh + 1));
     paintChoice (kickButton, kickCh >= 0 && snap.kickTrusted);
 
     // And the round trip shows the number when there is one, so a listener can
@@ -1495,8 +1497,8 @@ void MainComponent::refreshSourceButton()
         if (measured > 0.0f)
             latencyButton.setButtonText ("RT " + juce::String (measured, 1) + " ms");
         else if (latencyButton.getButtonText().startsWith ("RT ")
-                 || latencyButton.getButtonText() == "MISURO...")
-            latencyButton.setButtonText ("LATENZA");
+                 || latencyButton.getButtonText() == vpui::L ("MEASURING...", "MISURO..."))
+            latencyButton.setButtonText (vpui::L ("LATENCY", "LATENZA"));
         paintChoice (latencyButton, measured > 0.0f);
     }
 }
@@ -1532,7 +1534,7 @@ void MainComponent::selectFollowSource (vp::FollowSource source, bool restartInp
 void MainComponent::chooseInternalTrack()
 {
     trackChooser = std::make_unique<juce::FileChooser> (
-        "Scegli un brano audio", juce::File(), trackFormats.getWildcardForAllFormats(),
+        vpui::L ("Choose an audio track", "Scegli un brano audio"), juce::File(), trackFormats.getWildcardForAllFormats(),
         true, false, &settingsOverlay);
 
     juce::Component::SafePointer<MainComponent> safe (this);
@@ -1559,8 +1561,10 @@ void MainComponent::loadInternalTrack (juce::URL url)
     if (reader == nullptr)
     {
         juce::AlertWindow::showMessageBoxAsync (
-            juce::MessageBoxIconType::WarningIcon, "Brano non leggibile",
-            "Il file scelto non e' un formato audio supportato oppure non e' disponibile offline.");
+            juce::MessageBoxIconType::WarningIcon,
+            vpui::L ("Track not readable", "Brano non leggibile"),
+            vpui::L ("The chosen file is not a supported audio format, or is not available offline.",
+                     "Il file scelto non e' un formato audio supportato oppure non e' disponibile offline."));
         return;
     }
 
@@ -2236,7 +2240,7 @@ void MainComponent::refreshBarButton()
     // the label does not change and a press never unlocks or nudges.
     // See docs/TODO.md item 13.
     const bool locked = engine.settings().barLocked.load();
-    barButton.setButtonText (juce::String (juce::CharPointer_UTF8 ("L'1 \u00e8 QUI")));
+    barButton.setButtonText (vpui::L ("THE 1 IS HERE", "L'1 \xc3\xa8 QUI"));
     barButton.setToggleState (locked, juce::dontSendNotification);
     barButton.setColour (juce::TextButton::buttonColourId, ink());
     barButton.setColour (juce::TextButton::textColourOffId, text());
@@ -2260,9 +2264,9 @@ void MainComponent::refreshStyleButtons()
     // "the part went quiet" is the kind of thing a player wants confirmed
     // rather than wondered about.
     const bool followDyn = engine.settings().dynamicsFollow.load();
-    dynamicsButton.setButtonText (! followDyn ? "DINAMICA"
-                                              : (snap.standingDown ? "IN ASCOLTO"
-                                                                   : "DINAMICA"));
+    dynamicsButton.setButtonText (! followDyn ? vpui::L ("DYNAMICS", "DINAMICA")
+                                              : (snap.standingDown ? vpui::L ("LISTENING", "IN ASCOLTO")
+                                                                   : vpui::L ("DYNAMICS", "DINAMICA")));
     paint (dynamicsButton, followDyn, followDyn && snap.standingDown);
 }
 
@@ -2828,7 +2832,7 @@ void MainComponent::timerCallback()
         {
             // Refused rather than guessed. The commonest cause on a stage is
             // the send not being routed back, so say that rather than a number.
-            latencyButton.setButtonText ("NIENTE RITORNO");
+            latencyButton.setButtonText (vpui::L ("NO RETURN", "NIENTE RITORNO"));
         }
         refreshSourceButton();
     }

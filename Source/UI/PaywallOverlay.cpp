@@ -271,7 +271,7 @@ private:
 PaywallOverlay::PaywallOverlay()
 {
     setOpaque (true);
-    italian = juce::SystemStats::getUserLanguage().startsWithIgnoreCase ("it");
+    italian = vpui::italian();
     clock = [] { return juce::Time::currentTimeMillis() / 1000.0; };
 
     closeButton = std::make_unique<PillButton>();

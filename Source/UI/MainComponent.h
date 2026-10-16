@@ -3,6 +3,7 @@
 #include "Audio/TrackStreamer.h"
 #include "Audio/VirtualPercussionEngine.h"
 #include "Platform/Subscription.h"
+#include "UI/Localization.h"
 #include "UI/PaywallOverlay.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -379,16 +380,16 @@ private:
     vp::VirtualPercussionEngine engine;
     vp::EngineSnapshot snap;
 
-    juce::TextButton barButton { juce::String (juce::CharPointer_UTF8 ("SPOSTA L'1")) };
+    juce::TextButton barButton { vpui::L ("SHIFT THE 1", "SPOSTA L'1") };
     juce::TextButton tapButton { "TAP" };
     juce::TextButton halveButton { juce::String (juce::CharPointer_UTF8 ("\xc3\xb7" "2")) };
     juce::TextButton doubleButton { juce::String (juce::CharPointer_UTF8 ("\xc3\x97" "2")) };
     juce::TextButton startButton { "START" };
     juce::TextButton stopButton { "STOP" };
-    juce::TextButton followButton { "SEGUI" };
-    juce::TextButton fixedButton { "FISSO" };
-    juce::TextButton startNowButton { "START SUBITO" };
-    juce::TextButton guardButton { "PAUSA SE FUORI" };
+    juce::TextButton followButton { vpui::L ("FOLLOW", "SEGUI") };
+    juce::TextButton fixedButton { vpui::L ("FIXED", "FISSO") };
+    juce::TextButton startNowButton { vpui::L ("START NOW", "START SUBITO") };
+    juce::TextButton guardButton { vpui::L ("PAUSE IF OFF", "PAUSA SE FUORI") };
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
     juce::Label      bpmEdit;
@@ -396,21 +397,21 @@ private:
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
-    juce::TextButton trackLoadButton { "CARICA" };
+    juce::TextButton trackLoadButton { vpui::L ("LOAD", "CARICA") };
     juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };
-    juce::TextButton settingsClose { "CHIUDI" };
+    juce::TextButton settingsClose { vpui::L ("CLOSE", "CHIUDI") };
     juce::TextButton accountButton { "PRO" };
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };
     juce::TextButton buf256 { "256" }, buf512 { "512" };
-    juce::TextButton procButton { "ELAB.  OFF" };
+    juce::TextButton procButton { vpui::L ("PROC.  OFF", "ELAB.  OFF") };
     /** Runtime choice: the original stroke-by-stroke engine, or the recorded
         bank with the original engine as its compatibility fallback. */
     juce::TextButton loopModeButton { "LOOP" };
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
-    juce::TextButton naturalButton { "NATURALE" };
+    juce::TextButton naturalButton { vpui::L ("NATURAL", "NATURALE") };
     juce::TextButton swingButton { "SWING" };
 
     /** Custom style select. A native ComboBox on iOS/macOS is a system picker

@@ -121,11 +121,17 @@ l'informativa **non è stata letta da un legale**.
 
 **Importanti**
 
-- [ ] **Lingua dell'interfaccia.** La console ha etichette in italiano
-  (`MISURE`, `SEGUI`, `FISSO`, `IMPOSTAZIONI`, `CHIUDI`...) e in inglese
-  (`START`, `TAP`). La nuova pagina è già EN/IT secondo la lingua del
-  dispositivo; il resto no. Scegli la lingua principale della scheda e valuta di
-  tradurre il resto prima di una vendita fuori dall'Italia.
+- [x] **Lingue: inglese e italiano** (2026-10-16). `Source/UI/Localization.h`:
+  `vpui::L ("english", "italiano")` sceglie dalla lingua del dispositivo (e dalla
+  lingua per-app di iOS: `CFBundleLocalizations` en/it + `en.lproj` e `it.lproj`
+  con il permesso del microfono in `Assets/Localization`). Il testo italiano è
+  quello che l'app aveva, parola per parola; l'inglese è nuovo. `Core/` non è
+  stato toccato (test e probe cercano quei nomi): la UI li traduce in
+  `vpui::styleName / kitName / barLabel`. Pannello debug e righe di log
+  restano in italiano (non si vedono). **Da rivedere a occhio** con l'app in
+  inglese: la lunghezza dei testi nei pulsanti stretti, e la scelta di
+  «MARCH», «TAMBOURINE», «SHIFT THE 1». Resta da fare lo stesso per la scheda
+  dello store (già bilingue in `docs/store/`).
 - [ ] **`UIFileSharingEnabled`** è attivo di default: la cartella Documenti è
   visibile in File e si scrive `VirtualPercussionist-stopstart.log` (solo numeri
   di tempo). Utile al banco, inutile in un prodotto. **Per l'archivio dello

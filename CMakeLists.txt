@@ -153,7 +153,9 @@ juce_add_gui_app (VirtualPercussionist
     BUILD_VERSION "${VP_BUILD_NUMBER}"
     # No cryptography of our own: App Store Connect stops asking the export
     # compliance question on every upload.
-    PLIST_TO_MERGE "<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>"
+    # Languages the app declares (iOS then offers a per-app language in Settings,
+    # and the App Store shows them): English and Italian, see Source/UI/Localization.h.
+    PLIST_TO_MERGE "<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/><key>CFBundleDevelopmentRegion</key><string>en</string><key>CFBundleLocalizations</key><array><string>en</string><string>it</string></array></dict></plist>"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
@@ -346,7 +348,15 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
         Source/Platform/Subscription.mm
         Source/Platform/StoreKitBridge.swift
         Assets/PrivacyInfo.xcprivacy
-        Assets/StoreKit/VirtualPercussionist.storekit)
+        Assets/StoreKit/VirtualPercussionist.storekit
+        Assets/Localization/en.lproj/InfoPlist.strings
+        Assets/Localization/it.lproj/InfoPlist.strings)
+    # Xcode files each into its own <lang>.lproj by the source folder; naming the
+    # lproj here as well nests it twice (it.lproj/it.lproj/...).
+    set_source_files_properties (Assets/Localization/en.lproj/InfoPlist.strings PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    set_source_files_properties (Assets/Localization/it.lproj/InfoPlist.strings PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
     # In the project (not the bundle) so Xcode's scheme editor lists it under
     # Run > Options > StoreKit Configuration.
     set_source_files_properties (Assets/StoreKit/VirtualPercussionist.storekit PROPERTIES

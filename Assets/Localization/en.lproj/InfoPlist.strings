@@ -1,0 +1,3 @@
+/* The microphone prompt, English. The Italian one is in it.lproj. */
+"NSMicrophoneUsageDescription" = "Virtual Percussionist listens to your band through the microphone or the audio input so it can play along in time. Audio is analysed on the device and never recorded or sent.";
+"CFBundleDisplayName" = "Virtual Percussionist";

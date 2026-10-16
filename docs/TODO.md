@@ -5611,6 +5611,7 @@ Richiesta dell'utente: portare l'app sull'App Store con 7 giorni di prova e poi 
 - [x] `PrivacyInfo.xcprivacy`, `ITSAppUsesNonExemptEncryption`, `VP_BUILD_NUMBER`, file `.storekit` per prove locali.
 - [x] 2026-10-16: icona = logo della splash (e appiattita senza alfa: JUCE la scriveva con alfa, rifiutata da App Store Connect); schermata Licenze; brano di prova sintetico su PLAY a vuoto (`Assets/Demo`, `VPDemoTrack`); versione 1.0.0; `VP_FILE_SHARING=OFF` per l'archivio; PATTERN, DBG e la card STATO (i log in fondo) tolti dalle impostazioni, knob Energia/Reverbero più grandi; testi dello store, privacy e assistenza in `docs/store/`.
 - [ ] **Bloccanti prima dell'invio:** licenza JUCE commerciale; **origine dei suoni** (conga e shaker da loop SampleFocus non CC0, `Assets/Hits/*.wav` senza fonte: vedi `Assets/Percussion/ATTRIBUTION.md`); URL privacy veri (`kPrivacyUrl` è inventato) e pagina pubblicata; scheda App Store Connect e screenshot.
+- [x] 2026-10-16: app in inglese e italiano (`Source/UI/Localization.h`, `Assets/Localization`); da guardare con la lingua del telefono in inglese.
 - [ ] Provare davvero acquisto, prova, reinstallazione (nessuna seconda prova), scadenza durante la riproduzione, ripristino, offline, Mac: elenco con risultati attesi in `docs/APPSTORE.md` §5.
 - [ ] Aprire `Assets/StoreKit/VirtualPercussionist.storekit` in Xcode (scritto a mano, non aperto); verificare il privacy report dopo il primo Archive.
 

@@ -100,7 +100,7 @@ namespace
     juce::String micGainText (float gain)
     {
         if (gain <= 0.001f)
-            return "MUTO";
+            return vpui::L ("MUTE", "MUTO");
         const float db = 20.0f * std::log10 (gain);
         return (db >= 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
     }
@@ -341,20 +341,23 @@ namespace
     /** And the word beside it. A red "SEGUENDO" would contradict itself, so
         while following the word is the trust; before START it says whether
         pressing it is safe. The other states keep their own words. */
-    const char* shownLabel (const vp::EngineSnapshot& s, vp::TempoTrust t)
+    juce::String shownLabel (const vp::EngineSnapshot& s, vp::TempoTrust t)
     {
         using B = vp::FollowBar;
         using T = vp::TempoTrust;
         // The guard has the part silent: say so, and say when it is on its
         // way back, so a gap never reads as the app having broken.
         if (s.driftGuarded)
-            return t == T::out ? "FUORI TEMPO - IN PAUSA" : "RIENTRA ALLA BATTUTA";
+            return t == T::out ? vpui::L ("OUT OF TEMPO - PAUSED", "FUORI TEMPO - IN PAUSA")
+                               : vpui::L ("REJOINING THE BEAT", "RIENTRA ALLA BATTUTA");
         if (s.followBar == B::paused && t != T::none)
-            return t == T::sure ? "AGGANCIATO - PUOI PARTIRE"
-                 : t == T::check ? "IN ASCOLTO - ASPETTA" : "IN ASCOLTO - NON ANCORA";
+            return t == T::sure ? vpui::L ("LOCKED - YOU CAN START", "AGGANCIATO - PUOI PARTIRE")
+                 : t == T::check ? vpui::L ("LISTENING - WAIT", "IN ASCOLTO - ASPETTA")
+                                 : vpui::L ("LISTENING - NOT YET", "IN ASCOLTO - NON ANCORA");
         if (s.followBar == B::following || s.followBar == B::followingListen)
-            return t == T::out ? "STA USCENDO" : t == T::check ? "CONTROLLA" : "SEGUENDO";
-        return vp::toBarString (s.followBar);
+            return t == T::out ? vpui::L ("DRIFTING", "STA USCENDO")
+                 : t == T::check ? vpui::L ("CHECK", "CONTROLLA") : vpui::L ("FOLLOWING", "SEGUENDO");
+        return vpui::barLabel (s.followBar);
     }
 
     bool stateIsHot (vp::FollowBar b)
@@ -698,7 +701,7 @@ namespace
                     area.withHeight (nameH * 1.6f).translated (0.0f, 6.0f).toNearestInt(),
                     juce::Justification::centredTop, false);
 
-        const juce::String valueText = off ? juce::String ("MUTO") : knobValueText (slider);
+        const juce::String valueText = off ? vpui::L ("MUTE", "MUTO") : knobValueText (slider);
         g.setFont (fontUi (valueH));
         g.setColour ((valueOnFill ? onFill : mute()).withMultipliedAlpha (alpha));
         g.drawText (valueText,
@@ -724,22 +727,36 @@ namespace
         clipped on the narrow side of the page. */
     juce::String clockNote()
     {
-        return juce::String (juce::CharPointer_UTF8 (
+        return vpui::L (
+            "AUTO follows the interface's clock and does not touch it: with the mixer at "
+            "48 kHz the app opens at 48 kHz. A fixed value is requested from the "
+            "interface, and changing it while playing makes it restart.",
             "AUTO segue il clock dell'interfaccia e non lo tocca: con il mixer a "
             "48 kHz l'app si apre a 48 kHz. Un valore fisso lo chiede "
-            "all'interfaccia, e cambiarlo mentre suona la fa ripartire."));
+            "all'interfaccia, e cambiarlo mentre suona la fa ripartire.");
     }
 
     juce::String bufferNote()
     {
-        return juce::String (juce::CharPointer_UTF8 (
+        return vpui::L (
+            "Shorter means less delay and more risk of dropouts. AUTO takes whatever "
+            "the interface is already giving.",
             "Piu' corto, meno ritardo e piu' rischio di buchi. AUTO prende quello "
-            "che l'interfaccia sta gia' dando."));
+            "che l'interfaccia sta gia' dando.");
     }
 
     juce::String inputNote()
     {
-        return juce::String (juce::CharPointer_UTF8 (
+        return vpui::L (
+            "MIXER for a close microphone or a desk send, IPAD for the microphone that "
+            "hears the room. TRACK reads a file and sends it to both the analysis and "
+            "the output, AirPods included. LOAD chooses the file; drag the waveform "
+            "below (or on the stage) to seek. PLAY pauses. In IPAD the app removes "
+            "shaker and congas from what it hears. MIC sets how much the analysis "
+            "hears: raise it until the knob ring enters the fuchsia band. Below it, "
+            "the analysis gets the tempo wrong; above it, amber and then red, and "
+            "nothing more is gained. PROC. OFF removes iOS automatic gain and echo "
+            "cancelling: that is what the analysis wants.",
             "MIXER per un microfono vicino o una mandata del banco, IPAD per il "
             "microfono che sente la stanza. BRANO legge un file e lo manda sia "
             "all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il "
@@ -750,7 +767,7 @@ namespace
             "l'analisi sbaglia il tempo; sopra, ambra e poi rosso, e non "
             "guadagna piu' niente. "
             "ELAB. OFF toglie guadagno automatico ed eco di iOS: e' quello che "
-            "vuole l'analisi."));
+            "vuole l'analisi.");
     }
 
     /** How tall that sentence comes out at a given width. Measured rather than
@@ -804,11 +821,11 @@ namespace
     // Row 0 is AUTO; every row after it is `vp::toString (GrooveStyle (index - 1))`
     // - one source for the label text, so a style added to the enum shows up
     // here with its real name instead of "?".
-    const char* styleMenuLabel (int index) noexcept
+    juce::String styleMenuLabel (int index)
     {
         if (index == 0)
             return "AUTO";
-        return vp::toString (static_cast<vp::GrooveStyle> (index - 1));
+        return vpui::styleName (static_cast<vp::GrooveStyle> (index - 1));
     }
 }
 

@@ -58,7 +58,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     {
         const auto stCol = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
         const bool hot = stateIsHot (snap.followBar) || trust == vp::TempoTrust::sure;
-        const juce::String label (juce::CharPointer_UTF8 (shownLabel (snap, trust)));
+        const juce::String label = shownLabel (snap, trust);
         const bool bigPill = rows.pill.getHeight() >= 40;
         const auto f = bigPill ? fontUi (17.0f)
                                : fontUi (rows.pill.getHeight() < 28 ? 11.0f : 12.0f, false);
@@ -220,17 +220,19 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // the number does. The state itself is the pill's job, not this line's.
         juce::StringArray parts;
         if (snap.driftGuarded)
-            parts.add (juce::String (juce::CharPointer_UTF8 ("percussioni in pausa finch\xc3\xa9 il tempo non torna")));
+            parts.add (vpui::L ("percussion paused until the tempo returns",
+                                "percussioni in pausa finch\xc3\xa9 il tempo non torna"));
         else if (snap.percussionAudible && ! snap.clapAllowed && engine.settings().clapEnabled.load())
-            parts.add ("clap in attesa dell'1");
+            parts.add (vpui::L ("clap waiting for the 1", "clap in attesa dell'1"));
         if (userFixed)
-            parts.add ("TEMPO FISSO");
+            parts.add (vpui::L ("FIXED TEMPO", "TEMPO FISSO"));
         else if (! snap.levelSettled)
-            parts.add ("livello provvisorio");
+            parts.add (vpui::L ("provisional level", "livello provvisorio"));
         if (snap.tempoOctave != 0)
-            parts.add (juce::String (juce::CharPointer_UTF8 (snap.tempoOctave < 0 ? "a met\xc3\xa0"
-                                                                                  : "doppio"))
-                       + (snap.tempoOctaveAuto ? " (auto)" : " (manuale)"));
+            parts.add ((snap.tempoOctave < 0 ? vpui::L ("half", "a met\xc3\xa0")
+                                             : vpui::L ("double", "doppio"))
+                       + (snap.tempoOctaveAuto ? juce::String (" (auto)")
+                                               : vpui::L (" (manual)", " (manuale)")));
         if (! parts.isEmpty())
         {
             g.setColour (text());
@@ -382,8 +384,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     {
         g.setColour (mute());
         g.setFont (fontUi (12.0f));
-        g.drawFittedText (juce::String ("PARTE  ")
-                              + vp::toString (static_cast<vp::GrooveStyle> (snap.grooveStyle))
+        g.drawFittedText (vpui::L ("PART  ", "PARTE  ")
+                              + vpui::styleName (static_cast<vp::GrooveStyle> (snap.grooveStyle))
                               + (engine.settings().grooveAuto.load()
                                      ? "   (auto " + juce::String (snap.grooveStyleConfidence, 2) + ")"
                                      : juce::String()),
@@ -421,7 +423,7 @@ void MainComponent::paintSettings (juce::Graphics& g)
         g.fillRoundedRectangle (brand.withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
         g.setColour (text());
         g.setFont (fontUi (13.0f));
-        g.drawFittedText (juce::String (juce::CharPointer_UTF8 ("VIRTUAL PERCUSSIONIST  \xc2\xb7  IMPOSTAZIONI")),
+        g.drawFittedText (vpui::L ("VIRTUAL PERCUSSIONIST  \xc2\xb7  SETTINGS", "VIRTUAL PERCUSSIONIST  \xc2\xb7  IMPOSTAZIONI"),
                           titleR, juce::Justification::centredLeft, 1);
         g.setColour (fuchsia().withAlpha (0.55f));
         g.fillRect ((float) settingsRows.title.getX(),

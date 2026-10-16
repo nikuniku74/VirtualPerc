@@ -53,7 +53,7 @@ void MainComponent::TrackWaveform::paint (juce::Graphics& g)
     {
         g.setColour (mute());
         g.setFont (fontUi (11.0f, false));
-        g.drawFittedText ("Onda in caricamento...", bounds.toNearestInt(),
+        g.drawFittedText (vpui::L ("Loading waveform...", "Onda in caricamento..."), bounds.toNearestInt(),
                           juce::Justification::centred, 1);
         return;
     }
@@ -125,14 +125,14 @@ void MainComponent::StyleSelect::paint (juce::Graphics& g)
         owner.engine.settings().grooveStyle.load());
     // The style name is the big word. Under AUTO it is the one the detector has
     // landed on (without selecting it), and a small AUTO tag says who chose.
-    juce::String mainText = juce::String (vp::toString (chosen));
+    juce::String mainText = vpui::styleName (chosen);
     juce::String tag;
     if (autoOn)
     {
         const auto detected = static_cast<vp::GrooveStyle> (owner.snap.grooveStyle);
         if (detected != vp::GrooveStyle::count)
         {
-            mainText = juce::String (vp::toString (detected));
+            mainText = vpui::styleName (detected);
             tag = "AUTO";
         }
         else
@@ -240,7 +240,7 @@ void MainComponent::StyleMenuOverlay::paint (juce::Graphics& g)
     g.drawRoundedRectangle (r.reduced (0.5f), 24.0f, 1.0f);
     g.setColour (mute());
     g.setFont (fontUi (13.0f));
-    g.drawText ("STILE", sheet.withHeight (44).reduced (20, 0), juce::Justification::centredLeft, false);
+    g.drawText (vpui::L ("STYLE", "STILE"), sheet.withHeight (44).reduced (20, 0), juce::Justification::centredLeft, false);
 }
 
 void MainComponent::StyleMenuOverlay::resized()
@@ -384,19 +384,19 @@ void MainComponent::SoundMenuOverlay::paint (juce::Graphics& g)
     auto head = card.reduced (16, 0).withTrimmedTop (12).removeFromTop (kTitleH - 12);
     g.setColour (text());
     g.setFont (fontUi (15.0f, true));
-    g.drawText (hitMode ? "CAMPIONI" : "SUONI", head.removeFromTop (18),
+    g.drawText (hitMode ? vpui::L ("SAMPLES", "CAMPIONI") : vpui::L ("SOUNDS", "SUONI"), head.removeFromTop (18),
                 juce::Justification::centredLeft, false);
     g.setColour (mute());
     g.setFont (fontUi (10.5f));
-    g.drawText (juce::String ("al posto di ") + current, head,
+    g.drawText (vpui::L ("instead of ", "al posto di ") + current, head,
                 juce::Justification::centredLeft, false);
 
     if (shown == 0)
     {
         g.setColour (mute());
         g.setFont (fontUi (12.0f));
-        g.drawFittedText (hitMode ? "Nessun campione libero"
-                                  : "Nessun suono libero",
+        g.drawFittedText (hitMode ? vpui::L ("No free sample", "Nessun campione libero")
+                                  : vpui::L ("No free sound", "Nessun suono libero"),
                           list.getBounds(), juce::Justification::centred, 2);
     }
 }
@@ -446,8 +446,8 @@ void MainComponent::SoundMenuOverlay::resized()
     int labelW = 0;
     for (int k = 0; k < n; ++k)
     {
-        const auto name = juce::String (hitMode ? kHitNames[vis[k]]
-            : vp::toString (static_cast<vp::KitSound> (vis[k])));
+        const auto name = hitMode ? juce::String (kHitNames[vis[k]])
+            : vpui::kitName (static_cast<vp::KitSound> (vis[k]));
         labelW = juce::jmax (labelW, juce::GlyphArrangement::getStringWidthInt (measureFont, name));
     }
     const int listW = juce::jmin (getWidth() - 2 * (margin + pad),
@@ -467,8 +467,8 @@ void MainComponent::SoundMenuOverlay::resized()
             row.removeFromTop (btnGap);
         items[i].setVisible (true);
         items[i].setBounds (cell);
-        items[i].setButtonText (hitMode ? kHitNames[i]
-            : vp::toString (static_cast<vp::KitSound> (i)));
+        items[i].setButtonText (hitMode ? juce::String (kHitNames[i])
+            : vpui::kitName (static_cast<vp::KitSound> (i)));
         const auto fill = hitMode ? knobInterior (colourForHit (i))
                                   : knobInteriorForKitSound (static_cast<vp::KitSound> (i));
         items[i].setToggleState (false, juce::dontSendNotification);
