@@ -2,6 +2,8 @@
 
 #include "Audio/TrackStreamer.h"
 #include "Audio/VirtualPercussionEngine.h"
+#include "Platform/Subscription.h"
+#include "UI/PaywallOverlay.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -87,6 +89,8 @@ private:
     void refreshSourceButton();
     void chooseInternalTrack();
     void loadInternalTrack (juce::URL url);
+    /** PLAY with nothing loaded: the built-in demo song (Assets/Demo). */
+    void loadDemoTrack();
     void seekInternalTrack (double proportion);
     void buildTrackWaveform();
     void processTrackWaveform();
@@ -248,6 +252,19 @@ private:
     };
     SplashOverlay splash;
 
+    /** The subscription page (7 days free, then monthly or yearly) and what it
+        gates. Without an active trial or subscription START, and PLAY on a
+        loaded track, open it instead of starting (Release builds; see
+        VP_PAYWALL_ENFORCED in CMakeLists.txt). Platform/Subscription.h. */
+    PaywallOverlay paywall;
+    vp::store::Status subscription;
+    bool paywallAutoShown = false;
+    bool hasAccess() const noexcept;
+    /** True when the audio may start; otherwise shows the paywall and says no. */
+    bool requireAccess();
+    void showPaywall (bool show);
+    void onSubscriptionStatus (const vp::store::Status&);
+
     /** The parts of the settings page that are drawn rather than placed: the
         heading, the sentence under each group saying what the choice costs, and
         the block of numbers the hardware actually came back with. Computed in
@@ -383,6 +400,7 @@ private:
     juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };
     juce::TextButton settingsClose { "CHIUDI" };
+    juce::TextButton accountButton { "PRO" };
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };

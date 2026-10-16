@@ -4,9 +4,15 @@ cmake_minimum_required (VERSION 3.22)
 # fails configure on a Linux host, where the console test target is the only
 # thing that can be built anyway.
 if (APPLE)
-    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX OBJC OBJCXX)
+    project (VirtualPercussionist VERSION 1.0.0 LANGUAGES C CXX OBJC OBJCXX)
 else()
-    project (VirtualPercussionist VERSION 0.1.0 LANGUAGES C CXX)
+    project (VirtualPercussionist VERSION 1.0.0 LANGUAGES C CXX)
+endif()
+
+# StoreKit 2 is a Swift-only API; StoreKitBridge.swift is the whole of the Swift
+# in this project, iOS only (Source/Platform/Subscription.h).
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language (Swift)
 endif()
 
 set (CMAKE_CXX_STANDARD 20)
@@ -127,6 +133,9 @@ if (EXISTS "${VP_BEAT_MODEL}")
 endif()
 
 
+option (VP_FILE_SHARING "Show the app Documents folder in Files (bench logs)" ON)
+set (VP_BUILD_NUMBER "1" CACHE STRING "CFBundleVersion: increase for every App Store Connect upload")
+
 juce_add_gui_app (VirtualPercussionist
     PRODUCT_NAME "Virtual Percussionist"
     COMPANY_NAME "Virtual Percussionist"
@@ -138,12 +147,21 @@ juce_add_gui_app (VirtualPercussionist
     # in-app landing (MainComponent::SplashOverlay) opens on the same picture,
     # so the hand-over is seamless. The image itself is a bundle resource below.
     LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchScreen.storyboard"
+    # CFBundleVersion: an integer that goes up with every upload to App Store
+    # Connect (the marketing version above stays 0.1.0 until it is a release).
+    # Override: cmake -DVP_BUILD_NUMBER=7
+    BUILD_VERSION "${VP_BUILD_NUMBER}"
+    # No cryptography of our own: App Store Connect stops asking the export
+    # compliance question on every upload.
+    PLIST_TO_MERGE "<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/></dict></plist>"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE
     # The STOP/START log is written to the app's Documents folder; this makes
-    # that folder visible in Files ("On My iPad") so it can be sent on.
-    FILE_SHARING_ENABLED TRUE
+    # that folder visible in Files ("On My iPad") so it can be sent on. Useful on
+    # the bench, wrong in a product: configure the App Store archive with
+    # -DVP_FILE_SHARING=OFF (docs/APPSTORE.md).
+    FILE_SHARING_ENABLED ${VP_FILE_SHARING}
     DOCUMENT_BROWSER_ENABLED TRUE
     # iPhone and iPad. 1 is iPhone, 2 is iPad. This is the one that actually
     # decides anything here: it becomes UIDeviceFamily in the Info.plist, which
@@ -204,6 +222,24 @@ endif()
 # here. Mac stays on and Vision goes off in App Store Connect, and nowhere else.
 # See docs/PLATFORM.md.
 
+# JUCE writes every app icon with an alpha channel, and App Store Connect rejects
+# an app whose 1024 px icon has one (ITMS-90717, found 2026-10-16: the generated
+# Icon-AppStore-1024.png said hasAlpha: yes while Assets/AppIcon.png says no).
+# Flatten them at configure time, right after JUCE writes them. Needs Pillow
+# (pip install pillow); without it the warning says what to do.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    file (GLOB VP_ICON_PNGS
+        "${CMAKE_BINARY_DIR}/VirtualPercussionist_artefacts/JuceLibraryCode/VirtualPercussionist/Images.xcassets/AppIcon.appiconset/Icon-*.png")
+    if (VP_ICON_PNGS)
+        execute_process (
+            COMMAND python3 -c "import sys; from PIL import Image; [Image.open(p).convert('RGB').save(p) for p in sys.argv[1:]]" ${VP_ICON_PNGS}
+            RESULT_VARIABLE VP_ICON_RESULT ERROR_QUIET)
+        if (NOT VP_ICON_RESULT EQUAL 0)
+            message (WARNING "App icons still have an alpha channel (App Store Connect rejects it): pip3 install pillow, then reconfigure")
+        endif()
+    endif()
+endif()
+
 juce_generate_juce_header (VirtualPercussionist)
 
 # CONFIGURE_DEPENDS, because without it this list is frozen at the configure
@@ -263,6 +299,19 @@ else()
     message (STATUS "Recorded loop bank not embedded - the app uses patterns")
 endif()
 
+# The demo song PLAY plays when nothing is loaded (App Review has no band).
+# Regenerate with the VPDemoTrack target. Ours: rendered by scripts/probe_song_render.h.
+set (VP_DEMO_TRACK "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Demo/demo-track.wav")
+if (EXISTS "${VP_DEMO_TRACK}")
+    juce_add_binary_data (VpDemoData
+        HEADER_NAME VpDemoData.h
+        NAMESPACE VpDemoData
+        SOURCES "${VP_DEMO_TRACK}"
+    )
+    target_link_libraries (VirtualPercussionist PRIVATE VpDemoData)
+    target_compile_definitions (VirtualPercussionist PRIVATE VP_HAS_DEMO_TRACK=1)
+endif()
+
 if (VP_HAS_BEAT_MODEL_FILE)
     juce_add_binary_data (VpBeatModel
         HEADER_NAME VpBeatModelData.h
@@ -279,10 +328,42 @@ target_sources (VirtualPercussionist PRIVATE
     Source/UI/MainComponentLayout.cpp
     Source/UI/MainComponentPaint.cpp
     Source/UI/MainComponentWidgets.cpp
+    Source/UI/PaywallOverlay.cpp
 )
 
+# The paywall. Enforced in Release builds (what goes to the App Store) and off in
+# Debug, so a run from Xcode on the bench iPad is not behind it. To see or test
+# it in Debug: cmake -DVP_PAYWALL_DEBUG=ON, with the StoreKit file
+# Assets/StoreKit/VirtualPercussionist.storekit set in the scheme.
+option (VP_PAYWALL_DEBUG "Enforce the paywall in Debug builds too" OFF)
+target_compile_definitions (VirtualPercussionist PRIVATE
+    VP_PAYWALL_ENFORCED=$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<BOOL:${VP_PAYWALL_DEBUG}>>,1,0>)
+target_sources (VirtualPercussionist PRIVATE Source/Platform/Subscription.cpp)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_sources (VirtualPercussionist PRIVATE Source/Platform/IosMicPermission.mm)
+    target_sources (VirtualPercussionist PRIVATE
+        Source/Platform/IosMicPermission.mm
+        Source/Platform/Subscription.mm
+        Source/Platform/StoreKitBridge.swift
+        Assets/PrivacyInfo.xcprivacy
+        Assets/StoreKit/VirtualPercussionist.storekit)
+    # In the project (not the bundle) so Xcode's scheme editor lists it under
+    # Run > Options > StoreKit Configuration.
+    set_source_files_properties (Assets/StoreKit/VirtualPercussionist.storekit PROPERTIES
+        HEADER_FILE_ONLY TRUE)
+    target_compile_definitions (VirtualPercussionist PRIVATE VP_STOREKIT=1)
+    set_source_files_properties (Assets/PrivacyInfo.xcprivacy PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    # The module name is pinned so Subscription.mm can import one fixed header
+    # ("Virtual Percussionist" would otherwise become Virtual_Percussionist).
+    set_target_properties (VirtualPercussionist PROPERTIES
+        XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "VirtualPercussionist"
+        XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+        # JUCE's common flag string (-flto and a page of clang -W options) is
+        # applied to every language of the target; swiftc rejects it.
+        XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "-DVP_STOREKIT"
+        XCODE_ATTRIBUTE_SWIFT_OBJC_INTERFACE_HEADER_NAME "VirtualPercussionist-Swift.h"
+        XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES "YES")
 else()
     target_sources (VirtualPercussionist PRIVATE Source/Platform/IosMicPermission.cpp)
 endif()
@@ -406,6 +487,46 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_link_libraries (VPTiming PRIVATE
         juce::juce_dsp
         juce::juce_audio_basics
+        juce::juce_core
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
+    # The subscription pages as PNGs, plus the checks on them that need no
+    # store. See scripts/paywall_shots.cpp.
+    juce_add_console_app (VPPaywall
+        PRODUCT_NAME "VPPaywall"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPPaywall PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPPaywall PRIVATE ${VP_CORE_SOURCES}
+        Source/UI/PaywallOverlay.cpp Source/Platform/Subscription.cpp
+        Source/Platform/IosMicPermission.cpp scripts/paywall_shots.cpp)
+    target_include_directories (VPPaywall PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPPaywall PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 VP_HAS_LOOP_BANK=0)
+    target_link_libraries (VPPaywall PRIVATE
+        juce::juce_audio_utils
+        juce::juce_gui_extra
+        juce::juce_dsp
+        PUBLIC
+        juce::juce_recommended_config_flags
+    )
+
+    # Writes Assets/Demo/demo-track.wav (see scripts/make_demo_track.cpp).
+    juce_add_console_app (VPDemoTrack
+        PRODUCT_NAME "VPDemoTrack"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPDemoTrack PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPDemoTrack PRIVATE scripts/make_demo_track.cpp)
+    target_include_directories (VPDemoTrack PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
+    target_compile_definitions (VPDemoTrack PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries (VPDemoTrack PRIVATE
+        juce::juce_audio_formats
         juce::juce_core
         PUBLIC
         juce::juce_recommended_config_flags

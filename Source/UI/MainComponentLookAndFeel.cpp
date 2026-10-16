@@ -41,6 +41,22 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     if (area.isEmpty())
         return;
 
+    // The classic round close button: a cross, no word.
+    if ((bool) button.getProperties().getWithDefault ("closeIcon", false))
+    {
+        const auto c = area.toFloat().getCentre();
+        const float r = static_cast<float> (juce::jmin (area.getWidth(), area.getHeight())) * 0.22f;
+        juce::Path cross;
+        cross.startNewSubPath (c.x - r, c.y - r);
+        cross.lineTo (c.x + r, c.y + r);
+        cross.startNewSubPath (c.x + r, c.y - r);
+        cross.lineTo (c.x - r, c.y + r);
+        g.setColour (text());
+        g.strokePath (cross, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                                   juce::PathStrokeType::rounded));
+        return;
+    }
+
     const juce::String label = button.getButtonText();
     juce::Font f = getTextButtonFont (button, button.getHeight());
     const float w = juce::GlyphArrangement::getStringWidth (f, label);

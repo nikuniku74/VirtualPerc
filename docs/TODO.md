@@ -5602,6 +5602,18 @@ Richiesta dell'utente: il logo (versione scura di `~/Desktop/Logo Virtual Percus
 - [x] **Sull'iPad non si animava** (segnalato dall'utente): il tempo partiva alla costruzione, e all'avvio iOS tiene occupato il thread dell'interfaccia (permesso del microfono, dispositivo audio, rete); al primo fotogramma i 2.3 s erano già passati. Ora l'animazione ha un orologio suo (`animMs`), che avanza solo con la splash a schermo e al più 50 ms per fotogramma: un blocco la ferma invece di saltarla. Rivista sul Mac.
 - [ ] Sull'iPad e sull'iPhone: il passaggio dallo storyboard alla landing non deve far vedere uno stacco (stessa posizione e misura del logo), anche ruotato.
 
+### 124. App Store: prova di 7 giorni e abbonamento 🟡 (2026-10-15, compila Mac e iOS Release — nessun acquisto provato)
+
+Richiesta dell'utente: portare l'app sull'App Store con 7 giorni di prova e poi abbonamento, solo Apple. Tutto il lavoro, i controlli di sicurezza e la lista di cosa manca sono in **`docs/APPSTORE.md`**: leggere quello prima di toccare.
+- [x] StoreKit 2 in Swift (`Source/Platform/StoreKitBridge.swift`) dietro un'API C++ (`Subscription.h`); la prova è l'offerta introduttiva sul prodotto, quindi Apple la lega all'ID Apple (niente server, niente contatore nostro). Host/test: stub «abbonato».
+- [x] Schermate (`Source/UI/PaywallOverlay`): offerta, «sei dentro» (prova/abbonato/disdetto), caricamento, offline, in attesa, errore; EN/IT; 22 anteprime con `VPPaywall`. Pulsante PRO/TRIAL nella testata delle impostazioni.
+- [x] START e PLAY bloccati senza accesso nelle build Release; Debug libero (`VP_PAYWALL_DEBUG` per provarlo).
+- [x] `PrivacyInfo.xcprivacy`, `ITSAppUsesNonExemptEncryption`, `VP_BUILD_NUMBER`, file `.storekit` per prove locali.
+- [x] 2026-10-16: icona = logo della splash (e appiattita senza alfa: JUCE la scriveva con alfa, rifiutata da App Store Connect); schermata Licenze; brano di prova sintetico su PLAY a vuoto (`Assets/Demo`, `VPDemoTrack`); versione 1.0.0; `VP_FILE_SHARING=OFF` per l'archivio; PATTERN, DBG e la card STATO (i log in fondo) tolti dalle impostazioni, knob Energia/Reverbero più grandi; testi dello store, privacy e assistenza in `docs/store/`.
+- [ ] **Bloccanti prima dell'invio:** licenza JUCE commerciale; **origine dei suoni** (conga e shaker da loop SampleFocus non CC0, `Assets/Hits/*.wav` senza fonte: vedi `Assets/Percussion/ATTRIBUTION.md`); URL privacy veri (`kPrivacyUrl` è inventato) e pagina pubblicata; scheda App Store Connect e screenshot.
+- [ ] Provare davvero acquisto, prova, reinstallazione (nessuna seconda prova), scadenza durante la riproduzione, ripristino, offline, Mac: elenco con risultati attesi in `docs/APPSTORE.md` §5.
+- [ ] Aprire `Assets/StoreKit/VirtualPercussionist.storekit` in Xcode (scritto a mano, non aperto); verificare il privacy report dopo il primo Archive.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

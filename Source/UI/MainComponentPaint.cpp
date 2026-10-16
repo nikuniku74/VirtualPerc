@@ -435,65 +435,8 @@ void MainComponent::paintSettings (juce::Graphics& g)
     g.drawFittedText (bufferNote(), settingsRows.bufferNote, juce::Justification::centredLeft, 8);
     g.drawFittedText (inputNote(), settingsRows.inputNote, juce::Justification::centredLeft, 8);
 
-    // Status: what came back, not what was asked for.
-    {
-        auto* dev = deviceManager.getCurrentAudioDevice();
-        const double devSr = dev != nullptr ? dev->getCurrentSampleRate() : 0.0;
-        const int devBuf = dev != nullptr ? dev->getCurrentBufferSizeSamples() : 0;
-        const int outs = dev != nullptr
-                             ? dev->getActiveOutputChannels().countNumberOfSetBits() : 0;
-        const double blockMs = devSr > 0.0 && devBuf > 0
-                                   ? devBuf * 1000.0 / devSr : 0.0;
-        const juce::String route (vp::sessionRouteName());
-
-        juce::StringArray lines;
-        lines.add (juce::String ("clock      ")
-                   + (devSr > 0.0 ? juce::String (devSr, 0) + " Hz" : juce::String ("--"))
-                   + (clockHz > 0 ? juce::String ("   (chiesto ") + juce::String (clockHz) + ")"
-                                  : juce::String ("   (auto)")));
-        lines.add (juce::String ("buffer     ")
-                   + (devBuf > 0 ? juce::String (devBuf) + "  ->  "
-                                       + juce::String (blockMs, 1) + " ms"
-                                 : juce::String ("--")));
-        lines.add (juce::String ("latenza    ") + juce::String (snap.latencyMs, 1) + " ms");
-        lines.add (juce::String ("canali     in ") + juce::String (inputChannels)
-                   + "   out " + juce::String (outs));
-        if (route.isNotEmpty())
-            lines.add ("uscita     " + route);
-        lines.add (juce::String ("altre app  ")
-                   + (vp::otherAudioPlaying() ? "in riproduzione" : "ferme"));
-        lines.add (juce::String ("motore     ")
-                   + (snap.aiOnnx ? "ONNX BeatNet" : "AI STUB"));
-        juce::String partStatus;
-        if (! loopBankReady)
-            partStatus = "PATTERN  (banco non disponibile)";
-        else if (! engine.recordedLoopsEnabled())
-            partStatus = "PATTERN";
-        else if (snap.sampleRate > 1000.0 && std::fabs (snap.sampleRate - 48000.0) >= 1.0)
-            partStatus = "LOOP  (serve 48 kHz)";
-        else if (engine.settings().swing.load (std::memory_order_relaxed) > 0.18f)
-            // SWING is a switch now, so this is not a corner any more: on, it is
-            // always past what the bank has takes for (`LoopBank::swingTolerance`),
-            // and the part falls back to the stroke engine rather than going
-            // quiet. Say so - a listener who turns SWING on with LOOP selected is
-            // owed the reason the recordings stopped. See docs/TODO.md item 7.
-            partStatus = "PATTERN  (SWING: il banco non ha prese swingate)";
-        else if (snap.bpm > 1.0f && (snap.bpm < 98.0f || snap.bpm > 155.0f))
-            partStatus = "LOOP  (BPM fuori banco)";
-        else
-            partStatus = snap.loopPlaying ? "LOOP  (in riproduzione)"
-                                          : "LOOP  (attesa clock)";
-        lines.add ("parte      " + partStatus);
-        // A rig that needs this is a rig with a problem the app is papering
-        // over, so the number is on the page rather than in a log nobody reads.
-        lines.add (juce::String ("riavvii    ") + juce::String (deviceRebuilds)
-                   + (deviceRebuilds > 0 ? "   " + lastRebuildWhy : ""));
-
-        g.setColour (mute());
-        g.setFont (fontUi (12.0f, false));
-        g.drawFittedText (lines.joinIntoString ("\n"), settingsRows.status,
-                          juce::Justification::centredLeft, kStatusLines);
-    }
+    // The live numbers (clock, buffer, latency, route, part) used to be printed in
+    // a STATO card here; taken off the page for the product (user's call, 2026-10-16).
 }
 
 void MainComponent::paint (juce::Graphics& g)

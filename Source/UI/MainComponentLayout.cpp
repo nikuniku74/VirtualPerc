@@ -540,7 +540,7 @@ void MainComponent::resized()
     const auto isOverlay = [this] (const juce::Component* c)
     {
         return c == &settingsOverlay || c == &styleMenu || c == &soundMenu || c == &faderZoom
-            || c == &splash;
+            || c == &splash || c == &paywall;
     };
     juce::Array<std::pair<juce::Component*, juce::Rectangle<int>>> before;
     if (animateMode)
@@ -549,6 +549,8 @@ void MainComponent::resized()
                 before.add ({ c, c->getBounds() });
     laidOutSafeArea = effectiveSafeArea();
     settingsOverlay.setBounds (getLocalBounds());
+    paywall.setBounds (getLocalBounds());
+    paywall.setSafeArea (laidOutSafeArea);
     if (settingsOverlay.isVisible())
         layoutSettings (settingsOverlay.getLocalBounds());
 
@@ -734,7 +736,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     auto r = safePadded (area);
 
     auto head = r.removeFromTop (34);
-    settingsClose.setBounds (head.removeFromRight (juce::jmin (120, head.getWidth() / 3))
+    settingsClose.setBounds (head.removeFromRight (head.getHeight()).reduced (4));
+    accountButton.setBounds (head.removeFromRight (juce::jmin (110, head.getWidth() / 3))
                                  .reduced (2));
     settingsRows.title = head.withTrimmedRight (8);
     r.removeFromTop (14);
@@ -776,16 +779,15 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // Sized against their contents, placed second - the same order the stage
     // rows are computed in. A share of the column each gave a two-line caption
     // the same room as a seven-line read-out.
-    enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kStatus, kCards };
+    enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kCards };
     int h[kCards] = {
         chrome + rowH,
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
         chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0)
             + noteGap + noteHeight (inputNote(), bodyW),
-        chrome + 88,
-        chrome + rowH,
-        chrome + juce::roundToInt (fontUi (12.0f, false).getHeight() * 1.32f) * kStatusLines
+        chrome + 132,
+        chrome + rowH
     };
 
     int want = (kCards - 1) * gap;
@@ -876,11 +878,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     }
 
     buttonRow (card (take (h[kTests]), "PERCUSSIONI / PROVE"),
-               { &loopModeButton, &themeButton, &clickButton, &latencyButton, &debugButton });
+               { &themeButton, &clickButton, &latencyButton });
 
-    // The numbers are the point of the page: a clock the listener chose and a
-    // clock the hardware gave are not the same thing, and only one of them is
-    // what the engine is running at.
-    settingsRows.status = card (take (h[kStatus]), "STATO");
     layoutTrackWaveform();
 }

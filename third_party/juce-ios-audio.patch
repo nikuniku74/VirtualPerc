@@ -1,0 +1,381 @@
+diff --git a/modules/juce_audio_devices/native/juce_Audio_ios.cpp b/modules/juce_audio_devices/native/juce_Audio_ios.cpp
+index c9857b2d78..82528fa413 100644
+--- a/modules/juce_audio_devices/native/juce_Audio_ios.cpp
++++ b/modules/juce_audio_devices/native/juce_Audio_ios.cpp
+@@ -40,7 +40,7 @@ class iOSAudioIODevice;
+ constexpr const char* const iOSAudioDeviceName = "iOS Audio";
+ 
+ #ifndef JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES
+- #define JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES
++ #define JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES 44100.0, 48000.0
+ #endif
+ 
+ constexpr std::initializer_list<double> iOSExplicitSampleRates { JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES };
+@@ -208,7 +208,7 @@ JUCE_END_IGNORE_WARNINGS_GCC_LIKE
+ namespace juce {
+ 
+ #ifndef JUCE_IOS_AUDIO_LOGGING
+- #define JUCE_IOS_AUDIO_LOGGING 0
++ #define JUCE_IOS_AUDIO_LOGGING 1 // VPDIAG temporaneo
+ #endif
+ 
+ #if JUCE_IOS_AUDIO_LOGGING
+@@ -220,10 +220,7 @@ namespace juce {
+ static void logNSError (NSError* e)
+ {
+     if (e != nil)
+-    {
+-        JUCE_IOS_AUDIO_LOG ("iOS Audio error: " << [e.localizedDescription UTF8String]);
+-        jassertfalse;
+-    }
++        JUCE_IOS_AUDIO_LOG ("iOS Audio error: " << nsStringToJuce ([e localizedDescription]));
+ }
+ 
+ #define JUCE_NSERROR_CHECK(X)     { NSError* error = nil; X; logNSError (error); }
+@@ -309,6 +306,7 @@ public:
+ 
+         const auto result = audioCallbackOccurred.wait (1000.0);
+ 
++        AudioOutputUnitStop (audioUnit);
+         AudioComponentInstanceDispose (audioUnit);
+         audioUnit = nullptr;
+ 
+@@ -346,7 +344,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+         // may be changed later.
+         setAudioSessionCategory (AVAudioSessionCategoryPlayAndRecord);
+ 
+-        setAudioSessionActive (true);
++        setAudioSessionActive (true, true);
+         updateHardwareInfo();
+         channelData.reconfigure ({}, {});
+         setAudioSessionActive (false);
+@@ -371,16 +369,11 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         if (category == AVAudioSessionCategoryPlayAndRecord)
+         {
+-           #if JUCE_IOS_API_VERSION_CAN_BE_BUILT (26, 0)
+-            constexpr auto bluetoothOption = AVAudioSessionCategoryOptionAllowBluetoothHFP;
+-           #else
+-            constexpr auto bluetoothOption = AVAudioSessionCategoryOptionAllowBluetooth;
+-           #endif
+-
++            // No HFP (AllowBluetooth): that locks the session to 8–16 kHz and
++            // makes all mixed audio sound slow and distorted.
+             options |= AVAudioSessionCategoryOptionDefaultToSpeaker
+                      | AVAudioSessionCategoryOptionAllowAirPlay
+-                     | AVAudioSessionCategoryOptionAllowBluetoothA2DP
+-                     | bluetoothOption;
++                     | AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+         }
+ 
+         JUCE_NSERROR_CHECK ([[AVAudioSession sharedInstance] setCategory: category
+@@ -388,19 +381,26 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                                                                    error: &error]);
+     }
+ 
+-    static void setAudioSessionActive (bool enabled)
++    /** `probeSampleRate` builds a throwaway RemoteIO for iOS 18. Never run
++        it while this device has a live unit: a second unit can disturb the
++        output during an interruption or route recovery. */
++    static void setAudioSessionActive (bool enabled, bool probeSampleRate = false)
+     {
+         JUCE_NSERROR_CHECK ([[AVAudioSession sharedInstance] setActive: enabled
+                                                                  error: &error]);
+ 
++        if (! probeSampleRate || ! enabled)
++            return;
++
+         if (@available (iOS 18, *))
+         {
+-            if (enabled)
+-            {
+-                SubstituteAudioUnit au;
+-                [[maybe_unused]] const auto success = au.waitForAudioCallback();
+-                jassert (success);
+-            }
++            SubstituteAudioUnit au;
++            [[maybe_unused]] const auto success = au.waitForAudioCallback();
++            // Timeout is not fatal. On iOS 18+ this probe can miss the first
++            // callback (especially if the session was already touched), and
++            // jassert (success) stops Xcode with SIGTRAP on the message thread.
++            if (! success)
++                JUCE_IOS_AUDIO_LOG ("SubstituteAudioUnit waitForAudioCallback timed out");
+         }
+     }
+ 
+@@ -508,10 +508,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                                               &audioQueue);
+ 
+         if (err != noErr || audioQueue == nullptr)
+-        {
+-            jassertfalse;
+             return {};
+-        }
+ 
+         const ScopeGuard disposeAudioQueueOnReturn { [&]
+         {
+@@ -527,10 +524,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                                                     &size);
+ 
+         if (propErr != noErr || size != sizeof (result))
+-        {
+-            jassertfalse;
+             return {};
+-        }
+ 
+         return result;
+     }
+@@ -683,6 +677,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                  double sampleRateWanted, int bufferSizeWanted)
+     {
+         close();
++        restartFailed.set (false);
+ 
+         firstHostTime = true;
+         lastNumFrames = 0;
+@@ -700,11 +695,21 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                             << ", targetSampleRate: " << targetSampleRate
+                             << ", targetBufferSize: " << targetBufferSize);
+ 
++        // The constructor already performed the iOS 18 discovery probe.
++        // Reopening after a route or buffer change must not start a second,
++        // throwaway RemoteIO before the real output unit.
+         setAudioSessionActive (true);
+         setAudioSessionCategory (requestedInputChannels > 0 ? AVAudioSessionCategoryPlayAndRecord
+                                                             : AVAudioSessionCategoryPlayback);
+         channelData.reconfigure (requestedInputChannels, requestedOutputChannels);
+         setTargetSampleRateAndBufferSize();
++        // Keep asking for the rate iOS granted, not the one it refused. A
++        // first open with rate 0 arrives here as the constructed 44100; a
++        // 48 kHz route keeps 48000. restart() re-applies the target on every
++        // route change (an iPad window resize or move is one), and asking
++        // for 44100 there switched the session clock under the running unit:
++        // a crack, then silence until CLOCK or BUFFER reopened the device.
++        targetSampleRate = sampleRate;
+         updateHardwareInfo (true);
+         fixAudioRouteIfSetToReceiver();
+ 
+@@ -718,7 +723,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         const ScopedLock sl (callbackLock);
+ 
+-        AudioOutputUnitStart (audioUnit);
++        restartFailed.set (AudioOutputUnitStart (audioUnit) != noErr);
+ 
+         if (callback != nullptr)
+             callback->audioDeviceAboutToStart (&owner);
+@@ -736,7 +741,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+             if (audioUnit != nullptr)
+             {
+-                AudioOutputUnitStart (audioUnit);
++                AudioOutputUnitStop (audioUnit);
+                 AudioComponentInstanceDispose (audioUnit);
+                 audioUnit = nullptr;
+             }
+@@ -978,15 +983,25 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         JUCE_IOS_AUDIO_LOG ("handleStatusChange: enabled: " << (int) enabled << ", reason: " << reason);
+ 
+-        isRunning = enabled;
+-        setAudioSessionActive (enabled);
+-
+-        if (enabled)
+-            AudioOutputUnitStart (audioUnit);
+-        else
+-            AudioOutputUnitStop (audioUnit);
+-
+-        if (! enabled)
++        // An interruption can deactivate the session and stop RemoteIO while
++        // leaving the device object and playback position intact. Reactivate
++        // only when that interruption ends: ordinary window/route notices do
++        // not need another setActive (which itself causes an audible gap).
++        if (enabled && isRunning && audioUnit != nullptr
++            && String (reason) == "AVAudioSessionInterruptionTypeEnded")
++        {
++            setAudioSessionActive (true);
++            if (AudioOutputUnitStart (audioUnit) != noErr)
++            {
++                // Keep isRunning until close() disposes the failed unit; expose
++                // failure through isPlaying() so the app watchdog replaces it.
++                restartFailed.set (true);
++                invokeAudioDeviceErrorCallback ("AudioOutputUnitStart failed after interruption");
++            }
++            else
++                restartFailed.set (false);
++        }
++        else if (! enabled)
+             invokeAudioDeviceErrorCallback (reason);
+     }
+ 
+@@ -1003,8 +1018,15 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+         switch (reason)
+         {
+         case AVAudioSessionRouteChangeReasonCategoryChange:
+-        case AVAudioSessionRouteChangeReasonRouteConfigurationChange:
+             break;
++        case AVAudioSessionRouteChangeReasonRouteConfigurationChange:
++            // A window/route reconfiguration can leave RemoteIO accepting
++            // callbacks but no longer connected to the audible output. Do
++            // not restart repeatedly for notifications caused by our own
++            // reinitialisation; a new device/unplug still takes the path below.
++            if (Time::getMillisecondCounter() - lastAudioUnitRestartMs < 1000u)
++                break;
++            [[fallthrough]];
+         case AVAudioSessionRouteChangeReasonOverride:
+         case AVAudioSessionRouteChangeReasonUnknown:
+         case AVAudioSessionRouteChangeReasonNewDeviceAvailable:
+@@ -1012,8 +1034,13 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+         case AVAudioSessionRouteChangeReasonWakeFromSleep:
+         case AVAudioSessionRouteChangeReasonNoSuitableRouteForCategory:
+         {
+-            hardwareInfoNeedsUpdating = true;
+-            triggerAsyncUpdate();
++            // Category/port setup during open can notify a route change before
++            // there is a playback callback. open() already queries that route.
++            if (isRunning && callback != nullptr)
++            {
++                hardwareInfoNeedsUpdating = true;
++                triggerAsyncUpdate();
++            }
+             break;
+         }
+ 
+@@ -1090,10 +1117,21 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         recordXruns (time, numFrames);
+ 
+-        const bool useInput = channelData.areInputChannelsAvailable();
+-
+-        if (useInput)
+-            err = AudioUnitRender (audioUnit, flags, time, 1, numFrames, data);
++        bool useInput = channelData.areInputChannelsAvailable();
++
++        // A failed input pull must not cost the output. The status returned
++        // here is the status of the whole IO cycle: with the iPad microphone
++        // in and AirPods out (two clocks), a burst of xruns - the first
++        // window resize under load - can leave AudioUnitRender failing, and
++        // returning that error made RemoteIO play silence for as long as it
++        // lasted, while the app kept writing the song (VPDIAG: output peak
++        // 0.4, nothing in the earphones, until CLOCK/BUFFER reopened the
++        // device). Treat the input as silent for that cycle instead.
++        if (useInput && AudioUnitRender (audioUnit, flags, time, 1, numFrames, data) != noErr)
++        {
++            useInput = false;
++            inputRenderFailures.set (inputRenderFailures.get() + 1);
++        }
+ 
+         const auto channelDataSize = sizeof (float) * numFrames;
+ 
+@@ -1182,6 +1220,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+ 
+         if (audioUnit != nullptr)
+         {
++            AudioOutputUnitStop (audioUnit);
+             AudioComponentInstanceDispose (audioUnit);
+             audioUnit = nullptr;
+         }
+@@ -1330,9 +1369,10 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+         {
+             if ([port.portName isEqualToString: @"Receiver"])
+             {
++                // The port override itself notifies a route change. An extra
++                // activation here would cause another output transition.
+                 JUCE_NSERROR_CHECK ([session overrideOutputAudioPort: AVAudioSessionPortOverrideSpeaker
+                                                                error: &error]);
+-                setAudioSessionActive (true);
+             }
+         }
+     }
+@@ -1340,11 +1380,18 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+     void restart()
+     {
+         const ScopedLock sl (callbackLock);
++        JUCE_IOS_AUDIO_LOG ("VPDIAG restart: target " << targetSampleRate << " session " << getSampleRate() << " running " << (int) isRunning << " buf " << targetBufferSize);
+ 
++        // A route change is not a clock-only notification. The old RemoteIO
++        // can continue calling us after iPadOS disconnects its output (the
++        // file position then advances in silence). Recreate that unit; the app
++        // retains its tempo clock when the device rate has not changed.
+         if (isRunning)
+         {
++            lastAudioUnitRestartMs = Time::getMillisecondCounter();
+             if (audioUnit != nullptr)
+             {
++                AudioOutputUnitStop (audioUnit);
+                 AudioComponentInstanceDispose (audioUnit);
+                 audioUnit = nullptr;
+ 
+@@ -1370,8 +1417,10 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                 if (callback != nullptr)
+                     callback->audioDeviceAboutToStart (&owner);
+ 
+-                AudioOutputUnitStart (audioUnit);
++                restartFailed.set (AudioOutputUnitStart (audioUnit) != noErr);
+             }
++            else
++                restartFailed.set (true);
+         }
+     }
+ 
+@@ -1392,11 +1441,20 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+                               &desc,
+                               &dataSize);
+ 
+-        if (! approximatelyEqual (desc.mSampleRate, 0.0) && ! approximatelyEqual (desc.mSampleRate, sampleRate))
+-        {
+-            JUCE_IOS_AUDIO_LOG ("Stream format has changed: Sample rate " << desc.mSampleRate);
+-            triggerAsyncUpdate();
+-        }
++        if (approximatelyEqual (desc.mSampleRate, 0.0))
++            return;
++        JUCE_IOS_AUDIO_LOG ("VPDIAG streamFormat: unit " << desc.mSampleRate << " session " << [AVAudioSession sharedInstance].sampleRate << " jucerate " << sampleRate);
++
++        // A format event whose rate still matches the active session is often
++        // a harmless geometry notification. When the actual session clock
++        // changes, the old unit's buffers and the engine cannot be kept at
++        // the old rate: let the message thread reinitialise them.
++        const double sessionRate = [AVAudioSession sharedInstance].sampleRate;
++        if (sessionRate <= 0.0 || approximatelyEqual (sessionRate, sampleRate))
++            return;
++
++        hardwareInfoNeedsUpdating = true;
++        triggerAsyncUpdate();
+     }
+ 
+     static void dispatchAudioUnitPropertyChange (void* data, AudioUnit unit, AudioUnitPropertyID propertyID,
+@@ -1577,6 +1635,8 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+     BigInteger requestedInputChannels, requestedOutputChannels;
+ 
+     bool isRunning = false;
++    Atomic<bool> restartFailed { false };
++    uint32 lastAudioUnitRestartMs = 0;
+ 
+     AudioIODeviceCallback* callback = nullptr;
+ 
+@@ -1616,6 +1676,7 @@ struct iOSAudioIODevice::Pimpl final : public AsyncUpdater
+     Float64 lastSampleTime;
+     unsigned int lastNumFrames;
+     int xrun;
++    Atomic<int> inputRenderFailures { 0 };
+     PlayHead playhead { *this };
+ 
+     JUCE_DECLARE_NON_COPYABLE (Pimpl)
+@@ -1645,7 +1706,7 @@ Array<int> iOSAudioIODevice::getAvailableBufferSizes()              { return pim
+ 
+ bool iOSAudioIODevice::setAudioPreprocessingEnabled (bool enabled)  { return pimpl->setAudioPreprocessingEnabled (enabled); }
+ 
+-bool iOSAudioIODevice::isPlaying()                                  { return pimpl->isRunning && pimpl->callback != nullptr; }
++bool iOSAudioIODevice::isPlaying()                                  { return pimpl->isRunning && ! pimpl->restartFailed.get() && pimpl->callback != nullptr; }
+ bool iOSAudioIODevice::isOpen()                                     { return pimpl->isRunning; }
+ String iOSAudioIODevice::getLastError()                             { return pimpl->lastError; }
+ 
+@@ -1664,7 +1725,7 @@ BigInteger iOSAudioIODevice::getActiveOutputChannels() const        { return pim
+ 
+ int iOSAudioIODevice::getInputLatencyInSamples()                    { return roundToInt (pimpl->sampleRate * [AVAudioSession sharedInstance].inputLatency); }
+ int iOSAudioIODevice::getOutputLatencyInSamples()                   { return roundToInt (pimpl->sampleRate * [AVAudioSession sharedInstance].outputLatency); }
+-int iOSAudioIODevice::getXRunCount() const noexcept                 { return pimpl->xrun; }
++int iOSAudioIODevice::getXRunCount() const noexcept                 { return pimpl->xrun + 1000 * pimpl->inputRenderFailures.get(); } // VPDIAG temporaneo: migliaia = letture microfono fallite
+ AudioWorkgroup iOSAudioIODevice::getWorkgroup() const               { return pimpl->workgroup; }
+ 
+ void iOSAudioIODevice::setMidiMessageCollector (MidiMessageCollector* collector) { pimpl->messageCollector = collector; }

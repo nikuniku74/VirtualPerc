@@ -1,6 +1,14 @@
 // MainComponent: state, audio, prefs and the timer.
 #include "UI/MainComponentShared.h"
 
+#ifndef VP_PAYWALL_ENFORCED
+ #define VP_PAYWALL_ENFORCED 0
+#endif
+
+#if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
+ #include "VpDemoData.h"
+#endif
+
 MainComponent::MainComponent()
 {
     trackFormats.registerBasicFormats();
@@ -443,6 +451,12 @@ MainComponent::MainComponent()
     setupPageBtn (startNowButton, ink());
     setupPageBtn (guardButton, ink());
     setupPageBtn (settingsClose, ink());
+    settingsClose.setButtonText ({});
+    settingsClose.getProperties().set ("circle", true);
+    settingsClose.getProperties().set ("closeIcon", true);
+    settingsClose.setTitle ("Chiudi");
+    setupPageBtn (accountButton, ink());
+    accountButton.onClick = [this] { showPaywall (true); };
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
@@ -453,6 +467,10 @@ MainComponent::MainComponent()
     setupPageBtn (latencyButton, ink());
     setupPageBtn (procButton, ink());
     setupPageBtn (loopModeButton, ink());
+    // PATTERN/LOOP and DBG are off the settings page (user's call, 2026-10-16).
+    // The buttons and what they drive stay: nothing reaches them from the UI now.
+    loopModeButton.setVisible (false);
+    debugButton.setVisible (false);
     for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
                      &bufAuto, &buf64, &buf128, &buf256, &buf512 })
         setupPageBtn (*b, ink());
@@ -548,6 +566,61 @@ MainComponent::MainComponent()
     startTimerHz (15);
     beatVBlank = juce::VBlankAttachment (this, [this] { updateBeatDots(); });
     // The window already has its size by now; resized() keeps it full-bounds.
+    // The subscription page sits under the splash, so the launch animation
+    // opens onto it when there is no trial or subscription yet.
+    addChildComponent (paywall);
+    paywall.setBounds (getLocalBounds());
+    paywall.onClose = [this] { showPaywall (false); };
+    paywall.onRetry = [] { vp::store::reloadProducts(); };
+    paywall.onManage = [] { vp::store::manage(); };
+    paywall.onPurchase = [this] (const std::string& id)
+    {
+        paywall.setNotice (PaywallOverlay::Notice::none);
+        paywall.setBusy (true);
+        juce::Component::SafePointer<MainComponent> safe (this);
+        vp::store::purchase (id, [safe] (vp::store::PurchaseResult r, const std::string& why)
+        {
+            if (safe == nullptr)
+                return;
+            safe->paywall.setBusy (false);
+            if (r == vp::store::PurchaseResult::pending)
+                safe->paywall.setNotice (PaywallOverlay::Notice::pending);
+            else if (r == vp::store::PurchaseResult::failed)
+                safe->paywall.setNotice (PaywallOverlay::Notice::failed, juce::String (why));
+            else if (r == vp::store::PurchaseResult::success)
+            {
+                vp::haptic (vp::Haptic::success);
+                safe->showPaywall (false);
+            }
+        });
+    };
+    paywall.onRestore = [this]
+    {
+        paywall.setNotice (PaywallOverlay::Notice::none);
+        paywall.setBusy (true);
+        juce::Component::SafePointer<MainComponent> safe (this);
+        vp::store::restore ([safe] (bool ok)
+        {
+            if (safe == nullptr)
+                return;
+            safe->paywall.setBusy (false);
+            if (! ok)
+                safe->paywall.setNotice (PaywallOverlay::Notice::offline);
+            else if (! safe->subscription.entitled())
+                safe->paywall.setNotice (PaywallOverlay::Notice::nothingToRestore);
+            else
+                safe->showPaywall (false);
+        });
+    };
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        vp::store::start ([safe] (const vp::store::Status& s)
+        {
+            if (safe != nullptr)
+                safe->onSubscriptionStatus (s);
+        });
+    }
+
     addAndMakeVisible (splash);
     splash.setBounds (getLocalBounds());
     splash.toFront (false);
@@ -668,7 +741,7 @@ void MainComponent::refreshThemeColours()
         &sub16, &naturalButton, &swingButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton, &tapButton,
-        &settingsButton, &settingsClose, &procButton,
+        &settingsButton, &settingsClose, &accountButton, &procButton,
         &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -832,6 +905,8 @@ void MainComponent::refreshHitKnobs()
 
 void MainComponent::startPressed()
 {
+    if (! requireAccess())
+        return;
     vp::haptic (vp::Haptic::medium);
     if (! internalTrackSelected())
         ensureMicrophone();
@@ -1516,7 +1591,10 @@ void MainComponent::loadInternalTrack (juce::URL url)
     // playback starts so the new source cannot run through the old decoder
     // epoch before the restart is requested. See docs/TODO.md item 3.
     engine.notifyInputRestart();
-    trackTransport.start();
+    if (hasAccess())
+        trackTransport.start();
+    else
+        showPaywall (true);
     // The picture uses a second reader because the playing reader belongs to
     // the read-ahead thread. Only its setup runs here; the timer scans bounded
     // blocks after PLAY so a full-file pass cannot hold the BPM display.
@@ -1655,7 +1733,7 @@ void MainComponent::seekInternalTrack (double proportion)
     if (! internalTrackSelected())
         selectFollowSource (vp::FollowSource::internalPlayer);
 
-    if (! trackTransport.isPlaying())
+    if (! trackTransport.isPlaying() && requireAccess())
         trackTransport.start();
 
     trackWavePreview = -1.0;
@@ -1667,7 +1745,13 @@ void MainComponent::toggleInternalTrack()
 {
     if (trackReader == nullptr)
     {
+       #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
+        // Nothing loaded: play the built-in song, so the app can be tried (and
+        // reviewed) without a band. CARICA still picks a file.
+        loadDemoTrack();
+       #else
         chooseInternalTrack();
+       #endif
         return;
     }
 
@@ -1678,6 +1762,8 @@ void MainComponent::toggleInternalTrack()
         trackTransport.stop();
     else
     {
+        if (! requireAccess())
+            return;
         if (trackTransport.hasStreamFinished())
             trackTransport.setPosition (0.0);
         trackTransport.start();
@@ -1690,7 +1776,12 @@ void MainComponent::refreshInternalTrackButtons()
     const bool loaded = trackReader != nullptr;
     trackLoadButton.setButtonText (loaded ? trackName.substring (0, 14) : "CARICA");
     trackPlayButton.setButtonText (trackTransport.isPlaying() ? "PAUSA" : "PLAY");
+   #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
+    // Enabled with nothing loaded too: PLAY then plays the built-in demo song.
+    trackPlayButton.setEnabled (true);
+   #else
     trackPlayButton.setEnabled (loaded);
+   #endif
     paintChoice (trackLoadButton, loaded && internalTrackSelected());
     paintChoice (trackPlayButton, trackTransport.isPlaying() && internalTrackSelected());
 }
@@ -2914,4 +3005,79 @@ void MainComponent::timerCallback()
     // The settings page shows live numbers (latency, tempo, part).
     if (settingsOverlay.isVisible())
         settingsOverlay.repaint();
+}
+
+// ---- subscription -----------------------------------------------------------
+
+bool MainComponent::hasAccess() const noexcept
+{
+   #if VP_PAYWALL_ENFORCED
+    return subscription.entitled();
+   #else
+    return true;
+   #endif
+}
+
+bool MainComponent::requireAccess()
+{
+    if (hasAccess())
+        return true;
+    showPaywall (true);
+    return false;
+}
+
+void MainComponent::showPaywall (bool show)
+{
+    if (show == paywall.isVisible())
+        return;
+    if (show)
+    {
+        styleMenu.dismiss();
+        soundMenu.dismiss();
+        paywall.setBounds (getLocalBounds());
+        paywall.setSafeArea (effectiveSafeArea());
+        paywall.setNotice (PaywallOverlay::Notice::none);
+        paywall.setVisible (true);
+        paywall.toFront (false);
+        splash.toFront (false);
+    }
+    else
+        paywall.setVisible (false);
+    repaint();
+}
+
+void MainComponent::onSubscriptionStatus (const vp::store::Status& s)
+{
+    subscription = s;
+    paywall.setStatus (s);
+    accountButton.setButtonText (s.access == vp::store::Access::trial ? "TRIAL" : "PRO");
+
+   #if VP_PAYWALL_ENFORCED
+    if (s.access == vp::store::Access::locked)
+    {
+        // A subscription that lapsed or was refunded while playing: stop, and say why.
+        if (userWantsArmed)
+            stopPressed();
+        if (trackTransport.isPlaying())
+            trackTransport.stop();
+        if (! paywallAutoShown)
+        {
+            paywallAutoShown = true;
+            showPaywall (true);
+        }
+    }
+   #endif
+}
+
+void MainComponent::loadDemoTrack()
+{
+   #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
+    // The reader wants a file or a stream it can seek in: write the embedded
+    // song out once and load it like any other file.
+    const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("Demo track.wav");
+    if (file.getSize() != static_cast<juce::int64> (VpDemoData::demotrack_wavSize))
+        file.replaceWithData (VpDemoData::demotrack_wav, static_cast<size_t> (VpDemoData::demotrack_wavSize));
+    loadInternalTrack (juce::URL (file));
+   #endif
 }
