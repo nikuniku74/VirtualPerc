@@ -3,6 +3,7 @@
 #include "Audio/TrackStreamer.h"
 #include "Audio/VirtualPercussionEngine.h"
 #include "Platform/Subscription.h"
+#include "UI/InfoPopup.h"
 #include "UI/Localization.h"
 #include "UI/PaywallOverlay.h"
 
@@ -402,6 +403,9 @@ private:
     juce::TextButton settingsButton { "SETUP" };
     juce::TextButton settingsClose { vpui::L ("CLOSE", "CHIUDI") };
     juce::TextButton accountButton { "PRO" };
+    /** The (i) on the INPUT card: opens the explanation of the input modes. */
+    juce::TextButton infoButton { "i" };
+    InfoPopup inputInfo;
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };

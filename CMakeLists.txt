@@ -335,6 +335,7 @@ target_sources (VirtualPercussionist PRIVATE
     Source/UI/MainComponentPaint.cpp
     Source/UI/MainComponentWidgets.cpp
     Source/UI/PaywallOverlay.cpp
+    Source/UI/InfoPopup.cpp
 )
 
 # The paywall. Enforced in Release builds (what goes to the App Store) and off in

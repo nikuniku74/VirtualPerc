@@ -734,6 +734,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // full-screen too, and its close button is the first thing a Dynamic Island
     // would sit on.
     auto r = safePadded (area);
+    inputInfo.setBounds (area);
 
     auto head = r.removeFromTop (34);
     settingsClose.setBounds (head.removeFromRight (head.getHeight()).reduced (4));
@@ -784,8 +785,7 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         chrome + rowH,
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
-        chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0)
-            + noteGap + noteHeight (inputNote(), bodyW),
+        chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0),
         chrome + 132,
         chrome + rowH
     };
@@ -854,13 +854,16 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
                      &procButton, &kickButton });
         if (trackWaveformHeight() > 0)
         {
-            const int waveH = juce::jmin (trackWaveformHeight(), juce::jmax (40, body.getHeight() - noteGap - 24));
+            const int waveH = juce::jmin (trackWaveformHeight(), juce::jmax (40, body.getHeight()));
             settingsRows.trackWave = body.removeFromTop (waveH).reduced (2, 4);
         }
         else
             settingsRows.trackWave = {};
 
-        settingsRows.inputNote = body.withTrimmedTop (noteGap);
+        // The long explanation moved behind the (i) at the card's top right.
+        settingsRows.inputNote = {};
+        const auto cardBounds = settingsCards.getReference (settingsCards.size() - 1).bounds;
+        infoButton.setBounds (juce::Rectangle<int> (cardBounds.getRight() - 12 - 24, cardBounds.getY() + 4, 24, 24));
     }
 
     {

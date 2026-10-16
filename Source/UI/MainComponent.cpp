@@ -456,6 +456,16 @@ MainComponent::MainComponent()
     settingsClose.getProperties().set ("closeIcon", true);
     settingsClose.setTitle (vpui::L ("Close", "Chiudi"));
     setupPageBtn (accountButton, ink());
+    setupPageBtn (infoButton, ink());
+    infoButton.getProperties().set ("circle", true);
+    infoButton.setTitle (vpui::L ("Info: input modes", "Info: modalita' d'ingresso"));
+    settingsOverlay.addChildComponent (inputInfo);
+    infoButton.onClick = [this]
+    {
+        inputInfo.setContent (vpui::L ("INPUT MODES", "MODALITA' D'INGRESSO"), inputNote());
+        inputInfo.setBounds (settingsOverlay.getLocalBounds());
+        inputInfo.open();
+    };
     accountButton.onClick = [this] { showPaywall (true); };
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
@@ -744,7 +754,7 @@ void MainComponent::refreshThemeColours()
         &sub16, &naturalButton, &swingButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton, &tapButton,
-        &settingsButton, &settingsClose, &accountButton, &procButton,
+        &settingsButton, &settingsClose, &accountButton, &infoButton, &procButton,
         &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512

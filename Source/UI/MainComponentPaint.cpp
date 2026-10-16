@@ -435,7 +435,6 @@ void MainComponent::paintSettings (juce::Graphics& g)
     g.setFont (noteFont());
     g.drawFittedText (clockNote(), settingsRows.clockNote, juce::Justification::centredLeft, 8);
     g.drawFittedText (bufferNote(), settingsRows.bufferNote, juce::Justification::centredLeft, 8);
-    g.drawFittedText (inputNote(), settingsRows.inputNote, juce::Justification::centredLeft, 8);
 
     // The live numbers (clock, buffer, latency, route, part) used to be printed in
     // a STATO card here; taken off the page for the product (user's call, 2026-10-16).
