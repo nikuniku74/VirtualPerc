@@ -1,11 +1,11 @@
 # Support / Assistenza
 
-Da pubblicare su `[SITO]/support` (Apple richiede un URL di assistenza che
+Da pubblicare su `https://virtualpercussionist.it/support` (Apple richiede un URL di assistenza che
 funzioni). Bozza.
 
 ## English
 
-**Virtual Percussionist support** - write to [EMAIL]; we reply within a few working days. Please include your device model, iOS version and what you were playing along to.
+**Virtual Percussionist support** - write to info@ritmodigitale.com; we reply within a few working days. Please include your device model, iOS version and what you were playing along to.
 
 **Common questions**
 - *How do I get the best precision live?* Use **MIXER** mode (SETUP → INPUT): it is the most precise, and the one for live use. The app has to receive the signal and send the percussion out at the same time, so connect an audio interface or mixer with both an input and an output.
@@ -17,7 +17,7 @@ funzioni). Bozza.
 
 ## Italiano
 
-**Assistenza Virtual Percussionist** - scrivi a [EMAIL]; rispondiamo entro pochi giorni lavorativi. Indica il modello del dispositivo, la versione di iOS e cosa stavi accompagnando.
+**Assistenza Virtual Percussionist** - scrivi a info@ritmodigitale.com; rispondiamo entro pochi giorni lavorativi. Indica il modello del dispositivo, la versione di iOS e cosa stavi accompagnando.
 
 **Domande frequenti**
 - *Come ottengo la massima precisione dal vivo?* Usa la modalità **MIXER** (SETUP → INGRESSO): è la più precisa e quella da usare dal vivo. L'app deve ricevere il segnale e inviare il suono delle percussioni nello stesso momento, quindi collega un'interfaccia audio o un mixer con un ingresso e un'uscita.

@@ -7,7 +7,7 @@
 namespace
 {
     // ---- Replace before the first submission (docs/APPSTORE.md) -------------
-    const char* const kPrivacyUrl = "https://virtualpercussionist.app/privacy";
+    const char* const kPrivacyUrl = "https://virtualpercussionist.it/privacy/";   // until the DNS points at GitHub Pages, https://nikuniku74.github.io/virtualpercussionist-site/privacy/ answers
     const char* const kTermsUrl   = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 
     constexpr int kMaxColumn = 520;
