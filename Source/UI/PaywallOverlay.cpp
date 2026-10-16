@@ -625,8 +625,11 @@ void PaywallOverlay::layoutAll()
     area.removeFromTop (6);
 
     const bool twoCol = area.getWidth() >= 640 && area.getWidth() > area.getHeight() * 1.15f;
+    // A tablet in portrait: the same page, larger, instead of a phone-sized
+    // column in the middle of a big screen.
+    const float zoom = (! twoCol && area.getWidth() >= 800 && area.getHeight() >= 900) ? 1.4f : 1.0f;
     const int colW = twoCol ? juce::jmin (kMaxColumn - 100, (area.getWidth() - 40) / 2)
-                            : juce::jmin (kMaxColumn, area.getWidth());
+                            : juce::jmin (static_cast<int> (kMaxColumn * zoom), area.getWidth());
 
     // One pass at scale 1 to see how tall the page wants to be, then the same
     // pass again at the scale that makes it fit. The settings page does the
@@ -697,9 +700,9 @@ void PaywallOverlay::layoutAll()
     juce::Array<Item> left, right;
     Geometry g;
     int leftH = 0, rightH = 0;
-    pass (1.0f, left, right, g, leftH, rightH);
+    pass (zoom, left, right, g, leftH, rightH);
     const int want = twoCol ? juce::jmax (leftH, rightH) : leftH + 14 + rightH;
-    const float s = juce::jlimit (0.55f, 1.0f, static_cast<float> (area.getHeight()) / static_cast<float> (juce::jmax (1, want)));
+    const float s = juce::jlimit (0.55f, zoom, zoom * static_cast<float> (area.getHeight()) / static_cast<float> (juce::jmax (1, want)));
     pass (s, left, right, g, leftH, rightH);
 
     auto place = [] (juce::Rectangle<int> col, juce::Array<Item>& items)

@@ -1584,7 +1584,8 @@ void MainComponent::loadInternalTrack (juce::URL url)
     }
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
-    trackName = trackUrl.getFileName();
+    // getFileName() keeps the URL escapes: "My%20Song.mp3" is not what the button should say.
+    trackName = juce::URL::removeEscapeChars (trackUrl.getFileName());
     trackTransport.setSource (reader);
     selectFollowSource (vp::FollowSource::internalPlayer, false);
     // A different file is a different input, not a drift of the one before it.
@@ -1778,8 +1779,8 @@ void MainComponent::toggleInternalTrack()
 void MainComponent::refreshInternalTrackButtons()
 {
     const bool loaded = trackReader != nullptr;
-    trackLoadButton.setButtonText (loaded ? trackName.substring (0, 14) : "CARICA");
-    trackPlayButton.setButtonText (trackTransport.isPlaying() ? "PAUSA" : "PLAY");
+    trackLoadButton.setButtonText (loaded ? trackName.substring (0, 14) : vpui::L ("LOAD", "CARICA"));
+    trackPlayButton.setButtonText (trackTransport.isPlaying() ? vpui::L ("PAUSE", "PAUSA") : juce::String ("PLAY"));
    #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
     // Enabled with nothing loaded too: PLAY then plays the built-in demo song.
     trackPlayButton.setEnabled (true);

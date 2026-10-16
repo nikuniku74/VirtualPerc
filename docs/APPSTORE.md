@@ -75,14 +75,13 @@ l'informativa **non è stata letta da un legale**.
 
 **Bloccanti**
 
-- [ ] **Licenza JUCE**. `docs/LICENSES.md` lo dice già: JUCE è AGPLv3 *oppure*
-  commerciale, e **l'AGPL non è compatibile con l'App Store** (i termini
-  Apple non permettono di redistribuire sorgenti e licenza agli utenti). Serve
-  una licenza JUCE commerciale. Dai risultati che ho trovato JUCE 8 ha i livelli
-  *Starter* (fino a 20.000 $ di ricavi/finanziamenti), *Indie* (fino a 300.000 $)
-  e *Pro*, e lo splash non è più obbligatorio. Sono fonti di forum, **verifica i
-  termini attuali su juce.com** prima di acquistare. `JUCE_DISPLAY_SPLASH_SCREEN=0`
-  è già impostato.
+- [ ] **Licenza JUCE** (decisione e acquisto sono tuoi). L'AGPL non è
+  compatibile con l'App Store. Livelli letti il 2026-10-16: **Starter** gratis
+  fino a 20.000 $ di ricavi, **Indie** 800 $ una tantum (o 40 $/mese) fino a
+  300.000 $, **Pro** oltre. Una licenza JUCE 9 copre anche JUCE 8.0.15, che
+  usiamo. **Il livello dipende da chi è l'intestatario**: persona (conta solo
+  quello che ricava dall'uso di JUCE) o società (conta tutto il suo fatturato).
+  Dettagli, consiglio e passi in `docs/store/juce-licence.md`.
 - [ ] **URL reali**: `PaywallOverlay.cpp` (`kPrivacyUrl`) punta a
   `https://virtualpercussionist.app/privacy`, **un indirizzo che ho inventato**.
   Va sostituito con una pagina vera (e la stessa in App Store Connect). Se la
@@ -108,9 +107,14 @@ l'informativa **non è stata letta da un legale**.
   Non ancora ascoltato né provato su dispositivo: vedi sotto.
 - [ ] **Prove vere dello StoreKit** (sezione 5): acquisto, prova, ripristino,
   scadenza, rimborso, offline.
-- [ ] **Scheda dello store**: screenshot obbligatori (iPhone 6,9" e iPad 13"), testo,
-  parole chiave, sottotitolo, URL assistenza, icona 1024 (c'è: `Assets/AppIcon.png`,
-  senza alfa), classificazione età. Non preparati.
+- [~] **Scheda dello store** (2026-10-16): screenshot in inglese e italiano pronti nelle
+  misure giuste (iPhone 6,9" 1320x2868 e iPad 13" 2064x2752): console che segue il
+  brano di prova, offerta con prova, impostazioni, stato abbonato, in
+  `docs/store/screenshots/` (18 MB, **non committati** per non appesantire la
+  storia di git; README nella cartella). Console e impostazioni vengono dal
+  simulatore, offerta e stato sono renderizzati da `VPPaywall --store`: **i
+  prezzi lì sono segnaposto**. Restano testi (pronti in `docs/store/`),
+  parole chiave, URL assistenza e classificazione età in App Store Connect.
 - [x] **Versione** `1.0.0` in CMake; `VP_BUILD_NUMBER` va aumentato a ogni invio.
 - [x] **Icona dell'app** = il logo della splash (2026-10-16). Trovato e risolto:
   JUCE scriveva tutte le icone **con canale alfa** e App Store Connect rifiuta
@@ -135,7 +139,7 @@ l'informativa **non è stata letta da un legale**.
 - [ ] **`UIFileSharingEnabled`** è attivo di default: la cartella Documenti è
   visibile in File e si scrive `VirtualPercussionist-stopstart.log` (solo numeri
   di tempo). Utile al banco, inutile in un prodotto. **Per l'archivio dello
-  store configura con `-DVP_FILE_SHARING=OFF`.** `UISupportsDocumentBrowser`
+  store configura con `-DVP_FILE_SHARING=OFF`.** (Per il simulatore: `-DVP_STOREKIT=OFF`, senza Swift: il link Swift fallisce lì.) `UISupportsDocumentBrowser`
   resta com'è.
 - [ ] **Audio in background** (`UIBackgroundModes audio`): Apple controlla che
   sia usato davvero. Lo è (l'app suona a schermo bloccato), dillo nelle note.

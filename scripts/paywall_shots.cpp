@@ -40,13 +40,17 @@ namespace
         return p;
     }
 
+    bool gDollars = false;   // the English store shots show dollars, the Italian ones euros
+
     vp::store::Status offer (bool trial, bool hadBefore = false)
     {
         vp::store::Status s;
         s.access = vp::store::Access::locked;
         s.productsLoaded = true;
-        s.plans = { plan (vp::store::kMonthlyId, "4,99 \xe2\x82\xac", false, trial),
-                    plan (vp::store::kYearlyId, "34,99 \xe2\x82\xac", true, trial) };
+        s.plans = { plan (vp::store::kMonthlyId, gDollars ? "$4.99" : "4,99 \xe2\x82\xac", false, trial),
+                    plan (vp::store::kYearlyId, gDollars ? "$34.99" : "34,99 \xe2\x82\xac", true, trial) };
+        if (gDollars)
+            s.plans[1].pricePerMonth = "$2.92";
         s.hadSubscription = hadBefore;
         return s;
     }
@@ -74,13 +78,13 @@ namespace
     }
 
     void shoot (PaywallOverlay& p, const vp::store::Status& st, const juce::File& dir, const juce::String& name,
-                int w, int h, juce::BorderSize<int> safe, bool dark)
+                int w, int h, juce::BorderSize<int> safe, bool dark, float scale = 2.0f)
     {
         vpui::gDarkMode = dark;
         p.setSafeArea (safe);
         p.setSize (w, h);
         p.setStatus (st);
-        const auto img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+        const auto img = p.createComponentSnapshot (p.getLocalBounds(), true, scale);
         const auto file = dir.getChildFile (name + ".png");
         juce::PNGImageFormat png;
         if (auto out = file.createOutputStream())
@@ -129,6 +133,30 @@ int main (int argc, char** argv)
     expect (p.ctaText() == "Please wait...", "busy: the button waits");
     p.setBusy (false);
     juce::ignoreUnused (purchased, asked);
+
+    // --store <dir>: the paywall pages at the App Store's own sizes
+    // (iPhone 6.9" 1320x2868, iPad 13" 2064x2752), English and Italian.
+    if (argc > 2 && juce::String (argv[1]) == "--store")
+    {
+        const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]);
+        struct Device { const char* name; int w, h; float scale; juce::BorderSize<int> safe; };
+        const Device devices[] = { { "iphone", 440, 956, 3.0f, { 62, 0, 34, 0 } },
+                                   { "ipad", 1032, 1376, 2.0f, { 24, 0, 20, 0 } } };
+        for (const bool it : { false, true })
+        {
+            p.setItalian (it);
+            gDollars = ! it;
+            for (const auto& d : devices)
+            {
+                const auto sub = dir.getChildFile (juce::String (it ? "it-" : "en-") + d.name);
+                sub.createDirectory();
+                shoot (p, offer (true), sub, "3-paywall", d.w, d.h, d.safe, true, d.scale);
+                shoot (p, inTrial(), sub, "4-trial-status", d.w, d.h, d.safe, true, d.scale);
+            }
+        }
+        std::printf ("store paywall shots written to %s\n", dir.getFullPathName().toRawUTF8());
+        return 0;
+    }
 
     if (argc > 1)
     {

@@ -11,7 +11,11 @@ endif()
 
 # StoreKit 2 is a Swift-only API; StoreKitBridge.swift is the whole of the Swift
 # in this project, iOS only (Source/Platform/Subscription.h).
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# OFF builds the iOS app with no store at all (Subscription.cpp's stub: never
+# locked) and no Swift - what a simulator build needs: the Swift auto-link
+# pulls device SDK libraries and the simulator link fails.
+option (VP_STOREKIT "StoreKit 2 (Swift) in the iOS app" ON)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND VP_STOREKIT)
     enable_language (Swift)
 endif()
 
@@ -345,8 +349,6 @@ target_sources (VirtualPercussionist PRIVATE Source/Platform/Subscription.cpp)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources (VirtualPercussionist PRIVATE
         Source/Platform/IosMicPermission.mm
-        Source/Platform/Subscription.mm
-        Source/Platform/StoreKitBridge.swift
         Assets/PrivacyInfo.xcprivacy
         Assets/StoreKit/VirtualPercussionist.storekit
         Assets/Localization/en.lproj/InfoPlist.strings
@@ -361,19 +363,24 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Run > Options > StoreKit Configuration.
     set_source_files_properties (Assets/StoreKit/VirtualPercussionist.storekit PROPERTIES
         HEADER_FILE_ONLY TRUE)
-    target_compile_definitions (VirtualPercussionist PRIVATE VP_STOREKIT=1)
     set_source_files_properties (Assets/PrivacyInfo.xcprivacy PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources")
-    # The module name is pinned so Subscription.mm can import one fixed header
-    # ("Virtual Percussionist" would otherwise become Virtual_Percussionist).
-    set_target_properties (VirtualPercussionist PROPERTIES
-        XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "VirtualPercussionist"
-        XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
-        # JUCE's common flag string (-flto and a page of clang -W options) is
-        # applied to every language of the target; swiftc rejects it.
-        XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "-DVP_STOREKIT"
-        XCODE_ATTRIBUTE_SWIFT_OBJC_INTERFACE_HEADER_NAME "VirtualPercussionist-Swift.h"
-        XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES "YES")
+    if (VP_STOREKIT)
+        target_sources (VirtualPercussionist PRIVATE
+            Source/Platform/Subscription.mm
+            Source/Platform/StoreKitBridge.swift)
+        target_compile_definitions (VirtualPercussionist PRIVATE VP_STOREKIT=1)
+        # The module name is pinned so Subscription.mm can import one fixed header
+        # ("Virtual Percussionist" would otherwise become Virtual_Percussionist).
+        set_target_properties (VirtualPercussionist PROPERTIES
+            XCODE_ATTRIBUTE_PRODUCT_MODULE_NAME "VirtualPercussionist"
+            XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+            # JUCE's common flag string (-flto and a page of clang -W options) is
+            # applied to every language of the target; swiftc rejects it.
+            XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "-DVP_STOREKIT"
+            XCODE_ATTRIBUTE_SWIFT_OBJC_INTERFACE_HEADER_NAME "VirtualPercussionist-Swift.h"
+            XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES "YES")
+    endif()
 else()
     target_sources (VirtualPercussionist PRIVATE Source/Platform/IosMicPermission.cpp)
 endif()

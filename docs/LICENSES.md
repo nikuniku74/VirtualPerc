@@ -4,7 +4,7 @@ This project is intended to become a commercial live app. Do not add dependencie
 
 | Component | Version | License | Notes |
 |---|---|---|---|
-| JUCE | 8.0.15 | [AGPLv3 **or** JUCE commercial](https://juce.com/legal/juce-8-licence/) | Required. App Store / closed source needs a **commercial JUCE license**. Splash is off because it is unusable live. |
+| JUCE | 8.0.15 | [AGPLv3 **or** JUCE commercial](https://juce.com/legal/juce-8-licence/) | Required. App Store / closed source needs a **JUCE licence** (Starter free up to $20k revenue, Indie $800 perpetual up to $300k, Pro above; a JUCE 9 licence covers JUCE 8). Not yet obtained: see `docs/store/juce-licence.md`. Splash is off because it is unusable live. |
 | Virtual Percussionist source | — | Proprietary (project owner) | Original code in `Source/`, `Tests/` |
 | Percussion samples | VCSL / VSCO 2 CE (clap, cembalo only) | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | **Conga and shaker are no longer VCSL** (since 2026-09-28): cut from SampleFocus loops, *Standard Licensing - Royalty Free*, not CC0 - see `Assets/Percussion/ATTRIBUTION.md` and `docs/APPSTORE.md` before any release. `Assets/Hits/*.wav` have no recorded source. |
 | ONNX Runtime | 1.20.1 | MIT | Host dylib (GitHub release) + iOS xcframework from NuGet `Microsoft.ML.OnnxRuntime` (`./scripts/fetch_onnxruntime.sh`). |

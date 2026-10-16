@@ -487,17 +487,17 @@ private:
 
 
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
-    juce::TextButton kickButton { "CASSA NO" };
+    juce::TextButton kickButton { vpui::L ("NO KICK", "CASSA NO") };
     /** Measures this rig's round trip instead of taking the device's word for
         it. See Audio/LatencyProbe.h. */
-    juce::TextButton latencyButton { "LATENZA" };
+    juce::TextButton latencyButton { vpui::L ("LATENCY", "LATENZA") };
     /** Whether the part follows the band's dynamics. See BandDynamics.h. */
-    juce::TextButton dynamicsButton { "DINAMICA" };
+    juce::TextButton dynamicsButton { vpui::L ("DYNAMICS", "DINAMICA") };
     juce::Slider reverbSlider;
     juce::Label  reverbLabel { {}, "REVERB" };
     juce::Label  reverbValue { {}, "30%" };
     juce::Slider intensitySlider;
-    juce::Label  intensityLabel { {}, "ENERGIA" };
+    juce::Label  intensityLabel { {}, vpui::L ("ENERGY", "ENERGIA") };
     juce::Label  intensityValue { {}, "50%" };
     /** Volume knob that also arms the voice. A tap flips the enable (or fires
         the one-shot); a vertical drag is the level, with the zoom; a press held
@@ -582,7 +582,7 @@ private:
     juce::Label  congaVolLabel { {}, "CONGAS" };
     juce::Label  congaVolValue { {}, "100%" };
     VoiceKnob cembaloVolSlider;
-    juce::Label  cembaloVolLabel { {}, "CEMBALO" };
+    juce::Label  cembaloVolLabel { {}, vpui::kitName (vp::KitSound::cembalo) };
     juce::Label  cembaloVolValue { {}, "100%" };
     VoiceKnob clapVolSlider;
     juce::Label  clapVolLabel { {}, "CLAP" };
