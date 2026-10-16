@@ -35,39 +35,23 @@ provarlo»).
   Debug sull'iPad da banco non passa dal paywall. Per vederlo in Debug va
   passato `-DVP_PAYWALL_DEBUG=ON` a `cmake` (`configure-ios.sh` non lo espone).
   Host/test/probe non hanno mai paywall: lo stub risponde «abbonato».
-- **Prezzi decisi (2026-10-16)**: mensile **7,99 €**, annuale **49,99 €**
-  (-48% rispetto a dodici mesi), prova di 7 giorni su entrambi, e **lifetime
-  119,99 €** come acquisto singolo (*non-consumable*, senza prova).
+- **Prezzi (2026-10-16, rivisti lo stesso giorno)**: mensile **9,99 €**, annuale
+  **59,99 €** (-50% rispetto a dodici mesi), prova di 7 giorni su entrambi, e
+  **lifetime 149,99 €** come acquisto singolo (*non-consumable*, senza prova).
   Scartato il settimanale. Nella pagina il prezzo **addebitato** è la cifra
   grande di ogni carta; nessun equivalente mensile più in evidenza (Apple lo
   rifiuta). L'app mostra sempre i prezzi che StoreKit restituisce, già
   localizzati: quelli del file `.storekit` servono solo alle prove locali. Va
   creato in App Store Connect anche il prodotto lifetime
   (`com.virtualpercussionist.app.pro.lifetime`).
-
-### Uso gratuito e regali
-
-- **Build personale completa (2026-10-16)**: `cmake -S . -B build-ios -DVP_UNLOCKED=ON`
-  e Run da Xcode sui tuoi dispositivi, anche in Release (la più veloce, quella
-  da palco). Nessun paywall; il pulsante in alto nelle impostazioni dice **FULL**
-  invece di PRO. Compila (verificato su Mac con l'opzione accesa). **Mai per un
-  archivio per TestFlight o App Store**: avvisa con un warning a ogni configure.
-  Per la versione dello store, il lifetime gratuito si ottiene con un codice
-  offerta (sotto).
-
-- **Tu**: una Run da Xcode in Debug non ha paywall. Con la build dello store: un
-  **codice offerta** gratuito sul lifetime per il tuo ID Apple, oppure
-  TestFlight (acquisti di prova gratuiti, 90 giorni per build). Nessuna porta
-  segreta nell'app.
-- **Regali**: *Offer Codes* in App Store Connect (valgono anche per acquisti
-  singoli come il lifetime; codici monouso con scadenza massima di 6 mesi,
-  1 milione a trimestre, max 10 offerte attive). Verificare in App Store
-  Connect se il prezzo di un codice sul lifetime può essere zero. Chi li riceve
-  li riscatta da un link `apps.apple.com/redeem?...`, dalla scheda dell'App
-  Store o **dentro l'app** dal link «Riscatta codice» della pagina
-  dell'abbonamento (`AppStore.presentOfferCodeRedeemSheet`, aggiunto
-  2026-10-16, mai provato con un codice vero). L'acquisto arriva come una
-  normale transazione verificata.
+  **Confronto con app simili** (listini trovati il 2026-10-16, da ricontrollare
+  sugli store: cambiano): *Timml - AI Drummer* (il più vicino) 4,99 mese / 29,99
+  anno / 49,99 lifetime; *Drum Beats+* ~19,99 anno e ~45 lifetime; *Beat Station*
+  22,99 anno / 59,99 lifetime; *Moises* Premium ~4-6 al mese e ~36-40 l'anno,
+  Pro fino a ~90 l'anno; *Drum Coach* (lezioni) 59,99-99,99 l'anno e 249,99
+  lifetime. I prezzi qui sono **sopra i concorrenti diretti** e allineati alla
+  fascia alta (strumento da palco, per chi ha già un'interfaccia o un mixer):
+  è una scelta di posizionamento, non un allineamento al mercato.
 
 ## 2. Da fare in App Store Connect (non automatizzabile)
 

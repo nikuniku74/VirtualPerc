@@ -36,7 +36,7 @@ namespace
         p.trialEligible = trial && ! lifetime;      // a lifetime purchase has no trial
         p.trialDays = p.trialEligible ? 7 : 0;
         if (yearly)
-            p.savePercent = 48;                     // 49.99 against twelve times 7.99
+            p.savePercent = 50;                     // 59.99 against twelve times 9.99
         return p;
     }
 
@@ -45,9 +45,9 @@ namespace
         vp::store::Status s;
         s.access = vp::store::Access::locked;
         s.productsLoaded = true;
-        s.plans = { plan (vp::store::kMonthlyId,  gDollars ? "$7.99"   : "7,99 \xe2\x82\xac",   false, false, trial),
-                    plan (vp::store::kYearlyId,   gDollars ? "$49.99"  : "49,99 \xe2\x82\xac",  true,  false, trial),
-                    plan (vp::store::kLifetimeId, gDollars ? "$119.99" : "119,99 \xe2\x82\xac", false, true,  trial) };
+        s.plans = { plan (vp::store::kMonthlyId,  gDollars ? "$9.99"   : "9,99 \xe2\x82\xac",   false, false, trial),
+                    plan (vp::store::kYearlyId,   gDollars ? "$59.99"  : "59,99 \xe2\x82\xac",  true,  false, trial),
+                    plan (vp::store::kLifetimeId, gDollars ? "$149.99" : "149,99 \xe2\x82\xac", false, true,  trial) };
         s.hadSubscription = hadBefore;
         return s;
     }

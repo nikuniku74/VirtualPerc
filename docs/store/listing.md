@@ -111,16 +111,16 @@ Gruppo: **Virtual Percussionist Pro** (nome visibile al cliente: `Virtual Percus
 
 | ID | durata | nome (EN / IT) | descrizione (EN / IT) | prezzo proposto |
 |---|---|---|---|---|
-| `com.virtualpercussionist.app.pro.monthly` | 1 mese | Pro Monthly / Pro Mensile | Full access, billed monthly / Accesso completo, addebito mensile | **7,99 €** |
-| `com.virtualpercussionist.app.pro.yearly` | 1 anno | Pro Yearly / Pro Annuale | Full access, billed yearly / Accesso completo, addebito annuale | **49,99 €** |
+| `com.virtualpercussionist.app.pro.monthly` | 1 mese | Pro Monthly / Pro Mensile | Full access, billed monthly / Accesso completo, addebito mensile | **9,99 €** |
+| `com.virtualpercussionist.app.pro.yearly` | 1 anno | Pro Yearly / Pro Annuale | Full access, billed yearly / Accesso completo, addebito annuale | **59,99 €** |
 
 Più un acquisto singolo (**non** è un abbonamento: in App Store Connect va in *Acquisti in-app*, tipo **Non-consumable**, senza offerta di prova):
 
 | ID | nome (EN / IT) | descrizione (EN / IT) | prezzo |
 |---|---|---|---|
-| `com.virtualpercussionist.app.pro.lifetime` | Pro Lifetime / Pro Lifetime | Full access, one payment / Accesso completo, un solo pagamento | **119,99 €** |
+| `com.virtualpercussionist.app.pro.lifetime` | Pro Lifetime / Pro Lifetime | Full access, one payment / Accesso completo, un solo pagamento | **149,99 €** |
 
-Il settimanale è stato scartato (la prova è già di una settimana, e 4 piani confondono). Prezzi decisi il 2026-10-16.
+Il settimanale è stato scartato (la prova è già di una settimana, e 4 piani confondono). Prezzi decisi il 2026-10-16, alzati lo stesso giorno a 9,99 / 59,99 / 149,99 (vedi `docs/APPSTORE.md`).
 
 Offerta introduttiva su mensile e annuale (non sul lifetime): **Gratis, 1 settimana, tutti i paesi**, nuovi
 abbonati. Gerarchia nel gruppo: annuale sopra il mensile. **Periodo di
