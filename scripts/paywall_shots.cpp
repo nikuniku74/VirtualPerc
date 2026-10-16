@@ -24,33 +24,30 @@ namespace
             ++gFailed;
     }
 
-    vp::store::Plan plan (const char* id, const char* price, bool yearly, bool trial)
+    bool gDollars = false;   // the English store shots show dollars, the Italian ones euros
+
+    vp::store::Plan plan (const char* id, const char* price, bool yearly, bool lifetime, bool trial)
     {
         vp::store::Plan p;
         p.id = id;
         p.price = price;
         p.yearly = yearly;
-        p.trialEligible = trial;
-        p.trialDays = trial ? 7 : 0;
+        p.lifetime = lifetime;
+        p.trialEligible = trial && ! lifetime;      // a lifetime purchase has no trial
+        p.trialDays = p.trialEligible ? 7 : 0;
         if (yearly)
-        {
-            p.pricePerMonth = "2,92 \xe2\x82\xac";
-            p.savePercent = 42;
-        }
+            p.savePercent = 48;                     // 49.99 against twelve times 7.99
         return p;
     }
-
-    bool gDollars = false;   // the English store shots show dollars, the Italian ones euros
 
     vp::store::Status offer (bool trial, bool hadBefore = false)
     {
         vp::store::Status s;
         s.access = vp::store::Access::locked;
         s.productsLoaded = true;
-        s.plans = { plan (vp::store::kMonthlyId, gDollars ? "$4.99" : "4,99 \xe2\x82\xac", false, trial),
-                    plan (vp::store::kYearlyId, gDollars ? "$34.99" : "34,99 \xe2\x82\xac", true, trial) };
-        if (gDollars)
-            s.plans[1].pricePerMonth = "$2.92";
+        s.plans = { plan (vp::store::kMonthlyId,  gDollars ? "$7.99"   : "7,99 \xe2\x82\xac",   false, false, trial),
+                    plan (vp::store::kYearlyId,   gDollars ? "$49.99"  : "49,99 \xe2\x82\xac",  true,  false, trial),
+                    plan (vp::store::kLifetimeId, gDollars ? "$119.99" : "119,99 \xe2\x82\xac", false, true,  trial) };
         s.hadSubscription = hadBefore;
         return s;
     }
@@ -64,6 +61,14 @@ namespace
         s.activePlanId = vp::store::kYearlyId;
         s.expiresAt = kNow + 4.5 * 86400.0;
         s.renewal = vp::store::Status::Renewal::renews;
+        return s;
+    }
+
+    vp::store::Status lifetimeOwner()
+    {
+        auto s = offer (false);
+        s.access = vp::store::Access::subscribed;
+        s.activePlanId = vp::store::kLifetimeId;
         return s;
     }
 
@@ -110,6 +115,14 @@ int main (int argc, char** argv)
     expect (! p.showsStatusPage(), "locked shows the offer");
     p.setStatus (offer (false));
     expect (p.ctaText() == "Subscribe", "not eligible: plain Subscribe");
+    p.setStatus (offer (true));
+    p.selectPlan (2);
+    expect (p.lifetimeInView(), "the third card is the lifetime purchase");
+    expect (p.ctaText() == "Buy lifetime access", "lifetime: no trial, a plain purchase");
+    p.selectPlan (0);
+    expect (! p.lifetimeInView() && p.ctaText() == "Start 7-day free trial", "yearly again: the trial");
+    p.setStatus (lifetimeOwner());
+    expect (p.showsStatusPage() && p.lifetimeInView(), "a lifetime owner sees the status page");
     p.setStatus (inTrial());
     expect (p.showsStatusPage(), "in trial shows the status page");
     expect (p.ctaText() == "Manage subscription", "status page button manages");
@@ -152,6 +165,7 @@ int main (int argc, char** argv)
                 sub.createDirectory();
                 shoot (p, offer (true), sub, "3-paywall", d.w, d.h, d.safe, true, d.scale);
                 shoot (p, inTrial(), sub, "4-trial-status", d.w, d.h, d.safe, true, d.scale);
+                shoot (p, lifetimeOwner(), sub, "5-lifetime-status", d.w, d.h, d.safe, true, d.scale);
             }
         }
         std::printf ("store paywall shots written to %s\n", dir.getFullPathName().toRawUTF8());

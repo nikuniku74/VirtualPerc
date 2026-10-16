@@ -1,104 +1,105 @@
 {
-  "identifier" : "A1B2C3D4",
-  "nonRenewingSubscriptions" : [
-
-  ],
-  "products" : [
-
-  ],
-  "settings" : {
-    "_failTransactionsEnabled" : false,
-    "_storeKitErrors" : [
-
-    ]
-  },
-  "subscriptionGroups" : [
+  "identifier": "A1B2C3D4",
+  "nonRenewingSubscriptions": [],
+  "products": [
     {
-      "id" : "21500001",
-      "localizations" : [
-
-      ],
-      "name" : "Virtual Percussionist Pro",
-      "subscriptions" : [
+      "displayPrice": "119.99",
+      "familyShareable": false,
+      "internalID": "6760000003",
+      "localizations": [
         {
-          "adHocOffers" : [
-
-          ],
-          "codeOffers" : [
-
-          ],
-          "displayPrice" : "4.99",
-          "familyShareable" : false,
-          "groupNumber" : 2,
-          "internalID" : "6760000001",
-          "introductoryOffer" : {
-            "internalID" : "6760000011",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P1W"
-          },
-          "localizations" : [
-            {
-              "description" : "Full access, billed monthly",
-              "displayName" : "Pro Monthly",
-              "locale" : "en_US"
-            },
-            {
-              "description" : "Accesso completo, addebito mensile",
-              "displayName" : "Pro Mensile",
-              "locale" : "it"
-            }
-          ],
-          "productID" : "com.virtualpercussionist.app.pro.monthly",
-          "recurringSubscriptionPeriod" : "P1M",
-          "referenceName" : "Pro Monthly",
-          "subscriptionGroupID" : "21500001",
-          "type" : "RecurringSubscription",
-          "winbackOffers" : [
-
-          ]
+          "description": "Full access, one payment",
+          "displayName": "Pro Lifetime",
+          "locale": "en_US"
         },
         {
-          "adHocOffers" : [
-
-          ],
-          "codeOffers" : [
-
-          ],
-          "displayPrice" : "34.99",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "6760000002",
-          "introductoryOffer" : {
-            "internalID" : "6760000012",
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P1W"
+          "description": "Accesso completo, un solo pagamento",
+          "displayName": "Pro Lifetime",
+          "locale": "it"
+        }
+      ],
+      "productID": "com.virtualpercussionist.app.pro.lifetime",
+      "referenceName": "Pro Lifetime",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "21500001",
+      "localizations": [],
+      "name": "Virtual Percussionist Pro",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "7.99",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "6760000001",
+          "introductoryOffer": {
+            "internalID": "6760000011",
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
           },
-          "localizations" : [
+          "localizations": [
             {
-              "description" : "Full access, billed yearly",
-              "displayName" : "Pro Yearly",
-              "locale" : "en_US"
+              "description": "Full access, billed monthly",
+              "displayName": "Pro Monthly",
+              "locale": "en_US"
             },
             {
-              "description" : "Accesso completo, addebito annuale",
-              "displayName" : "Pro Annuale",
-              "locale" : "it"
+              "description": "Accesso completo, addebito mensile",
+              "displayName": "Pro Mensile",
+              "locale": "it"
             }
           ],
-          "productID" : "com.virtualpercussionist.app.pro.yearly",
-          "recurringSubscriptionPeriod" : "P1Y",
-          "referenceName" : "Pro Yearly",
-          "subscriptionGroupID" : "21500001",
-          "type" : "RecurringSubscription",
-          "winbackOffers" : [
-
-          ]
+          "productID": "com.virtualpercussionist.app.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro Monthly",
+          "subscriptionGroupID": "21500001",
+          "type": "RecurringSubscription",
+          "winbackOffers": []
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "49.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "6760000002",
+          "introductoryOffer": {
+            "internalID": "6760000012",
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "Full access, billed yearly",
+              "displayName": "Pro Yearly",
+              "locale": "en_US"
+            },
+            {
+              "description": "Accesso completo, addebito annuale",
+              "displayName": "Pro Annuale",
+              "locale": "it"
+            }
+          ],
+          "productID": "com.virtualpercussionist.app.pro.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Pro Yearly",
+          "subscriptionGroupID": "21500001",
+          "type": "RecurringSubscription",
+          "winbackOffers": []
         }
       ]
     }
   ],
-  "version" : {
-    "major" : 3,
-    "minor" : 0
+  "version": {
+    "major": 3,
+    "minor": 0
   }
 }

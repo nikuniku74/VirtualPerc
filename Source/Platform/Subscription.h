@@ -25,12 +25,19 @@ enum class Access
     subscribed     // paying
 };
 
+/** Product ids. Must match App Store Connect and the .storekit file. Monthly and
+    yearly are auto-renewing subscriptions (with the 7-day introductory offer);
+    lifetime is a non-consumable: one payment, no renewal, no trial. */
+inline constexpr const char* kMonthlyId  = "com.virtualpercussionist.app.pro.monthly";
+inline constexpr const char* kYearlyId   = "com.virtualpercussionist.app.pro.yearly";
+inline constexpr const char* kLifetimeId = "com.virtualpercussionist.app.pro.lifetime";
+
 struct Plan
 {
     std::string id;             // App Store product id
-    std::string price;          // "29,99 €", already localised by StoreKit
-    std::string pricePerMonth;  // yearly only: what the year comes to a month
+    std::string price;          // "49,99 €", already localised by StoreKit
     bool yearly = false;
+    bool lifetime = false;
     int savePercent = 0;        // yearly only, against twelve monthly payments
     bool trialEligible = false; // this Apple ID has not used the intro offer yet
     int trialDays = 0;
@@ -41,7 +48,7 @@ struct Status
     Access access = Access::checking;
     bool productsLoaded = false;
     bool productsFailed = false;      // asked and could not get them (offline...)
-    std::vector<Plan> plans;          // monthly first, yearly second
+    std::vector<Plan> plans;          // whatever the store returned, in no fixed order
     std::string activePlanId;
     double expiresAt = 0.0;           // unix seconds; 0 = unknown
     enum class Renewal { unknown, renews, ends } renewal = Renewal::unknown;
@@ -51,6 +58,7 @@ struct Status
     {
         return access == Access::trial || access == Access::subscribed;
     }
+    bool ownsLifetime() const noexcept { return access == Access::subscribed && activePlanId == kLifetimeId; }
 };
 
 enum class PurchaseResult { success, pending, cancelled, failed };
@@ -78,9 +86,5 @@ void restore (std::function<void (bool ok)> done);
 
 /** Apple's own Manage Subscriptions sheet (cancel, change plan). */
 void manage();
-
-/** Product ids. Must match App Store Connect and the .storekit file. */
-inline constexpr const char* kMonthlyId = "com.virtualpercussionist.app.pro.monthly";
-inline constexpr const char* kYearlyId  = "com.virtualpercussionist.app.pro.yearly";
 
 } // namespace vp::store

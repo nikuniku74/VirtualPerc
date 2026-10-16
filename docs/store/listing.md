@@ -53,7 +53,7 @@ PRIVATE BY DESIGN
 Everything is analysed on your device. Audio is never recorded, uploaded or shared, and the app has no account.
 
 SUBSCRIPTION
-Virtual Percussionist Pro is an auto-renewing subscription (monthly or yearly) with a 7-day free trial for new subscribers. Payment is charged to your Apple ID at confirmation of purchase, or when the free trial ends. It renews automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings > Apple ID > Subscriptions.
+Virtual Percussionist Pro is available as an auto-renewing subscription (monthly or yearly) with a 7-day free trial for new subscribers, or as a one-time lifetime purchase (no trial, no renewal). Payment is charged to your Apple ID at confirmation of purchase, or when the free trial ends. It renews automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings > Apple ID > Subscriptions.
 Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Privacy Policy: [SITO]/privacy
 ```
@@ -92,7 +92,7 @@ PRIVATO PER SCELTA
 Tutto viene analizzato sul tuo dispositivo. L'audio non viene mai registrato, caricato o condiviso, e l'app non ha account.
 
 ABBONAMENTO
-Virtual Percussionist Pro e' un abbonamento a rinnovo automatico (mensile o annuale) con 7 giorni di prova gratuita per i nuovi abbonati. Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto, o al termine della prova gratuita. Si rinnova automaticamente, a meno che non venga annullato almeno 24 ore prima della fine del periodo in corso. Puoi gestirlo o annullarlo in qualsiasi momento da Impostazioni > ID Apple > Abbonamenti.
+Virtual Percussionist Pro e' disponibile come abbonamento a rinnovo automatico (mensile o annuale) con 7 giorni di prova gratuita per i nuovi abbonati, oppure come acquisto singolo lifetime (senza prova, senza rinnovo). Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto, o al termine della prova gratuita. Si rinnova automaticamente, a meno che non venga annullato almeno 24 ore prima della fine del periodo in corso. Puoi gestirlo o annullarlo in qualsiasi momento da Impostazioni > ID Apple > Abbonamenti.
 Condizioni d'uso: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Informativa privacy: [SITO]/privacy
 ```
@@ -105,10 +105,18 @@ Gruppo: **Virtual Percussionist Pro** (nome visibile al cliente: `Virtual Percus
 
 | ID | durata | nome (EN / IT) | descrizione (EN / IT) | prezzo proposto |
 |---|---|---|---|---|
-| `com.virtualpercussionist.app.pro.monthly` | 1 mese | Pro Monthly / Pro Mensile | Full access, billed monthly / Accesso completo, addebito mensile | 4,99 € |
-| `com.virtualpercussionist.app.pro.yearly` | 1 anno | Pro Yearly / Pro Annuale | Full access, billed yearly / Accesso completo, addebito annuale | 34,99 € |
+| `com.virtualpercussionist.app.pro.monthly` | 1 mese | Pro Monthly / Pro Mensile | Full access, billed monthly / Accesso completo, addebito mensile | **7,99 €** |
+| `com.virtualpercussionist.app.pro.yearly` | 1 anno | Pro Yearly / Pro Annuale | Full access, billed yearly / Accesso completo, addebito annuale | **49,99 €** |
 
-Offerta introduttiva su entrambi: **Gratis, 1 settimana, tutti i paesi**, nuovi
+Più un acquisto singolo (**non** è un abbonamento: in App Store Connect va in *Acquisti in-app*, tipo **Non-consumable**, senza offerta di prova):
+
+| ID | nome (EN / IT) | descrizione (EN / IT) | prezzo |
+|---|---|---|---|
+| `com.virtualpercussionist.app.pro.lifetime` | Pro Lifetime / Pro Lifetime | Full access, one payment / Accesso completo, un solo pagamento | **119,99 €** |
+
+Il settimanale è stato scartato (la prova è già di una settimana, e 4 piani confondono). Prezzi decisi il 2026-10-16.
+
+Offerta introduttiva su mensile e annuale (non sul lifetime): **Gratis, 1 settimana, tutti i paesi**, nuovi
 abbonati. Gerarchia nel gruppo: annuale sopra il mensile. **Periodo di
 tolleranza di fatturazione: spento** (vedi `docs/APPSTORE.md` §4).
 Screenshot di revisione per ciascun prodotto: `docs/paywall/en-1-offer-trial-phone.png`.

@@ -13,8 +13,8 @@ import UIKit
 @objc(VPPlan) public final class VPPlan: NSObject {
     @objc public var id = ""
     @objc public var price = ""
-    @objc public var pricePerMonth = ""
     @objc public var yearly = false
+    @objc public var lifetime = false
     @objc public var savePercent = 0
     @objc public var trialEligible = false
     @objc public var trialDays = 0
@@ -38,7 +38,9 @@ import UIKit
     @objc public static let shared = VPStore()
 
     private let ids = ["com.virtualpercussionist.app.pro.monthly",
-                       "com.virtualpercussionist.app.pro.yearly"]
+                       "com.virtualpercussionist.app.pro.yearly",
+                       "com.virtualpercussionist.app.pro.lifetime"]
+    private let lifetimeId = "com.virtualpercussionist.app.pro.lifetime"
     private var observer: ((VPStatus) -> Void)?
     private var products: [Product] = []
     private var plans: [VPPlan] = []
@@ -72,7 +74,16 @@ import UIKit
             products = found
             var built: [VPPlan] = []
             let monthly = found.first { $0.id == ids[0] }
-            for p in found.sorted(by: { $0.id < $1.id }) {   // ".monthly" < ".yearly"
+            for p in found.sorted(by: { $0.id < $1.id }) {
+                if p.id == lifetimeId {
+                    // A non-consumable: one payment, no renewal and no trial.
+                    let plan = VPPlan()
+                    plan.id = p.id
+                    plan.price = p.displayPrice
+                    plan.lifetime = true
+                    built.append(plan)
+                    continue
+                }
                 guard let sub = p.subscription else { continue }
                 let plan = VPPlan()
                 plan.id = p.id
@@ -83,7 +94,6 @@ import UIKit
                     plan.trialEligible = await sub.isEligibleForIntroOffer
                 }
                 if plan.yearly {
-                    plan.pricePerMonth = (p.price / 12).formatted(p.priceFormatStyle)
                     if let m = monthly {
                         let year = NSDecimalNumber(decimal: m.price * 12).doubleValue
                         let paid = NSDecimalNumber(decimal: p.price).doubleValue
@@ -121,6 +131,7 @@ import UIKit
         s.access = 1
 
         // Only what Apple signed, only our products, nothing refunded or lapsed.
+        var best = 0
         for await result in Transaction.currentEntitlements {
             guard case .verified(let t) = result, ids.contains(t.productID),
                   t.revocationDate == nil else { continue }
@@ -128,9 +139,11 @@ import UIKit
             let isTrial: Bool
             if #available(iOS 17.2, *) { isTrial = t.offer?.type == .introductory }
             else { isTrial = t.offerType == .introductory }
-            let rank = isTrial ? 2 : 3     // a paid period beats a trial if both show up
-            if rank > s.access {
-                s.access = rank
+            // lifetime beats a paid period, which beats a trial
+            let rank = t.productID == lifetimeId ? 4 : (isTrial ? 2 : 3)
+            if rank > best {
+                best = rank
+                s.access = min(rank, 3)
                 s.activePlanId = t.productID
                 s.expiresAt = t.expirationDate?.timeIntervalSince1970 ?? 0
             }

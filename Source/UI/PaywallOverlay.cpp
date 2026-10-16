@@ -292,6 +292,7 @@ PaywallOverlay::PaywallOverlay()
                                 static_cast<juce::Component*> (ctaButton.get()),
                                 static_cast<juce::Component*> (planButtons[0].get()),
                                 static_cast<juce::Component*> (planButtons[1].get()),
+                                static_cast<juce::Component*> (planButtons[2].get()),
                                 static_cast<juce::Component*> (restoreLink.get()),
                                 static_cast<juce::Component*> (termsLink.get()),
                                 static_cast<juce::Component*> (privacyLink.get()),
@@ -314,7 +315,7 @@ PaywallOverlay::PaywallOverlay()
         else if (const auto* p = selected(); p != nullptr && onPurchase)
             onPurchase (p->id);
     };
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < 3; ++i)
         planButtons[i]->onClick = [this, i]
         {
             if (! busy)
@@ -421,25 +422,44 @@ bool PaywallOverlay::showsStatusPage() const noexcept { return statusPage(); }
 
 int PaywallOverlay::planCount() const noexcept
 {
-    return juce::jmin (2, static_cast<int> (status.plans.size()));
+    return juce::jmin (3, static_cast<int> (status.plans.size()));
 }
 
 const vp::store::Plan* PaywallOverlay::plan (int i) const noexcept
 {
     if (i < 0 || i >= planCount())
         return nullptr;
-    // The yearly one first. With one plan in the list that is whichever it is.
+    // Yearly first (it is the one on offer), then monthly, then lifetime.
     std::vector<const vp::store::Plan*> order;
     for (const auto& p : status.plans)
         if (p.yearly)
             order.push_back (&p);
     for (const auto& p : status.plans)
-        if (! p.yearly)
+        if (! p.yearly && ! p.lifetime)
+            order.push_back (&p);
+    for (const auto& p : status.plans)
+        if (p.lifetime)
             order.push_back (&p);
     return order[static_cast<size_t> (i)];
 }
 
 const vp::store::Plan* PaywallOverlay::selected() const noexcept { return plan (selectedPlan); }
+
+void PaywallOverlay::selectPlan (int displayIndex)
+{
+    selectedPlan = juce::jlimit (0, juce::jmax (0, planCount() - 1), displayIndex);
+    refreshControls();
+    layoutAll();
+    repaint();
+}
+
+bool PaywallOverlay::lifetimeInView() const noexcept
+{
+    if (statusPage())
+        return status.activePlanId == vp::store::kLifetimeId;
+    const auto* p = selected();
+    return p != nullptr && p->lifetime;
+}
 
 bool PaywallOverlay::offerReady() const noexcept
 {
@@ -470,7 +490,8 @@ juce::String PaywallOverlay::dateText (double unixSeconds) const
 
 juce::String PaywallOverlay::planName (const juce::String& id) const
 {
-    return id == vp::store::kYearlyId ? t ("Yearly", "Annuale") : t ("Monthly", "Mensile");
+    return id == vp::store::kLifetimeId ? t ("Lifetime", "Lifetime")
+         : id == vp::store::kYearlyId   ? t ("Yearly", "Annuale") : t ("Monthly", "Mensile");
 }
 
 juce::String PaywallOverlay::headlineText() const
@@ -488,6 +509,8 @@ juce::String PaywallOverlay::subText() const
 {
     if (status.access == vp::store::Access::trial)
         return t ("Your free trial is active.", "La prova gratuita è attiva.");
+    if (status.ownsLifetime())
+        return t ("Thank you for your purchase.", "Grazie per il tuo acquisto.");
     if (status.access == vp::store::Access::subscribed)
         return t ("Thank you for subscribing.", "Grazie per il tuo abbonamento.");
     return t ("It follows your band's tempo and plays along, in time.",
@@ -499,6 +522,9 @@ juce::String PaywallOverlay::priceNote() const
     const auto* p = selected();
     if (status.productsFailed || p == nullptr || statusPage())
         return {};
+    if (p->lifetime)
+        return juce::String (p->price) + t (" one-time payment. No subscription, no renewal.",
+                                            " una tantum. Nessun abbonamento, nessun rinnovo.");
     const auto per = p->yearly ? t ("per year", "all'anno") : t ("per month", "al mese");
     const auto cancel = t ("Cancel anytime.", "Disdici quando vuoi.");
     if (p->trialEligible && p->trialDays > 0)
@@ -509,6 +535,13 @@ juce::String PaywallOverlay::priceNote() const
 
 juce::String PaywallOverlay::legalText() const
 {
+    if (lifetimeInView())
+        return t ("Payment is charged to your Apple ID at confirmation of purchase. This is a one-time purchase, "
+                  "not a subscription: it does not renew. You can restore it on your other devices with "
+                  "Restore purchases.",
+                  "Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto. E' un acquisto "
+                  "singolo, non un abbonamento: non si rinnova. Puoi ripristinarlo sugli altri tuoi dispositivi "
+                  "con Ripristina acquisti.");
     return t ("Payment is charged to your Apple ID at confirmation of purchase, or when the free trial ends. "
               "The subscription renews automatically unless it is cancelled at least 24 hours before the end of "
               "the current period. Your account is charged for renewal within 24 hours before the period ends. "
@@ -527,6 +560,8 @@ juce::String PaywallOverlay::ctaText() const
         return t ("Please wait...", "Attendi...");
     if (statusPage())
         return t ("Manage subscription", "Gestisci abbonamento");
+    if (const auto* p = selected(); p != nullptr && p->lifetime)
+        return t ("Buy lifetime access", "Acquista l'accesso lifetime");
     if (const auto* p = selected(); p != nullptr && p->trialEligible && p->trialDays > 0)
         return t ("Start ", "Prova gratis per ") + (italian ? dayWord (true, p->trialDays)
                                                            : juce::String (p->trialDays) + "-day free trial");
@@ -557,7 +592,7 @@ void PaywallOverlay::refreshControls()
     ctaButton->setEnabled (! busy && (onStatus || ready));
     ctaButton->setTitle (ctaButton->text);
 
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < 3; ++i)
     {
         auto& b = *planButtons[i];
         const auto* p = plan (i);
@@ -567,13 +602,19 @@ void PaywallOverlay::refreshControls()
         if (p == nullptr)
             continue;
         b.selected = i == selectedPlan;
-        b.title = p->yearly ? t ("Yearly", "Annuale") : t ("Monthly", "Mensile");
-        const auto per = p->yearly ? t ("year", "anno") : t ("month", "mese");
+        b.title = p->lifetime ? t ("Lifetime", "Lifetime")
+                : p->yearly   ? t ("Yearly", "Annuale") : t ("Monthly", "Mensile");
+        // What is charged is the big figure on the right; the line on the left
+        // only says how it is billed. (A per-month equivalent bigger than the
+        // real charge is what App Review rejects.)
         const bool trial = p->trialEligible && p->trialDays > 0;
-        b.detail = trial ? dayWord (italian, p->trialDays) + t (" free, then ", " gratis, poi ") + juce::String (p->price) + " / " + per
-                         : juce::String (p->price) + " / " + per;
-        b.rightTop = p->yearly && p->pricePerMonth.size() > 0 ? juce::String (p->pricePerMonth) : juce::String (p->price);
-        b.rightBottom = p->yearly && p->pricePerMonth.size() > 0 ? t ("per month", "al mese") : t ("per month", "al mese");
+        const auto billed = p->yearly ? t ("billed yearly", "addebito annuale") : t ("billed monthly", "addebito mensile");
+        b.detail = p->lifetime ? t ("One payment, yours for good", "Un solo pagamento, tuo per sempre")
+                 : trial       ? dayWord (italian, p->trialDays) + t (" free, then ", " gratis, poi ") + billed
+                               : billed.substring (0, 1).toUpperCase() + billed.substring (1);
+        b.rightTop = juce::String (p->price);
+        b.rightBottom = p->lifetime ? t ("one-time", "una tantum")
+                      : p->yearly   ? t ("per year", "all'anno") : t ("per month", "al mese");
         b.badge = p->yearly && p->savePercent > 0
                       ? t ("BEST VALUE  -", "CONVIENE  -") + juce::String (p->savePercent) + "%" : juce::String();
         b.setTitle (b.title + ", " + b.detail);
@@ -598,7 +639,8 @@ void PaywallOverlay::refreshControls()
     licensesLink->setVisible (true);
     retryLink->setVisible (status.productsFailed && ! onStatus);
     manageLink->setVisible (false);
-    ctaButton->setVisible (true);
+    // A lifetime owner has no subscription to manage: the page is just the receipt.
+    ctaButton->setVisible (! (onStatus && lifetimeInView()));
     closeButton->setVisible (true);
     ctaButton->repaint();
 }
@@ -668,17 +710,18 @@ void PaywallOverlay::layoutAll()
             right.add ({ &g.statusCard, static_cast<int> (112 * s) });
         else if (ready)
         {
-            right.add ({ &g.planRect[0], static_cast<int> (76 * s) });
-            if (planCount() > 1)
+            for (int i = 0; i < planCount(); ++i)
             {
-                right.add ({ nullptr, static_cast<int> (8 * s) });
-                right.add ({ &g.planRect[1], static_cast<int> (70 * s) });
+                if (i > 0)
+                    right.add ({ nullptr, static_cast<int> (8 * s) });
+                right.add ({ &g.planRect[i], static_cast<int> ((i == 0 ? 76 : 64) * s) });
             }
         }
         else
             right.add ({ &g.statusCard, static_cast<int> (112 * s) });   // "reading the store" / "unreachable"
         right.add ({ nullptr, static_cast<int> (14 * s) });
-        right.add ({ &g.cta, static_cast<int> (54 * s) });
+        if (! (onStatus && lifetimeInView()))
+            right.add ({ &g.cta, static_cast<int> (54 * s) });
         right.add ({ nullptr, static_cast<int> (8 * s) });
         if (priceNote().isNotEmpty())
             right.add ({ &g.price, textHeight (priceNote(), F (13.0f, true), colW) });
@@ -735,7 +778,7 @@ void PaywallOverlay::layoutAll()
     geo = g;
     closeButton->setBounds (closeRect);
     ctaButton->setBounds (geo.cta);
-    for (int i = 0; i < 2; ++i)
+    for (int i = 0; i < 3; ++i)
         planButtons[i]->setBounds (geo.planRect[i]);
 
     auto row = geo.links;
@@ -820,7 +863,13 @@ void PaywallOverlay::paint (juce::Graphics& g)
             g.drawText (planName (status.activePlanId), in.removeFromTop (static_cast<int> (28 * s)), juce::Justification::centredLeft, true);
 
             juce::String line, detail;
-            if (status.access == vp::store::Access::trial)
+            if (status.ownsLifetime())
+            {
+                line = t ("Lifetime access", "Accesso lifetime");
+                detail = t ("One payment, no renewals. It stays with your Apple ID.",
+                            "Un solo pagamento, nessun rinnovo. Resta legato al tuo ID Apple.");
+            }
+            else if (status.access == vp::store::Access::trial)
             {
                 const int n = vp::store::daysLeft (status.expiresAt, clock(), active != nullptr ? active->trialDays : 0);
                 line = t ("Free trial: ", "Prova gratuita: ") + dayWord (italian, n) + t (" left", " rimasti");

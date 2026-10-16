@@ -35,10 +35,15 @@ provarlo»).
   Debug sull'iPad da banco non passa dal paywall. Per vederlo in Debug va
   passato `-DVP_PAYWALL_DEBUG=ON` a `cmake` (`configure-ios.sh` non lo espone).
   Host/test/probe non hanno mai paywall: lo stub risponde «abbonato».
-- **Prezzi proposti (da decidere tu)**: mensile 4,99 €, annuale 34,99 € (−42%),
-  prova di 7 giorni su entrambi. Sono nel file `.storekit`; quelli veri si
-  mettono in App Store Connect e l'app mostra sempre quelli che StoreKit
-  restituisce, già localizzati.
+- **Prezzi decisi (2026-10-16)**: mensile **7,99 €**, annuale **49,99 €**
+  (-48% rispetto a dodici mesi), prova di 7 giorni su entrambi, e **lifetime
+  119,99 €** come acquisto singolo (*non-consumable*, senza prova).
+  Scartato il settimanale. Nella pagina il prezzo **addebitato** è la cifra
+  grande di ogni carta; nessun equivalente mensile più in evidenza (Apple lo
+  rifiuta). L'app mostra sempre i prezzi che StoreKit restituisce, già
+  localizzati: quelli del file `.storekit` servono solo alle prove locali. Va
+  creato in App Store Connect anche il prodotto lifetime
+  (`com.virtualpercussionist.app.pro.lifetime`).
 
 ## 2. Da fare in App Store Connect (non automatizzabile)
 

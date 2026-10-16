@@ -45,8 +45,12 @@ public:
     /** What the main button says and does, for tests. */
     juce::String ctaText() const;
     bool showsStatusPage() const noexcept;
+    /** The page is about a lifetime purchase (the plan in view, or the one owned). */
+    bool lifetimeInView() const noexcept;
     /** Third-party notices (CC BY attribution, MIT text) over the page. */
     void showLicenses();
+    /** Selects a plan card by display position (0 yearly, 1 monthly, 2 lifetime). */
+    void selectPlan (int displayIndex);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -74,14 +78,14 @@ private:
     std::function<double()> clock;
 
     std::unique_ptr<PillButton> closeButton, ctaButton;
-    std::unique_ptr<PlanButton> planButtons[2];
+    std::unique_ptr<PlanButton> planButtons[3];
     std::unique_ptr<LinkButton> restoreLink, termsLink, privacyLink, licensesLink, retryLink, manageLink;
     std::unique_ptr<LicensesPage> licensesPage;
 
     struct Geometry
     {
         juce::Rectangle<int> brand, headline, sub, statusCard, price, legal, noticeRow, links;
-        juce::Rectangle<int> bullets[3], planRect[2], cta;
+        juce::Rectangle<int> bullets[3], planRect[3], cta;
         int bulletCount = 0;
         float scale = 1.0f;
     };
@@ -89,7 +93,7 @@ private:
 
     bool statusPage() const noexcept;
     bool offerReady() const noexcept;
-    /** Display order: the yearly plan first, it is the one on offer. */
+    /** Display order: yearly (the one on offer), monthly, lifetime. */
     const vp::store::Plan* plan (int displayIndex) const noexcept;
     int planCount() const noexcept;
     const vp::store::Plan* selected() const noexcept;

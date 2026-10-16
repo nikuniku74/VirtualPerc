@@ -37,8 +37,8 @@ namespace
             Plan plan;
             plan.id = str (p.id);
             plan.price = str (p.price);
-            plan.pricePerMonth = str (p.pricePerMonth);
             plan.yearly = p.yearly;
+            plan.lifetime = p.lifetime;
             plan.savePercent = static_cast<int> (p.savePercent);
             plan.trialEligible = p.trialEligible;
             plan.trialDays = static_cast<int> (p.trialDays);
