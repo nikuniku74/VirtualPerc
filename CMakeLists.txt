@@ -138,12 +138,16 @@ endif()
 
 
 option (VP_FILE_SHARING "Show the app Documents folder in Files (bench logs)" ON)
+# The store build keeps these two. The personal FULL build overrides them
+# (docs/TESTFLIGHT.md) so it installs next to the TestFlight one instead of over it.
+set (VP_BUNDLE_ID "com.virtualpercussionist.app" CACHE STRING "Bundle identifier")
+set (VP_PRODUCT_NAME "Virtual Percussionist" CACHE STRING "App name under the icon")
 set (VP_BUILD_NUMBER "1" CACHE STRING "CFBundleVersion: increase for every App Store Connect upload")
 
 juce_add_gui_app (VirtualPercussionist
-    PRODUCT_NAME "Virtual Percussionist"
+    PRODUCT_NAME "${VP_PRODUCT_NAME}"
     COMPANY_NAME "Virtual Percussionist"
-    BUNDLE_ID com.virtualpercussionist.app
+    BUNDLE_ID ${VP_BUNDLE_ID}
     VERSION ${PROJECT_VERSION}
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/AppIcon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/AppIcon.png"
