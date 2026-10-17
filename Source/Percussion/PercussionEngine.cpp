@@ -47,18 +47,21 @@ namespace
     // for the cembalo and -18.5 for the clap, and under a band they share the
     // bass and guitars' octave: the percussionist had to keep the knob at the
     // top to hear them at all (2026-09-28). +5 dB puts them beside the clap.
-    constexpr float kCongaLevel = 1.778f;
-    // The other voices at a full knob, by the same measure redone on today's
-    // bank (K-weighted, loudest 50 ms of each stroke, each voice alone,
-    // dance/pop/rock/samba at 120): shaker 0, cembalo -0.5, congas +2.0,
-    // clap -2.5 dB. The clap also lands on the snare's 2 and 4, and the
-    // percussionist had to keep its knob at the top (2026-10-05); then asked
-    // for all four alike. Each is lifted to the congas. These follow the
-    // *sound*, not the knob it is assigned to; the congas' level is the one
-    // set on their knob, above.
-    constexpr float kShakerLevel  = 1.259f;   // +2.0 dB
-    constexpr float kCembaloLevel = 1.334f;   // +2.5 dB
-    constexpr float kClapLevel    = 1.679f;   // +4.5 dB
+    constexpr float kCongaLevel = 1.641f;
+    // The other voices at a full knob. The first alignment (2026-10-05) used
+    // the loudest 50 ms of each stroke; that favours the shaker and the
+    // cembalo, which play every sixteenth, and the percussionist still had to
+    // keep their knobs low and the congas' and the clap's at the top
+    // (2026-10-17). Measured on the groove instead: K-weighted loudness of
+    // each voice alone over 16 bars (marcha/rock/dance/pop/samba/funk at 120,
+    // VPRender --raw), shaker -16.2, cembalo -16.2, congas -17.8, clap -20.1
+    // dB at the previous constants. All four now land on -18.5, a little
+    // under the old average so the clap does not sit in the soft clip.
+    // These follow the *sound*, not the knob it is assigned to; the congas'
+    // level is the one set on their knob, above.
+    constexpr float kShakerLevel  = 0.966f;   // -2.3 dB
+    constexpr float kCembaloLevel = 1.023f;   // -2.3 dB
+    constexpr float kClapLevel    = 2.018f;   // +1.6 dB
     // Samples are normalised near full scale, so that gain - and any stack of
     // shaker, conga and clap on one sixteenth - can exceed it. Above the knee
     // peaks are rounded rather than clipped; only the first milliseconds of a
