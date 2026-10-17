@@ -1,6 +1,6 @@
 # Scheda dello store (bozza da incollare in App Store Connect)
 
-Segnaposto da riempire: `[EMAIL]`, `[SITO]`, `[NOME LEGALE / INDIRIZZO]`. Limiti
+Segnaposto da riempire: `info@ritmodigitale.com`, `https://virtualpercussionist.it`, `Nicola Marogna`. Limiti
 indicati da Apple: nome 30, sottotitolo 30, testo promozionale 170, parole
 chiave 100 (separate da virgole, senza spazi), descrizione 4000.
 
@@ -14,10 +14,10 @@ chiave 100 (separate da virgole, senza spazi), descrizione 4000.
 | Lingua principale | Inglese (U.S.), più Italiano |
 | Classificazione età | 4+ (nessun contenuto sensibile; risposte «Nessuno» a tutto) |
 | Prezzo app | Gratis, con abbonamento |
-| Copyright | © 2026 [NOME LEGALE] |
-| URL assistenza | [SITO]/support |
-| URL privacy | [SITO]/privacy |
-| URL marketing (facoltativo) | [SITO] |
+| Copyright | © 2026 Nicola Marogna |
+| URL assistenza | https://virtualpercussionist.it/support |
+| URL privacy | https://virtualpercussionist.it/privacy |
+| URL marketing (facoltativo) | https://virtualpercussionist.it |
 | Disponibilità | iPhone, iPad, Mac (Apple silicon); **Apple Vision: no** |
 | Scheda privacy | Dati non raccolti |
 
@@ -58,7 +58,7 @@ Everything is analysed on your device. Audio is never recorded, uploaded or shar
 SUBSCRIPTION
 Virtual Percussionist Pro is available as an auto-renewing subscription (monthly or yearly) with a 7-day free trial for new subscribers, or as a one-time lifetime purchase (no trial, no renewal). Payment is charged to your Apple ID at confirmation of purchase, or when the free trial ends. It renews automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel anytime in Settings > Apple ID > Subscriptions.
 Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
-Privacy Policy: [SITO]/privacy
+Privacy Policy: https://virtualpercussionist.it/privacy
 ```
 
 **What's new (1.0)**: `First release.`
@@ -100,7 +100,7 @@ Tutto viene analizzato sul tuo dispositivo. L'audio non viene mai registrato, ca
 ABBONAMENTO
 Virtual Percussionist Pro e' disponibile come abbonamento a rinnovo automatico (mensile o annuale) con 7 giorni di prova gratuita per i nuovi abbonati, oppure come acquisto singolo lifetime (senza prova, senza rinnovo). Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto, o al termine della prova gratuita. Si rinnova automaticamente, a meno che non venga annullato almeno 24 ore prima della fine del periodo in corso. Puoi gestirlo o annullarlo in qualsiasi momento da Impostazioni > ID Apple > Abbonamenti.
 Condizioni d'uso: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
-Informativa privacy: [SITO]/privacy
+Informativa privacy: https://virtualpercussionist.it/privacy
 ```
 
 **Novita' (1.0)**: `Prima versione.`

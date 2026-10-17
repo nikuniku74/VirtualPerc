@@ -155,6 +155,7 @@ int main (int argc, char** argv)
         const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]);
         struct Device { const char* name; int w, h; float scale; juce::BorderSize<int> safe; };
         const Device devices[] = { { "iphone", 440, 956, 3.0f, { 62, 0, 34, 0 } },
+                                   { "iphone63", 402, 874, 3.0f, { 62, 0, 34, 0 } },   // 6.3": 1206x2622
                                    { "ipad", 1032, 1376, 2.0f, { 24, 0, 20, 0 } } };
         for (const bool it : { false, true })
         {

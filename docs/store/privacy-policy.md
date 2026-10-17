@@ -1,12 +1,12 @@
 # Privacy Policy / Informativa sulla privacy
 
-Da pubblicare su `[SITO]/privacy`. **Bozza non revisionata da un legale**: va
+Da pubblicare su `https://virtualpercussionist.it/privacy`. **Bozza non revisionata da un legale**: va
 letta e adattata (soprattutto la parte sul titolare del trattamento).
 Ultimo aggiornamento: 2026-10-16.
 
 ## English
 
-**Virtual Percussionist** ("the app") is published by [NOME LEGALE], [INDIRIZZO] ("we"). Contact: [EMAIL].
+**Virtual Percussionist** ("the app") is published by Nicola Marogna, [INDIRIZZO] ("we"). Contact: info@ritmodigitale.com.
 
 **What we collect: nothing.** The app has no account, no analytics, no advertising and no tracking, and it does not connect to any server of ours.
 
@@ -18,13 +18,13 @@ Ultimo aggiornamento: 2026-10-16.
 
 **Children.** The app is not directed at children and collects no personal data from anyone.
 
-**Your rights.** Because we hold no personal data about you, there is nothing to access, correct or delete on our side. If you are in the EU/EEA or the UK you may contact us at [EMAIL] with any privacy question or complaint, and you may complain to your data protection authority.
+**Your rights.** Because we hold no personal data about you, there is nothing to access, correct or delete on our side. If you are in the EU/EEA or the UK you may contact us at info@ritmodigitale.com with any privacy question or complaint, and you may complain to your data protection authority.
 
 **Changes.** If this changes, we will update this page and the date above.
 
 ## Italiano
 
-**Virtual Percussionist** ("l'app") e' pubblicata da [NOME LEGALE], [INDIRIZZO] ("noi"). Contatto: [EMAIL].
+**Virtual Percussionist** ("l'app") e' pubblicata da Nicola Marogna, [INDIRIZZO] ("noi"). Contatto: info@ritmodigitale.com.
 
 **Cosa raccogliamo: niente.** L'app non ha account, analisi statistiche, pubblicita' o tracciamento, e non si collega a nessun nostro server.
 
@@ -36,6 +36,6 @@ Ultimo aggiornamento: 2026-10-16.
 
 **Minori.** L'app non e' rivolta ai minori e non raccoglie dati personali di nessuno.
 
-**I tuoi diritti.** Poiche' non conserviamo dati personali che ti riguardano, non c'e' nulla da consultare, correggere o cancellare presso di noi. Se ti trovi nell'UE/SEE o nel Regno Unito puoi scriverci a [EMAIL] per qualsiasi domanda o reclamo sulla privacy, e puoi rivolgerti all'autorita' per la protezione dei dati.
+**I tuoi diritti.** Poiche' non conserviamo dati personali che ti riguardano, non c'e' nulla da consultare, correggere o cancellare presso di noi. Se ti trovi nell'UE/SEE o nel Regno Unito puoi scriverci a info@ritmodigitale.com per qualsiasi domanda o reclamo sulla privacy, e puoi rivolgerti all'autorita' per la protezione dei dati.
 
 **Modifiche.** Se questa informativa cambia, aggiorneremo la pagina e la data qui sopra.
