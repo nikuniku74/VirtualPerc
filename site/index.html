@@ -2,54 +2,97 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<title>Virtual Percussionist</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f0e12">
+<title>Virtual Percussionist: a percussionist that listens</title>
+<meta name="description" content="Virtual Percussionist follows your band's tempo in real time and plays percussion along, in the groove. For iPhone, iPad and Mac.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Virtual Percussionist: a percussionist that listens">
+<meta property="og:description" content="Virtual Percussionist follows your band's tempo in real time and plays percussion along, in the groove. For iPhone, iPad and Mac.">
+<meta property="og:image" content="https://virtualpercussionist.it/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="./favicon.png">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="stylesheet" href="./style.css">
 <script src="./lang.js"></script>
 </head>
 <body>
-<header>
-  <a class="brand" href="./"><i></i>VIRTUAL PERCUSSIONIST</a>
-  <span class="lang"><a href="#" data-lang="en">EN</a><a href="#" data-lang="it">IT</a></span>
+<header class="top">
+  <a class="brand" href="./"><img src="./assets/mark.png" width="32" height="32" alt=""><span>VIRTUAL PERCUSSIONIST</span></a>
+  <nav>
+    <a href="./guide/"><span class="en">Guide</span><span class="it">Guida</span></a>
+    <a href="./support/"><span class="en">Support</span><span class="it">Assistenza</span></a>
+    <a href="./privacy/">Privacy</a>
+    <span class="lang"><a href="#" data-lang="en">EN</a><a href="#" data-lang="it">IT</a></span>
+  </nav>
 </header>
 <main>
-<div class="en">
-  <h1>A percussionist that listens.</h1>
-  <p class="lead">Virtual Percussionist follows your band's tempo in real time and plays shaker, congas, clap and tambourine along, in the groove.</p>
-  <div class="card">
-    <ul>
-      <li>Finds the tempo and the first beat of the bar by itself, with no click track.</li>
-      <li>Works on a mixer feed, the microphone or a track you load.</li>
-      <li>Keeps playing when the screen locks. Everything is analysed on your device.</li>
-    </ul>
+<section class="hero wrap">
+  <img class="logo" src="assets/logo.png" width="800" height="800" alt="Virtual Percussionist">
+  <div class="beats" aria-hidden="true"><i></i><i></i><i></i><i></i><span class="ball-x"><span class="ball"></span></span></div>
+  <h1><span class="en">A percussionist <em>that listens.</em></span><span class="it">Un percussionista <em>che ascolta.</em></span></h1>
+  <p class="lead"><span class="en">Virtual Percussionist follows your band's tempo in real time and plays shaker, congas, clap and tambourine along, in the groove.</span><span class="it">Virtual Percussionist segue il tempo della tua band in tempo reale e suona shaker, conga, clap e tamburello insieme a lei, nel groove giusto.</span></p>
+  <p><a class="cta" href="#plans"><span class="en">Coming soon to the App Store</span><span class="it">Presto su App Store</span></a></p>
+  <ul class="chips">
+    <li><span class="en">iPhone &middot; iPad &middot; Mac</span><span class="it">iPhone &middot; iPad &middot; Mac</span></li>
+    <li><span class="en">7-day free trial</span><span class="it">7 giorni di prova gratuita</span></li>
+    <li><span class="en">Private: analysed on your device</span><span class="it">Privato: analizzato sul tuo dispositivo</span></li>
+  </ul>
+</section>
+
+<section class="wrap" id="live">
+  <div class="live">
+    <p class="eyebrow"><span class="en">Best results</span><span class="it">La migliore precisione</span></p>
+    <h2><span class="en">For live use, choose MIXER mode.</span><span class="it">Per il live, scegli la modalit&agrave; MIXER.</span></h2>
+    <p class="sub" style="margin-bottom:0"><span class="en">It is the most precise mode. The app has to receive the signal and send the percussion out at the same time, so connect an audio interface or mixer that gives it an input and an output: it listens to the tempo of the band and plays the percussion in real time.</span><span class="it">&Egrave; la modalit&agrave; pi&ugrave; precisa. L'app deve ricevere il segnale e inviare il suono delle percussioni nello stesso momento, quindi collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita: ascolta il tempo della band e manda le percussioni in tempo reale.</span></p>
+    <div class="flow" aria-hidden="true">
+      <div class="node">MIXER<small><span class="en">the band</span><span class="it">la band</span></small></div>
+      <div class="wire"></div>
+      <div class="node app">VIRTUAL PERCUSSIONIST<small><span class="en">listens &middot; plays</span><span class="it">ascolta &middot; suona</span></small></div>
+      <div class="wire out"></div>
+      <div class="node"><span class="en">OUTPUT</span><span class="it">USCITA</span><small><span class="en">the PA</span><span class="it">l'impianto</span></small></div>
+    </div>
   </div>
-  <div class="card">
-    <strong>Best results: MIXER mode.</strong> For live use it is the most precise. The app has to receive the signal and send the percussion out at the same time, so connect an audio interface or mixer with an input and an output: it listens to the tempo and plays the percussion in real time.
+</section>
+
+<section class="wrap">
+  <p class="eyebrow"><span class="en">What it does</span><span class="it">Cosa fa</span></p>
+  <h2><span class="en">Built for playing live.</span><span class="it">Pensato per suonare dal vivo.</span></h2>
+  <div class="grid">
+    <div class="card"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2l2-6 3 12 3-9 2 5 2-2h4"/></svg></span><h3><span class="en">Follows the band</span><span class="it">Segue la band</span></h3>
+      <p><span class="en">Finds the tempo and the first beat of the bar by itself and keeps them, with no click track.</span><span class="it">Trova da solo il tempo e il primo battere della battuta e li mantiene, senza metronomo.</span></p></div>
+    <div class="card"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="8" rx="8" ry="3"/><path d="M4 8v8c0 1.7 3.6 3 8 3s8-1.3 8-3V8"/><path d="M8 3l3 5M16 3l-3 5"/></svg></span><h3><span class="en">A part that sounds played</span><span class="it">Una parte che suona suonata</span></h3>
+      <p><span class="en">Several styles, with the accents and ghost notes a real player would use. Swing, energy and reverb to sit it in your mix.</span><span class="it">Pi&ugrave; stili, con gli accenti e le note fantasma di un musicista vero. Swing, energia e riverbero per inserirla nel tuo mix.</span></p></div>
+    <div class="card"><span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></span><h3><span class="en">Private by design</span><span class="it">Privato per scelta</span></h3>
+      <p><span class="en">Everything is analysed on your device. Audio is never recorded, uploaded or shared, and there is no account.</span><span class="it">Tutto viene analizzato sul tuo dispositivo. L'audio non viene mai registrato, caricato o condiviso, e non c'&egrave; nessun account.</span></p></div>
   </div>
-  <p><span class="pill">Coming soon to the App Store</span></p>
-  <p>7-day free trial, then a monthly, yearly or lifetime plan. For iPhone and iPad.</p>
-</div>
-<div class="it">
-  <h1>Un percussionista che ascolta.</h1>
-  <p class="lead">Virtual Percussionist segue il tempo della tua band in tempo reale e suona shaker, conga, clap e tamburello insieme a lei, nel groove giusto.</p>
-  <div class="card">
-    <ul>
-      <li>Trova da solo il tempo e il primo battere della battuta, senza metronomo.</li>
-      <li>Funziona con il mix del mixer, il microfono o un brano che carichi.</li>
-      <li>Continua a suonare a schermo bloccato. Tutto viene analizzato sul tuo dispositivo.</li>
-    </ul>
+</section>
+
+<section class="wrap">
+  <p class="eyebrow"><span class="en">How it works</span><span class="it">Come funziona</span></p>
+  <h2><span class="en">Three steps.</span><span class="it">Tre passi.</span></h2>
+  <ol class="steps">
+    <li><b><span class="en">Connect</span><span class="it">Collega</span></b><span><span class="en">Plug your interface or mixer into the iPhone or iPad.</span><span class="it">Collega la tua interfaccia o il mixer all'iPhone o all'iPad.</span></span></li>
+    <li><b><span class="en">Press START</span><span class="it">Premi START</span></b><span><span class="en">It finds the tempo and the one, and tells you when it has locked.</span><span class="it">Trova il tempo e l'uno, e ti dice quando si &egrave; agganciato.</span></span></li>
+    <li><b><span class="en">Play</span><span class="it">Suona</span></b><span><span class="en">The percussion follows you, even when the band speeds up or slows down.</span><span class="it">Le percussioni ti seguono, anche quando la band accelera o rallenta.</span></span></li>
+  </ol>
+</section>
+
+<section class="wrap" id="plans">
+  <p class="eyebrow"><span class="en">Plans</span><span class="it">Piani</span></p>
+  <h2><span class="en">Try it free for 7 days.</span><span class="it">Provalo gratis per 7 giorni.</span></h2>
+  <p class="sub"><span class="en">Then choose a monthly or yearly plan, or a single lifetime purchase. Cancel anytime in your Apple ID settings.</span><span class="it">Poi scegli un piano mensile o annuale, oppure un unico acquisto lifetime. Puoi disdire quando vuoi dalle impostazioni del tuo ID Apple.</span></p>
+  <div class="plans">
+    <div class="plan best"><span class="tag"><span class="en">BEST VALUE</span><span class="it">CONVIENE</span></span><h3><span class="en">Yearly</span><span class="it">Annuale</span></h3><p><span class="en">7 days free, then billed yearly.</span><span class="it">7 giorni gratis, poi addebito annuale.</span></p></div>
+    <div class="plan"><h3><span class="en">Monthly</span><span class="it">Mensile</span></h3><p><span class="en">7 days free, then billed monthly.</span><span class="it">7 giorni gratis, poi addebito mensile.</span></p></div>
+    <div class="plan"><h3>Lifetime</h3><p><span class="en">One payment, yours for good.</span><span class="it">Un solo pagamento, tuo per sempre.</span></p></div>
   </div>
-  <div class="card">
-    <strong>La migliore precisione: modalità MIXER.</strong> Per il live è la più precisa. L'app deve ricevere il segnale e inviare il suono delle percussioni nello stesso momento, quindi collega un'interfaccia audio o un mixer con un ingresso e un'uscita: ascolta il tempo e manda le percussioni in tempo reale.
-  </div>
-  <p><span class="pill">Presto su App Store</span></p>
-  <p>7 giorni di prova gratuita, poi un piano mensile, annuale o lifetime. Per iPhone e iPad.</p>
-</div>
+</section>
 </main>
 <footer>
-  <nav><a href="./">Home</a><a href="./guide/">Guide / Guida</a><a href="./privacy/">Privacy</a><a href="./support/">Support / Assistenza</a></nav>
-  <p>&copy; 2026 {{LEGAL_NAME}}</p>
+  <div>&copy; 2026 {{LEGAL_NAME}} &middot; <a href="mailto:{{EMAIL}}">{{EMAIL}}</a></div>
+  <div><a href="./guide/">Guide / Guida</a><a href="./support/">Support</a><a href="./privacy/">Privacy</a></div>
 </footer>
 </body>
 </html>

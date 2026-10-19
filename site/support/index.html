@@ -2,18 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f0e12">
 <title>Support - Virtual Percussionist</title>
+<meta name="description" content="Help and answers for Virtual Percussionist.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Support - Virtual Percussionist">
+<meta property="og:description" content="Help and answers for Virtual Percussionist.">
+<meta property="og:image" content="https://virtualpercussionist.it/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../favicon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <link rel="stylesheet" href="../style.css">
 <script src="../lang.js"></script>
 </head>
 <body>
-<header>
-  <a class="brand" href="../"><i></i>VIRTUAL PERCUSSIONIST</a>
-  <span class="lang"><a href="#" data-lang="en">EN</a><a href="#" data-lang="it">IT</a></span>
+<header class="top">
+  <a class="brand" href="../"><img src="../assets/mark.png" width="32" height="32" alt=""><span>VIRTUAL PERCUSSIONIST</span></a>
+  <nav>
+    <a href="../guide/"><span class="en">Guide</span><span class="it">Guida</span></a>
+    <a href="../support/"><span class="en">Support</span><span class="it">Assistenza</span></a>
+    <a href="../privacy/">Privacy</a>
+    <span class="lang"><a href="#" data-lang="en">EN</a><a href="#" data-lang="it">IT</a></span>
+  </nav>
 </header>
 <main>
+<article>
 <div class="en">
   <h1>Support</h1>
   <p class="lead">Write to <a href="mailto:{{EMAIL}}">{{EMAIL}}</a>. We reply within a few working days. Please include your device model, iOS version and what you were playing along to.</p>
@@ -46,10 +61,11 @@
   <h2>Rimborsi</h2>
   <p>I rimborsi li gestisce Apple: <a href="https://reportaproblem.apple.com">reportaproblem.apple.com</a>.</p>
 </div>
+</article>
 </main>
 <footer>
-  <nav><a href="../">Home</a><a href="../guide/">Guide / Guida</a><a href="../privacy/">Privacy</a><a href="../support/">Support / Assistenza</a></nav>
-  <p>&copy; 2026 {{LEGAL_NAME}}</p>
+  <div>&copy; 2026 {{LEGAL_NAME}} &middot; <a href="mailto:{{EMAIL}}">{{EMAIL}}</a></div>
+  <div><a href="../guide/">Guide / Guida</a><a href="../support/">Support</a><a href="../privacy/">Privacy</a></div>
 </footer>
 </body>
 </html>

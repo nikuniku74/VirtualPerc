@@ -15,5 +15,5 @@ if [[ -z "$3" ]]; then
 fi
 find "$OUT" -name '*.html' -exec sed -i '' \
   -e "s|{{LEGAL_NAME}}|$(esc "$2")|g" -e "s|{{ADDRESS}}|$(esc "$3")|g" -e "s|{{EMAIL}}|$(esc "$4")|g" {} +
-if grep -rq '{{' "$OUT"; then echo "unfilled placeholder left in $OUT" >&2; exit 1; fi
+if grep -rq --include='*.html' '{{' "$OUT"; then echo "unfilled placeholder left in $OUT" >&2; exit 1; fi
 echo "site written to $OUT"
