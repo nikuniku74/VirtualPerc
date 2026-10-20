@@ -252,6 +252,43 @@ Three things about it are load-bearing, and two of them were got wrong once:
   delay now needs `kDelaySwitchMargin` (0.15) over the incumbent: **0.2794 ->
   0.0888** mean on that fixture, worst block 0.99 -> 0.13, and the sparsest voice
   gains most - congas 13.4% -> 25.2% of their return removed.
+  **And below 1024 frames the search is not one callback's** (item 125).
+  Our part is a handful of samples played again and again, so a 5 ms block
+  holding one stroke matches another stroke of the same sound at the wrong lag
+  almost as well as at the right one (0.87-0.98 against 1.00). At 256 frames on
+  the iPad path (funk, eighths, 175 ms return) the held delay was given up 36
+  times in four seconds - 9859, 10016, 4062, 7392, 2042 - before it landed on
+  8400: `leak-buffer` **0.3221** at 256 against 0.0095 at 1024. It surfaced when
+  the voice levels moved (`c17265a`); the fragility was the window. Two parts,
+  both needed, kept in `leakHist` (input before the subtraction, contiguous
+  with `outRing`, dropped on any gap):
+  - the search scores the newest `leakSearchSamples` (1024 frames at 48 kHz)
+    and runs once per that much audio, so its cost per second is the
+    1024-frame cost at every smaller buffer;
+  - while that window spans several callbacks, a held delay is given up only if
+    the challenger also wins by the margin over `kLeakConfirmSec` (0.3 s,
+    several strokes).
+  A block of 1024 or more is decided exactly as before, bit for bit. After:
+  256 = 0.0096, no-leak speaker row at 128 frames 26.2% of mean / gated 1.246
+  -> 4.1% / 1.048, `--leak` **49/0** (the three standing failures included).
+  Rejected on the way, all measured: the longer search window alone (fixes
+  `--leak`, but in `--makeup d`'s veto sweep a correct 1440 was left when the
+  part went quiet under the room - worst margin +13.48 -> -5.67 dB); the
+  confirmation alone on the 5 ms search (8400 hardly ever nominated: 0.3480);
+  the same lag winning two scans running (a sparse part rarely gives two
+  stroke blocks in a row: 0.8958); and the confirmation at every buffer size
+  (cost the reflective rooms at 1024: one wall 16.9% -> 13.1% removed, worst
+  block 1.10 -> 1.16). With the canceller holding its path, the empty-room
+  phase of the veto sweep reads silent and band dynamics stand the part down
+  at ~5.4 s, as designed: the sweep now holds the part on
+  (`MakeupOpts::followDynamics = false`), like `leakRun`.
+  **A bench can pass on the canceller's junk.** The harmony bar test on
+  drum-free material (iPad path, 256 frames) read 99% at HEAD only because the
+  delay hopped ~600 times on a feed with no return, with gains up to 0.9, and the
+  subtraction injected our own part into the analysis; with the part muted HEAD
+  and the fix both read 10%, and with the delay held it reads 26%. When a
+  speaker-path result moves with a canceller change, mute the part before
+  believing either number.
 - **The gain is fitted over half a second of causal history, not over the
   block.** The normal-equation terms of the three-band least squares are
   accumulated with `alpha = exp(-numSamples / (0.5 s * sampleRate))` and the

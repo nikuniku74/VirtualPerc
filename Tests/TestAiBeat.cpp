@@ -9696,6 +9696,12 @@ namespace
         /** Follow the iPad's own speaker, which is the mode whose canceller
             searches for the acoustic hop instead of trusting the round trip. */
         bool   speakerSource = false;
+        /** Band dynamics as shipped. Off holds the part playing whatever the
+            input carries: a bench whose only "band" before the record is a
+            quiet room and our own return is measuring the return, and a
+            canceller doing its job leaves the dynamics a silent room - so the
+            part stands down and there is no return left to measure. */
+        bool   followDynamics = true;
         /** FISSO releases the part without waiting for the input to start, which
             is how a listener reaches "part audible over a quiet room". */
         float  fixedBpm = 0.0f;
@@ -9725,6 +9731,7 @@ namespace
         eng.settings().masterVolume.store (o.partAudible ? o.partVolume : 0.0f);
         eng.setReportedLatencyMs (o.leakGain > 0.0f ? 8.0f : 0.0f);
         eng.setLeakCancellationEnabledForTest (o.cancellation);
+        eng.settings().dynamicsFollow.store (o.followDynamics);
         if (o.speakerSource)
             eng.settings().followSource.store (
                 static_cast<int> (vp::FollowSource::speaker), std::memory_order_relaxed);
@@ -11779,6 +11786,16 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                             // even when return gain is one.
                             o.partVolume = 0.45f;
                             o.cancellation = true;
+                            // The veto is judged on our return over the
+                            // room's last three seconds, so the part has to
+                            // be playing then. With dynamics on it played
+                            // only while our own uncancelled return held the
+                            // dynamics up: once the iPad-path delay search
+                            // stopped losing its path (item 125) the room
+                            // read as silent, the part stood down at ~5.4 s
+                            // and the rows had 55-57 strokes against 89 -
+                            // nothing left to veto.
+                            o.followDynamics = false;
                             o.leakGain = g;
                             o.leakDelayMs = path.delayMs;
                             o.speakerSource = path.speaker;

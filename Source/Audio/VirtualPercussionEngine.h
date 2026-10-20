@@ -436,8 +436,22 @@ private:
     float leakLp = 0.0f;
     float analysisHp = 0.0f;
     int leakDelaySamples = 0;
+    /** Samples, not callbacks, until the next full delay search. */
     int leakScanCountdown = 0;
     bool leakDelayLocked = false;
+    /** The newest input before the subtraction, contiguous with outRing. The
+        delay search correlates on `leakSearchSamples` of it (1024 frames at
+        48 kHz) whatever the buffer size, and a held delay is only given up on
+        kLeakConfirmSec of it - several strokes. See updateLeakDelay.
+        `leakHistFill` is how much of it is real history, `leakHistNextWrite`
+        where ringWrite must be for the next block to continue it. */
+    static constexpr int leakHistSize = 16384;
+    static constexpr double kLeakConfirmSec = 0.3;
+    std::vector<float> leakHist;
+    int leakHistWrite = 0;
+    int leakHistFill = 0;
+    int leakHistNextWrite = -1;
+    int leakSearchSamples = 1024;
     /** How much of our own output the input is carrying back, fitted per band
         and held across blocks. Signed, and clamped only where it is used: see
         subtractSpeakerLeak. */

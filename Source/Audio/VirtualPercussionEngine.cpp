@@ -187,6 +187,10 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     for (auto& b : leakBand)
         b.assign (static_cast<size_t> (maxBlock), 0.0f);
+    leakHist.assign (static_cast<size_t> (leakHistSize), 0.0f);
+    // 1024 frames at 48 kHz: the window the delay search was right on at 1024.
+    leakSearchSamples = std::clamp (static_cast<int> (std::lround (sampleRate * (1024.0 / 48000.0))),
+                                    256, leakHistSize / 4);
     outRing.assign (static_cast<size_t> (ringSize), 0.0f);
     ringWrite = 0;
     // The reference the canceller fits against has just been zeroed, so any
@@ -316,6 +320,9 @@ void VirtualPercussionEngine::resetLeakEstimate() noexcept
     leakDelaySamples = 0;
     leakScanCountdown = 0;
     leakDelayLocked = false;
+    leakHistWrite = 0;
+    leakHistFill = 0;
+    leakHistNextWrite = -1;
 }
 
 void VirtualPercussionEngine::reset() noexcept
@@ -613,6 +620,48 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     if (outRing.empty() || numSamples <= 0)
         return;
 
+    // Correlate on a length of time, not on one callback (item 125). Every
+    // score below used to be taken over the current block alone, so at 256
+    // frames the search judged "this is our own return" on 5 ms of input - and
+    // our part is a handful of samples played again and again, so 5 ms holding
+    // one stroke matches any other stroke of the same sound at the wrong lag
+    // almost as well as at the right one. Measured in `VPTests --leak` (funk,
+    // eighths, iPad path, 175 ms return): at 256 frames the held delay was
+    // given up 36 times in four seconds - 9859, 10016, 4062, 7392, 2042... -
+    // the fit dropped at every hop, before it landed on 8400; residual 0.3221
+    // against 0.0095 at 1024. Two fixes, both needed:
+    //  - the search scores the newest leakSearchSamples of input (what it
+    //    always had at 1024 frames), and runs once per that much audio rather
+    //    than once per callback, so its cost per second is the same at every
+    //    buffer size; a block at least that long is scored exactly as before;
+    //  - a held delay is given up only if the challenger also wins over
+    //    kLeakConfirmSec of input, several strokes (below).
+    // The history that does not continue the reference ring - a skipped block,
+    // a mode switch - is dropped rather than correlated at the wrong alignment.
+    static_assert ((leakHistSize & (leakHistSize - 1)) == 0, "leakHistSize must be a power of two");
+    // A callback longer than the history (over 340 ms at 48 kHz, which no
+    // device asks for) would wrap it onto itself: no search rather than a wrong one.
+    if (leakHist.empty() || numSamples > leakHistSize)
+        return;
+    if (ringWrite != leakHistNextWrite)
+        leakHistFill = 0;
+    leakHistNextWrite = (ringWrite + numSamples) & (ringSize - 1);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        leakHist[static_cast<size_t> (leakHistWrite)] = mono[static_cast<size_t> (i)];
+        leakHistWrite = (leakHistWrite + 1) & (leakHistSize - 1);
+    }
+    leakHistFill = std::min (leakHistSize, leakHistFill + numSamples);
+    // The input sample `i` of a window `w` long that ends with this block,
+    // and how far before the block that window starts: the reference for it
+    // is the output `d` samples before.
+    auto histAt = [this] (int w, int i) noexcept
+    {
+        return leakHist[static_cast<size_t> ((leakHistWrite - w + i) & (leakHistSize - 1))];
+    };
+    const int window = std::max (numSamples, std::min (leakHistFill, leakSearchSamples));
+    const int back = window - numSamples;
+
     const float latMs = std::max (8.0f, latencyMs.load (std::memory_order_relaxed));
     int center = static_cast<int> (latMs * 0.001 * sampleRate);
     center = std::clamp (center, 64, ringSize - numSamples - 1);
@@ -624,7 +673,7 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     const int pad = static_cast<int> ((speaker ? 0.080 : 0.040) * sampleRate);
     const int lo = std::max (64, speaker ? static_cast<int> (0.008 * sampleRate)
                                          : center - pad);
-    const int hi = std::min (ringSize - numSamples - 1,
+    const int hi = std::min (ringSize - window - 1,
                              speaker ? std::max (center + pad,
                                                  static_cast<int> (0.080 * sampleRate))
                                      : center + pad);
@@ -638,9 +687,8 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     }
 
     double xx = 0.0;
-    for (int i = 0; i < numSamples; ++i)
-        xx += static_cast<double> (mono[static_cast<size_t> (i)])
-              * mono[static_cast<size_t> (i)];
+    for (int i = 0; i < window; ++i)
+        xx += static_cast<double> (histAt (window, i)) * histAt (window, i);
 
     // Do not move a delay estimate while the input block is empty. At the true
     // delay its reference is empty too (scoreAt returns the sentinel), while a
@@ -650,26 +698,26 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     if (xx < 1.0e-9)
         return;
 
-    auto scoreAt = [this, numSamples, xx] (int d) noexcept -> double
+    auto scoreAt = [this, window, back, xx, &histAt] (int d) noexcept -> double
     {
         double xy = 0.0, yy = 0.0;
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = 0; i < window; ++i)
         {
-            const int ri = (ringWrite - d + i + ringSize) & (ringSize - 1);
+            const int ri = (ringWrite - d - back + i + ringSize) & (ringSize - 1);
             const float y = outRing[static_cast<size_t> (ri)];
-            xy += static_cast<double> (mono[static_cast<size_t> (i)]) * y;
+            xy += static_cast<double> (histAt (window, i)) * y;
             yy += static_cast<double> (y) * y;
         }
         return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
     };
-    auto envelopeScoreAt = [this, numSamples, xx] (int d) noexcept -> double
+    auto envelopeScoreAt = [this, window, back, xx, &histAt] (int d) noexcept -> double
     {
         double xy = 0.0, yy = 0.0;
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = 0; i < window; ++i)
         {
-            const int ri = (ringWrite - d + i + ringSize) & (ringSize - 1);
+            const int ri = (ringWrite - d - back + i + ringSize) & (ringSize - 1);
             const float y = outRing[static_cast<size_t> (ri)];
-            xy += static_cast<double> (std::abs (mono[static_cast<size_t> (i)]))
+            xy += static_cast<double> (std::abs (histAt (window, i)))
                   * std::abs (y);
             yy += static_cast<double> (y) * y;
         }
@@ -703,14 +751,18 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     int best = leakDelaySamples;
     double bestScore = incumbentScore;
 
-    if (--leakScanCountdown <= 0)
+    leakScanCountdown -= numSamples;
+    if (leakScanCountdown <= 0)
     {
-        // Search every block until one actually contains enough of our return
+        // Search every window until one actually contains enough of our return
         // to identify the path. Sparse percussion can put all of its attacks
-        // between a fixed every-fourth-block scan; once acquired, the cheaper
-        // cadence is sufficient to follow a moving acoustic path.
-        leakScanCountdown = speaker ? (leakDelayLocked ? 4 : 1) : 8;
-        const int step = std::max (16, numSamples / 8);
+        // between a fixed every-fourth-window scan; once acquired, the cheaper
+        // cadence is sufficient to follow a moving acoustic path. Counted in
+        // samples: below leakSearchSamples a window spans several callbacks,
+        // and each scan already sees all of them.
+        leakScanCountdown = (speaker ? (leakDelayLocked ? 4 : 1) : 8)
+                            * std::max (numSamples, leakSearchSamples);
+        const int step = std::max (16, window / 8);
         int coarseBest = best;
         double coarseScore = envelopeScoreAt (coarseBest);
         for (int d = lo; d <= hi; d += step)
@@ -762,6 +814,57 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
     {
         best = leakDelaySamples;
         bestScore = incumbentScore;
+    }
+
+    // And the same margin has to hold over several strokes, not only over the
+    // search window. That window is the right place to *nominate* a delay -
+    // a stroke sits inside it, undiluted by the room - and the wrong place to
+    // give one up: one stroke of ours matches another of the same sound at the
+    // wrong lag (0.87-0.98 against 1.00), and when our part is quiet under the
+    // room the held path scores noise while a lag somewhere touches a tail.
+    // Without this, the longer search window alone fixed `--leak` but broke
+    // `--makeup d`: the veto sweep (iPad path, 30 ms exact return, 128 frames)
+    // left a correct 1440 at 5.8 s, when the part went quiet under the room,
+    // for 1920, 1152, 4005 and held 495 into the band - worst margin +13.48 dB
+    // -> -5.67 dB. Rejected on the way: the same lag winning two scans running
+    // (a sparse part rarely gives two stroke blocks in a row, `--leak` 256 at
+    // 0.8958), and this check alone on the 5 ms search (8400 was hardly ever
+    // nominated: 0.3480).
+    //
+    // Only where the search window spans several callbacks (`back > 0`). A
+    // block of leakSearchSamples or more is decided as it always was: there
+    // the check bought nothing and cost the reflective rooms - `--leak`
+    // one-wall fixture at 1024 frames, removed 16.9% -> 13.1%, worst block
+    // 1.10 -> 1.16 - by holding a direct path against a better-fitting one.
+    if (leakDelayLocked && best != leakDelaySamples && back > 0)
+    {
+        const int w = std::min ({ leakHistFill,
+                                  static_cast<int> (kLeakConfirmSec * sampleRate),
+                                  ringSize - 1 - std::max (best, leakDelaySamples) });
+        if (w > window)
+        {
+            const int wBack = w - numSamples;
+            double wxx = 0.0;
+            for (int i = 0; i < w; ++i)
+                wxx += static_cast<double> (histAt (w, i)) * histAt (w, i);
+            auto confirmScoreAt = [this, w, wBack, wxx, &histAt] (int d) noexcept -> double
+            {
+                double xy = 0.0, yy = 0.0;
+                for (int i = 0; i < w; ++i)
+                {
+                    const int ri = (ringWrite - d - wBack + i) & (ringSize - 1);
+                    const float y = outRing[static_cast<size_t> (ri)];
+                    xy += static_cast<double> (histAt (w, i)) * y;
+                    yy += static_cast<double> (y) * y;
+                }
+                return yy > 1.0e-12 && wxx > 1.0e-9 ? xy / std::sqrt (wxx * yy) : -1.0e9;
+            };
+            if (confirmScoreAt (best) < confirmScoreAt (leakDelaySamples) + kDelaySwitchMargin)
+            {
+                best = leakDelaySamples;
+                bestScore = incumbentScore;
+            }
+        }
     }
 
     if (bestScore > 0.12)
