@@ -288,7 +288,10 @@ Three things about it are load-bearing, and two of them were got wrong once:
   subtraction injected our own part into the analysis; with the part muted HEAD
   and the fix both read 10%, and with the delay held it reads 26%. When a
   speaker-path result moves with a canceller change, mute the part before
-  believing either number.
+  believing either number. The test now mutes the part. The muted 10%
+  was the tonal-share gate opening at 42 s, not the harmony (item 126); the
+  injected congas had read as tonal (share 0.69 against 0.46) and opened it
+  early.
 - **The gain is fitted over half a second of causal history, not over the
   block.** The normal-equation terms of the three-band least squares are
   accumulated with `alpha = exp(-numSamples / (0.5 s * sampleRate))` and the

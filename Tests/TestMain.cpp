@@ -1191,6 +1191,12 @@ int main (int argc, char** argv)
         vpRunHarmonicEntryTest (gPassed, gFailed);
         return gFailed ? 1 : 0;
     }
+    if (argc > 1 && std::string (argv[1]) == "--harmony-bar")
+    {
+        vpRunHarmonyBarTest (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
     if (argc > 1 && std::string (argv[1]) == "--harmonic-audio")
     {
         vpRunHarmonicAudioTest (gPassed, gFailed);

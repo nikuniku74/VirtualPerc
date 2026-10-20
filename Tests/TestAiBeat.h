@@ -58,6 +58,8 @@ void vpRunEvidenceTrustTest (int& passed, int& failed);
 void vpRunStateTimingTest (int& passed, int& failed);
 void vpRunHarmonicEntryTest (int& passed, int& failed);
 void vpRunHarmonicAudioTest (int& passed, int& failed);
+/** Harmony on drum-free material places the one. Also `VPTests --harmony-bar`. */
+void vpRunHarmonyBarTest (int& passed, int& failed);
 /** Click-track heard-phase at 78/100/120/138/156 BPM. Also `VPTests --phase-lock`. */
 void vpRunOnnxPhaseLockTests (int& passed, int& failed);
 

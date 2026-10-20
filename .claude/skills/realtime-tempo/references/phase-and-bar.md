@@ -85,6 +85,15 @@ is the *only* evidence, and measured there every single change landed on the
 downbeat - where the network through an iPad speaker is no better than a coin.
 Summing them would hide which one answered.
 
+The harmony's gate is `harmonicShare` > 0.42 (`HarmonicChange::tonalShare`,
+an average over ~15 s). It is divided by the weight gathered since `reset()`:
+started at zero, the average read its own start as "no chord" and kept the
+gate shut ~40 s on drum-free material whose votes were already unanimous
+(item 126). The engine never resets it at an epoch, so after a long room the
+share still climbs from near zero at the band's entrance. On today's rendered
+song the gate no longer separates anything: kit mix 0.62-0.68, drum-free
+stem 0.47 (the 0.32 / 0.55 it was set on were measured on 2026-08-29).
+
 On the acoustic speaker path, `alignBarFromVotes` is still called but skips the
 network histogram and may answer only from the gated harmony histogram. Do not
 gate the call itself on `barFromHarmony`: that flag is the result of a successful

@@ -110,6 +110,7 @@ public:
         usable = false;
         loudestWindow = 0.0f;
         usableShare = 0.0f;
+        shareWeight = 0.0f;
         histWrite = 0;
         histFilled = 0;
         for (auto& row : history)
@@ -272,8 +273,18 @@ public:
         How often the signal is tonal at all does separate them, and it barely
         moves: on a band with a chord under it nearly every window passes, on a
         kit track hardly any do. It is the question "is there harmony here",
-        asked before "where does it change". */
-    float tonalShare() const noexcept { return usableShare; }
+        asked before "where does it change".
+
+        Divided by the weight the average has actually gathered since reset().
+        Without that an average that starts at zero reads its own start as
+        "no chord": on drum-free material whose share settles at 0.47 it took
+        39 s to clear BeatTracker's 0.42, so the harmony placed the bar at
+        42 s instead of 22 (TODO item 126). Once a few time constants have
+        passed the weight is one and nothing changes. */
+    float tonalShare() const noexcept
+    {
+        return shareWeight > 0.0f ? usableShare / shareWeight : 0.0f;
+    }
 
 private:
     static constexpr double kPi = 3.14159265358979;
@@ -419,6 +430,7 @@ private:
         // Over about fifteen seconds, so a chorus does not have to prove it
         // again and a passage that stops being harmonic stops answering.
         usableShare += ((usable ? 1.0f : 0.0f) - usableShare) * kShareRate;
+        shareWeight += (1.0f - shareWeight) * kShareRate;
         if (! usable)
             return 0.0f;
 
@@ -468,6 +480,7 @@ private:
     bool  haveReference = false, usable = false;
     float loudestWindow = 0.0f;
     float usableShare = 0.0f;
+    float shareWeight = 0.0f;
     float history[kMedianHops][12] {};
     int   histWrite = 0, histFilled = 0;
     std::int64_t absPos = 0, changeStartedAt = 0;
