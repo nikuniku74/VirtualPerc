@@ -148,6 +148,15 @@ int main (int argc, char** argv)
     p.setBusy (false);
     juce::ignoreUnused (purchased, asked);
 
+    {
+        // VP_UNLOCKED: the store is never asked, so the status stays the default.
+        PaywallOverlay f;
+        f.setPersonalBuild (true);
+        f.setSize (393, 852);
+        expect (f.showsStatusPage() && f.lifetimeInView(),
+                "FULL build: the status page, no purchase or manage button, nothing asks the store");
+    }
+
     // --store <dir>: the paywall pages at the App Store's own sizes
     // (iPhone 6.9" 1320x2868, iPad 13" 2064x2752), English and Italian.
     if (argc > 2 && juce::String (argv[1]) == "--store")
@@ -214,6 +223,12 @@ int main (int argc, char** argv)
             q.setSize (393, 852);
             q.showLicenses();
             shoot (q, offer (true), dir, L + "11-licenses-phone", 393, 852, phoneSafe, true);
+
+            PaywallOverlay full;
+            full.setClock ([] { return kNow; });
+            full.setItalian (it);
+            full.setPersonalBuild (true);
+            shoot (full, vp::store::Status {}, dir, L + "12-full-personal-phone", 393, 852, phoneSafe, true);
         }
         std::printf ("screens written to %s\n", dir.getFullPathName().toRawUTF8());
     }

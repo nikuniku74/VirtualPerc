@@ -44,6 +44,30 @@ public:
     }
 };
 
+/** The body: laid out once per size and painted, nothing to select or edit.
+    Inside a Viewport, so a finger still scrolls it where it is too long. */
+class InfoPopup::TextView final : public juce::Component
+{
+public:
+    static constexpr float kPt = 16.5f;   // 15 read small on a phone (2026-10-20)
+    juce::String text;
+
+    void layout (int width)
+    {
+        juce::AttributedString a;
+        a.setJustification (juce::Justification::topLeft);
+        a.append (text, fontUi (kPt, false), ::text());
+        tl.createLayout (a, static_cast<float> (juce::jmax (40, width)));
+        setSize (juce::jmax (40, width), static_cast<int> (std::ceil (tl.getHeight())) + 4);
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override { tl.draw (g, getLocalBounds().toFloat()); }
+
+private:
+    juce::TextLayout tl;
+};
+
 InfoPopup::InfoPopup()
 {
     setOpaque (false);
@@ -59,11 +83,9 @@ InfoPopup::InfoPopup()
     confirmButton->onClick = [this] { close(); };
     addChildComponent (*confirmButton);
 
-    body.setMultiLine (true, true);
-    body.setReadOnly (true);
-    body.setCaretVisible (false);
-    body.setPopupMenuEnabled (false);
-    body.setScrollbarsShown (true);
+    textView = std::make_unique<TextView>();
+    body.setViewedComponent (textView.get(), false);
+    body.setScrollBarsShown (true, false);
     addAndMakeVisible (body);
 }
 
@@ -72,7 +94,7 @@ InfoPopup::~InfoPopup() = default;
 void InfoPopup::setContent (const juce::String& t, const juce::String& text)
 {
     title = t;
-    body.setText (text, false);
+    textView->text = text;
     resized();
     repaint();
 }
@@ -87,14 +109,8 @@ void InfoPopup::setConfirmText (const juce::String& text)
 
 void InfoPopup::open()
 {
-    body.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
-    body.setColour (juce::TextEditor::textColourId, ::text());
-    body.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    body.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
-    body.applyFontToAllText (fontUi (15.0f, false));
-    body.setFont (fontUi (15.0f, false));
-    body.moveCaretToTop (false);
-    resized();
+    resized();   // lays the text out again, in the current theme's colour
+    body.setViewPosition (0, 0);
     setVisible (true);
     toFront (false);
     repaint();
@@ -122,18 +138,15 @@ void InfoPopup::resized()
         return;
 
     const int width = juce::jmin (area.getWidth(), 600);
-    const int textW = width - 40 - 8;
-    juce::AttributedString a;
-    a.setJustification (juce::Justification::topLeft);
-    a.append (body.getText(), fontUi (15.0f, false), juce::Colours::white);
-    juce::TextLayout layout;
-    layout.createLayout (a, static_cast<float> (juce::jmax (40, textW)));
-    const int textH = static_cast<int> (std::ceil (layout.getHeight())) + 24;
+    const int textW = width - 40 - 8;   // 8: room for the scrollbar
+    textView->layout (textW);
+    const int textH = textView->getHeight() + 24;
     const int head = 56;
     const int foot = confirmButton->isVisible() ? 64 : 0;
     const int height = juce::jmin (area.getHeight(), head + textH + 16 + foot);
 
-    card = juce::Rectangle<int> (width, height).withCentre (area.getCentre());
+    // At the top of the page, centred across: like every other page (2026-10-20).
+    card = juce::Rectangle<int> (width, height).withCentre (area.getCentre()).withY (area.getY());
     auto inner = card.reduced (20, 14);
     auto top = inner.removeFromTop (head - 14);
     closeButton->setBounds (top.removeFromRight (30).withSizeKeepingCentre (30, 30));

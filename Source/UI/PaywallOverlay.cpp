@@ -352,6 +352,14 @@ void PaywallOverlay::setStatus (const vp::store::Status& s)
     repaint();
 }
 
+void PaywallOverlay::setPersonalBuild (bool b)
+{
+    personal = b;
+    refreshControls();
+    layoutAll();
+    repaint();
+}
+
 void PaywallOverlay::setBusy (bool b)
 {
     busy = b;
@@ -420,7 +428,7 @@ void PaywallOverlay::showLicenses()
     licensesPage->toFront (false);
 }
 
-bool PaywallOverlay::statusPage() const noexcept { return status.entitled(); }
+bool PaywallOverlay::statusPage() const noexcept { return personal || status.entitled(); }
 bool PaywallOverlay::showsStatusPage() const noexcept { return statusPage(); }
 
 int PaywallOverlay::planCount() const noexcept
@@ -458,6 +466,8 @@ void PaywallOverlay::selectPlan (int displayIndex)
 
 bool PaywallOverlay::lifetimeInView() const noexcept
 {
+    if (personal)
+        return true;   // nothing to manage: no button under the receipt
     if (statusPage())
         return status.activePlanId == vp::store::kLifetimeId;
     const auto* p = selected();
@@ -510,6 +520,9 @@ juce::String PaywallOverlay::headlineText() const
 
 juce::String PaywallOverlay::subText() const
 {
+    if (personal)
+        return t ("Personal FULL build: everything unlocked, no subscription.",
+                  "Versione FULL personale: tutto sbloccato, nessun abbonamento.");
     if (status.access == vp::store::Access::trial)
         return t ("Your free trial is active.", "La prova gratuita è attiva.");
     if (status.ownsLifetime())
@@ -538,6 +551,8 @@ juce::String PaywallOverlay::priceNote() const
 
 juce::String PaywallOverlay::legalText() const
 {
+    if (personal)
+        return {};   // nothing is sold here
     if (lifetimeInView())
         return t ("Payment is charged to your Apple ID at confirmation of purchase. This is a one-time purchase, "
                   "not a subscription: it does not renew. You can restore it on your other devices with "
@@ -637,8 +652,8 @@ void PaywallOverlay::refreshControls()
         l->setTitle (l->text);
     }
     restoreLink->setEnabled (! busy);
-    restoreLink->setVisible (true);
-    redeemLink->setVisible (static_cast<bool> (onRedeem));
+    restoreLink->setVisible (! personal);
+    redeemLink->setVisible (! personal && static_cast<bool> (onRedeem));
     redeemLink->setEnabled (! busy);
     termsLink->setVisible (true);
     privacyLink->setVisible (true);
@@ -770,14 +785,15 @@ void PaywallOverlay::layoutAll()
     {
         auto l = area.removeFromLeft (area.getWidth() / 2).withSizeKeepingCentre (colW, area.getHeight());
         auto r = area.withSizeKeepingCentre (colW, area.getHeight());
-        place (l.withTrimmedTop (juce::jmax (0, (l.getHeight() - leftH) / 2)), left);
-        place (r.withTrimmedTop (juce::jmax (0, (r.getHeight() - rightH) / 2)), right);
+        // Both columns start at the top, under the close button (2026-10-20:
+        // pages centred in the height read as floating).
+        place (l, left);
+        place (r, right);
     }
     else
     {
         auto col = area.withSizeKeepingCentre (colW, area.getHeight());
-        col.removeFromTop (juce::jmax (0, (col.getHeight() - (leftH + gap + rightH)) / 3));
-        const int y = place (col, left) + gap;
+        const int y = place (col, left) + gap;   // from the top, like the two columns
         place (juce::Rectangle<int> (col.getX(), y, colW, juce::jmax (0, col.getBottom() - y)), right);
     }
 
@@ -871,10 +887,16 @@ void PaywallOverlay::paint (juce::Graphics& g)
             g.drawText (t ("YOUR PLAN", "IL TUO PIANO"), in.removeFromTop (static_cast<int> (18 * s)), juce::Justification::centredLeft, true);
             g.setColour (::text());
             g.setFont (F (20.0f, true));
-            g.drawText (planName (status.activePlanId), in.removeFromTop (static_cast<int> (28 * s)), juce::Justification::centredLeft, true);
+            g.drawText (personal ? juce::String ("FULL") : planName (status.activePlanId), in.removeFromTop (static_cast<int> (28 * s)), juce::Justification::centredLeft, true);
 
             juce::String line, detail;
-            if (status.ownsLifetime())
+            if (personal)
+            {
+                line = t ("Everything unlocked", "Tutto sbloccato");
+                detail = t ("Installed from Xcode, not from the App Store: no subscription and no purchases.",
+                            "Installata da Xcode, non dall'App Store: nessun abbonamento e nessun acquisto.");
+            }
+            else if (status.ownsLifetime())
             {
                 line = t ("Lifetime access", "Accesso lifetime");
                 detail = t ("One payment, no renewals. It stays with your Apple ID.",

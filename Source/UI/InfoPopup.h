@@ -30,9 +30,12 @@ public:
 private:
     class CrossButton;
     class ConfirmButton;
+    class TextView;
 
     juce::String title;
-    juce::TextEditor body;
+    /** Text only: a TextEditor, even read-only, let a finger select it. */
+    juce::Viewport body;
+    std::unique_ptr<TextView> textView;
     std::unique_ptr<CrossButton> closeButton;
     std::unique_ptr<ConfirmButton> confirmButton;
     juce::Rectangle<int> card, titleArea;

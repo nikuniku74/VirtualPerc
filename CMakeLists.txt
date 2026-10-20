@@ -163,7 +163,8 @@ juce_add_gui_app (VirtualPercussionist
     # compliance question on every upload.
     # Languages the app declares (iOS then offers a per-app language in Settings,
     # and the App Store shows them): English and Italian, see Source/UI/Localization.h.
-    PLIST_TO_MERGE "<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/><key>CFBundleDevelopmentRegion</key><string>en</string><key>CFBundleLocalizations</key><array><string>en</string><string>it</string></array></dict></plist>"
+    # Dark system sheets (file picker, purchase), like the app, which always starts dark.
+    PLIST_TO_MERGE "<plist><dict><key>ITSAppUsesNonExemptEncryption</key><false/><key>UIUserInterfaceStyle</key><string>Dark</string><key>CFBundleDevelopmentRegion</key><string>en</string><key>CFBundleLocalizations</key><array><string>en</string><string>it</string></array></dict></plist>"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Virtual Percussionist listens to your drum kit to play along in time."
     BACKGROUND_AUDIO_ENABLED TRUE

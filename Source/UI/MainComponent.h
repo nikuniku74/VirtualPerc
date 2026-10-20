@@ -711,7 +711,8 @@ private:
 
     bool debugOpen = false;
     bool darkMode = true;
-    bool themeFollowsSystem = true;
+    /** Off: the app always starts dark and does not follow the system. */
+    bool themeFollowsSystem = false;
     /** Written by JUCE's device lifecycle and read by the message-thread
         watchdog. A plain bool made the recovery decision a data race. */
     std::atomic<bool> audioReady { false };

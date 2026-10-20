@@ -22,7 +22,10 @@ MainComponent::MainComponent()
     trackFormats.registerBasicFormats();
     trackReadThread.startThread (juce::Thread::Priority::normal);
 
-    darkMode = juce::Desktop::getInstance().isDarkModeActive();
+    // Always starts dark, whatever the system or the last session chose: it is
+    // a stage app (2026-10-20). LIGHT is still one tap away in the settings,
+    // for that session only.
+    darkMode = true;
     gDarkMode = darkMode;
     appLaf.refreshColours();
     juce::Desktop::getInstance().addDarkModeSettingListener (this);
@@ -480,6 +483,13 @@ MainComponent::MainComponent()
         }
     };
     accountButton.onClick = [this] { showPaywall (true); };
+   #if VP_UNLOCKED
+    // A personal build's bundle id has no products: the page would only say
+    // the App Store is unreachable. It opens as "everything unlocked" and
+    // keeps terms, privacy and licences (2026-10-20).
+    accountButton.setButtonText ("FULL");
+    paywall.setPersonalBuild (true);
+   #endif
     setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
@@ -638,6 +648,7 @@ MainComponent::MainComponent()
                 safe->showPaywall (false);
         });
     };
+   #if ! VP_UNLOCKED
     {
         juce::Component::SafePointer<MainComponent> safe (this);
         vp::store::start ([safe] (const vp::store::Status& s)
@@ -646,6 +657,7 @@ MainComponent::MainComponent()
                 safe->onSubscriptionStatus (s);
         });
     }
+   #endif
 
     addAndMakeVisible (splash);
     splash.setBounds (getLocalBounds());
@@ -1884,11 +1896,7 @@ void MainComponent::loadPrefs()
         || src == static_cast<int> (vp::FollowSource::kitMic))
         engine.settings().followSource.store (src);
 
-    // -1 is the state the app ships in: follow the system rather than remember
-    // a theme the listener never chose.
-    const int theme = prefs->getIntValue ("theme", -1);
-    if (theme == 0 || theme == 1)
-        applyTheme (theme == 1, true);
+    // The saved theme is not applied: the app always starts dark (constructor).
 
     const int sub = prefs->getIntValue ("subdivision",
                                         engine.settings().subdivision.load());
@@ -1980,17 +1988,18 @@ void MainComponent::loadPrefs()
         prefs->getBoolValue ("startImmediately", false));
     engine.settings().driftGuard.store (prefs->getBoolValue ("driftGuard", true));
 
-    const bool recordedLoops = loopBankReady
-                               && prefs->getBoolValue ("recordedLoops", true);
-    engine.setRecordedLoopsEnabled (recordedLoops);
-    if (recordedLoops)
-    {
-        // Safe migration for installs which saved AUTO, another sample rate or
-        // a very short buffer before the recorded bank was bundled.
-        clockHz = 48000;
-        if (bufferChoice == 0 || bufferChoice < 256)
-            bufferChoice = 256;
-    }
+    // PATTERN only: the part is the app's own strokes (clap, cembalo, shaker,
+    // congas, triangle...). The recorded loops (Assets/Loops, DANCE only) took
+    // the part over a second or two after it started (HybridPercussionRenderer,
+    // kHoldBlocks), and the PATTERN/LOOP switch has been off the settings page
+    // since 2026-10-16: a fresh install - the FULL build, every store user -
+    // played them with no way back. A LOOP saved before is not honoured either
+    // (user's report, 2026-10-20). The hidden button still switches them.
+    engine.setRecordedLoopsEnabled (false);
+    // 256 frames on a first install; after that the player's own choice (64,
+    // 128, AUTO...) is kept from session to session (2026-10-20).
+    if (! prefs->containsKey ("bufferFrames"))
+        bufferChoice = 256;
 
     const float shakerVol = clamp01 (prefs->getDoubleValue ("shakerVolume", 1.00), 1.00);
     engine.settings().shakerVolume.store (shakerVol);
@@ -3104,12 +3113,14 @@ void MainComponent::onSubscriptionStatus (const vp::store::Status& s)
    #if VP_PAYWALL_ENFORCED
     if (s.access == vp::store::Access::locked)
     {
-        // A subscription that lapsed or was refunded while playing: stop, and say why.
-        if (userWantsArmed)
-            stopPressed();
-        if (trackTransport.isPlaying())
-            trackTransport.stop();
-        if (! paywallAutoShown)
+        // Never in the middle of a song. The status is read again whenever
+        // the app comes back to the foreground (StoreKitBridge.swift), and
+        // a live set is exactly when a locked iPad gets unlocked: a trial
+        // that ended under the band, or a refund, must not cut the part or
+        // cover the console. The part plays on; START and PLAY ask next
+        // time (requireAccess).
+        const bool playing = userWantsArmed || trackTransport.isPlaying();
+        if (! playing && ! paywallAutoShown)
         {
             paywallAutoShown = true;
             showPaywall (true);

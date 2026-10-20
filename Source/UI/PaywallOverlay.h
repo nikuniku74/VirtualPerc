@@ -26,6 +26,10 @@ public:
     ~PaywallOverlay() override;
 
     void setStatus (const vp::store::Status&);
+    /** A personal build (VP_UNLOCKED): the page only says everything is
+        unlocked and keeps the terms, privacy and licences links - no plans,
+        no restore, no codes, nothing that would ask the App Store. */
+    void setPersonalBuild (bool);
     /** A purchase or a restore is running: the buttons stand still. */
     void setBusy (bool busy);
     /** One line under the button, in the page's language. `detail` is the
@@ -71,6 +75,7 @@ private:
 
     int selectedPlan = 0;
     vp::store::Status status;
+    bool personal = false;
     bool busy = false;
     bool italian = false;
     juce::String notice;

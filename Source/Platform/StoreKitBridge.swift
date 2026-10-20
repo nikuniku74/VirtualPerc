@@ -47,6 +47,7 @@ import UIKit
     private var productsLoaded = false
     private var productsFailed = false
     private var updates: Task<Void, Never>?
+    private var foreground: NSObjectProtocol?
     private var last = VPStatus()
 
     @objc public func start(_ onChange: @escaping (VPStatus) -> Void) {
@@ -59,6 +60,14 @@ import UIKit
                 await self?.refresh()
             }
         }
+        // A trial or a cancelled subscription simply runs out: no transaction
+        // arrives for that, so without this the app stayed unlocked until it
+        // was relaunched. Read again whenever it comes back to the foreground.
+        foreground = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { await self?.refresh() }
+            }
         Task { await loadProducts(); await refresh() }
     }
 

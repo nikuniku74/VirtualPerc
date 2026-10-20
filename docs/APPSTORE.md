@@ -293,8 +293,11 @@ App Store → Account sandbox*. In sandbox l'abbonamento mensile dura 5 minuti.
    dice **TRIAL** e la pagina mostra i giorni rimasti.
 4. Stesso ID, cancella e reinstalla l'app: **nessuna seconda prova** («Subscribe»
    senza «gratis»).
-5. Scadenza durante la riproduzione: l'app si ferma e riapre l'offerta con
-   «Riprendi da dove avevi lasciato».
+5. Scadenza (in sandbox il mensile dura 5 minuti): con l'app ferma, metti l'app
+   in background e riaprila dopo la scadenza → si apre l'offerta con «Riprendi
+   da dove avevi lasciato». Con la parte che suona: **non si ferma** (dal
+   2026-10-20, mai a metà brano); a STOP la parte tace e il prossimo START apre
+   l'offerta.
 6. Ripristina acquisti su un secondo dispositivo: si sblocca.
 7. Modalità aereo con abbonamento valido: l'app resta sbloccata. Modalità aereo
    senza abbonamento: «App Store non raggiungibile», *Riprova*.
