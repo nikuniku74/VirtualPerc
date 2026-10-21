@@ -18,6 +18,7 @@
 #include "Audio/VirtualPercussionEngine.h"
 #include "AI/BeatModelConfig.h"
 #include "Loops/WavFile.h"
+#include "probe_song_render.h"
 
 #include <algorithm>
 #include <chrono>
@@ -43,6 +44,10 @@ int main (int argc, char** argv)
     // later. --bpm then refers to the second file. docs/TODO.md item 48.
     std::string thenPath;
     double thenAt = -1.0, stopGap = -1.0, stopAfter = 0.0, stopAt = -1.0, lagSec = 0.0;
+    // --self-leak G: the part comes back into the microphone through the probe
+    // room (speakerRoomMic's band limits and reflections) after --self-delay ms,
+    // at G times its output level. The iPad hearing itself (item 133).
+    double selfLeak = 0.0, selfDelayMs = 32.0;
     // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
     // and the engine is told, as MainComponent does. --stop-gap then counts
     // from the seek. --from T scores --bpm only from T seconds on (a long
@@ -86,6 +91,8 @@ int main (int argc, char** argv)
         else if (a == "--stop-after") stopAfter = std::atof (next());
         else if (a == "--stop-at")    stopAt = std::atof (next());
         else if (a == "--lag")        lagSec = std::atof (next());
+        else if (a == "--self-leak")  selfLeak = std::atof (next());
+        else if (a == "--self-delay") selfDelayMs = std::atof (next());
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
         else if (a == "--from")       scoreFrom = std::atof (next());
@@ -160,6 +167,20 @@ int main (int argc, char** argv)
     eng.start();
 
     std::vector<float> oL (block, 0.0f), oR (block, 0.0f);
+    std::vector<float> partOut (selfLeak > 0.0 ? static_cast<size_t> (n + block) : 0u, 0.0f);
+    std::vector<float> leakIn (block, 0.0f);
+    const long selfDelay = static_cast<long> (selfDelayMs * 0.001 * sr);
+    long roomTaps[8];
+    const float roomGains[8] = { 0.42f, 0.31f, 0.26f, 0.20f, 0.16f, 0.12f, 0.09f, 0.06f };
+    {
+        const int taps48[8] = { 411, 967, 1733, 2591, 3701, 5273, 7639, 11003 };
+        for (int k = 0; k < 8; ++k)
+            roomTaps[k] = static_cast<long> (taps48[k] * sr / 48000.0);
+    }
+    vp::probe::Biquad roomHp1, roomHp2, roomLp;
+    roomHp1.highpass (sr, 260.0, 0.707);
+    roomHp2.highpass (sr, 260.0, 0.707);
+    roomLp.lowpass (sr, 9000.0, 0.707);
     float* outs[2] = { oL.data(), oR.data() };
     const int hop = static_cast<int> (std::ceil (vp::kBeatModelHop * sr / vp::kBeatModelSampleRate));
 
@@ -236,7 +257,28 @@ int main (int argc, char** argv)
         }
         const int take = std::min ({ block, n - pos, hop - inHop, switchAt > pos ? switchAt - pos : block });
         const float* ins[1] = { mono.data() + pos + readOffset };
+        if (selfLeak > 0.0)
+        {
+            for (int i = 0; i < take; ++i)
+            {
+                const long at = pos + i - selfDelay;
+                float e = 0.0f;
+                if (at >= 0)
+                {
+                    e = partOut[static_cast<size_t> (at)];
+                    for (int k = 0; k < 8; ++k)
+                        if (at >= roomTaps[k])
+                            e += roomGains[k] * partOut[static_cast<size_t> (at - roomTaps[k])];
+                }
+                e = roomLp.process (roomHp2.process (roomHp1.process (e)));
+                leakIn[static_cast<size_t> (i)] = ins[0][i] + static_cast<float> (selfLeak) * e;
+            }
+            ins[0] = leakIn.data();
+        }
         eng.process (ins, 1, outs, 2, take);
+        if (selfLeak > 0.0)
+            for (int i = 0; i < take; ++i)
+                partOut[static_cast<size_t> (pos + i)] = 0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
         s = eng.snapshot();
         const double t = pos / sr;
         if (s.confidence < vp::kTrustConf || s.state != vp::TrackingState::following)

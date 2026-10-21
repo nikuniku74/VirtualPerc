@@ -9120,7 +9120,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
     // expecting the band in a moment; the analysis, left alone with a room, has
     // already found a tempo in it - measured through the engine, FOLLOWING at
     // 99 BPM with a confidence of 0.91 - and without this the part comes in on
-    // the next downbeat of a tempo nobody is playing.
+    // the next downbeat of a tempo nobody is playing. The iPad microphone too:
+    // there a lock held kSpeakerLockSec also counts as music (item 132).
+    for (const auto src : { vp::FollowSource::kitMic, vp::FollowSource::speaker })
     {
         const double sr = 48000.0;
         const int block = 256;
@@ -9153,7 +9155,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
 
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, block, 1);
-        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().followSource.store (static_cast<int> (src));
         eng.settings().congasEnabled.store (false);
         eng.start();   // armed from the first sample, as a player would
 
@@ -9182,13 +9184,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 std::this_thread::sleep_for (std::chrono::milliseconds (4));
         }
 
-        std::printf ("start-on-room  sulla stanza: colpi=%d bar=%s bpm=%.1f | dopo: colpi=%d bpm=%.2f\n",
-                     hitsOnRoom, vp::toBarString (barOnRoom),
+        std::printf ("start-on-room %s sulla stanza: colpi=%d bar=%s bpm=%.1f | dopo: colpi=%d bpm=%.2f\n",
+                     src == vp::FollowSource::speaker ? "IPAD " : "MIXER", hitsOnRoom, vp::toBarString (barOnRoom),
                      static_cast<double> (bpmOnRoom), eng.shakerHits(),
                      static_cast<double> (last.bpm));
         expect (hitsOnRoom == 0,
                 "START to an empty room does not start the shaker");
-        expect (barOnRoom == vp::FollowBar::waitStart,
+        // Either says it is waiting. Since the settled-entry rule (item 129)
+        // the tracker usually stays listening on a room instead of locking
+        // onto it and then waiting for the start.
+        expect (barOnRoom == vp::FollowBar::waitStart || barOnRoom == vp::FollowBar::listening,
                 "and the screen says what it is waiting for");
         expect (eng.shakerHits() > 8 && std::fabs (last.bpm - bpm) < 6.0f,
                 "and once the band actually starts, it plays");
@@ -9723,6 +9728,9 @@ namespace
             canceller doing its job leaves the dynamics a silent room - so the
             part stands down and there is no return left to measure. */
         bool   followDynamics = true;
+        /** START SUBITO: no wait for the comb or for a settled confidence.
+            For benches about something other than how the part comes in. */
+        bool   startNow = false;
         /** FISSO releases the part without waiting for the input to start, which
             is how a listener reaches "part audible over a quiet room". */
         float  fixedBpm = 0.0f;
@@ -9753,6 +9761,7 @@ namespace
         eng.setReportedLatencyMs (o.leakGain > 0.0f ? 8.0f : 0.0f);
         eng.setLeakCancellationEnabledForTest (o.cancellation);
         eng.settings().dynamicsFollow.store (o.followDynamics);
+        eng.settings().startImmediately.store (o.startNow);
         if (o.speakerSource)
             eng.settings().followSource.store (
                 static_cast<int> (vp::FollowSource::speaker), std::memory_order_relaxed);
@@ -10218,6 +10227,22 @@ struct BeatTrackerTimingProbe
         return ok;
     }
 
+    // Where the press lands in the clock's beat -> the phase two beats later.
+    // A flip glides onto the press (about 0); no flip leaves the phase alone.
+    static float declareBarHereTwoBeatsOn (float pressPhase)
+    {
+        BeatTracker t;
+        t.prepare (48000.0);
+        t.follower.forceTempo (100.0f);
+        t.follower.snapPhase (pressPhase);
+        t.sounding = true;
+        t.declareBarHere();
+        for (int i = 0; i < 225; ++i)   // two beats at 100
+            t.follower.advance (256);
+        t.suspendAnalysis();
+        return t.follower.beatPhase();
+    }
+
     static bool declareBarHereUnflipsHalfBeat()
     {
         BeatTracker t;
@@ -10573,6 +10598,18 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
     gFail = &failed;
     expect (vp::BeatTrackerTimingProbe::declareBarHereUnflipsHalfBeat(),
             "L'1 e' QUI pressed mid-beat glides the clock half a beat onto the press");
+    {
+        // A press on the true one arrives late: with the grid on the levare it
+        // lands past the middle, with a right grid just after the beat.
+        const float late = vp::BeatTrackerTimingProbe::declareBarHereTwoBeatsOn (0.70f);
+        const float right = vp::BeatTrackerTimingProbe::declareBarHereTwoBeatsOn (0.20f);
+        std::printf ("declare-bar-here band  0.70->%.3f  0.20->%.3f\n",
+                     static_cast<double> (late), static_cast<double> (right));
+        expect (std::fabs (vp::wrapCentered (late)) < 0.08f,
+                "L'1 e' QUI pressed late on the levare (0.70 of the beat) still moves the half");
+        expect (std::fabs (right - 0.20f) < 0.03f,
+                "a press just after a right beat (0.20) does not");
+    }
 
     // The decoder side of the same press: the grid locked on the levare
     // (here quarters at offset 0 while the band's beats are at 0.5) moves half
@@ -11076,6 +11113,13 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                     o.cancellation = false;
                     o.scripted = true;
                     o.syncWorker = true;
+                    // The pair compares the analysis with the part audible and
+                    // muted; when the part comes in is not the question. The
+                    // scripted model's confidence stays under the settled-entry
+                    // line (item 129), so with an ordinary entry 78-120 BPM
+                    // never had a part playing in these 12 s. Both runs of the
+                    // pair start the same way.
+                    o.startNow = true;
                     o.fromSeconds = 6.0;
                     o.keepTrace = true;
                     auto r = runMakeupBench (song, o);

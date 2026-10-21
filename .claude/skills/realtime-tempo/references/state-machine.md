@@ -2,6 +2,28 @@
 
 Moved verbatim from SKILL.md section 6 on 2026-10-07. Chronological log: newest entries are often at the top of a section, older ones further down; grep for the symbol you are touching. When you change a decision, update the entry that justified it.
 
+## Entry waits for a settled confidence (2026-10-21, docs/TODO.md item 129)
+
+`BeatTracker::updateState`, listening: on top of every other entry condition
+the smoothed confidence must have stayed >= `kEntryConfSettled` (0.60) for
+`kEntryConfHoldSec` (4 s), or everything else must have been ready for
+`kEntryConfWaitSec` (6 s; that wait advances only while the rest holds, so on
+songs where the decoder changes its mind it can reach 15-21 s). Why: the
+confidence before the entry separates good entries from bad ones (AUC 0.80 /
+0.83 on its 3 s minimum, BRANO / MIXER), and the part came in on the first
+block over 0.22. Measured (`scripts/analysis/entry_start.py BASE TAG`, `HALF=A|B`, `V=1`: fixed 25 s window from
+today's entry, a beat bad only while the part sounds): first four strokes
+right 26 -> 36 / 33 -> 36; wrong played seconds 505 -> 322 / 347 -> 288; of the
+seconds no longer played 85% / 74% were wrong. Both halves of the titles.
+Whole songs MIXER 85.7 -> 86.2% right; BRANO 81.7 -> 80.2%, all VIVERE 48k
+flipping octave (the split song). Rejected the same day: entering only once the
+clock has reached its target (+2 entries, FLAMINGO 1200 MIXER -5 points), a
+20 s comb wait (only DEJAVU better, GARDEN 1500 worse), and a hard 6 s cap on
+this rule (378 wrong seconds instead of 322). Exempt like the comb gate
+(`entryConfExempt`): TAP, a tempo set by hand, follow off, harmony,
+START immediately - a tempo somebody gave the app is not waiting on the network.
+
+
 ## 6. State machine
 
 **Harmonic source integration (2026-09-08).** Direct mode can now acquire and

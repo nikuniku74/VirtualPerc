@@ -11,7 +11,12 @@ Moved verbatim from SKILL.md section 5 on 2026-10-07. Chronological log: newest 
   "ATTENDO CHE ATTACCHI") until the analysis has *ever* seen the input start.
   The committed tempo and `established` are deliberately kept so the clock does
   not stop. A track already playing when the app opened never "starts": one TAP
-  releases it, and there is no timeout on purpose.
+  releases it, and there is no plain timeout on purpose. What does release it is
+  START plus one of `heardMusic` (level and low end, `rhythmSeen`) or a lock
+  held confident with the comb agreeing (`lineLocked`): kLineLockSec 4 s on a
+  direct feed, kSpeakerLockSec 8 s on the iPad mic, whose small speakers give
+  `rhythmSeen` almost no low end (item 132: 4 of 54 `--speaker` files never
+  entered; rendered rooms still stay silent at 8 s).
 - **`notifyDiscontinuity(lostSeconds)`** is the other case: audio was lost, so
   the beat history is dropped and the timeline advanced - but the committed
   tempo, the regime and the metrical level are kept. A dropout is a reason to

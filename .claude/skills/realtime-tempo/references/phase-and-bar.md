@@ -152,7 +152,7 @@ of the song it was locked to. **"L'1 è QUI"** (`BeatTracker::declareBarHere`)
 names the nearest beat already on the clock as beat zero and locks the bar.
 It does not write the phase. A press in the second half of a beat names the
 beat about to land; a press in the first half names the beat that has started.
-**Except a press in the middle of the beat (0.35-0.65, `kLevarePressBand`):**
+**Except a press in the middle of the beat (0.30-0.75, `kLevarePressFrom/To`; lopsided because a press only arrives late, widened from 0.35-0.65 on 2026-10-21, item 132):**
 the listener hears the part on the levare and is pressing on the one, so the
 half moves (2026-10-05, docs/TODO.md item 90). The clock glides half a beat
 over one beat (`glidePhase`, half or 1.5x speed, nothing skipped or doubled;

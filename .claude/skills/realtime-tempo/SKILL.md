@@ -97,10 +97,15 @@ and precise, so there are several:
   residual-shape bridge (`TempoMotionTracker`) was removed (item 94: active
   0.15% of the time, real-song metrics unchanged without it).
 - **Published phase under a sounding part**: the line through the newest
-  `kPhaseLineBeats` (6) accepted beats, direct feed, FISSO/VIVO only.
+  `kPhaseLineBeats` (6) accepted beats, FISSO/VIVO only - on the iPad
+  microphone too since item 130 (speaker bench 24.2 -> 18.6 ms; there the trim
+  is off, so this is what closes a committed tempo a hair slow).
 - **Entry**: the part enters only when decoder tempo and comb agree within
   `kEntryCombAgree` (3%, ×2/÷2 allowed), capped at `kEntryCombWaitSec` (12 s);
-  exempt with TAP, user tempo, follow off, harmony.
+  exempt with TAP, user tempo, follow off, harmony. And only once the
+  confidence has **settled**: >= `kEntryConfSettled` (0.60) for 4 s, or 6 s
+  ready for everything else (item 129: first four strokes right 26 -> 36 of
+  54 BRANO, 33 -> 36 MIXER; +1.3 s median).
 - **Octave**: partly ambiguous, and for straight slow grooves with hat eighths
   (50 vs 100) **acoustically undecidable** - same sound as half-time at 100.
   AUTO keeps the pulse in a percussionist's range (`updateAutoOctave`). A dense

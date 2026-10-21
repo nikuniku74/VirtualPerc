@@ -5741,7 +5741,21 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     // 20.2 ms (most bench songs run at ÷2 under AUTO, and the line helps them
     // most: FLAMINGO 1200 15.9 -> 10.6 ms); 12 beats at ÷2 still reads -8.4.
     // Open decision, docs/TODO.md item 87.
-    if (lineFeed && sounding
+    //
+    // On the iPad's own microphone too (2026-10-21, docs/TODO.md item 130).
+    // It used to be line feeds only, and the listener heard the part fall
+    // behind a studio record and keep chasing it: through the microphone the
+    // trim is off on purpose (see BeatTracker), so a committed tempo a hair
+    // slow is closed only by the phase servo, and the anchor it was given
+    // lags. Speaker bench (`VPTrack --speaker`, 54 files) against the truth:
+    // scatter 24.2 -> 18.6 ms, beats outside 25 ms 41.3 -> 32.6%, p90 77.6
+    // -> 65.2, late by more than 25 ms 24.5 -> 19.2%; right tempo, octave
+    // and the one unchanged (74.4 / 14.3 / 19.3%), better in 37 files and
+    // worse by more than 1 ms in one, both halves of the titles. Only this
+    // block: the whole line-feed mode on the microphone gave 16.2 ms but
+    // turned three songs to the wrong octave. `--makeup d` (our part
+    // returning through the room) identical.
+    if (sounding
         && (tempoRegime == TempoRegime::fixed || tempoRegime == TempoRegime::live))
     {
         float linePeriod = 0.0f, lineResidual = 0.0f, lineCoverage = 0.0f;

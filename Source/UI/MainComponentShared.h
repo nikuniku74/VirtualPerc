@@ -761,8 +761,7 @@ namespace
             "MIC sets how much the analysis hears: raise it until the knob ring enters the "
             "fuchsia band. Below it, the analysis gets the tempo wrong; above it, amber and "
             "then red, and nothing more is gained.\n\n"
-            "PROC. OFF removes iOS automatic gain and echo cancelling: that is what the "
-            "analysis wants.",
+            "PROC. OFF removes iOS automatic gain: that is what the analysis wants.",
             "PER IL LIVE USA MIXER. È la modalità più precisa. L'app deve ricevere il "
             "segnale e inviare il suono delle percussioni nello stesso momento, quindi "
             "collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita: "
@@ -776,8 +775,7 @@ namespace
             "MIC regola quanto sente l'analisi: alzalo finché l'anello del knob entra "
             "nella fascia fucsia. Sotto, l'analisi sbaglia il tempo; sopra, ambra e poi "
             "rosso, e non guadagna più niente.\n\n"
-            "ELAB. OFF toglie guadagno automatico ed eco di iOS: è quello che vuole "
-            "l'analisi.");
+            "ELAB. OFF toglie il guadagno automatico di iOS: è quello che vuole l'analisi.");
     }
 
     /** How tall that sentence comes out at a given width. Measured rather than

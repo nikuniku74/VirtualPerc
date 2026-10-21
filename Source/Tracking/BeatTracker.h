@@ -624,6 +624,12 @@ private:
     bool entryTempoAgrees = false;
     /** How long an otherwise ready entry has waited for that agreement. */
     int entryWaitSamples = 0;
+    /** How long the confidence has stayed at kEntryConfSettled while
+        listening, and how long everything else has been ready while it
+        had not (BeatTracker.cpp, kEntryConfSettled). */
+    int entryConfHeldSamples = 0;
+    int entryConfWaitSamples = 0;
+    bool entryConfExempt = false;
     /** How long a direct feed has held a confident, comb-agreed lock with START on. */
     int lineLockSamples = 0;
     bool startImmediately = false;

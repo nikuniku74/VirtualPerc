@@ -153,10 +153,38 @@ constexpr float kNoNetworkTempoSec = 6.0f;
     // the level sweep entered at 8-17 s instead of 1.9), and the listener
     // accepted three or four seconds, not a verse.
     constexpr double kEntryCombWaitSec = 12.0;
+    // The part comes in only once the confidence has *settled*: at or above
+    // this for kEntryConfHoldSec, or after kEntryConfWaitSec spent ready for
+    // everything else. The confidence before an entry separates the entries
+    // that start right from the ones that do not (AUC 0.80 BRANO / 0.83
+    // MIXER on its 3 s minimum, 54 files), and before this the part came in
+    // on the first block that crossed 0.22: half the BRANO entries had one of
+    // their first four strokes off (tempo 4:3 or 3:2, octave, levare).
+    // Measured (docs/TODO.md item 129), today -> this, BRANO / MIXER -12 dB:
+    // first four strokes right 26 -> 36 / 33 -> 36 of 54; seconds played
+    // wrong in the 25 s from today's entry 505 -> 322 / 347 -> 288, and of
+    // the seconds no longer played 85% / 74% were wrong (37% / 28% on
+    // average); waiting 1.3 s more in the median (MIXER 0), 15-21 s only on
+    // songs that today play wrong for the whole first 25 s (WRECKING BALL
+    // 04, UNA CANZONE, FLAMINGO 1200, VIVERE). Held on both halves of the
+    // titles. Whole songs: MIXER right tempo 85.7 -> 86.2%; BRANO 81.7 ->
+    // 80.2%, all of it VIVERE 48k, the bench's split 50/100 song, turning to
+    // the other octave. The listener chose this over a hard 6 s cap (fewer
+    // wrong seconds saved: 378) and over no rule.
+    constexpr float  kEntryConfSettled = 0.60f;
+    constexpr double kEntryConfHoldSec = 4.0;
+    constexpr double kEntryConfWaitSec = 6.0;
     // A direct feed held this long, this confident, counts as somebody playing
     // even without a quiet-to-loud edge or a heavy low end (see alreadyPlaying).
     constexpr double kLineLockSec = 4.0;
     constexpr float kLineLockConf = 0.80f;
+    // The same on the iPad microphone, held twice as long because an empty room
+    // does lock there. --speaker bench (docs/TODO.md item 132): never entered
+    // 4 -> 0 of 54 (in at 18-46 s, 97-100% of the played beats on the right
+    // tempo), every other entry unchanged (first four beats right 31 -> 31 of
+    // 50). Rooms rendered for it (noise at two levels, talk) stay silent at 8 s
+    // as they did before; their confidence peaks at 0.74-0.95 but not for 8 s.
+    constexpr double kSpeakerLockSec = 8.0;
 
     // And once moved, left alone for four bars at 100 BPM. Anything shorter and
     // two disagreeing votes can trade the bar back and forth inside one phrase.
@@ -178,9 +206,17 @@ constexpr float kNoNetworkTempoSec = 6.0f;
 
     // How long the one stays marked after a tap has declared it.
     constexpr double kBarDeclaredFlashSeconds = 0.9;
-    // "L'1 è QUI" pressed this close to the middle of the clock's beat means
-    // the grid is on the levare: the press is half a beat from any beat we have.
-    constexpr float kLevarePressBand = 0.15f;
+    // "L'1 è QUI" pressed in this part of the clock's beat means the grid is
+    // on the levare: the press is about half a beat from any beat we have.
+    // Lopsided because a press only ever arrives late: touch and output
+    // latency put a press on the true one at 0.5 + 0.05..0.20 of a beat when
+    // the grid is on the levare, and a press on a right grid at 0..0.20. The
+    // old +-0.15 band around 0.5 missed the late presses, which then only
+    // renumbered the bar and left the part on the levare - reported live
+    // (2026-10-21, "difficilmente si riesce a farlo rientrare"). docs/TODO.md
+    // item 132.
+    constexpr float kLevarePressFrom = 0.30f;
+    constexpr float kLevarePressTo   = 0.75f;
 
     // The pipeline delay computed below is a geometric figure - where the
     // analysis frame sits in the input stream - and it comes out about one hop
@@ -527,7 +563,15 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
 {
     const int sr = static_cast<int> (sampleRate);
     if (currentState != TrackingState::listening)
+    {
         entryWaitSamples = 0;
+        entryConfHeldSamples = 0;
+        entryConfWaitSamples = 0;
+    }
+    else if (confidence >= kEntryConfSettled)
+        entryConfHeldSamples += std::max (0, numSamples);
+    else
+        entryConfHeldSamples = 0;
 
     switch (currentState)
     {
@@ -540,10 +584,19 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
         {
             const bool combOrWaited = entryTempoAgrees
                 || entryWaitSamples > static_cast<int> (sampleRate * kEntryCombWaitSec);
-            if (periodic && combOrWaited && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
+            const bool entryReady = periodic && combOrWaited && (loudEnough || inputPeakEnv > 0.0008f) && confidence > 0.22f
                 && listeningSamples > static_cast<int> (sampleRate * 0.70)
                 && heldBpm > 50.0f && beatCount >= 2
-                && samplesSinceBeat < static_cast<int> (sampleRate * 1.6))
+                && samplesSinceBeat < static_cast<int> (sampleRate * 1.6);
+            // And the confidence has to have settled, not just touched the line:
+            // kEntryConfSettled held for kEntryConfHoldSec, or kEntryConfWaitSec
+            // spent ready for everything else. See kEntryConfSettled.
+            const bool confSettled = entryConfExempt
+                || entryConfHeldSamples >= static_cast<int> (sampleRate * kEntryConfHoldSec)
+                || entryConfWaitSamples >= static_cast<int> (sampleRate * kEntryConfWaitSec);
+            if (entryReady && ! confSettled)
+                entryConfWaitSamples += std::max (0, numSamples);
+            if (entryReady && confSettled)
             {
                 // The decoder has already done the causal lock here: three
                 // peaks on a line feed, four through a room, plus the checks
@@ -827,12 +880,12 @@ void BeatTracker::declareBarHere() noexcept
     // The clock glides there over one beat (half or one and a half speed:
     // no sixteenth skipped or doubled) - the count rule below still names
     // the right beat, since retarding by p keeps the current beat and
-    // advancing by 1-p reaches the next one. A press of 0.35 beat is
-    // 175 ms late at 120 BPM; a wrong flip is undone by pressing again on
-    // the one, which then lands in the middle again. The hold covers the
+    // advancing by 1-p reaches the next one. A press 0.30 beat late on a
+    // right grid (150 ms at 120 BPM, 105 at 170) flips it wrongly; that is
+    // undone by pressing again on the one, which then lands mid-beat again. The hold covers the
     // glide so the servo does not chase the old grid meanwhile.
     const float p = follower.beatPhase();
-    const bool levare = std::fabs (p - 0.5f) < kLevarePressBand;
+    const bool levare = p >= kLevarePressFrom && p < kLevarePressTo;
     const int bar = follower.beatInBarIndex();
     if (p <= 0.5f)
         follower.rotateBarIndex (-bar);
@@ -2027,6 +2080,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // A band with no drummer enters on the harmony's tempo, which has no comb.
     entryTempoAgrees = tempoOwned || tapEstablished || ! tempoFollow || harmonicSourceActive;
     entryTempoAgrees = entryTempoAgrees || startImmediately;
+    // Same exemptions for the settled confidence: a tempo somebody gave the
+    // app is not waiting for the network to be sure of it.
+    entryConfExempt = tempoOwned || tapEstablished || ! tempoFollow || harmonicSourceActive
+                      || startImmediately;
     if (! entryTempoAgrees && haveHyp && hyp.combBpm > 0.0f && hyp.bpm > 0.0f)
         for (const float octave : { 0.5f, 1.0f, 2.0f })
             if (std::fabs (hyp.bpm / hyp.combBpm / octave - 1.0f) < kEntryCombAgree)
@@ -2198,15 +2255,21 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // level, FLAMINGO 4500 below -12 dB) while locked at 118 BPM with
     // confidence 1.0 - the send's low-band share is 0.13-0.24 against the
     // 0.30 that rhythmSeen asks for, and its level is judged before the input
-    // gain the listener raises. The room path keeps the old rule: there an
-    // empty room really does lock.
-    if (! speakerFollow && armed && periodic && entryTempoAgrees
+    // gain the listener raises.
+    // The iPad microphone gets the same rule over kSpeakerLockSec. There the
+    // low-band test is what keeps a room out, and an iPad speaker or a phone
+    // playing YouTube has almost no low end (plus the 80 Hz high-pass), so a
+    // song already playing at START could stay in waitStart for good: reported
+    // live (2026-10-21, "spesso non suona"), and on the --speaker bench 4 of 54
+    // (UMBRELLA, SPLENDIDA GIORNATA) never entered while locked with
+    // confidence 1.0. See kSpeakerLockSec.
+    if (armed && periodic && entryTempoAgrees
         && currentState == TrackingState::following && smoothedConf > kLineLockConf)
         lineLockSamples = std::min (lineLockSamples + numSamples,
                                     static_cast<int> (sampleRate * 60.0));
     else
         lineLockSamples = 0;
-    const bool lineLocked = lineLockSamples > static_cast<int> (sampleRate * kLineLockSec);
+    const bool lineLocked = lineLockSamples > static_cast<int> (sampleRate * (speakerFollow ? kSpeakerLockSec : kLineLockSec));
     const bool alreadyPlaying = armed && periodic && (heardMusic || lineLocked || startImmediately);
     const bool inputIsLive = sawInputStart || alreadyPlaying
                              || tapEstablished || ! tempoFollow;
