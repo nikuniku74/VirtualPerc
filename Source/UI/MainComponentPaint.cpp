@@ -219,6 +219,13 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // Notes only when there is one; otherwise the line says what a tap on
         // the number does. The state itself is the pill's job, not this line's.
         juce::StringArray parts;
+        // The iPad hearing its own part as loud as the song: the echo canceller
+        // is not enough there and the tempo sags (docs/TODO.md item 133).
+        const bool hearsItself = snap.source == vp::FollowSource::speaker
+                                 && snap.selfShare > vp::kSelfShareWarn;
+        if (hearsItself)
+            parts.add (vpui::L ("I HEAR MYSELF: turn the percussion down or move the iPad away",
+                                "SENTO ME STESSO: abbassa le percussioni o allontana l'iPad"));
         if (snap.driftGuarded)
             parts.add (vpui::L ("percussion paused until the tempo returns",
                                 "percussioni in pausa finch\xc3\xa9 il tempo non torna"));
@@ -235,7 +242,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                                : vpui::L (" (manual)", " (manuale)")));
         if (! parts.isEmpty())
         {
-            g.setColour (text());
+            g.setColour (hearsItself ? stateSearching() : text());
             g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
                               rows.tempoLine, juce::Justification::centred, 1);
         }

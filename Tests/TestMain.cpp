@@ -681,8 +681,78 @@ namespace
                 "difference between a shuffle and the sixteenth swing the reference has");
     }
 
+    // The adaptive canceller on its own (docs/TODO.md item 133). A shaker-like
+    // reference - noise bursts on 120 BPM eighths - comes back 1500 samples
+    // late through a one-pole low-pass and two reflections, under independent
+    // "music". After eight seconds the echo left in the output must be a small
+    // share of the echo; with no echo at all nothing may be subtracted.
+    // Returns the residual share over the last two seconds (-1: touched a
+    // signal it had no business touching).
+    double echoCancellerResidual (double sr, float echoGain)
+    {
+        constexpr int block = 256, delay = 1500;
+        const int n = static_cast<int> (sr * 10.0);
+        std::mt19937 rng (7u);
+        std::normal_distribution<float> gauss (0.0f, 1.0f);
+        std::vector<float> ref (static_cast<size_t> (n)), music (static_cast<size_t> (n)), echo (static_cast<size_t> (n), 0.0f);
+        const int period = static_cast<int> (sr * 0.25);
+        float lp = 0.0f, mlp = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float env = std::exp (-static_cast<float> (i % period) / static_cast<float> (sr * 0.02));
+            ref[static_cast<size_t> (i)] = 0.3f * env * gauss (rng);
+            mlp += 0.05f * (gauss (rng) - mlp);
+            music[static_cast<size_t> (i)] = 0.3f * mlp;
+        }
+        for (int i = 0; i < n; ++i)
+        {
+            float x = 0.0f;
+            for (const auto [tap, g] : { std::pair { 0, 1.0f }, std::pair { 211, 0.5f }, std::pair { 733, 0.25f } })
+                if (i - delay - tap >= 0)
+                    x += g * ref[static_cast<size_t> (i - delay - tap)];
+            lp += 0.4f * (x - lp);
+            echo[static_cast<size_t> (i)] = echoGain * lp;
+        }
+        vp::EchoCanceller ec;
+        ec.prepare (sr);
+        std::vector<float> mic (static_cast<size_t> (block));
+        double left = 0.0, total = 0.0;
+        bool touched = false;
+        for (int start = 0; start + block <= n; start += block)
+        {
+            for (int i = 0; i < block; ++i)
+                mic[static_cast<size_t> (i)] = music[static_cast<size_t> (start + i)] + echo[static_cast<size_t> (start + i)];
+            ec.process (mic.data(), block, delay - 64,
+                        [&] (int k) { return start - k >= 0 ? ref[static_cast<size_t> (start - k)] : 0.0f; });
+            for (int i = 0; i < block; ++i)
+            {
+                const size_t at = static_cast<size_t> (start + i);
+                const float r = mic[static_cast<size_t> (i)] - music[at];
+                if (echoGain == 0.0f && r != 0.0f)
+                    touched = true;
+                if (start > n - static_cast<int> (sr * 2.0))
+                {
+                    left += static_cast<double> (r) * r;
+                    total += static_cast<double> (echo[at]) * echo[at];
+                }
+            }
+        }
+        if (echoGain == 0.0f)
+            return touched ? -1.0 : 0.0;
+        return total > 0.0 ? left / total : 1.0;
+    }
+
     void runLeakTests (double sr)
     {
+        {
+            const double withEcho = echoCancellerResidual (sr, 1.0f);
+            const double none = echoCancellerResidual (sr, 0.0f);
+            std::printf ("echo-canceller  echo left %.4f of it  |  no echo: %s\n",
+                         withEcho, none < 0.0 ? "TOUCHED" : "untouched");
+            expect (withEcho >= 0.0 && withEcho < 0.10,
+                    "the adaptive canceller takes nine tenths of a reshaped echo out under music");
+            expect (none == 0.0, "and with no echo it leaves the input exactly as it came");
+        }
         const vp::Subdivision subs[3] = { vp::Subdivision::quarter, vp::Subdivision::eighth,
                                           vp::Subdivision::sixteenth };
         const char* subNames[3] = { "quarter", "eighth", "sixteenth" };

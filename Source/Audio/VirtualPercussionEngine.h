@@ -7,6 +7,7 @@
 #include "Percussion/PercussionEngine.h"
 #include "Percussion/StyleDetector.h"
 #include "Tracking/BeatTracker.h"
+#include "Audio/EchoCanceller.h"
 #include "Audio/LatencyProbe.h"
 #include "Tracking/HarmonicChange.h"
 #include "Tracking/KickOnsetDetector.h"
@@ -321,6 +322,7 @@ private:
     std::atomic<float> lastAnalysisPeak { 0.0f };
     std::atomic<float> lastAnalysisGain { 1.0f };
     std::atomic<float> lastLeakRemain { 0.0f };
+    std::atomic<float> lastSelfShare { 0.0f };
     /** Input samples that arrived non-finite and were replaced with silence.
         Never zero on a healthy device; worth showing, because a driver that
         does this is a driver whose other numbers are also suspect. */
@@ -456,6 +458,8 @@ private:
         and held across blocks. Signed, and clamped only where it is used: see
         subtractSpeakerLeak. */
     float leakGain[kLeakBands] = {};
+    /** The iPad mic's adaptive echo canceller, ahead of the band one. */
+    EchoCanceller echo;
     /** The normal equations that fit is solved from, accumulated over about
         half a second of causal history instead of over the current block. A
         block of 256 samples is a noisy estimate and a block whose reference is

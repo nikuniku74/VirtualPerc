@@ -188,6 +188,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
     for (auto& b : leakBand)
         b.assign (static_cast<size_t> (maxBlock), 0.0f);
     leakHist.assign (static_cast<size_t> (leakHistSize), 0.0f);
+    echo.prepare (sampleRate);
     // 1024 frames at 48 kHz: the window the delay search was right on at 1024.
     leakSearchSamples = std::clamp (static_cast<int> (std::lround (sampleRate * (1024.0 / 48000.0))),
                                     256, leakHistSize / 4);
@@ -310,6 +311,7 @@ void VirtualPercussionEngine::resetLeakEstimate() noexcept
     analysisHp = 0.0f;
     for (auto& g : leakGain)
         g = 0.0f;
+    echo.reset();
     for (int b = 0; b < kLeakBands; ++b)
     {
         leakFitXy[b] = 0.0;
@@ -915,6 +917,7 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
         delay = static_cast<int> (std::max (8.0f, roundTripMs()) * 0.001 * sampleRate);
     }
     delay = std::clamp (delay, 64, ringSize - numSamples - 1);
+
 
     // The scratch is sized in prepare(). A fixed stack buffer used to cap this
     // at 2048 samples, which left the tail of a larger block un-subtracted: the
@@ -1743,7 +1746,28 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // zero when there is nothing of ours on the input - so running it on a feed
     // that has no leak costs nothing.
     if (! directFile && leakCancellationEnabledForTest)
+    {
         subtractSpeakerLeak (numSamples, speaker);
+        // Then, on the iPad mic, the adaptive canceller (EchoCanceller.h) on
+        // what the band fit left: it models the whole speaker-to-mic path and
+        // subtracts only once our echo is a real share of the input. After the
+        // band fit, not before: on a digitally exact return the band fit
+        // leaves ~0.02 and this never engages, where in front of it the
+        // fifty-four `--leak` rows went from that to 0.12-0.20. In a room the
+        // band fit takes ~10% and this learns the rest. Started 64 samples
+        // (1.3 ms at 48 kHz) before the searched delay, so the direct
+        // arrival's leading edge is inside the filter. Probe room, 9 songs,
+        // tempo against the teacher with the part twice the song's level at
+        // the mic: -0.52 -> -0.00 BPM. docs/TODO.md item 133.
+        if (speaker && leakDelaySamples > 0)
+        {
+            const int mask = ringSize - 1;
+            const int w = ringWrite;
+            echo.process (mono.data(), numSamples, leakDelaySamples - 64,
+                          [this, w, mask] (int k) noexcept
+                          { return outRing[static_cast<size_t> ((w - k) & mask)]; });
+        }
+    }
     maybeInjectClick (numSamples);
     // Mic rumble only. A mixer aux and the click tests carry kick body around
     // 50-60 Hz; an 80 Hz HPF on those feeds thins the very pulse BeatNet
@@ -1763,6 +1787,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     for (int i = 0; i < numSamples; ++i)
         postPeak = std::max (postPeak, std::abs (mono[static_cast<size_t> (i)]));
     lastLeakRemain.store (postPeak, std::memory_order_relaxed);
+    lastSelfShare.store (speaker ? echo.selfShare() : 0.0f, std::memory_order_relaxed);
     // INPUT is an analysis trim, not a claim that the room or the song changed.
     // The epoch watcher used to see the trimmed level, so moving INPUT upward
     // could look exactly like a new band entering and reset the decoder while
@@ -2301,6 +2326,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.analysisGain = lastAnalysisGain.load (std::memory_order_relaxed);
     s.inputGain = cfg.inputGain.load (std::memory_order_relaxed);
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
+    s.selfShare = lastSelfShare.load (std::memory_order_relaxed);
     s.lowShare = lastLowShare.load (std::memory_order_relaxed);
     s.rhythmSeen = lastRhythmSeen.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);

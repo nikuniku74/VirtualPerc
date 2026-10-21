@@ -1599,18 +1599,60 @@ void MainComponent::chooseInternalTrack()
         auto url = chooser.getURLResult();
         safe->trackChooser.reset();
         if (! url.isEmpty())
-            safe->loadInternalTrack (std::move (url));
+            safe->openTrackInBackground (std::move (url));
     });
 }
 
-void MainComponent::loadInternalTrack (juce::URL url)
+void MainComponent::openTrackInBackground (juce::URL url)
 {
-    auto stream = url.createInputStream (
-        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
-    auto* reader = stream != nullptr ? trackFormats.createReaderFor (std::move (stream))
-                                     : nullptr;
-    if (reader == nullptr)
+    // Opening a file is not bounded by anything we choose. MP3 and M4A go
+    // through CoreAudio here (JUCE's own MP3 reader is not built), and to give
+    // the length of a file with no packet index it counts every packet - the
+    // whole file, read through the iOS file provider, and twice: the playing
+    // reader and the waveform's. On the message thread a 200 MB track froze
+    // the interface for good (reported 2026-10-21; a small one loaded). Both
+    // readers are opened on a thread of their own, with a format manager of
+    // their own so nothing of this component is touched there.
+    trackLoading = true;
+    const int generation = ++trackLoadGeneration;
+    refreshInternalTrackButtons();
+
+    struct Opened
     {
+        std::unique_ptr<juce::AudioFormatReader> reader, wave;
+    };
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::Thread::launch ([safe, url, generation]
+    {
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        auto open = [&]() -> juce::AudioFormatReader*
+        {
+            auto stream = url.createInputStream (
+                juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
+            return stream != nullptr ? formats.createReaderFor (std::move (stream)) : nullptr;
+        };
+        auto opened = std::make_shared<Opened>();
+        opened->reader.reset (open());
+        if (opened->reader != nullptr)
+            opened->wave.reset (open());
+
+        juce::MessageManager::callAsync ([safe, url, generation, opened]
+        {
+            if (safe == nullptr || generation != safe->trackLoadGeneration)
+                return;
+            safe->trackLoading = false;
+            safe->loadInternalTrack (url, std::move (opened->reader), std::move (opened->wave));
+        });
+    });
+}
+
+void MainComponent::loadInternalTrack (juce::URL url, std::unique_ptr<juce::AudioFormatReader> readerOwned,
+                                       std::unique_ptr<juce::AudioFormatReader> waveReader)
+{
+    if (readerOwned == nullptr)
+    {
+        refreshInternalTrackButtons();
         juce::AlertWindow::showMessageBoxAsync (
             juce::MessageBoxIconType::WarningIcon,
             vpui::L ("Track not readable", "Brano non leggibile"),
@@ -1633,6 +1675,7 @@ void MainComponent::loadInternalTrack (juce::URL url)
         engine.settings().tempoOctaveAuto.store (true);
         refreshOctaveButtons();
     }
+    auto* reader = readerOwned.release();
     trackReader = std::make_unique<juce::AudioFormatReaderSource> (reader, true);
     trackUrl = std::move (url); // retains the iOS security-scoped bookmark
     // getFileName() keeps the URL escapes: "My%20Song.mp3" is not what the button should say.
@@ -1654,7 +1697,7 @@ void MainComponent::loadInternalTrack (juce::URL url)
     // The picture uses a second reader because the playing reader belongs to
     // the read-ahead thread. Only its setup runs here; the timer scans bounded
     // blocks after PLAY so a full-file pass cannot hold the BPM display.
-    buildTrackWaveform();
+    buildTrackWaveform (std::move (waveReader));
     refreshInternalTrackButtons();
     // A loaded track adds the waveform row to stageRows, so every stage row
     // moves: the buttons, the tap zone and the MIC bar need a full layout.
@@ -1708,7 +1751,7 @@ void MainComponent::clearTrackWaveform()
     trackWaveform.repaint();
 }
 
-void MainComponent::buildTrackWaveform()
+void MainComponent::buildTrackWaveform (std::unique_ptr<juce::AudioFormatReader> scanReader)
 {
     clearTrackWaveform();
     if (trackUrl.isEmpty() || trackReader == nullptr)
@@ -1724,10 +1767,8 @@ void MainComponent::buildTrackWaveform()
 
     // Not the transport's reader. setSource has already started its
     // read-ahead thread, and an MP3 reader has one shared stream position.
-    auto stream = trackUrl.createInputStream (
-        juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress));
-    trackWaveScanReader.reset (
-        stream != nullptr ? trackFormats.createReaderFor (std::move (stream)) : nullptr);
+    // Opened with it in openTrackInBackground.
+    trackWaveScanReader = std::move (scanReader);
     if (trackWaveScanReader == nullptr || trackWaveScanReader->lengthInSamples <= 0)
     {
         trackWaveScanReader.reset();
@@ -1830,7 +1871,9 @@ void MainComponent::toggleInternalTrack()
 void MainComponent::refreshInternalTrackButtons()
 {
     const bool loaded = trackReader != nullptr;
-    trackLoadButton.setButtonText (loaded ? trackName.substring (0, 14) : vpui::L ("LOAD", "CARICA"));
+    trackLoadButton.setButtonText (trackLoading ? vpui::L ("LOADING...", "CARICO...")
+                                   : loaded ? trackName.substring (0, 14) : vpui::L ("LOAD", "CARICA"));
+    trackLoadButton.setEnabled (! trackLoading);
     trackPlayButton.setButtonText (trackTransport.isPlaying() ? vpui::L ("PAUSE", "PAUSA") : juce::String ("PLAY"));
    #if defined (VP_HAS_DEMO_TRACK) && VP_HAS_DEMO_TRACK
     // Enabled with nothing loaded too: PLAY then plays the built-in demo song.
@@ -3188,6 +3231,6 @@ void MainComponent::loadDemoTrack()
                           .getChildFile ("Demo track.wav");
     if (file.getSize() != static_cast<juce::int64> (VpDemoData::demotrack_wavSize))
         file.replaceWithData (VpDemoData::demotrack_wav, static_cast<size_t> (VpDemoData::demotrack_wavSize));
-    loadInternalTrack (juce::URL (file));
+    openTrackInBackground (juce::URL (file));
    #endif
 }

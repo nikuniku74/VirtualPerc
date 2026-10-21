@@ -996,19 +996,24 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     //
     // The network answers first wherever it has a clear opinion: it is being
     // asked the question directly, and where it can answer it is the better
-    // source. The harmony is asked only when the network could not - which is
-    // most of the time through an iPad's own speaker, where its downbeat vote
-    // is measured at no better than a coin, and always on material with no
-    // drums in it, where there is nothing for it to vote on at all.
+    // source. The harmony is asked only when the network could not - always on
+    // material with no drums in it, where there is nothing for it to vote on.
     //
     // Neither is folded into the other. They are different quantities of
     // different quality, and adding them would hide which one answered - the
     // debug panel says `BATTUTA DALL'ARMONIA` when it was the second.
-    // Through the acoustic speaker path the network's downbeat vote measured
-    // at chance. Do not let that arbitrary winner pre-empt the harmonic
-    // fallback; the latter is the only automatic bar source retained there.
-    if (! speakerFollow
-        && tryAlignFrom (downbeatVotes, voteBeats, comingIn, 0.0f))
+    //
+    // The iPad microphone too. Its network vote used to be shut out here and
+    // in `corroborated` below - measured at chance through the speaker path,
+    // with the network of the time - which left the harmony, held to a near-
+    // unanimous bar, as the only automatic source: the one was right 19.5% of
+    // the --speaker bench, below a guess. With the fine-tuned network (phase 2)
+    // and the vote back: 72.7% (title halves 19 -> 73 and 29 -> 82), and
+    // through the probe room (--room: nothing under 260 Hz, reflections)
+    // 18.3 -> 35.9% (19 -> 43, 20 -> 38); tempo and phase identical to the
+    // decimal. Reported live (2026-10-21): "non riconosce da solo l'1".
+    // docs/TODO.md item 134.
+    if (tryAlignFrom (downbeatVotes, voteBeats, comingIn, 0.0f))
     {
         barFromHarmony = false;
         return;
@@ -1152,7 +1157,7 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
                                 && margin >= kBarWinMargin)
                                || bestVotes >= runnerUp + kBarNetAloneMargin;
             else
-                corroborated = ! speakerFollow && voteBeats >= kBeatsToMoveTheBar
+                corroborated = voteBeats >= kBeatsToMoveTheBar
                                && winner (downbeatVotes, margin) == best
                                && margin >= kBarWinMarginPlaying;
         }

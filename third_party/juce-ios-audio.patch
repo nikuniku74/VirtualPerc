@@ -379,3 +379,27 @@ index c9857b2d78..82528fa413 100644
  AudioWorkgroup iOSAudioIODevice::getWorkgroup() const               { return pimpl->workgroup; }
  
  void iOSAudioIODevice::setMidiMessageCollector (MidiMessageCollector* collector) { pimpl->messageCollector = collector; }
+diff --git a/modules/juce_gui_basics/native/juce_FileChooser_ios.mm b/modules/juce_gui_basics/native/juce_FileChooser_ios.mm
+index 96b5c99ab8..8924c57cd3 100644
+--- a/modules/juce_gui_basics/native/juce_FileChooser_ios.mm
++++ b/modules/juce_gui_basics/native/juce_FileChooser_ios.mm
+@@ -111,11 +111,17 @@ void didPickDocumentsAtURLs (NSArray<NSURL*>* urls)
+ 
+         [fileCoordinator coordinateAccessWithIntents: intents queue: [NSOperationQueue mainQueue] byAccessor: ^(NSError* err)
+         {
++            // VirtualPercussionist: this used to return here, without ever
++            // calling passResultsToInitiator, so the chooser's modal state
++            // stayed on and the whole interface ignored every touch for good.
++            // A large recording does it: the coordinated read claim outlives
++            // the picker's service and comes back as an error ("grantAccessClaim
++            // reply is an error ... connection invalidated"). Carry on with the
++            // picked URLs instead; whoever opens them finds out whether the
++            // file is readable.
+             if (err != nil)
+             {
+                 [[maybe_unused]] auto desc = [err localizedDescription];
+-                jassertfalse;
+-                return;
+             }
+ 
+             Array<URL> result;

@@ -48,6 +48,11 @@ int main (int argc, char** argv)
     // room (speakerRoomMic's band limits and reflections) after --self-delay ms,
     // at G times its output level. The iPad hearing itself (item 133).
     double selfLeak = 0.0, selfDelayMs = 32.0;
+    std::string shareOut;   // --share-out FILE: "t selfShare" every 0.1 s
+    // --room: the song itself reaches the microphone through the probe room
+    // (speakerRoomMic: nothing below 260 Hz, reflections, noise floor), as it
+    // does on the iPad when the record plays from a speaker in the room.
+    bool room = false;
     // A tap on the waveform: at --seek-at seconds the file jumps to --seek-to
     // and the engine is told, as MainComponent does. --stop-gap then counts
     // from the seek. --from T scores --bpm only from T seconds on (a long
@@ -93,6 +98,8 @@ int main (int argc, char** argv)
         else if (a == "--lag")        lagSec = std::atof (next());
         else if (a == "--self-leak")  selfLeak = std::atof (next());
         else if (a == "--self-delay") selfDelayMs = std::atof (next());
+        else if (a == "--share-out")  shareOut = next();
+        else if (a == "--room")       room = true;
         else if (a == "--seek-at")    seekAt = std::atof (next());
         else if (a == "--seek-to")    seekTo = std::atof (next());
         else if (a == "--from")       scoreFrom = std::atof (next());
@@ -139,6 +146,8 @@ int main (int argc, char** argv)
     }
     else
         append (wav, wav.frames);
+    if (room)
+        vp::probe::speakerRoomMic (mono, sr, 1u, 1.0f);
     const int n = static_cast<int> (mono.size());
     bool switched = false, stoppedAfter = false, restartedAfterGap = false, seeked = false;
     long readOffset = 0;
@@ -193,6 +202,8 @@ int main (int argc, char** argv)
 
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     std::FILE* outFile = outPath.empty() ? nullptr : std::fopen (outPath.c_str(), "wb");
+    std::FILE* shareFile = shareOut.empty() ? nullptr : std::fopen (shareOut.c_str(), "w");
+    double nextShare = 0.0;
     if (pulseFile != nullptr)
         std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust rete target trim trans recover stato conf pettine resid copert residCorto fiducia protetto unoFidato rullSide cassaSide rotazioni clapOk rotDispari\n");
 
@@ -287,6 +298,11 @@ int main (int argc, char** argv)
                                            std::max (s.inputPeak, s.analysisPeak) < 0.0012f);
         if (outFile != nullptr)
             std::fwrite (oL.data(), sizeof (float), static_cast<size_t> (take), outFile);
+        if (shareFile != nullptr && t >= nextShare)
+        {
+            nextShare = t + 0.1;
+            std::fprintf (shareFile, "%.2f %.4f\n", t, (double) s.selfShare);
+        }
 
         if (s.analysisRestarts != restartsSeen)
         {
@@ -399,5 +415,7 @@ int main (int argc, char** argv)
         std::fclose (pulseFile);
     if (outFile != nullptr)
         std::fclose (outFile);
+    if (shareFile != nullptr)
+        std::fclose (shareFile);
     return 0;
 }

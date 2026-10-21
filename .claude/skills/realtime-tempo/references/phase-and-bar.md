@@ -100,8 +100,15 @@ Two separate histograms, deliberately not summed
 
 They are different qualities of evidence: on a drum-free arrangement the harmony
 is the *only* evidence, and measured there every single change landed on the
-downbeat - where the network through an iPad speaker is no better than a coin.
-Summing them would hide which one answered.
+downbeat. Summing them would hide which one answered.
+
+**The iPad mic votes too (2026-10-21, item 134).** Its network vote had been shut
+out ("no better than a coin" through a tablet speaker, with the network of the
+time), leaving only the harmony, so the one was right 19.5% of the `--speaker`
+bench. With the fine-tuned network it is 72.7% with the vote back (title halves
+19 -> 73, 29 -> 82); through the probe room (`VPTrack --room`) 18.3 -> 35.9%.
+Tempo and phase unchanged to the decimal. The entry stays quantized to the beat
+on IPAD (state-machine.md).
 
 The harmony's gate is `harmonicShare` > 0.42 (`HarmonicChange::tonalShare`,
 an average over ~15 s). It is divided by the weight gathered since `reset()`:

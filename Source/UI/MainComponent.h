@@ -90,11 +90,14 @@ private:
     void refreshBufferButtons();
     void refreshSourceButton();
     void chooseInternalTrack();
-    void loadInternalTrack (juce::URL url);
+    /** Opens the file off the message thread, then hands it to loadInternalTrack. */
+    void openTrackInBackground (juce::URL url);
+    void loadInternalTrack (juce::URL url, std::unique_ptr<juce::AudioFormatReader> reader,
+                            std::unique_ptr<juce::AudioFormatReader> waveReader);
     /** PLAY with nothing loaded: the built-in demo song (Assets/Demo). */
     void loadDemoTrack();
     void seekInternalTrack (double proportion);
-    void buildTrackWaveform();
+    void buildTrackWaveform (std::unique_ptr<juce::AudioFormatReader> scanReader);
     void processTrackWaveform();
     void clearTrackWaveform();
     void relayoutSettings();
@@ -680,6 +683,10 @@ private:
     std::unique_ptr<juce::FileChooser> trackChooser;
     juce::URL trackUrl;
     juce::String trackName;
+    /** A file is being opened in the background; a newer choice bumps the
+        generation so a slower, older open is dropped when it arrives. */
+    bool trackLoading = false;
+    int trackLoadGeneration = 0;
 
     /** Where the beat dots are drawn, kept so the timer can repaint that strip
         alone rather than the whole console. */

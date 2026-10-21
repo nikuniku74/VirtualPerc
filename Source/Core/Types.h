@@ -315,6 +315,10 @@ struct EngineSnapshot
     /** Peak left on the analysis bus after leak subtraction, before makeup.
         The ratio of this to `inputPeak` is how much of our own part survived. */
     float leakRemain           = 0.0f;
+    /** IPAD only: share of the microphone's signal that is the app's own part
+        coming back, 0..1, smoothed over seconds. Past kSelfShareWarn the part
+        is loud enough at the mic to drag the tempo (item 133). */
+    float selfShare            = 0.0f;
     /** Share of the pre-make-up analysis signal below 200 Hz. Diagnostics: it
         is what says whether the input has a rhythm section in it. */
     float lowShare             = 0.0f;
@@ -461,6 +465,12 @@ struct EngineSnapshot
 enum class TempoTrust : int { none = 0, sure, check, out };
 
 constexpr float  kTrustConf      = 0.80f;
+/** IPAD: EngineSnapshot::selfShare past this shows "SENTO ME STESSO". Probe
+    room, 9 songs (item 133): 0.000 with no return, 0.000-0.015 with the part as
+    loud as the song at the mic (0.039 with the song through the room too),
+    0.036-0.083 at twice. A first reading - the estimate's own energy - read
+    0.02+ on the iPad with no echo at all and the warning never went off. */
+constexpr float  kSelfShareWarn  = 0.02f;
 constexpr double kTrustSteadySec = 4.0;
 // 5-9% of the time above it, and in time there 16%; the same at 0.08, so the
 // line sits in a flat stretch rather than on the edge of a few cases.
