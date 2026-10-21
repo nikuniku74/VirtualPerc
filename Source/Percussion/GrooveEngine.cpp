@@ -617,6 +617,149 @@ namespace
           { 1.00f, 0.90f, 0.95f, 0.92f },
           0.00f, 8 },
     };
+    // ======================================================== 3/4 (METRO)
+    //
+    // Twelve sixteenths: steps 0, 4, 8 are the quarters, 2, 6, 10 the
+    // off-eighths. Same rules as the 4/4 parts: no conga on step 0 (the guard
+    // in eventsAt holds here too), strokes meant to survive a quiet band at
+    // 0.72 or above, the A B A C D B A fill sentence. No clap: there is no
+    // backbeat pair in three, and the percussionist asked for none
+    // (2026-10-21). Written by reasoning, not yet heard - see docs/TODO.md.
+
+    // ---------------------------------------------------------------- valzer
+    //
+    // Um-pa-pa. The one is the band's bass note; the part is the "pa-pa":
+    // open tones on 2 and 3, the second a touch lighter so the bar leans back
+    // to the one, and the heel under the "and" of one to join them.
+    constexpr Hit kWaltzA[] = {
+        {  2, Stroke::heel,  0.34f },
+        {  4, Stroke::open,  0.82f },   // pa
+        {  8, Stroke::open,  0.76f },   // pa
+        { 10, Stroke::toe,   0.28f },
+    };
+    // The answer: the second "pa" cracks.
+    constexpr Hit kWaltzB[] = {
+        {  2, Stroke::heel,  0.34f },
+        {  4, Stroke::open,  0.82f },
+        {  8, Stroke::slap,  0.80f },
+        { 10, Stroke::toe,   0.28f },
+    };
+    // The bar that goes somewhere: a low tone after the one, and the third
+    // quarter split in two.
+    constexpr Hit kWaltzC[] = {
+        {  2, Stroke::tumba, 0.74f },
+        {  4, Stroke::open,  0.80f },
+        {  8, Stroke::open,  0.78f },
+        { 10, Stroke::open,  0.72f },
+    };
+    // Second half of the sentence: the first "pa" stopped, the last one
+    // pushing into the next bar from the "a" of 3.
+    constexpr Hit kWaltzD[] = {
+        {  2, Stroke::heel,  0.34f },
+        {  4, Stroke::muff,  0.62f },
+        {  8, Stroke::open,  0.82f },
+        { 11, Stroke::toe,   0.30f },
+    };
+    constexpr Hit kWaltzFill[] = {
+        {  4, Stroke::open,  0.82f },
+        {  6, Stroke::open,  0.76f },
+        {  8, Stroke::slap,  0.86f },
+        { 10, Stroke::open,  0.80f },
+        { 11, Stroke::slap,  0.84f },
+    };
+
+    // ---------------------------------------------------------------- ballad
+    //
+    // A slow three, mostly space: a low tone after the one, a lift on 3. The
+    // shaker carries the eighths; the congas only mark where the bar breathes.
+    constexpr Hit kBallad3A[] = {
+        {  2, Stroke::tumba, 0.74f },
+        {  8, Stroke::open,  0.72f },
+    };
+    constexpr Hit kBallad3B[] = {
+        {  2, Stroke::tumba, 0.74f },
+        {  6, Stroke::heel,  0.34f },
+        {  8, Stroke::open,  0.72f },
+        { 10, Stroke::toe,   0.28f },
+    };
+    constexpr Hit kBallad3C[] = {
+        {  2, Stroke::tumba, 0.74f },
+        {  8, Stroke::open,  0.74f },
+        { 10, Stroke::open,  0.66f },
+    };
+    constexpr Hit kBallad3D[] = {
+        {  2, Stroke::tapado, 0.70f },
+        {  8, Stroke::muff,  0.60f },
+        { 10, Stroke::open,  0.74f },
+    };
+    constexpr Hit kBallad3Fill[] = {
+        {  6, Stroke::open,  0.74f },
+        {  8, Stroke::open,  0.78f },
+        { 10, Stroke::tumba, 0.80f },
+        { 11, Stroke::open,  0.76f },
+    };
+
+    // -------------------------------------------------------------- semplice
+    //
+    // The pulse and nothing that draws the ear: a stopped low tone after the
+    // one, open tones on 2 and 3, the same every bar. Two drums, no ghosts.
+    constexpr Hit kSimple3A[] = {
+        {  2, Stroke::tapado, 0.76f },
+        {  4, Stroke::open,  0.80f },
+        {  8, Stroke::open,  0.78f },
+    };
+    constexpr Hit kSimple3Fill[] = {
+        {  4, Stroke::open,  0.80f },
+        {  8, Stroke::open,  0.80f },
+        { 10, Stroke::open,  0.78f },
+    };
+
+    constexpr StyleSpec kStyles3[static_cast<int> (GrooveStyle3::count)] = {
+        // valzer - the one leads, 2 and 3 follow it
+        { kWaltzA, static_cast<int> (std::size (kWaltzA)),
+          kWaltzB, static_cast<int> (std::size (kWaltzB)),
+          kWaltzC, static_cast<int> (std::size (kWaltzC)),
+          kWaltzD, static_cast<int> (std::size (kWaltzD)),
+          kWaltzFill, static_cast<int> (std::size (kWaltzFill)),
+          { 0.88f, 0.22f, 0.46f, 0.22f,  0.64f, 0.22f, 0.44f, 0.24f,
+            0.66f, 0.24f, 0.50f, 0.30f,  0.00f, 0.00f, 0.00f, 0.00f },
+          { 1.00f, 0.84f, 0.86f, 1.00f },
+          0.15f, 8 },
+
+        // ballad - soft even eighths, the one a little forward
+        { kBallad3A, static_cast<int> (std::size (kBallad3A)),
+          kBallad3B, static_cast<int> (std::size (kBallad3B)),
+          kBallad3C, static_cast<int> (std::size (kBallad3C)),
+          kBallad3D, static_cast<int> (std::size (kBallad3D)),
+          kBallad3Fill, static_cast<int> (std::size (kBallad3Fill)),
+          { 0.66f, 0.18f, 0.42f, 0.18f,  0.52f, 0.18f, 0.42f, 0.20f,
+            0.54f, 0.20f, 0.46f, 0.24f,  0.00f, 0.00f, 0.00f, 0.00f },
+          { 1.00f, 0.88f, 0.90f, 1.00f },
+          0.08f, 8 },
+
+        // semplice - quarters with a light return, no ghosts
+        { kSimple3A, static_cast<int> (std::size (kSimple3A)),
+          kSimple3A, static_cast<int> (std::size (kSimple3A)),
+          kSimple3A, static_cast<int> (std::size (kSimple3A)),
+          kSimple3A, static_cast<int> (std::size (kSimple3A)),
+          kSimple3Fill, static_cast<int> (std::size (kSimple3Fill)),
+          { 0.80f, 0.00f, 0.38f, 0.00f,  0.62f, 0.00f, 0.36f, 0.00f,
+            0.62f, 0.00f, 0.38f, 0.00f,  0.00f, 0.00f, 0.00f, 0.00f },
+          { 1.00f, 0.86f, 0.86f, 1.00f },
+          0.00f, 8 },
+    };
+
+    /** The part being played: a 3/4 bar reads its own table, anything else
+        the 4/4 one exactly as before. */
+    const StyleSpec& specFor (GrooveStyle s, int beatsPerBar, GrooveStyle3 s3) noexcept
+    {
+        if (beatsPerBar == 3)
+        {
+            const int i = static_cast<int> (s3);
+            return kStyles3[(i >= 0 && i < static_cast<int> (GrooveStyle3::count)) ? i : 0];
+        }
+        return kStyles[static_cast<int> (s)];
+    }
 
     // A triplet-feel off-eighth sits two thirds of the way through the beat
     // instead of half way, which is a sixth of a beat late.
@@ -660,6 +803,13 @@ void GrooveEngine::setStyle (GrooveStyle s) noexcept
 {
     const int i = static_cast<int> (s);
     style = (i >= 0 && i < static_cast<int> (GrooveStyle::count)) ? s : GrooveStyle::marcha;
+}
+
+void GrooveEngine::setMeter (int beats, GrooveStyle3 s3) noexcept
+{
+    beatsPerBar = beats == 3 ? 3 : 4;
+    const int i = static_cast<int> (s3);
+    style3 = (i >= 0 && i < static_cast<int> (GrooveStyle3::count)) ? s3 : GrooveStyle3::waltz;
 }
 
 void GrooveEngine::setHumanize (float amount) noexcept
@@ -819,18 +969,19 @@ float GrooveEngine::humanDelay (int step) noexcept
 
 bool GrooveEngine::isFillBar (int barIndex) const noexcept
 {
-    const StyleSpec& spec = kStyles[static_cast<int> (style)];
+    const StyleSpec& spec = specFor (style, beatsPerBar, style3);
     return wrapBar (barIndex, spec.fillEveryBars) == spec.fillEveryBars - 1;
 }
 
 int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut) noexcept
 {
-    if (out == nullptr || maxOut <= 0 || step < 0 || step >= kStepsPerBar)
+    if (out == nullptr || maxOut <= 0 || step < 0 || step >= kStepsPerBar
+        || step >= 4 * beatsPerBar)
         return 0;
 
     const bool subdivisionAllowsStep =
         stepAllowedForSubdivision (step, subdivisionGrid);
-    const StyleSpec& spec = kStyles[static_cast<int> (style)];
+    const StyleSpec& spec = specFor (style, beatsPerBar, style3);
     int n = 0;
     const int beat = step / 4;
     const float accent = spec.accent[beat & 3];
@@ -948,7 +1099,8 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
     // The clap: only the backbeat, and only once the bar it lands on is
     // trustworthy. It does not read a style table and it does not follow
     // the shaker's steps. `step` is already the app's believed bar position.
-    if (barTrustedFlag && (step == 4 || step == 12))
+    // Not in 3/4: there is no backbeat pair to put it on (2026-10-21).
+    if (beatsPerBar == 4 && barTrustedFlag && (step == 4 || step == 12))
     {
         constexpr float kClapVelocity = 0.85f;
         if (v_survives (kClapVelocity))

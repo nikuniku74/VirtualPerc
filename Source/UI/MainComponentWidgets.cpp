@@ -139,6 +139,13 @@ void MainComponent::StyleSelect::paint (juce::Graphics& g)
             mainText = "AUTO";
     }
 
+    if (owner.meterIsThree())
+    {
+        mainText = vpui::style3Name (static_cast<vp::GrooveStyle3> (
+            owner.engine.settings().grooveStyle3.load()));
+        tag = "3/4";
+    }
+
     const float h = static_cast<float> (getHeight());
     const auto f = fontUi (juce::jlimit (13.0f, 19.0f, h * 0.36f));
     const auto tagFont = fontUi (juce::jlimit (10.0f, 13.0f, h * 0.26f), false);
@@ -198,7 +205,9 @@ MainComponent::StyleMenuOverlay::StyleMenuOverlay (MainComponent& o)
         items[i].setButtonText (styleMenuLabel (i));
         items[i].onClick = [this, i]
         {
-            if (i == 0)
+            if (owner.meterIsThree())
+                owner.applyStyle3 (static_cast<vp::GrooveStyle3> (i));
+            else if (i == 0)
                 owner.applyStyleAuto (true);
             else
                 owner.applyStyle (static_cast<vp::GrooveStyle> (i - 1));
@@ -249,7 +258,16 @@ void MainComponent::StyleMenuOverlay::resized()
         return;
 
     auto anchor = getLocalArea (&owner.styleSelect, owner.styleSelect.getLocalBounds());
-    const int n = kCount;
+    // In 3/4 the list is the three 3/4 parts and no AUTO: the chooser only
+    // knows 4/4 rhythms.
+    const bool three = owner.meterIsThree();
+    const int n = three ? static_cast<int> (vp::GrooveStyle3::count) : kCount;
+    for (int i = 0; i < kCount; ++i)
+    {
+        items[i].setVisible (i < n);
+        items[i].setButtonText (three && i < n ? vpui::style3Name (static_cast<vp::GrooveStyle3> (i))
+                                               : styleMenuLabel (i));
+    }
     const bool sheetMode = owner.isCompact();
     juce::Rectangle<int> cell[kCount];
     int itemH = 0;
@@ -293,11 +311,12 @@ void MainComponent::StyleMenuOverlay::resized()
     for (int i = 0; i < n; ++i)
     {
         items[i].setBounds (sheetMode ? cell[i] : row.removeFromTop (itemH));
-        const bool on = (i == 0) ? autoOn
+        const bool on = three ? owner.engine.settings().grooveStyle3.load() == i
+                      : (i == 0) ? autoOn
                                  : (! autoOn && cur == i - 1);
         // Under AUTO the detected style is tinted, not selected. DUE-UNO is
         // never chosen by the detector.
-        const bool hinted = autoOn && i > 0 && i - 1 == detected
+        const bool hinted = ! three && autoOn && i > 0 && i - 1 == detected
                             && i - 1 != static_cast<int> (vp::GrooveStyle::twoOne);
         items[i].setToggleState (on, juce::dontSendNotification);
         items[i].setColour (juce::TextButton::buttonColourId, ink());
@@ -423,6 +442,9 @@ void MainComponent::SoundMenuOverlay::resized()
         if (v >= 0 && v < count)
             taken[v] = true;
     }
+    // No clap in 3/4 (GrooveEngine): it is not offered there.
+    if (! hitMode && owner.meterIsThree())
+        taken[static_cast<int> (vp::KitSound::clap)] = true;
     int vis[kCount];
     int n = 0;
     for (int i = 0; i < count; ++i)

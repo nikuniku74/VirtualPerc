@@ -121,6 +121,11 @@ public:
         has its own conga figure and its own shaker weighting. */
     void setStyle (GrooveStyle s) noexcept;
 
+    /** Quarters to the bar (METRO) and, for 3, which 3/4 part. A 3/4 bar is
+        twelve sixteenths, reads its own tables and has no clap; 4 is the
+        engine exactly as it was. */
+    void setMeter (int beatsPerBar, GrooveStyle3 style3) noexcept;
+
     /** Whether this bar takes a fill instead of repeating the pattern. */
     bool isFillBar (int barIndex) const noexcept;
 
@@ -211,6 +216,8 @@ private:
 
     DeterministicRng rng { 0x9E3779B9u };
     GrooveStyle style = GrooveStyle::marcha;
+    int beatsPerBar = 4;
+    GrooveStyle3 style3 = GrooveStyle3::waltz;
     float humanize = 0.35f;
     float swing = 0.0f;
     float intensity = 0.5f;

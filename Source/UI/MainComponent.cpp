@@ -66,6 +66,7 @@ MainComponent::MainComponent()
     settingsButton.getProperties().set ("gearIcon", true);
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
+    setupBtn (meterButton, ink());
     setupBtn (dynamicsButton, ink());
     setupBtn (subAuto, ink());
     setupBtn (barButton, ink());
@@ -130,6 +131,7 @@ MainComponent::MainComponent()
     dynamicsButton.getProperties().set ("btnStyle", 2);
     naturalButton.getProperties().set ("btnStyle", 2);
     swingButton.getProperties().set ("btnStyle", 2);
+    meterButton.getProperties().set ("btnStyle", 2);
     startButton.getProperties().set ("btnStyle", 3);
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
@@ -219,6 +221,11 @@ MainComponent::MainComponent()
     {
         vp::haptic (vp::Haptic::select);
         applySwing (engine.settings().swing.load() <= 0.5f);
+    };
+    meterButton.onClick = [this]
+    {
+        vp::haptic (vp::Haptic::select);
+        applyMeter (meterIsThree() ? 4 : 3);
     };
 
     // Not in SETUP: this one is a musical choice and belongs next to the other
@@ -592,6 +599,7 @@ MainComponent::MainComponent()
     refreshStartNowButton();
     refreshGuardButton();
     refreshSwingButton();
+    refreshMeterButton();
     refreshOctaveButtons();
     refreshLoopModeButton();
     refreshThemeColours();
@@ -776,7 +784,7 @@ void MainComponent::refreshThemeColours()
         &clickButton, &themeButton, &sourceButton, &trackLoadButton,
         &trackPlayButton, &kickButton, &latencyButton,
         &subAuto, &sub4, &sub8,
-        &sub16, &naturalButton, &swingButton,
+        &sub16, &naturalButton, &swingButton, &meterButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton, &tapButton,
         &settingsButton, &settingsClose, &accountButton, &infoButton, &procButton,
@@ -829,6 +837,7 @@ void MainComponent::refreshThemeColours()
     refreshStartNowButton();
     refreshGuardButton();
     refreshSwingButton();
+    refreshMeterButton();
     refreshBarButton();
     refreshTempoModeButtons();
     refreshClockButtons();
@@ -885,8 +894,12 @@ void MainComponent::refreshVoiceKnobs()
             return static_cast<vp::KitSound> (v);
         return identity;
     };
-    auto paint = [] (juce::Slider& s, juce::Label& name, bool on, vp::KitSound sound)
+    const bool three = meterIsThree();
+    auto paint = [three] (juce::Slider& s, juce::Label& name, bool on, vp::KitSound sound)
     {
+        // No clap in 3/4 (GrooveEngine): a knob on CLAP reads as off there.
+        if (three && sound == vp::KitSound::clap)
+            on = false;
         s.getProperties().set ("voiceEnabled", on);
         s.getProperties().set ("voiceOnFill", true);
         const auto fill = colourForKitSound (sound);
@@ -2064,6 +2077,10 @@ void MainComponent::loadPrefs()
     engine.settings().swing.store (
         prefs->getDoubleValue ("swing", 0.0) > 0.5 ? 1.0f : 0.0f);
     refreshSwingButton();
+    engine.settings().beatsPerBar.store (prefs->getIntValue ("beatsPerBar", 4) == 3 ? 3 : 4);
+    engine.settings().grooveStyle3.store (juce::jlimit (0, static_cast<int> (vp::GrooveStyle3::count) - 1,
+                                                        prefs->getIntValue ("grooveStyle3", 0)));
+    refreshMeterButton();
 
     const float energy = clamp01 (prefs->getDoubleValue ("intensity", 0.50), 0.50);
     engine.settings().intensity.store (energy);
@@ -2187,6 +2204,8 @@ void MainComponent::savePrefs (bool flush)
                      static_cast<double> (engine.settings().reverbAmount.load()));
     prefs->setValue ("swing",
                      engine.settings().swing.load() > 0.5f ? 1.0 : 0.0);
+    prefs->setValue ("beatsPerBar", engine.settings().beatsPerBar.load());
+    prefs->setValue ("grooveStyle3", engine.settings().grooveStyle3.load());
     prefs->setValue ("intensity", static_cast<double> (engine.settings().intensity.load()));
     prefs->setValue ("tempoFollow", engine.settings().tempoFollow.load());
     prefs->setValue ("userBpm", static_cast<double> (engine.settings().userBpm.load()));
@@ -2374,6 +2393,35 @@ void MainComponent::applySwing (bool on)
     savePrefs();
 }
 
+void MainComponent::applyMeter (int beats)
+{
+    // The clock and the one's votes take it on the next block (the tracker
+    // starts the votes again); the part on its next quarter.
+    engine.settings().beatsPerBar.store (beats == 3 ? 3 : 4);
+    styleMenu.dismiss();
+    soundMenu.dismiss();
+    refreshMeterButton();
+    refreshStyleButtons();
+    refreshVoiceKnobs();
+    savePrefs();
+}
+
+void MainComponent::refreshMeterButton()
+{
+    const bool three = meterIsThree();
+    meterButton.setButtonText (three ? "3/4" : "4/4");
+    meterButton.setToggleState (three, juce::dontSendNotification);
+    meterButton.setColour (juce::TextButton::buttonColourId, ink());
+    meterButton.setColour (juce::TextButton::textColourOffId, text());
+}
+
+void MainComponent::applyStyle3 (vp::GrooveStyle3 s)
+{
+    engine.settings().grooveStyle3.store (static_cast<int> (s));
+    refreshStyleButtons();
+    savePrefs();
+}
+
 void MainComponent::refreshSwingButton()
 {
     const bool on = engine.settings().swing.load() > 0.5f;
@@ -2395,16 +2443,18 @@ void MainComponent::updateBeatDots()
     // ahead by. Same in BRANO and with a live band: in BRANO the song shares
     // that output path, live the band is already in the room.
     const float bpm = juce::jmax (40.0f, snap.bpm);
+    const int nb = meterIsThree() ? 3 : 4;
+    const float quarters = static_cast<float> (nb);
     const float delayBars = (outputLatencyMs + engine.attackLeadMs()) * 0.001f
-                            * bpm / 60.0f * 0.25f;
+                            * bpm / 60.0f / quarters;
     float bar = engine.clockBarPhase() - delayBars;
     bar -= std::floor (bar);
-    const int beat = juce::jlimit (0, 3, static_cast<int> (bar * 4.0f));
+    const int beat = juce::jlimit (0, nb - 1, static_cast<int> (bar * quarters));
     {
         // The hero card flashes with the quarter the stroke is heard on: 90 ms
         // full, 90 ms half, the one harder. Stepped rather than a decay, so
         // the card repaints three times a beat, not every frame (item 108).
-        const float msInto = (bar * 4.0f - std::floor (bar * 4.0f)) * 60000.0f / bpm;
+        const float msInto = (bar * quarters - std::floor (bar * quarters)) * 60000.0f / bpm;
         const float step = msInto < 90.0f ? 1.0f : (msInto < 180.0f ? 0.45f : 0.0f);
         const float flash = heroLive ? step * (beat == 0 ? 1.0f : 0.6f) : 0.0f;
         if (std::abs (flash - heroFlash) > 0.001f)
@@ -2415,7 +2465,7 @@ void MainComponent::updateBeatDots()
         }
     }
     {
-        const float frac = bar * 4.0f - std::floor (bar * 4.0f);
+        const float frac = bar * quarters - std::floor (bar * quarters);
         const float pulse = userWantsArmed ? std::exp (-frac * 3.2f) : 0.0f;
         if (std::abs (pulse - armedPulse) > 0.02f || (pulse == 0.0f && armedPulse != 0.0f))
         {
@@ -2435,7 +2485,7 @@ void MainComponent::updateBeatDots()
         // strip is repainted, and at most ~60 times a second: a ProMotion
         // screen calls this 120 times. One more repaint when it stops, so the
         // ball does not stay frozen in the air.
-        beatPos = bar * 4.0f;
+        beatPos = bar * quarters;
         const bool animate = heroLive || snap.barDeclared;
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
         if ((animate || beatAnimating) && nowMs - lastBeatAnimMs >= 15.0 && ! beatAnimArea.isEmpty())

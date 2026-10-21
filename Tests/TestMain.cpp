@@ -1191,6 +1191,12 @@ int main (int argc, char** argv)
         vpRunHarmonicEntryTest (gPassed, gFailed);
         return gFailed ? 1 : 0;
     }
+    if (argc > 1 && std::string (argv[1]) == "--meter")
+    {
+        vpRunMeterTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
     if (argc > 1 && std::string (argv[1]) == "--harmony-bar")
     {
         vpRunHarmonyBarTest (gPassed, gFailed);
@@ -2559,6 +2565,7 @@ int main (int argc, char** argv)
     vpRunAiBeatTests (gPassed, gFailed);
     vpRunMakeupTests (gPassed, gFailed);
     vpRunLoopTests (gPassed, gFailed);
+    vpRunMeterTests (gPassed, gFailed);
 
     std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
     return gFailed == 0 ? 0 : 1;

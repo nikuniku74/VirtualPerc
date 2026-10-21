@@ -137,7 +137,7 @@ int main (int argc, char** argv)
         }
         else
         {
-            std::printf ("uso: VPRender [--style marcha|rock|dance|pop|samba|funk|reggae|bossa]\n"
+            std::printf ("uso: VPRender [--style marcha|rock|dance|pop|samba|funk|reggae|bossa|valzer|ballad|semplice]\n"
                          "              [--bpm 124] [--bars 8] [--out file.wav] [--click]\n"
                          "              [--humanize 0.35] [--swing 0] [--intensity 0.5]\n"
                          "              [--shaker-vol 0.9] [--conga-vol 0.9] [--reverb 0.30]\n"
@@ -147,6 +147,18 @@ int main (int argc, char** argv)
                          "              [--dynamics 1.0] [--arc]\n");
             return 1;
         }
+    }
+
+    // The 3/4 parts (METRO): their own names, three quarters to the bar.
+    int beatsPerBar = 4;
+    vp::GrooveStyle3 style3 = vp::GrooveStyle3::waltz;
+    if (styleName == "valzer" || styleName == "ballad" || styleName == "semplice")
+    {
+        beatsPerBar = 3;
+        style3 = styleName == "ballad"   ? vp::GrooveStyle3::ballad
+               : styleName == "semplice" ? vp::GrooveStyle3::simple
+                                         : vp::GrooveStyle3::waltz;
+        styleName = "dance";   // the 4/4 style is not read in 3/4
     }
 
     bool ok = false;
@@ -164,6 +176,7 @@ int main (int argc, char** argv)
     perc.prepare (kSr);
     perc.setSeed (0x5EED17u);
     perc.setGrooveStyle (style);
+    perc.setMeter (beatsPerBar, style3);
     perc.setGroove (static_cast<float> (bpm), 4);
     perc.setSubdivision (subdivision);
     perc.setShakerNatural (natural);
@@ -189,6 +202,7 @@ int main (int argc, char** argv)
     vp::TempoFollower clock;
     clock.prepare (kSr);
     clock.setPulsesPerBeat (4);
+    clock.setBeatsPerBar (beatsPerBar);
     clock.forceTempo (static_cast<float> (bpm));
     clock.setTargetTempo (static_cast<float> (bpm), 1.0f);
     clock.setLocked (true);
@@ -201,8 +215,8 @@ int main (int argc, char** argv)
     // agrees with or the file opens in the middle of a bar. Then a beat of tail
     // so the last stroke's ring is not cut off at the end.
     const double beatSec = 60.0 / bpm;
-    const int lead = static_cast<int> (kSr * beatSec * 4.0);
-    const int body = static_cast<int> (kSr * beatSec * 4.0 * bars);
+    const int lead = static_cast<int> (kSr * beatSec * beatsPerBar);
+    const int body = static_cast<int> (kSr * beatSec * beatsPerBar * bars);
     const int tail = static_cast<int> (kSr * beatSec);
     const int total = lead + body + tail;
 

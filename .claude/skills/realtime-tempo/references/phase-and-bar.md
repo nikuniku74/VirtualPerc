@@ -71,6 +71,24 @@ the neural path. Measured: phase error 17 ms rms -> 13 ms. It is gated by
 `kickIsTrusted()`, a running share of strikes landing near a clock beat, so
 somebody routing the full mix into that input fails it immediately and forever.
 
+### METRO: three or four quarters (2026-10-21, docs/TODO.md item 128)
+
+`EngineSettings::beatsPerBar` -> `BeatTracker::setBeatsPerBar` ->
+`TempoFollower::setBeatsPerBar`. The listener sets it; nothing guesses it (a
+meter that moved under a sounding part would be the octave problem again).
+Every bar `4` in the clock and the tracker is now that number, written so that
+4 gives the same integers and floats (`(x % n + n) % n` for `& 3`, `/ n` for
+`* 0.25`): `bench_fast` BRANO and MIXER bit-identical to before, 0 of 54 files.
+In 3/4 there is **no half bar**: `tryAlignFrom`'s `halfBar` is false, so on a
+trusted count every move needs both sources (the network's playing margin or
+harmony agreeing), and the pause rule never rotates. A change clears both vote
+histograms and the trust (a locked bar stays locked); the count keeps its
+quarter or folds into the new bar. Margins and decays are the 4/4 ones - not
+measured on real 3/4 material yet (phase 2). The decoder's own `beatsInBar`
+still counts four: nothing downstream reads `BeatHypothesis::barPhase`.
+`VPTests --meter`: a scripted network calling every third beat, the engine's
+one right 100% after 24 s (4/4 control 100%).
+
 ### Which quarter is the one
 
 Two separate histograms, deliberately not summed

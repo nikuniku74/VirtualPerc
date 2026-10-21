@@ -1625,6 +1625,10 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // docs/HANDOFF_OCTAVE_50BPM.md.
     tracker.setTempoOctaveAuto (cfg.tempoOctaveAuto.load (std::memory_order_relaxed));
     tracker.setTempoOctave (cfg.tempoOctave.load (std::memory_order_relaxed));
+    // METRO. The listener says it; nothing here guesses it (a meter that
+    // changed by itself under a sounding part would be the octave problem
+    // again). The tracker starts the one's votes again on a change.
+    tracker.setBeatsPerBar (cfg.beatsPerBar.load (std::memory_order_relaxed));
     {
         const bool follow = cfg.tempoFollow.load (std::memory_order_relaxed);
         tracker.setTempoFollow (follow);
@@ -1991,6 +1995,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
                                    ? styleDetector.style()
                                    : static_cast<GrooveStyle> (cfg.grooveStyle.load (std::memory_order_relaxed));
     percussion.setGrooveStyle (chosen);
+    percussion.setMeter (cfg.beatsPerBar.load (std::memory_order_relaxed),
+                         static_cast<GrooveStyle3> (cfg.grooveStyle3.load (std::memory_order_relaxed)));
 
     // What the band is giving, and whether the passage wants anything at all.
     //

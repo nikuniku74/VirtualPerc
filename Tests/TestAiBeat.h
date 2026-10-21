@@ -71,3 +71,8 @@ void vpRunOnnxPhaseLockTests (int& passed, int& failed);
     `only` narrows that further to one bench - "a" to "e" - for the same reason.
     The full suite passes nullptr and runs all of them. */
 void vpRunMakeupTests (int& passed, int& failed, const char* only = nullptr);
+
+/** METRO 3/4 (docs/TODO.md item 128): the clock counts three, the 3/4 parts keep
+    the 4/4 rules and have no clap, the engine finds a one called every third
+    beat (and every fourth, as the control). Also `VPTests --meter`. */
+void vpRunMeterTests (int& passed, int& failed);

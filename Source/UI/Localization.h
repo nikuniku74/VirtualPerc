@@ -48,6 +48,19 @@ inline juce::String styleName (vp::GrooveStyle s)
     return juce::String (vp::toString (s));
 }
 
+/** The 3/4 parts (METRO). */
+inline juce::String style3Name (vp::GrooveStyle3 s)
+{
+    switch (s)
+    {
+        case vp::GrooveStyle3::waltz:  return L ("WALTZ", "VALZER");
+        case vp::GrooveStyle3::ballad: return L ("BALLAD", "BALLAD");
+        case vp::GrooveStyle3::simple: return L ("SIMPLE", "SEMPLICE");
+        case vp::GrooveStyle3::count:  break;
+    }
+    return juce::String (vp::toString (s));
+}
+
 inline juce::String kitName (vp::KitSound s)
 {
     switch (s)

@@ -248,7 +248,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     beatStrip = rows.beats;
     if (! rows.beats.isEmpty())
     {
-        // A compact cluster, centred in the row: the four quarters are a
+        // A compact cluster, centred in the row: the quarters are a
         // count, not a full-width ruler.
         const int bandW = juce::jmin (rows.beats.getWidth(),
                                       juce::jmax (200, rows.beats.getHeight() * 6));
@@ -258,7 +258,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // of text below, which is what it did.
         const float rad = juce::jmin (24.0f, static_cast<float> (rows.beats.getHeight()) * 0.27f);
         const float y = static_cast<float> (band.getCentreY());
-        const float step = static_cast<float> (band.getWidth()) / 4.0f;
+        // One dot per quarter of the bar: three in 3/4 (METRO).
+        const int nb = meterIsThree() ? 3 : 4;
+        const float step = static_cast<float> (band.getWidth()) / static_cast<float> (nb);
         const bool running = (snap.bpm > 40.0f || snap.barDeclared) && (heroLive || snap.barDeclared);
         const auto dotX = [&band, step] (int i)
         {
@@ -276,18 +278,18 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float hopLow = rad * 1.30f, hopHigh = rad * 2.10f;
         beatAnimArea = rows.beats.expanded (static_cast<int> (rad * 2.0f),
                                             static_cast<int> (hopHigh + ballR * 3.4f) + 4);
-        const float pos = std::fmod (juce::jmax (0.0f, beatPos), 4.0f);
-        const int at = juce::jlimit (0, 3, static_cast<int> (pos));
+        const float pos = std::fmod (juce::jmax (0.0f, beatPos), static_cast<float> (nb));
+        const int at = juce::jlimit (0, nb - 1, static_cast<int> (pos));
         const float f = juce::jlimit (0.0f, 1.0f, pos - static_cast<float> (at));
-        const int next = (at + 1) & 3;
+        const int next = (at + 1) % nb;
         const float lit = running ? std::pow (1.0f - f, 1.6f) : 0.0f;
         const float coming = running ? juce::jlimit (0.0f, 1.0f, (f - 0.72f) / 0.28f) : 0.0f;
 
         g.setColour (text().withAlpha (0.10f));
         g.fillRoundedRectangle (static_cast<float> (band.getX()) + step * 0.5f, y - 1.0f,
-                                step * 3.0f, 2.0f, 1.0f);
+                                step * static_cast<float> (nb - 1), 2.0f, 1.0f);
 
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < nb; ++i)
         {
             const float x = dotX (i);
             const bool one = i == 0;

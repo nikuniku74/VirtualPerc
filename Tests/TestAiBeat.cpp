@@ -12415,3 +12415,192 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                 "fresh engine reads");
     }
 }
+
+// ---------------------------------------------------------------------------
+// METRO 3/4 (docs/TODO.md item 128). Three things that must hold before a 3/4
+// part can be listened to: the clock counts three and never drifts round the
+// bar, the 3/4 parts keep the rules the 4/4 ones keep (no conga on the one,
+// nothing past the third quarter, no clap, a fill every eighth bar), and the
+// whole engine finds the one when the network calls it every third beat. The
+// last is run in 4/4 as well, as the control that the method measures what it
+// says.
+// ---------------------------------------------------------------------------
+void vpRunMeterTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    std::printf ("\nmeter 3/4 (item 128)\n");
+
+    {
+        vp::TempoFollower clock;
+        clock.prepare (48000.0);
+        clock.setPulsesPerBeat (4);
+        clock.setBeatsPerBar (3);
+        clock.forceTempo (120.0f);
+        clock.setTargetTempo (120.0f, 1.0f);
+        clock.setLocked (true);
+        clock.resetClock();
+        int quarters = 0, wrongStep = 0, bars = 0, last = -1;
+        float maxBar = 0.0f;
+        for (int pos = 0; quarters < 64 * 3; pos += 256)
+        {
+            const auto tick = clock.advance (256);
+            if (tick.wrappedBar)
+                ++bars;
+            maxBar = std::max (maxBar, clock.barPhase());
+            for (int i = 0; i < tick.pulsesFired; ++i)
+            {
+                if (tick.pulseIndex[i] != 0)
+                    continue;
+                const int b = tick.pulseBeatInBar[i];
+                if (last >= 0 && b != (last + 1) % 3)
+                    ++wrongStep;
+                last = b;
+                ++quarters;
+            }
+        }
+        std::printf ("meter-clock  quarters=%d bars=%d out-of-order=%d max bar phase=%.4f\n",
+                     quarters, bars, wrongStep, static_cast<double> (maxBar));
+        expect (wrongStep == 0 && bars >= 63 && bars <= 64 && maxBar < 1.0f,
+                "3/4: the clock counts 0 1 2 and wraps the bar every third quarter, 64 bars");
+    }
+
+    {
+        int stepsPast = 0, claps = 0, congaOnOne = 0, fillBars = 0, played = 0;
+        for (int s3 = 0; s3 < static_cast<int> (vp::GrooveStyle3::count); ++s3)
+        {
+            vp::GrooveEngine g;
+            g.prepare (7u);
+            g.setMeter (3, static_cast<vp::GrooveStyle3> (s3));
+            g.setShakerEnabled (true);
+            g.setCongasEnabled (true);
+            g.setCembaloEnabled (true);
+            g.setClapEnabled (true);
+            g.setBarTrusted (true);
+            g.setIntensity (1.0f);
+            g.setDynamics (1.0f);
+            g.setSubdivision (vp::Subdivision::sixteenth);
+            for (int bar = 0; bar < 64; ++bar)
+            {
+                bool fillConga = false;
+                for (int step = 0; step < vp::GrooveEngine::kStepsPerBar; ++step)
+                {
+                    vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+                    const int n = g.eventsAt (bar, step, ev, vp::GrooveEngine::kMaxEvents);
+                    if (step >= 12 && n > 0)
+                        ++stepsPast;
+                    for (int e = 0; e < n; ++e)
+                    {
+                        ++played;
+                        const auto k = vp::kitSoundForStroke (ev[e].stroke);
+                        if (ev[e].stroke == vp::Stroke::clap)
+                            ++claps;
+                        if (k == vp::KitSound::congas && step == 0)
+                            ++congaOnOne;
+                        if (k == vp::KitSound::congas && g.isFillBar (bar))
+                            fillConga = true;
+                    }
+                }
+                if (g.isFillBar (bar) && fillConga)
+                    ++fillBars;
+            }
+        }
+        std::printf ("meter-groove strokes=%d past-the-bar=%d claps=%d conga-on-one=%d fill-bars=%d\n",
+                     played, stepsPast, claps, congaOnOne, fillBars);
+        expect (played > 1000 && stepsPast == 0,
+                "3/4 parts play and nothing sounds past the third quarter");
+        expect (claps == 0, "3/4: no clap, even switched on and with the one trusted");
+        expect (congaOnOne == 0, "3/4: no conga on the first quarter's down-stroke");
+        expect (fillBars == 3 * 8, "3/4: every eighth bar takes the fill, in every part");
+
+        vp::GrooveEngine g4;
+        g4.prepare (7u);
+        g4.setClapEnabled (true);
+        g4.setBarTrusted (true);
+        vp::GrooveEvent ev[vp::GrooveEngine::kMaxEvents];
+        bool clap4 = false;
+        const int n = g4.eventsAt (0, 4, ev, vp::GrooveEngine::kMaxEvents);
+        for (int e = 0; e < n; ++e)
+            clap4 = clap4 || ev[e].stroke == vp::Stroke::clap;
+        expect (clap4, "4/4 control: the same switches still put the clap on 2");
+    }
+
+    class MeterModel final : public vp::IBeatModel
+    {
+    public:
+        MeterModel (double framesPerBeat, int beatsPerBar) : fpb (framesPerBeat), nb (beatsPerBar) {}
+        bool prepare (int) override { return true; }
+        void reset() override {}
+        bool infer (const float*, int, float activations3[3]) override
+        {
+            const double beats = static_cast<double> (frame++) / fpb;
+            const double toBeat = std::fabs (beats - std::round (beats)) * fpb;
+            const int    beatNo = static_cast<int> (std::llround (beats));
+            const float  pulse = 0.03f + 0.95f * static_cast<float> (
+                                     std::exp (-0.5 * (toBeat / 1.6) * (toBeat / 1.6)));
+            activations3[0] = pulse;
+            activations3[1] = (((beatNo % nb) + nb) % nb) == 0 ? pulse * 0.95f : 0.03f;
+            activations3[2] = 1.0f - activations3[0];
+            return true;
+        }
+    private:
+        double fpb;
+        int nb;
+        long long frame = 0;
+    };
+
+    for (const int nb : { 3, 4 })
+    {
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        constexpr float bpm = 100.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (bpm)
+                                     * (vp::kBeatModelSampleRate / vp::kBeatModelHop);
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (std::make_unique<MeterModel> (framesPerBeat, nb));
+        eng.prepare (sr, block, 1);
+        eng.settings().beatsPerBar.store (nb);
+        eng.settings().shakerEnabled.store (false);
+        eng.settings().congasEnabled.store (false);
+        eng.settings().cembaloEnabled.store (false);
+        eng.settings().clapEnabled.store (false);
+        eng.setRecordedLoopsEnabled (false);
+        eng.start();
+
+        const int n = static_cast<int> (sr * 40.0);
+        std::vector<float> song (static_cast<size_t> (n), 0.0f);
+        renderKitTrack (song, bpm, sr);
+        std::vector<float> oL (static_cast<size_t> (block), 0.0f);
+        std::vector<float> oR (static_cast<size_t> (block), 0.0f);
+        float* outs[2] = { oL.data(), oR.data() };
+        int seen = 0, hits = 0, blocks = 0;
+        for (int pos = 0; pos + block <= n; pos += block)
+        {
+            const float* ins[1] = { song.data() + pos };
+            eng.process (ins, 1, outs, 2, block);
+            if ((++blocks % 8) == 0)
+                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+            const double t = static_cast<double> (pos + block) / sr;
+            if (t < 24.0)
+                continue;
+            const double truth = t * bpm / 60.0;
+            const double inBeat = truth - std::floor (truth);
+            if (inBeat <= 0.25 || inBeat >= 0.45)
+                continue;
+            const auto s = eng.snapshot();
+            if (s.bpm < 40.0f)
+                continue;
+            ++seen;
+            const int at = std::clamp (static_cast<int> (s.barPhase * static_cast<float> (nb)), 0, nb - 1);
+            const long long beat = static_cast<long long> (std::floor (truth));
+            if (at == static_cast<int> (((beat % nb) + nb) % nb))
+                ++hits;
+        }
+        const double right = seen > 0 ? static_cast<double> (hits) / seen : 0.0;
+        std::printf ("meter-engine %d/4  one right %.1f%% of %d samples after 24 s\n",
+                     nb, right * 100.0, seen);
+        expect (seen > 100 && right > 0.9,
+                nb == 3 ? "3/4: the engine finds the one when the network calls every third beat"
+                        : "4/4 control: the same method finds the one every fourth beat");
+    }
+}

@@ -598,12 +598,12 @@ void TempoFollower::snapPhase (float targetPhase, bool keepBarInStep) noexcept
                                  static_cast<float> (to - from)));
         if (moved >= 1.0)
         {
-            beatInBar = (beatInBar + 1) & 3;
+            beatInBar = (beatInBar + 1) % beatsPerBar;
             ++totalBeats;
         }
         else if (moved < 0.0)
         {
-            beatInBar = (beatInBar + 3) & 3;
+            beatInBar = (beatInBar + beatsPerBar - 1) % beatsPerBar;
             --totalBeats;
         }
     }
@@ -649,12 +649,21 @@ void TempoFollower::snapDownbeat (float targetPhase) noexcept
 void TempoFollower::snapBeat (int beatIndex, float targetPhase) noexcept
 {
     snapPhase (targetPhase);
-    beatInBar = ((beatIndex % 4) + 4) % 4;
+    beatInBar = ((beatIndex % beatsPerBar) + beatsPerBar) % beatsPerBar;
 }
 
 void TempoFollower::rotateBarIndex (int delta) noexcept
 {
-    beatInBar = ((beatInBar + delta) % 4 + 4) % 4;
+    beatInBar = ((beatInBar + delta) % beatsPerBar + beatsPerBar) % beatsPerBar;
+}
+
+void TempoFollower::setBeatsPerBar (int n) noexcept
+{
+    n = n == 3 ? 3 : 4;
+    if (n == beatsPerBar)
+        return;
+    beatsPerBar = n;
+    beatInBar %= beatsPerBar;
 }
 
 void TempoFollower::observeOnsetPhase (float beatPhaseOfOnset, float strength, int gridPulses) noexcept
@@ -1372,7 +1381,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         phase -= static_cast<double> (crossed);
         tick.wrappedBeat = true;
         totalBeats += crossed;
-        beatInBar = (beatInBar + crossed) & 3;
+        beatInBar = (beatInBar + crossed) % beatsPerBar;
         if (beatInBar == 0)
             tick.wrappedBar = true;
         if (! beatGapHold && gapSteerGuardBeats > 0)
@@ -1430,7 +1439,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
         const int idx = ((p % pulsesPerBeat) + pulsesPerBeat) % pulsesPerBeat;
         const int beatOffset = static_cast<int> (std::floor (static_cast<double> (p)
                                                              / static_cast<double> (pulsesPerBeat)));
-        const int barBeat = (beatAtStart + beatOffset) & 3;
+        const int barBeat = ((beatAtStart + beatOffset) % beatsPerBar + beatsPerBar) % beatsPerBar;
 
         tick.pulseIndex[tick.pulsesFired] = idx;
         tick.pulseOffset[tick.pulsesFired] = offset;

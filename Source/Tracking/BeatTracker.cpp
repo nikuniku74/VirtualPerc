@@ -793,6 +793,21 @@ void BeatTracker::nudgeBar (int beats) noexcept
     holdBarDecision();
 }
 
+void BeatTracker::setBeatsPerBar (int n) noexcept
+{
+    n = n == 3 ? 3 : 4;
+    if (n == follower.getBeatsPerBar())
+        return;
+    follower.setBeatsPerBar (n);
+    std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
+    voteBeats = 0.0f;
+    std::fill (harmonyVotes, harmonyVotes + 4, 0.0f);
+    harmonyVoteCount = 0.0f;
+    halfBarStreak = 0;
+    if (! barLocked)
+        barTrustEstablished = false;
+}
+
 void BeatTracker::declareBarHere() noexcept
 {
     // The press names the one. Writing phase to 0, the way TAP's first
@@ -822,7 +837,7 @@ void BeatTracker::declareBarHere() noexcept
     if (p <= 0.5f)
         follower.rotateBarIndex (-bar);
     else
-        follower.rotateBarIndex (3 - bar);
+        follower.rotateBarIndex (follower.getBeatsPerBar() - 1 - bar);
     if (levare)
         follower.glidePhase (wrapCentered (-p), 1.0f);
     holdBarDecision();
@@ -863,7 +878,7 @@ void BeatTracker::notifyBarReentry (bool fromPause) noexcept
     neural.invalidatePublicationsBeforeNow();
 
     const float bpm = std::max (50.0f, heldBpm > 40.0f ? heldBpm : 120.0f);
-    const double barSec = 4.0 * 60.0 / static_cast<double> (bpm);
+    const double barSec = static_cast<double> (follower.getBeatsPerBar()) * 60.0 / static_cast<double> (bpm);
     barReentrySamples = static_cast<int> (sampleRate * barSec * kBarReentryBars);
 }
 
@@ -874,15 +889,16 @@ bool BeatTracker::barIsTrustedNow() noexcept
     if (barReentrySamples > 0)
         return false;
 
+    const int nb = follower.getBeatsPerBar();
     float total = 0.0f;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < nb; ++i)
         total += downbeatVotes[i];
     if (total <= 1.0e-6f || voteBeats < kBeatsToTrustReentry)
         return barTrustEstablished;
 
     int best = 0;
     float bestVotes = 0.0f, runnerUp = 0.0f;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < nb; ++i)
     {
         const float s = downbeatVotes[i] / total;
         if (s > bestVotes)
@@ -955,7 +971,7 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
     // every vote, so the stricter line costs nothing there.
     if (harmonicShare > kHarmonicShareToTrust
         && harmonyVoteCount >= kChangesToTrustTheBar
-        && tryAlignFrom (harmonyVotes, harmonyVoteCount * 4.0f, comingIn,
+        && tryAlignFrom (harmonyVotes, harmonyVoteCount * static_cast<float> (follower.getBeatsPerBar()), comingIn,
                          kHarmonyExtraMargin))
     {
         barFromHarmony = true;
@@ -966,17 +982,20 @@ void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
 bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
                                 bool comingIn, float extraMargin) noexcept
 {
+    // Quarters to the bar (METRO). In 3/4 there is no half bar: every move is
+    // by a quarter, so on a trusted count every one needs both sources.
+    const int nb = follower.getBeatsPerBar();
     float score[4] {};
     float totalVotes = 0.0f;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < nb; ++i)
         totalVotes += votes[i];
 
-    for (int i = 0; i < 4; ++i)
-        score[i] = totalVotes > 1.0e-6f ? votes[i] / totalVotes : 0.25f;
+    for (int i = 0; i < nb; ++i)
+        score[i] = totalVotes > 1.0e-6f ? votes[i] / totalVotes : 1.0f / static_cast<float> (nb);
 
     int best = 0;
     float bestVotes = 0.0f, runnerUp = 0.0f;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < nb; ++i)
     {
         if (score[i] > bestVotes)
         {
@@ -1012,9 +1031,10 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // 1-vs-3 the hole was built for; one quarter is the battere and the
     // levare trading places. The playing margin is what a clear relocation
     // clears and a split vote does not.
+    const bool halfBar = nb == 4 && best == 2;
     if (comingIn && barReentryHalfOnly)
     {
-        if (best != 2)
+        if (! halfBar)
             return false;
         if (bestVotes < runnerUp + kBarWinMarginPlaying + extraMargin)
             return false;
@@ -1053,18 +1073,18 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         // rejected: mid-song harmony can be clear and wrong (LET ME LOVE YOU
         // 44.1k, 70 -> 152 s off the one).
         bool corroborated = false;
-        if (barTrustEstablished && best != 2)
+        if (barTrustEstablished && ! halfBar)
         {
-            auto winner = [] (const float* v, float& margin) noexcept
+            auto winner = [nb] (const float* v, float& margin) noexcept
             {
                 float total = 0.0f;
-                for (int i = 0; i < 4; ++i)
+                for (int i = 0; i < nb; ++i)
                     total += v[i];
                 int b = 0;
                 float first = 0.0f, second = 0.0f;
-                for (int i = 0; i < 4; ++i)
+                for (int i = 0; i < nb; ++i)
                 {
-                    const float s = total > 1.0e-6f ? v[i] / total : 0.25f;
+                    const float s = total > 1.0e-6f ? v[i] / total : 1.0f / static_cast<float> (nb);
                     if (s > first) { second = first; first = s; b = i; }
                     else if (s > second) second = s;
                 }
@@ -1083,7 +1103,7 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
                                && winner (downbeatVotes, margin) == best
                                && margin >= kBarWinMarginPlaying;
         }
-        if (barTrustEstablished && best != 2 && ! corroborated)
+        if (barTrustEstablished && ! halfBar && ! corroborated)
             return false;
         // Half a bar must keep winning for kHalfBarPersistBeats in a row. A
         // passage where the 3 sounds like a 1 (a stop, a crash, a chord change
@@ -1094,7 +1114,7 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
         // half a point on both halves; four bars stopped the breaks but lost
         // corrections and a point of the one. docs/TODO.md item 121.
         constexpr int kHalfBarPersistBeats = 8;
-        if (best == 2)
+        if (halfBar)
         {
             halfCandidateThisBeat = true;
             if (++halfBarStreak < kHalfBarPersistBeats)
@@ -1125,14 +1145,14 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // Both histograms rotate, whichever answered: they are two opinions about
     // the same count, and leaving one un-rotated would have it argue for the
     // position the bar has just been moved off.
-    float rotated[4];
-    for (int i = 0; i < 4; ++i)
-        rotated[i] = downbeatVotes[(i + best) & 3];
-    for (int i = 0; i < 4; ++i)
+    float rotated[4] {};
+    for (int i = 0; i < nb; ++i)
+        rotated[i] = downbeatVotes[(i + best) % nb];
+    for (int i = 0; i < nb; ++i)
         downbeatVotes[i] = rotated[i];
-    for (int i = 0; i < 4; ++i)
-        rotated[i] = harmonyVotes[(i + best) & 3];
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < nb; ++i)
+        rotated[i] = harmonyVotes[(i + best) % nb];
+    for (int i = 0; i < nb; ++i)
         harmonyVotes[i] = rotated[i];
     return true;
 }
@@ -1251,7 +1271,8 @@ bool BeatTracker::selectHarmonicSource (BeatHypothesis& hyp, bool haveHyp, int n
     hyp.bpm = harmonicTempo.bpm();
     hyp.periodSec = 60.0f / hyp.bpm;
     hyp.beatPhase = static_cast<float> (position - std::floor (position));
-    hyp.barPhase = static_cast<float> (position / 4 - std::floor (position / 4));
+    const double barBeats = static_cast<double> (follower.getBeatsPerBar());
+    hyp.barPhase = static_cast<float> (position / barBeats - std::floor (position / barBeats));
     hyp.confidence = 0.65f * harmonicTempo.coherence();
     hyp.beatSerial = harmonicBeatSerial;
     // Predicted quarters are not fresh observed attacks: they must not arm
@@ -1598,7 +1619,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                              + follower.beatPhase();
         const float sinceBeat = hyp.beatPhase + leadBeats;
         const int nearest = static_cast<int> (std::lround (posNow - sinceBeat));
-        const int at = ((nearest % 4) + 4) & 3;
+        const int nb = follower.getBeatsPerBar();
+        const int at = ((nearest % nb) + nb) % nb;
 
         // Weighted by how strongly the network called this beat the one, which
         // for most beats is "not at all" and is worth counting as such. On
@@ -1706,7 +1728,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             const float posNow = static_cast<float> (follower.beatInBarIndex())
                                  + follower.beatPhase();
             const int nearest = static_cast<int> (std::lround (posNow - leadSec / beatSeconds));
-            const int at = ((nearest % 4) + 4) & 3;
+            const int nb = follower.getBeatsPerBar();
+            const int at = ((nearest % nb) + nb) % nb;
             for (float& v : harmonyVotes)
                 v *= kHarmonyVoteDecay;
             harmonyVoteCount = harmonyVoteCount * kHarmonyVoteDecay + 1.0f;

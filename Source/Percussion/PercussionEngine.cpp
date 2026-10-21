@@ -321,12 +321,21 @@ void PercussionEngine::setGrooveStyle (GrooveStyle s) noexcept
         applyPendingGrooveControls();
 }
 
+void PercussionEngine::setMeter (int beats, GrooveStyle3 s3) noexcept
+{
+    requestedBeatsPerBar = beats == 3 ? 3 : 4;
+    requestedStyle3 = s3;
+    if (! hasSeenPulse)
+        applyPendingGrooveControls();
+}
+
 void PercussionEngine::applyPendingGrooveControls() noexcept
 {
     appliedSwing = requestedSwing;
     appliedStyle = requestedStyle;
     groove.setSwing (appliedSwing);
     groove.setStyle (appliedStyle);
+    groove.setMeter (requestedBeatsPerBar, requestedStyle3);
 }
 
 void PercussionEngine::setIntensity (float amount) noexcept

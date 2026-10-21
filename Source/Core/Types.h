@@ -81,6 +81,31 @@ inline const char* toString (GrooveStyle s) noexcept
     return "?";
 }
 
+/** The parts written for three quarters to the bar (METRO 3/4), twelve
+    sixteenths each. Kept apart from GrooveStyle on purpose: those are
+    sixteen-step bars with a backbeat, and every 4/4 style, its tests and the
+    automatic chooser stay exactly as they were. No clap in 3/4 (the
+    percussionist's call, 2026-10-21): there is no backbeat pair to put it on. */
+enum class GrooveStyle3 : int
+{
+    waltz = 0,   // um-pa-pa: the one is the band's, open tones on 2 and 3
+    ballad,      // slow and sparse: a low tone after the one, a lift on 3
+    simple,      // pulse only, two drums, nothing that draws the ear
+    count
+};
+
+inline const char* toString (GrooveStyle3 s) noexcept
+{
+    switch (s)
+    {
+        case GrooveStyle3::waltz:  return "VALZER";
+        case GrooveStyle3::ballad: return "BALLAD";
+        case GrooveStyle3::simple: return "SEMPLICE";
+        case GrooveStyle3::count:  break;
+    }
+    return "?";
+}
+
 /** Which bundled instrument a FEEL knob plays. The four knobs are the four
     parts (shaker / congas / cembalo / clap patterns); this is only the
     sample family, so a hold on SHAKER can assign TRIANGOLO without rewriting
@@ -556,6 +581,11 @@ struct EngineSettings
     // against material whose style is known, which is no better than always
     // guessing the same style. See docs/AUDIO_ENGINE.md.
     std::atomic<bool>  grooveAuto      { false };
+    // Quarters to the bar (METRO): 4 or 3. The clock, the one's votes and the
+    // part all count in it; 4 is the app as it always was. In 3/4 the part is
+    // `grooveStyle3`, the automatic chooser is off and there is no clap.
+    std::atomic<int>   beatsPerBar     { 4 };
+    std::atomic<int>   grooveStyle3    { static_cast<int> (GrooveStyle3::waltz) };
     // Counter, not a position: every increment moves the bar on by one beat.
     // Where beat one is cannot be read reliably from what the network gives us
     // - see docs/STATUS.md - so the listener gets to say, and saying it has to

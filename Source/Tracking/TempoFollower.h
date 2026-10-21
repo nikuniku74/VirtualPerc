@@ -167,11 +167,17 @@ public:
         the observed band beat. */
     float observedPhaseErrorBeats() const noexcept { return lastObservedPhaseErr; }
     float beatPhase() const noexcept { return static_cast<float> (phase); }
-    float barPhase() const noexcept { return static_cast<float> ((beatInBar + phase) * 0.25); }
+    float barPhase() const noexcept { return static_cast<float> ((beatInBar + phase) / beatsPerBar); }
     int   beatInBarIndex() const noexcept { return beatInBar; }
     int   beatsElapsed() const noexcept { return totalBeats; }
 
     void setPulsesPerBeat (int n) noexcept { pulsesPerBeat = n < 1 ? 1 : n; }
+    /** Quarters to the bar (METRO): 4, or 3. The count wraps at it and the
+        bar phase is measured against it; the tempo and the beat are untouched.
+        A change keeps the current quarter if the new bar has it, otherwise
+        folds it in. */
+    void setBeatsPerBar (int n) noexcept;
+    int  getBeatsPerBar() const noexcept { return beatsPerBar; }
     int  getPulsesPerBeat() const noexcept { return pulsesPerBeat; }
 
 private:
@@ -183,6 +189,7 @@ private:
     float target = 120.0f;
     float conf = 0.0f;
     int beatInBar = 0;
+    int beatsPerBar = 4;
     int totalBeats = 0;
     int pulsesPerBeat = 4; // 4 = 16th notes per quarter
     float phaseErrEma = 0.0f;

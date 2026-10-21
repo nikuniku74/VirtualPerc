@@ -129,6 +129,12 @@ private:
         docs/TODO.md item 7 and `GrooveEngine::humanDelay`. */
     void applySwing (bool on);
     void refreshSwingButton();
+    /** METRO: 4 or 3 quarters to the bar. In 3/4 the style list is the 3/4
+        parts, AUTO is off and a knob on CLAP is silent. */
+    void applyMeter (int beatsPerBar);
+    void refreshMeterButton();
+    bool meterIsThree() const noexcept { return engine.settings().beatsPerBar.load() == 3; }
+    void applyStyle3 (vp::GrooveStyle3 s);
     void applyTheme (bool dark, bool manualOverride);
     void refreshThemeColours();
     void refreshBarButton();
@@ -421,6 +427,8 @@ private:
     juce::TextButton subAuto { "AUTO" }, sub4 { "1/4" }, sub8 { "1/8" }, sub16 { "1/16" };
     juce::TextButton naturalButton { vpui::L ("NATURAL", "NATURALE") };
     juce::TextButton swingButton { "SWING" };
+    /** METRO, next to the other musical switches: reads 4/4 or 3/4. */
+    juce::TextButton meterButton { "4/4" };
 
     /** Custom style select. A native ComboBox on iOS/macOS is a system picker
         and would break the look; this paints with the same chrome as the

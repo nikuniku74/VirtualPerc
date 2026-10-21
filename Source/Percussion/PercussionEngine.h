@@ -67,6 +67,9 @@ public:
     /** Requests a new part. While playing, the change is committed on the next
         quarter so one beat can never contain two different parts. */
     void setGrooveStyle (GrooveStyle s) noexcept;
+    /** Quarters to the bar (METRO) and the 3/4 part. Committed with the style
+        and the swing, on the next quarter. */
+    void setMeter (int beatsPerBar, GrooveStyle3 style3) noexcept;
     /** How much the band is giving, 0..1. See Percussion/BandDynamics.h. */
     void setDynamics (float amount) noexcept { groove.setDynamics (amount); }
 
@@ -222,6 +225,8 @@ private:
     float appliedSwing = 0.0f;
     GrooveStyle requestedStyle = GrooveStyle::marcha;
     GrooveStyle appliedStyle = GrooveStyle::marcha;
+    int requestedBeatsPerBar = 4;
+    GrooveStyle3 requestedStyle3 = GrooveStyle3::waltz;
     float grooveBpm = 120.0f;
     int groovePulses = 4;
     int bankAttackLead = 0;

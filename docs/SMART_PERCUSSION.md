@@ -75,7 +75,7 @@ intelligente".
 | **B4** | Analisi | `subtractSpeakerLeak` trattava solo i primi 2048 campioni → gradino nel segnale d'analisi | ✅ fatto | R1/R2 |
 | **B5** | Analisi | drop della FIFO non resettava feature/decoder → onset fantasma | ✅ fatto | R1 |
 | **B6** | Doc/codice | `AUTO` = ottavi nel codice, sedicesimi nella doc (aperto); "steal quietest" ora è vero | 🟡 parziale | — |
-| **M1** | Metrica | 4/4 cablato ovunque: niente 3/4, 6/8, 12/8 | 🔴 | R3 |
+| **M1** | Metrica | 3/4 manuale (METRO) dal 2026-10-21, voce 128 del TODO; 6/8 no, 12/8 = SWING | 🟡 | R3 |
 | **M2** | Metrica | nessun decoder di battuta: il "1" arriva da una soglia su un frame | 🟢 fatto: istogramma su ogni battito, più il conteggio che segue la griglia quando si sposta la fase. Misurato con `VPBar`: 21/25 all'ingresso su mandata di linea, 10/25 col microfono nella stanza, dove il tetto è la rete | R3 |
 | **M3** | Feel | swing ora *riproducibile* (parametro), ma non ancora *rilevato* dal brano | 🟠 | R4 |
 | **M4** | Feel | nessuna scelta half-time / double-time | 🟠 | R4 |

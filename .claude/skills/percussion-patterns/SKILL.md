@@ -11,7 +11,8 @@ because those decisions were lost once already.
 
 ## 1. The grid
 
-- Everything is on a **sixteenth grid**: `GrooveEngine::kStepsPerBar = 16`.
+- Everything is on a **sixteenth grid**: `GrooveEngine::kStepsPerBar = 16` (twelve of
+  them used in 3/4, see section 12b).
 - The clock always emits **4 pulses per beat** (`kClockPulsesPerBeat` in
   `BeatTracker.cpp`); the subdivision setting chooses how dense the groove is,
   not the clock. `PercussionEngine::render` maps a pulse onto the sixteenth grid
@@ -573,6 +574,32 @@ rendered onset against the notated beat. A stroke can be 12 ms late with a
 perfect clock.
 
 Always also run `./scripts/run-tests.sh`.
+
+## 12b. METRO 3/4 (2026-10-21, docs/TODO.md item 128)
+
+`EngineSettings::beatsPerBar` (4 or 3, the METRO pill next to SWING) and
+`grooveStyle3`. A 3/4 bar is **twelve sixteenths** (quarters 0/4/8, off-eighths
+2/6/10); `PercussionEngine::render` already maps `barBeat * 4 + ...`, so with
+the clock counting three nothing past step 11 is visited, and `eventsAt`
+refuses `step >= 4 * beatsPerBar` anyway.
+
+- The 3/4 parts are **their own table**, `kStyles3[GrooveStyle3]` (VALZER,
+  BALLAD, SEMPLICE), chosen by `specFor`. They are not `GrooveStyle` values on
+  purpose: every 4/4 style, its tests, the leak bench rows and the automatic
+  chooser stay exactly as they were. In 3/4 the style list shows only these
+  three and AUTO is not offered (the chooser measures 4/4 rhythms).
+- **No clap in 3/4** - the percussionist's call: there is no backbeat pair.
+  The clap block needs `beatsPerBar == 4`; the picker does not offer CLAP and a
+  knob already on CLAP reads as off.
+- Same rules as 4/4: no conga on step 0 (guard), skeleton at >= 0.72, the
+  A B A C D B A fill sentence, a bar-long shaker figure, `accent[3]` used.
+- VALZER = um-pa-pa: open tones on 2 and 3 (the second lighter, cracked in
+  bar B), heel/toe in the gaps. BALLAD = mostly space: tumba after the one,
+  a lift on 3. SEMPLICE = pulse only, two drums, no ghosts.
+- Triangle, swing, NATURALE and dynamics need nothing: they work per quarter.
+- `setMeter` commits with style and swing on the next quarter.
+- Listen: `VPRender --style valzer|ballad|semplice --bpm 150 --click`.
+  Checked by `VPTests --meter`. **Written by reasoning, not yet heard.**
 
 ## 13. Related
 

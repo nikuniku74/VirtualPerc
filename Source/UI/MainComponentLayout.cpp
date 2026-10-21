@@ -164,7 +164,9 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
     // (pills). Wide: one row. Narrow: style and track, then the pills.
     const int gap = 8;
     juce::TextButton* segs[]  = { &sub4, &sub8, &sub16 };
-    juce::TextButton* pills[] = { &dynamicsButton, &naturalButton, &swingButton };
+    // METRO is the fourth switch: a musical choice, reachable mid-song.
+    juce::TextButton* pills[] = { &dynamicsButton, &naturalButton, &swingButton, &meterButton };
+    constexpr int kPills = 4;
 
     const auto placeSeg = [this, &segs] (juce::Rectangle<int> r)
     {
@@ -175,11 +177,11 @@ void MainComponent::layoutMisure (juce::Rectangle<int> body)
     };
     const auto placePills = [this, gap, &pills] (juce::Rectangle<int> r)
     {
-        const int w = juce::jmax (1, (r.getWidth() - gap * 2) / 3);
-        for (int i = 0; i < 3; ++i)
+        const int w = juce::jmax (1, (r.getWidth() - gap * (kPills - 1)) / kPills);
+        for (int i = 0; i < kPills; ++i)
         {
-            pills[i]->setBounds (i < 2 ? r.removeFromLeft (w) : r);
-            if (i < 2)
+            pills[i]->setBounds (i < kPills - 1 ? r.removeFromLeft (w) : r);
+            if (i < kPills - 1)
                 r.removeFromLeft (gap);
         }
     };

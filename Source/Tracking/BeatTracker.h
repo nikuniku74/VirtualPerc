@@ -122,6 +122,12 @@ public:
         phrase. */
     void nudgeBar (int beats) noexcept;
 
+    /** Quarters to the bar (METRO): 4, or 3. Passed to the clock; the one's
+        votes from the old meter are about positions that no longer exist,
+        so both histograms start again and the count must earn its trust.
+        A bar the listener locked stays locked. Audio thread. */
+    void setBeatsPerBar (int n) noexcept;
+
     /** The listener has just said "the one is here": this instant is beat
         zero. Snaps the clock onto that quarter (a half-beat correction is
         allowed) even while a part is sounding, holds the bar so the auto
