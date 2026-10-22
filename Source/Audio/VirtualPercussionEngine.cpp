@@ -170,6 +170,7 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
     maxBlock = std::max (512, maxBlk);
+    octaveDoubt = {};
 
     mono.assign (static_cast<size_t> (maxBlock), 0.0f);
     kickDetector.prepare (sampleRate);
@@ -532,7 +533,12 @@ void VirtualPercussionEngine::mixInputs (const float* const* inputs, int numInpu
         lastKickChannel.store (assigned ? kick : -1, std::memory_order_relaxed);
     }
 
-    const int assigned = cfg.analysisChannel.load (std::memory_order_relaxed);
+    // MIXER only (MainComponent's IN button): the iPad's own microphone and a
+    // loaded file are not the interface the choice was made on.
+    const int assigned = cfg.followSource.load (std::memory_order_relaxed)
+                                 == static_cast<int> (FollowSource::kitMic)
+                             ? cfg.analysisChannel.load (std::memory_order_relaxed)
+                             : -1;
     int used = 0;
     if (assigned >= 0 && assigned < numInputs && inputs[assigned] != nullptr)
     {
@@ -2214,6 +2220,15 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastRegime.store (static_cast<int> (tr.regime), std::memory_order_relaxed);
     lastOctave.store (tr.tempoOctave, std::memory_order_relaxed);
     lastCombBpm.store (tr.combBpm, std::memory_order_relaxed);
+    lastOctaveDoubt.store (octaveDoubt.update (static_cast<double> (numSamples) / sampleRate,
+                                               tr.percussionShouldPlay
+                                                   && cfg.tempoFollow.load (std::memory_order_relaxed),
+                                               tr.neuralBpm, tr.combRawBpm,
+                                               // the listener's choice only: AUTO moves the
+                                               // level by itself right after an entry
+                                               cfg.tempoOctaveAuto.load (std::memory_order_relaxed)
+                                                   ? 100 : cfg.tempoOctave.load (std::memory_order_relaxed)),
+                           std::memory_order_relaxed);
     lastLevelSettled.store (tr.levelSettled, std::memory_order_relaxed);
     lastFitResidual.store (tr.fitResidual, std::memory_order_relaxed);
     lastFitCoverage.store (tr.fitCoverage, std::memory_order_relaxed);
@@ -2327,6 +2342,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.inputGain = cfg.inputGain.load (std::memory_order_relaxed);
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.selfShare = lastSelfShare.load (std::memory_order_relaxed);
+    s.octaveInDoubt = lastOctaveDoubt.load (std::memory_order_relaxed);
     s.lowShare = lastLowShare.load (std::memory_order_relaxed);
     s.rhythmSeen = lastRhythmSeen.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);

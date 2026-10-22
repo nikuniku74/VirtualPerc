@@ -12,7 +12,15 @@ A timing change is accepted only with numbers from this procedure. Read
 
 - Real audio lives only on the Mac, in `~/vp-bench/wav/*.wav` (bench songs at
   44.1 and 48 kHz + live excerpts), truth files `*.truth.txt` next to them,
-  training data in `~/vp-train`. It used to be `/tmp/vp-bench`, which macOS
+  training data in `~/vp-train`. Held-out material is kept beside it, out of
+  `bench_fast.py`: `~/vp-bench/new` (songs never tuned on, e.g. FBI 22.01.10,
+  24 songs) and `~/vp-bench/long` (whole sets, 48 and 104 min, for song
+  changes); run them with VPTrack in a loop, `truth.py score` finds their truth
+  too. The bench is the material the app was tuned on: FBI in MIXER reads
+  55.6% right tempo against 86.2% on the bench (docs/TODO.md item 141), so a
+  change that only holds on the bench is not shown to hold. The teacher's
+  level is the user's: blind A/B on 8 excerpts where teacher and app disagree
+  by an octave, the user picked the teacher 8/8 (2026-10-22). It used to be `/tmp/vp-bench`, which macOS
   empties on reboot and prunes after 3 days (lost twice on 2026-10-07). To
   rebuild: each `~/Desktop/clicks/NN TITLE.mp3` of the bench through
   `afconvert -f WAVE -d LEI16@44100|48000` into `NN_TITLE_44k|48k.wav`

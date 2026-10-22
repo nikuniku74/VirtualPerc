@@ -131,7 +131,9 @@ def report(tags):
     for tag in tags:
         rows = {}
         for f in sorted(os.listdir(f'{CACHE}/{tag}')):
-            truth = f'{CACHE}/wav/{f[:-4]}.wav.truth.txt'
+            # the bench, then material kept out of bench_fast (new songs, long sets)
+            truth = next((t for t in (f'{CACHE}/{d}/{f[:-4]}.wav.truth.txt' for d in ('wav', 'new', 'long'))
+                          if os.path.exists(t)), '')
             if f.endswith('.pul') and os.path.exists(truth):
                 rows[f[:-4]] = score(f'{CACHE}/{tag}/{f}', truth)
         print(f'== {tag} ({len(rows)} file con verità)\n{head}')

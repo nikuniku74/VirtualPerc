@@ -204,6 +204,7 @@ int main (int argc, char** argv)
     std::FILE* outFile = outPath.empty() ? nullptr : std::fopen (outPath.c_str(), "wb");
     std::FILE* shareFile = shareOut.empty() ? nullptr : std::fopen (shareOut.c_str(), "w");
     double nextShare = 0.0;
+    double octaveDoubtAt = -1.0;   // first time OTTAVA? shows (item 143)
     if (pulseFile != nullptr)
         std::fprintf (pulseFile, "# t beatPhase barPhase bpm clockBpm suona phaseErr regime trust rete target trim trans recover stato conf pettine resid copert residCorto fiducia protetto unoFidato rullSide cassaSide rotazioni clapOk rotDispari\n");
 
@@ -291,6 +292,8 @@ int main (int argc, char** argv)
             for (int i = 0; i < take; ++i)
                 partOut[static_cast<size_t> (pos + i)] = 0.5f * (oL[static_cast<size_t> (i)] + oR[static_cast<size_t> (i)]);
         s = eng.snapshot();
+        if (s.octaveInDoubt && octaveDoubtAt < 0.0)
+            octaveDoubtAt = static_cast<double> (pos) / sr;
         const double t = pos / sr;
         if (s.confidence < vp::kTrustConf || s.state != vp::TrackingState::following)
             trustLowAt = t;
@@ -417,5 +420,6 @@ int main (int argc, char** argv)
         std::fclose (outFile);
     if (shareFile != nullptr)
         std::fclose (shareFile);
+    std::printf ("octave-doubt %.2f\n", octaveDoubtAt);
     return 0;
 }

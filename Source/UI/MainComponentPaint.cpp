@@ -226,6 +226,11 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         if (hearsItself)
             parts.add (vpui::L ("I HEAR MYSELF: turn the percussion down or move the iPad away",
                                 "SENTO ME STESSO: abbassa le percussioni o allontana l'iPad"));
+        // The octave the part came in on may be the wrong one (OctaveDoubt,
+        // docs/TODO.md item 143): only a prompt, the octave stays the listener's.
+        if (snap.octaveInDoubt)
+            parts.add (vpui::L ("OCTAVE? try \xc3\xb7" "2 or \xc3\x97" "2",
+                                "OTTAVA? prova \xc3\xb7" "2 o \xc3\x97" "2"));
         if (snap.driftGuarded)
             parts.add (vpui::L ("percussion paused until the tempo returns",
                                 "percussioni in pausa finch\xc3\xa9 il tempo non torna"));
@@ -242,7 +247,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                                : vpui::L (" (manual)", " (manuale)")));
         if (! parts.isEmpty())
         {
-            g.setColour (hearsItself ? stateSearching() : text());
+            g.setColour (hearsItself || snap.octaveInDoubt ? stateSearching() : text());
             g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
                               rows.tempoLine, juce::Justification::centred, 1);
         }

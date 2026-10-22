@@ -399,6 +399,7 @@ public:
         float         leadMs = 0.0f;
         TempoRegime   regime = TempoRegime::unknown;
         float         combBpm = 0.0f;
+        float         combRawBpm = 0.0f;   // unfolded, for OctaveDoubt
         bool          levelSettled = false;
         float         fitResidual = 1.0f;
         float         fitCoverage = 0.0f;

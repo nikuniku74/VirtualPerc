@@ -323,6 +323,8 @@ private:
     std::atomic<float> lastAnalysisGain { 1.0f };
     std::atomic<float> lastLeakRemain { 0.0f };
     std::atomic<float> lastSelfShare { 0.0f };
+    std::atomic<bool>  lastOctaveDoubt { false };
+    OctaveDoubt octaveDoubt;
     /** Input samples that arrived non-finite and were replaced with silence.
         Never zero on a healthy device; worth showing, because a driver that
         does this is a driver whose other numbers are also suspect. */

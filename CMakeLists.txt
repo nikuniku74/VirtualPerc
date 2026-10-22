@@ -184,7 +184,8 @@ juce_add_gui_app (VirtualPercussionist
     TARGETED_DEVICE_FAMILY "1,2"
     STATUS_BAR_HIDDEN FALSE
     IPAD_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationPortraitUpsideDown;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
-    IPHONE_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait;UIInterfaceOrientationLandscapeLeft;UIInterfaceOrientationLandscapeRight"
+    # iPhone: portrait only (2026-10-22, the user's choice); iPad keeps all four.
+    IPHONE_SCREEN_ORIENTATIONS "UIInterfaceOrientationPortrait"
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE
     # Split View / Stage Manager / a window next to SendSong. The compact

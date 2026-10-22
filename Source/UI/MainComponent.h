@@ -507,6 +507,7 @@ private:
 
     /** Which input the kick drum arrives on, or none. See applyKickChannel. */
     juce::TextButton kickButton { vpui::L ("NO KICK", "CASSA NO") };
+    juce::TextButton analysisButton { "IN MIX" };
     /** Measures this rig's round trip instead of taking the device's word for
         it. See Audio/LatencyProbe.h. */
     juce::TextButton latencyButton { vpui::L ("LATENCY", "LATENZA") };

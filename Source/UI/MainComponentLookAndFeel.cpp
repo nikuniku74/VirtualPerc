@@ -108,8 +108,8 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
                                                                        : juce::TextButton::textColourOffId);
     if (buttonIsSolidOn (button, button.findColour (juce::TextButton::buttonColourId)))
         labelCol = bg();                               // dark on the light face
-    else if ((style == 1 || style == 2) && ! button.getToggleState())
-        labelCol = mute();                             // off segments and pills are quiet
+    else if (style == 1 && ! button.getToggleState())
+        labelCol = mute();                             // off segments are quiet
     g.setColour (labelCol.withMultipliedAlpha (alpha));
     if (style == 3)
     {

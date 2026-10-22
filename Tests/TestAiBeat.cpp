@@ -1594,6 +1594,71 @@ void vpRunNewInputTests (int& passed, int& failed)
     gFail = &failed;
     std::printf ("\nnew input (item 3)\n");
 
+    // OTTAVA? (docs/TODO.md item 143): 4 s of the raw fold an octave from the
+    // tempo within 30 s of the entry shows it, for 20 s; ÷2/×2 or STOP ends it.
+    {
+        constexpr double dt = 0.01;
+        auto run = [&] (vp::OctaveDoubt& d, double sec, float tempo, float raw, int octave, bool playing = true)
+        {
+            double firstOn = -1.0, lastOn = -1.0;
+            for (double t = 0.0; t < sec; t += dt)
+                if (d.update (dt, playing, tempo, raw, octave))
+                {
+                    if (firstOn < 0.0) firstOn = t;
+                    lastOn = t;
+                }
+            return std::pair { firstOn, lastOn };
+        };
+        vp::OctaveDoubt right, wrong, answered;
+        const auto r = run (right, 40.0, 120.0f, 121.0f, 0);
+        const auto w = run (wrong, 40.0, 60.0f, 120.5f, 0);
+        run (answered, 5.0, 60.0f, 120.5f, 0);
+        const bool shownBeforePress = answered.shownAt >= 0.0;
+        const auto a = run (answered, 5.0, 120.0f, 120.5f, 1);
+        vp::OctaveDoubt stopped;
+        run (stopped, 3.0, 60.0f, 120.5f, 0);
+        run (stopped, 0.1, 60.0f, 120.5f, 0, false);
+        const auto s2 = run (stopped, 3.0, 60.0f, 120.5f, 0);
+        std::printf ("octave-doubt  right %.2f  wrong on %.2f off %.2f  after the press %.2f  after STOP %.2f\n",
+                     r.first, w.first, w.second, a.first, s2.first);
+        expect (r.first < 0.0, "OTTAVA? never shows when the fold agrees with the tempo");
+        expect (std::fabs (w.first - 4.0) < 0.05 && std::fabs (w.second - 24.0) < 0.05,
+                "OTTAVA? shows after 4 s an octave apart and stays 20 s");
+        expect (shownBeforePress && a.first < 0.0 && s2.first < 0.0,
+                "and goes at once on \xc3\xb7" "2/\xc3\x97" "2; STOP starts the count again");
+    }
+
+    // The IN button (docs/TODO.md item 140): in MIXER the analysis reads the
+    // chosen input only; MIX averages them; on the iPad's own microphone the
+    // choice made for the interface does not apply.
+    {
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        std::vector<float> quiet (block, 0.0f), loud (block, 0.5f), l (block), r (block);
+        auto peakWith = [&] (vp::FollowSource source, int channel)
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.prepare (sr, block, 2);
+            eng.settings().followSource.store (static_cast<int> (source));
+            eng.settings().analysisChannel.store (channel);
+            eng.settings().inputGain.store (1.0f);
+            const float* ins[2] = { quiet.data(), loud.data() };
+            float* outs[2] = { l.data(), r.data() };
+            for (int i = 0; i < 8; ++i)
+                eng.process (ins, 2, outs, 2, block);
+            return eng.snapshot().inputPeak;
+        };
+        const float in1 = peakWith (vp::FollowSource::kitMic, 0);
+        const float in2 = peakWith (vp::FollowSource::kitMic, 1);
+        const float mix = peakWith (vp::FollowSource::kitMic, -1);
+        const float ipad = peakWith (vp::FollowSource::speaker, 0);
+        std::printf ("analysis-channel  IN 1 %.3f  IN 2 %.3f  MIX %.3f  IPAD with IN 1 %.3f\n", in1, in2, mix, ipad);
+        expect (in1 < 0.01f && in2 > 0.4f,
+                "MIXER: the analysis reads only the input chosen with IN");
+        expect (std::fabs (mix - 0.25f) < 0.05f && std::fabs (ipad - mix) < 1.0e-6f,
+                "MIX averages the inputs, and the iPad microphone ignores the MIXER choice");
+    }
+
     // An occasional failed model call still consumes one 20 ms feature frame.
     // The next successful publication must describe the current frame, not
     // one frame earlier for the rest of the session.

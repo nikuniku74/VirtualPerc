@@ -5799,6 +5799,7 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.periodSec = newPeriod;
     hyp.regime = tempoRegime;
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
+    hyp.combRawBpm = tempo.ready() ? tempo.bpm() : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
     hyp.fitResidual = lastFitResidual;
     hyp.fitCoverage = lastFitCoverage;

@@ -128,10 +128,6 @@ MainComponent::MainComponent()
     sub4.getProperties().set ("btnStyle", 1);
     sub8.getProperties().set ("btnStyle", 1);
     sub16.getProperties().set ("btnStyle", 1);
-    dynamicsButton.getProperties().set ("btnStyle", 2);
-    naturalButton.getProperties().set ("btnStyle", 2);
-    swingButton.getProperties().set ("btnStyle", 2);
-    meterButton.getProperties().set ("btnStyle", 2);
     startButton.getProperties().set ("btnStyle", 3);
     stopButton.setVisible (false);
     followButton.onClick = [this] { applyTempoFollow (true); };
@@ -194,6 +190,25 @@ MainComponent::MainComponent()
         engine.settings().kickChannel.store (next - 1);
         // Opening more inputs is what makes a channel past the second reachable
         // at all, so the device has to be told.
+        applyAudioSetup (true);
+        savePrefs (true);
+        refreshSourceButton();
+    };
+
+    // Which input the tempo is read from in MIXER. MIX, the default and what
+    // the app always did, averages every open input; an interface with the
+    // send on 1 and a voice or a guitar on 2 put that in the analysis too.
+    // Cycled like the kick: MIX, 1, 2, ... up to the open inputs, never the
+    // kick's own channel.
+    analysisButton.onClick = [this]
+    {
+        auto& s = engine.settings();
+        const int most = juce::jmax (2, inputChannels);
+        int next = s.analysisChannel.load();
+        do
+            next = next + 1 >= most ? -1 : next + 1;
+        while (next >= 0 && next == s.kickChannel.load());
+        s.analysisChannel.store (next);
         applyAudioSetup (true);
         savePrefs (true);
         refreshSourceButton();
@@ -504,6 +519,7 @@ MainComponent::MainComponent()
     setupPageBtn (trackLoadButton, ink());
     setupPageBtn (trackPlayButton, ink());
     setupPageBtn (kickButton, ink());
+    setupPageBtn (analysisButton, ink());
     setupPageBtn (latencyButton, ink());
     setupPageBtn (procButton, ink());
     setupPageBtn (loopModeButton, ink());
@@ -782,7 +798,7 @@ void MainComponent::refreshThemeColours()
         &startButton, &stopButton, &followButton, &fixedButton,
         &bpmNudgeDown, &bpmNudgeUp, &debugButton,
         &clickButton, &themeButton, &sourceButton, &trackLoadButton,
-        &trackPlayButton, &kickButton, &latencyButton,
+        &trackPlayButton, &kickButton, &analysisButton, &latencyButton,
         &subAuto, &sub4, &sub8,
         &sub16, &naturalButton, &swingButton, &meterButton,
         &dynamicsButton, &halveButton, &doubleButton,
@@ -1313,8 +1329,9 @@ void MainComponent::applyAudioSetup (bool claimInputChannels)
         // to reach it - asking for channels a desk does not have costs nothing,
         // JUCE gives back what exists.
         const int wantKick = engine.settings().kickChannel.load() + 1;
+        const int wantAnalysis = engine.settings().analysisChannel.load() + 1;
         setup.inputChannels.clear();
-        setup.inputChannels.setRange (0, juce::jmax (2, wantKick), true);
+        setup.inputChannels.setRange (0, juce::jmax (2, wantKick, wantAnalysis), true);
         setup.useDefaultInputChannels = false;
     }
 
@@ -1538,6 +1555,11 @@ void MainComponent::refreshSourceButton()
     kickButton.setButtonText (kickCh < 0 ? vpui::L ("NO KICK", "CASSA NO")
                                          : vpui::L ("KICK ", "CASSA ") + juce::String (kickCh + 1));
     paintChoice (kickButton, kickCh >= 0 && snap.kickTrusted);
+    const int analysisCh = engine.settings().analysisChannel.load();
+    analysisButton.setButtonText (analysisCh < 0 ? juce::String ("IN MIX")
+                                                 : "IN " + juce::String (analysisCh + 1));
+    analysisButton.setEnabled (! speaker && ! internal);
+    paintChoice (analysisButton, analysisCh >= 0);
 
     // And the round trip shows the number when there is one, so a listener can
     // see at a glance whether the clock is running on a measurement of this rig
@@ -1940,6 +1962,8 @@ void MainComponent::loadPrefs()
     // plugged in today would open inputs that do not exist.
     engine.settings().kickChannel.store (
         juce::jlimit (-1, 31, prefs->getIntValue ("kickChannel", -1)));
+    engine.settings().analysisChannel.store (
+        juce::jlimit (-1, 31, prefs->getIntValue ("analysisChannel", -1)));
     // A round trip measured on this rig, if one was. Kept per install rather
     // than per session: the rig does not usually change between soundcheck and
     // the first song, and re-measuring is one press.
@@ -2201,6 +2225,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("inputProcessing", inputProcessing);
     prefs->setValue ("followSource", engine.settings().followSource.load());
     prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
+    prefs->setValue ("analysisChannel", engine.settings().analysisChannel.load());
     prefs->setValue ("measuredLatencyMs", static_cast<double> (engine.measuredLatency()));
     prefs->setValue ("measuredLatencyBaseMs", static_cast<double> (engine.measuredLatencyBase()));
     prefs->setValue ("theme", themeFollowsSystem ? -1 : (darkMode ? 1 : 0));

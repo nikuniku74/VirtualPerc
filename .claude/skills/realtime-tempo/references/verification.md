@@ -703,6 +703,19 @@ grid's pulse also fixed LET ME LOVE YOU but kept grids provisional for longer
 48k's entry by half a second: rejected. The song bench is not deterministic
 under heavy concurrent load (I WANNA DANCE 44k); run it alone.
 
+**Kept (2026-10-22, docs/TODO.md items 142-143): OTTAVA?, not a better
+octave rule.** On 37 unseen songs and 3 sets the octave is as knife-edge as on
+the bench: no anchor variant improves both title halves (no anchor: 68.7 ->
+87.6 on one half, 71.9 -> 57.1 on the other). So the app says when it is in
+doubt: `OctaveDoubt` (Core/Types.h) counts, from the entry, the seconds the
+fold's raw reading (`BeatHypothesis::combRawBpm`, before `foldToAnchor`) is an
+octave from the analysis tempo; 4 s within the first 30 s shows OTTAVA? for
+20 s. 247 entries: 72% of the wrong-octave ones warned (unseen songs 94%), 8%
+false alarms offline; in the app 67% / 9%, ~6 s after the entry. Only the
+listener's octave setting counts as an answer: AUTO moves the level by itself
+right after an entry and was cancelling the prompt. The folded `combBpm` is useless for this: it is folded onto the
+anchor that made the choice. Nothing automatic changes the octave.
+
 **Superseded (2026-10-22, docs/TODO.md item 138): a manual /2 is decoded
 again; published only when the halved tempo would fall under kMinBpm or there
 is no tempo yet, decided when the request changes.** With the fine-tuned

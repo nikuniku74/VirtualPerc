@@ -215,12 +215,14 @@ namespace
                                .withHeight (juce::jmax (1.0f, h)));
     }
 
-    /** The condensed face every label, button and caption is set in; only the
-        BPM keeps Futura Bold. Narrow and light: Futura Condensed Medium (the
-        same family as the tempo), then Avenir Next Condensed Demi Bold, DIN
-        Condensed, Arial Narrow, and finally the old Avenir Next. The first
-        family the system actually has wins. Resolved once:
-        findAllTypefaceNames walks the system font list. */
+    /** The face every label, button and caption is set in; only the BPM keeps
+        Futura Bold. Avenir Next Demi Bold / Medium: Futura's humanist
+        descendant, so it sits with the tempo, but with open counters, a
+        two-storey a and a tall x-height that hold up at 12 pt on a stand.
+        Futura Condensed Medium was used before and read as too narrow
+        (reported 2026-10-22); the condensed faces stay below only as
+        fallbacks. The first family the system actually has wins. Resolved
+        once: findAllTypefaceNames walks the system font list. */
     struct CondensedFace
     {
         juce::String family, boldStyle, textStyle;
@@ -237,6 +239,7 @@ namespace
             // Medium weights on purpose: ExtraBold and Impact read as shouting
             // at 12-17 pt on the stand. Hierarchy comes from size and colour.
             constexpr Candidate candidates[] = {
+                { "Avenir Next",           "Demi Bold",           "Medium",           1.00f },
                 { "Futura",                "Condensed Medium",    "Condensed Medium", 0.94f },
                 { "Avenir Next Condensed", "Demi Bold",           "Medium",           0.94f },
                 { "DIN Condensed",         "Bold",                "Bold",             1.00f },
@@ -530,8 +533,10 @@ namespace
         g.fillEllipse (cx - core, cy - core, core * 2.0f, core * 2.0f);
     }
 
-    /** Which shared look a button wears. 0: plain rounded key. 1: a segment of
-        the 1/4 - 1/8 - 1/16 track. 2: a switch pill with a dot. 3: START/STOP. */
+    /** Which shared look a button wears. 0: plain rounded key, lit (solid face)
+        when on - DINAMICA, NATURALE, SWING and METRO too since 2026-10-22, when
+        the dotted switch pill (style 2) was dropped at the user's request.
+        1: a segment of the 1/4 - 1/8 - 1/16 track. 3: START/STOP. */
     int buttonStyle (const juce::Button& b)
     {
         return static_cast<int> (b.getProperties().getWithDefault ("btnStyle", 0));
@@ -561,7 +566,7 @@ namespace
     bool buttonIsSolidOn (const juce::Button& b, juce::Colour fill)
     {
         const int st = buttonStyle (b);
-        if (st == 2 || st == 3)
+        if (st == 3)
             return false;
         return b.getToggleState() && ! buttonIsHot (b, fill)
                && ! buttonIsVoiceTile (b) && ! buttonIsChip (b);
@@ -577,7 +582,7 @@ namespace
         const bool chip = buttonIsChip (button);
         const bool hot = buttonIsHot (button, fill);
         const bool solidOn = buttonIsSolidOn (button, fill);
-        const float round = style >= 2 ? bounds.getHeight() * 0.5f
+        const float round = style == 3 ? bounds.getHeight() * 0.5f
                                        : juce::jmin (12.0f, bounds.getHeight() * 0.5f);
         const auto body = bounds.reduced (0.5f);
         const auto pressed = [down] (juce::Colour c)
@@ -616,21 +621,6 @@ namespace
             {
                 g.setColour (border());
                 g.drawRoundedRectangle (body, round, 1.0f);
-            }
-            return;
-        }
-
-        if (style == 2)
-        {
-            // Switch pill: outlined and dotted when on, quiet when off.
-            g.setColour (pressed (ink()));
-            g.fillRoundedRectangle (body, round);
-            g.setColour (on ? text() : border());
-            g.drawRoundedRectangle (body, round, on ? 1.4f : 1.0f);
-            if (on)
-            {
-                g.setColour (text());
-                g.fillEllipse (bounds.getX() + 14.0f, bounds.getCentreY() - 4.0f, 8.0f, 8.0f);
             }
             return;
         }
@@ -752,9 +742,14 @@ namespace
             "signal and send the percussion out at the same time, so connect an audio "
             "interface or mixer that gives it an input and an output: it listens to the "
             "tempo and plays the percussion in real time.\n\n"
-            "MIXER is for a close microphone or a send from the desk. IPAD is for the "
-            "microphone that hears the room; there the app removes shaker and congas "
-            "from what it hears.\n\n"
+            "MIXER is for a close microphone or a send from the desk. IN chooses which "
+            "input of the interface the tempo is read from: MIX averages them all, IN 1, "
+            "IN 2... read only that one. Put the send on its own input and choose it, so "
+            "a voice or a guitar on another input stays out of the analysis.\n\n"
+            "IPAD is for the microphone that hears the room; there the app removes "
+            "shaker and congas from what it hears. If the screen says I HEAR MYSELF, the "
+            "percussion reaches the microphone as loud as the song: turn it down or move "
+            "the iPad away.\n\n"
             "TRACK reads a file and sends it to both the analysis and the output, AirPods "
             "included. LOAD chooses the file; drag the waveform (below, or on the stage) "
             "to seek. PLAY pauses.\n\n"
@@ -766,9 +761,13 @@ namespace
             "segnale e inviare il suono delle percussioni nello stesso momento, quindi "
             "collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita: "
             "ascolta il tempo e manda le percussioni in tempo reale.\n\n"
-            "MIXER è per un microfono vicino o una mandata del banco. IPAD è per il "
-            "microfono che sente la stanza; qui l'app toglie shaker e congas da quello "
-            "che ascolta.\n\n"
+            "MIXER è per un microfono vicino o una mandata del banco. IN sceglie da quale "
+            "ingresso dell'interfaccia leggere il tempo: MIX fa la media di tutti, IN 1, "
+            "IN 2... leggono solo quello. Metti la mandata su un ingresso suo e sceglilo: "
+            "una voce o una chitarra su un altro ingresso restano fuori dall'analisi.\n\n"
+            "IPAD è per il microfono che sente la stanza; qui l'app toglie shaker e "
+            "congas da quello che ascolta. Se compare SENTO ME STESSO, le percussioni "
+            "arrivano al microfono forti come il brano: abbassale o allontana l'iPad.\n\n"
             "BRANO legge un file e lo manda sia all'analisi sia all'uscita, anche nelle "
             "AirPods. CARICA sceglie il file; l'onda (sotto, o sul palco) si trascina per "
             "saltare. PLAY mette in pausa.\n\n"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 
 namespace vp
@@ -319,6 +320,8 @@ struct EngineSnapshot
         coming back, 0..1, smoothed over seconds. Past kSelfShareWarn the part
         is loud enough at the mic to drag the tempo (item 133). */
     float selfShare            = 0.0f;
+    /** OctaveDoubt says the part may have come in on the wrong octave. */
+    bool  octaveInDoubt        = false;
     /** Share of the pre-make-up analysis signal below 200 Hz. Diagnostics: it
         is what says whether the input has a rhythm section in it. */
     float lowShare             = 0.0f;
@@ -471,6 +474,62 @@ constexpr float  kTrustConf      = 0.80f;
     0.036-0.083 at twice. A first reading - the estimate's own energy - read
     0.02+ on the iPad with no echo at all and the warning never went off. */
 constexpr float  kSelfShareWarn  = 0.02f;
+
+/** "OTTAVA?": the octave the part came in on may be the wrong one. The tempo's
+    octave is never changed automatically once the part plays; this only tells
+    the listener to check ÷2 / ×2. Shown when, within the first
+    kOctaveDoubtWindowSec after the part comes in, the fold's raw reading has
+    been an octave from the analysis tempo for kOctaveDoubtSec in all; kept for
+    kOctaveDoubtShowSec, gone at once on ÷2 / ×2 or STOP. Measured on 247
+    entries, bench + 37 unseen songs, MIXER / BRANO / IPAD (docs/TODO.md item
+    143): measured offline 72% of the entries on the wrong octave warned
+    (unseen songs 94%), 8% of the right ones falsely; in the app, through
+    VPTrack, 67% / 9% (MIXER 70 / 11, BRANO 65 / 6, IPAD 67 / 8), about 6 s
+    after the entry, beats bit-identical. Before the entry the same signal was
+    useless (69% / 22%). */
+constexpr double kOctaveDoubtWindowSec = 30.0;
+constexpr double kOctaveDoubtSec       = 4.0;
+constexpr double kOctaveDoubtShowSec   = 20.0;
+
+struct OctaveDoubt
+{
+    /** Call once per block. `playing`: the part is sounding; `octave`: the
+        listener's octave setting (a change is their answer to the prompt -
+        not the level AUTO picks, which moves by itself right after an entry
+        and was taken for an answer on 5 of 39 wrong entries). Returns whether
+        the warning shows. */
+    bool update (double dt, bool playing, float tempoBpm, float combRawBpm, int octave) noexcept
+    {
+        if (! playing)
+        {
+            *this = {};
+            return false;
+        }
+        if (sinceEntry == 0.0)
+            octaveAtEntry = octave;
+        sinceEntry += dt;
+        if (octave != octaveAtEntry)
+            done = true;
+        if (done)
+            return false;
+        if (shownAt < 0.0)
+        {
+            if (sinceEntry <= kOctaveDoubtWindowSec && tempoBpm > 30.0f && combRawBpm > 30.0f
+                && std::fabs (std::fabs (std::log2 (combRawBpm / tempoBpm)) - 1.0f) < 0.15f)
+                apart += dt;
+            if (apart >= kOctaveDoubtSec)
+                shownAt = sinceEntry;
+            return shownAt >= 0.0;
+        }
+        if (sinceEntry - shownAt > kOctaveDoubtShowSec)
+            done = true;
+        return ! done;
+    }
+
+    double sinceEntry = 0.0, apart = 0.0, shownAt = -1.0;
+    int    octaveAtEntry = 0;
+    bool   done = false;
+};
 constexpr double kTrustSteadySec = 4.0;
 // 5-9% of the time above it, and in time there 16%; the same at 0.08, so the
 // line sits in a flat stretch rather than on the edge of a few cases.

@@ -782,12 +782,16 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // Sized against their contents, placed second - the same order the stage
     // rows are computed in. A share of the column each gave a two-line caption
     // the same room as a seven-line read-out.
+    // Six INPUT buttons in Avenir Next need ~90 pt each to keep their 12 pt
+    // labels (CASSA NO is 64 pt wide); on a phone that is two rows of three,
+    // or the labels shrink to 7 pt. Futura Condensed used to fit one row.
+    const bool inputTwoRows = bodyW < 6 * 90;
     enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kCards };
     int h[kCards] = {
         chrome + rowH,
         chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
         chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
-        chrome + rowH + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0),
+        chrome + rowH * (inputTwoRows ? 2 : 1) + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0),
         chrome + 132,
         chrome + rowH
     };
@@ -851,9 +855,17 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
 
     {
         auto body = card (take (h[kInput]), vpui::L ("INPUT", "INGRESSO"));
-        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
-                   { &sourceButton, &trackLoadButton, &trackPlayButton,
-                     &procButton, &kickButton });
+        if (inputTwoRows)
+        {
+            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                       { &sourceButton, &trackLoadButton, &trackPlayButton });
+            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                       { &procButton, &kickButton, &analysisButton });
+        }
+        else
+            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+                       { &sourceButton, &trackLoadButton, &trackPlayButton,
+                         &procButton, &kickButton, &analysisButton });
         if (trackWaveformHeight() > 0)
         {
             const int waveH = juce::jmin (trackWaveformHeight(), juce::jmax (40, body.getHeight()));

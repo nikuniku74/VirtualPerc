@@ -122,6 +122,10 @@ struct BeatHypothesis
         analysis to look at, and there is no way to see them from outside
         otherwise - the estimator lives on the worker thread. */
     float    combBpm     = 0.0f;
+    /** The fold's own reading, before it is folded onto the anchor's level.
+        Against `bpm` an octave apart for seconds after the part comes in, it
+        is what says the octave is in doubt (docs/TODO.md item 143). */
+    float    combRawBpm  = 0.0f;
     bool     levelSettled = false;
 
     /** Reserved diagnostic field. The bar-cadence octave experiment was
