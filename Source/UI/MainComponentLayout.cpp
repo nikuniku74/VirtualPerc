@@ -739,11 +739,21 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     auto r = safePadded (area);
 
     auto head = r.removeFromTop (34);
-    settingsClose.setBounds (head.removeFromRight (head.getHeight()).reduced (4));
+    // The cross is drawn 26 pt; the target is 44 around the same centre, and
+    // sits behind its neighbours so PRO keeps every point it had.
+    settingsClose.setBounds (head.removeFromRight (head.getHeight()).withSizeKeepingCentre (44, 44));
+    settingsClose.toBack();
     accountButton.setBounds (head.removeFromRight (juce::jmin (110, head.getWidth() / 3))
                                  .reduced (2));
     settingsRows.title = head.withTrimmedRight (8);
     r.removeFromTop (14);
+
+    // Below the heading everything is on the scrolling page: the viewport
+    // takes the rest of the screen and the cards are placed in the page's own
+    // coordinates, from its top-left.
+    settingsOverlay.viewport.setBounds (r);
+    const int viewH = r.getHeight();
+    r = r.withPosition (0, 0);
 
     const int gap = 10;
     const int titleH = 18;
@@ -787,26 +797,50 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // or the labels shrink to 7 pt. Futura Condensed used to fit one row.
     const bool inputTwoRows = bodyW < 6 * 90;
     enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kCards };
-    int h[kCards] = {
-        chrome + rowH,
-        chrome + rowH + noteGap + noteHeight (clockNote(), bodyW),
-        chrome + rowH + noteGap + noteHeight (bufferNote(), bodyW),
-        chrome + rowH * (inputTwoRows ? 2 : 1) + (trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0),
-        chrome + 132,
-        chrome + rowH
+    const int inputRows = inputTwoRows ? 2 : 1;
+    const int waveExtra = trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0;
+    const int clockNoteH = noteGap + noteHeight (clockNote(), bodyW);
+    const int bufferNoteH = noteGap + noteHeight (bufferNote(), bodyW);
+    int rowFit = rowH;
+    int feelFit = 132;
+    int h[kCards] {};
+    int want = 0;
+    const auto measure = [&]
+    {
+        h[kTempo]  = chrome + rowFit;
+        h[kClock]  = chrome + rowFit + clockNoteH;
+        h[kBuffer] = chrome + rowFit + bufferNoteH;
+        h[kInput]  = chrome + rowFit * inputRows + waveExtra;
+        h[kFeel]   = chrome + feelFit;
+        h[kTests]  = chrome + rowFit;
+        want = (kCards - 1) * gap;
+        for (const int n : h)
+            want += n;
     };
+    measure();
 
-    int want = (kCards - 1) * gap;
-    for (const int n : h)
-        want += n;
+    // Short of the natural height, the controls give way a little - rows of
+    // buttons down to 50 (44 pt buttons), the FEEL knobs down to 100 - and the
+    // captions never do. Still short (a phone always is), the page scrolls at
+    // that size. Every card scaled alike to fit took the buttons to 30 pt and
+    // left the captions less room than their text.
+    if (want > viewH)
+    {
+        const int shrinkable = rowH * (4 + inputRows) + 132;
+        const int fixedPart = want - shrinkable;
+        const float s = juce::jlimit (0.0f, 1.0f, static_cast<float> (viewH - fixedPart)
+                                                      / static_cast<float> (shrinkable));
+        rowFit = juce::jmax (50, juce::roundToInt (static_cast<float> (rowH) * s));
+        feelFit = juce::jmax (100, juce::roundToInt (132.0f * s));
+        measure();
+    }
+
+    const bool scrolls = want > viewH;
+    settingsOverlay.page.setSize (r.getWidth(), scrolls ? want + 16 : viewH);
+    r = settingsOverlay.page.getLocalBounds();
 
     int cardGap = gap;
-    if (want > r.getHeight() && want > 0)
-    {
-        for (int& n : h)
-            n = n * r.getHeight() / want;
-    }
-    else
+    if (! scrolls)
     {
         // What is left over goes three ways, in this order: a third of their own
         // height to the cards, up to 24 px to each gap, and whatever is still
@@ -835,20 +869,20 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
 
     {
         auto body = card (take (h[kTempo]), "TEMPO");
-        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+        buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                    { &followButton, &fixedButton, &startNowButton, &guardButton });
     }
 
     {
         auto body = card (take (h[kClock]), "CLOCK");
-        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+        buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                    { &clockAuto, &clock44, &clock48, &clock88, &clock96 });
         settingsRows.clockNote = body.withTrimmedTop (noteGap);
     }
 
     {
         auto body = card (take (h[kBuffer]), "BUFFER");
-        buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+        buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                    { &bufAuto, &buf64, &buf128, &buf256, &buf512 });
         settingsRows.bufferNote = body.withTrimmedTop (noteGap);
     }
@@ -857,13 +891,13 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         auto body = card (take (h[kInput]), vpui::L ("INPUT", "INGRESSO"));
         if (inputTwoRows)
         {
-            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+            buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                        { &sourceButton, &trackLoadButton, &trackPlayButton });
-            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+            buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                        { &procButton, &kickButton, &analysisButton });
         }
         else
-            buttonRow (body.removeFromTop (juce::jmin (rowH, body.getHeight())),
+            buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                        { &sourceButton, &trackLoadButton, &trackPlayButton,
                          &procButton, &kickButton, &analysisButton });
         if (trackWaveformHeight() > 0)
@@ -877,7 +911,11 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         // The long explanation moved behind the (i) at the card's top right.
         settingsRows.inputNote = {};
         const auto cardBounds = settingsCards.getReference (settingsCards.size() - 1).bounds;
-        infoButton.setBounds (juce::Rectangle<int> (cardBounds.getRight() - 12 - 24, cardBounds.getY() + 4, 24, 24));
+        // Drawn 24 pt, touched as 44 around the same centre; behind the row of
+        // buttons below, which keep the 10 pt it reaches into.
+        infoButton.setBounds (juce::Rectangle<int> (cardBounds.getRight() - 12 - 24, cardBounds.getY() + 4, 24, 24)
+                                  .withSizeKeepingCentre (44, 44));
+        infoButton.toBack();
     }
 
     {

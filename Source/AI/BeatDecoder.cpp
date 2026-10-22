@@ -498,6 +498,10 @@ namespace
     constexpr float kFastAcquireMarginLine = 0.55f;
     constexpr float kFastAcquireMarginRoom = 0.90f;
     constexpr float kFastAcquireMaxLevelError = 0.20f; // octaves
+    // Evidence the fold must hold before its half-beat contrast is published
+    // (BeatHypothesis::halfBeatContrast). With less, a reading near one is a
+    // profile still too short to have a half-beat, not a half-beat (item 147).
+    constexpr double kHalfBeatContrastSec = 4.0;
     // Above this the state space keeps a veto over the interval branches that
     // waive the level check. See `tryFastAcquire`; measured at 180 because the
     // one regression that must survive is 168 acquiring on the interval alone.
@@ -5801,6 +5805,13 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
     hyp.combBpm = tempo.ready() ? applyUserOctave (foldToAnchor (tempo.bpm())) : 0.0f;
     hyp.combRawBpm = tempo.ready() ? tempo.bpm() : 0.0f;
     hyp.levelSettled = tempo.levelSettled();
+    hyp.halfBeatContrast = -1.0f;
+    if (bpm > kMinBpm && tempo.evidenceCount() >= static_cast<int> (fps * kHalfBeatContrastSec))
+    {
+        float contrast = 1.0f;
+        if (tempo.beatPhaseFor (bpm, contrast) >= 0.0f)
+            hyp.halfBeatContrast = contrast;
+    }
     hyp.fitResidual = lastFitResidual;
     hyp.fitCoverage = lastFitCoverage;
     hyp.shortFitBpm = shortFitBpm;

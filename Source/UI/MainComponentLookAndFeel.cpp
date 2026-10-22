@@ -1,6 +1,17 @@
 // MainComponent: AppLookAndFeel and the fader zoom.
 #include "UI/MainComponentShared.h"
 
+namespace
+{
+    /** A round button can be drawn smaller than it is: its "disc" property is
+        the diameter you see, the bounds stay the 44 pt a thumb needs. */
+    float discSide (const juce::Button& b, float side)
+    {
+        const auto disc = static_cast<float> (static_cast<double> (b.getProperties().getWithDefault ("disc", 0.0)));
+        return disc > 0.0f ? juce::jmin (disc, side) : side;
+    }
+}
+
 MainComponent::AppLookAndFeel::AppLookAndFeel()
 {
     refreshColours();
@@ -20,7 +31,7 @@ juce::Font MainComponent::AppLookAndFeel::getTextButtonFont (juce::TextButton& b
     const float dim = juce::jmin ((float) buttonHeight, (float) juce::jmax (1, button.getWidth()));
     const bool chipFill = (bool) button.getProperties().getWithDefault ("chipFill", false);
     if ((bool) button.getProperties().getWithDefault ("circle", false))
-        return fontUi (juce::jmax (11.0f, dim * 0.42f));
+        return fontUi (juce::jmax (11.0f, discSide (button, dim) * 0.42f));
     // Kit-sound chips: a step up from the 9 px Misure floor, not a title.
     if (chipFill)
         return fontUi (juce::jmax (12.0f, dim * 0.38f));
@@ -36,8 +47,13 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     // chipFill cells hug their label; keep the 6 px Misure side inset even
     // when the chip is narrower than a square.
     const bool tight = compact && ! chipFill;
-    auto area = button.getLocalBounds().reduced (circle ? 1 : (tight ? 2 : 6),
-                                                 circle ? 1 : (tight ? 2 : 4));
+    auto area = button.getLocalBounds();
+    if (circle)
+    {
+        const int d = juce::roundToInt (discSide (button, static_cast<float> (juce::jmin (area.getWidth(), area.getHeight()))));
+        area = area.withSizeKeepingCentre (d, d);
+    }
+    area = area.reduced (circle ? 1 : (tight ? 2 : 6), circle ? 1 : (tight ? 2 : 4));
     if (area.isEmpty())
         return;
 
@@ -68,7 +84,8 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     {
         static juce::Image gear;
         static bool gearWhite = true;
-        if (! gear.isValid() || gearWhite != gDarkMode)
+        static bool noSystemGear = false;   // asked once, not on every paint
+        if (! noSystemGear && (! gear.isValid() || gearWhite != gDarkMode))
         {
             gearWhite = gDarkMode;
             constexpr int px = 64;
@@ -77,6 +94,7 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
             if (! vp::copySystemGear (px, bits.data, bits.lineStride, gDarkMode))
             {
                 gear = {};
+                noSystemGear = true;
             }
             else
             {
@@ -95,7 +113,39 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
         const int side = juce::jmin (20, juce::jmin (box.getWidth(), box.getHeight()));
         box = box.withSizeKeepingCentre (side, side);
         if (gear.isValid())
+        {
             g.drawImage (gear, box.toFloat(), juce::RectanglePlacement::centred);
+            return;
+        }
+        // No SF Symbol off iOS (the Mac build, Android): draw the same gear as
+        // a path. Without it the button that opens SETUP was there and blank.
+        const auto b = box.toFloat();
+        const auto c = b.getCentre();
+        const float outer = b.getWidth() * 0.5f, inner = outer * 0.74f;
+        constexpr int teeth = 8;
+        const float pitch = juce::MathConstants<float>::twoPi / static_cast<float> (teeth);
+        juce::Path wheel;
+        for (int k = 0; k < teeth; ++k)
+        {
+            const float a = pitch * static_cast<float> (k);
+            const auto at = [c] (float r, float ang)
+            {
+                return juce::Point<float> (c.x + r * std::sin (ang), c.y - r * std::cos (ang));
+            };
+            const auto p0 = at (inner, a - pitch * 0.30f);
+            if (k == 0)
+                wheel.startNewSubPath (p0);
+            else
+                wheel.lineTo (p0);
+            wheel.lineTo (at (outer, a - pitch * 0.17f));
+            wheel.lineTo (at (outer, a + pitch * 0.17f));
+            wheel.lineTo (at (inner, a + pitch * 0.30f));
+        }
+        wheel.closeSubPath();
+        wheel.addEllipse (b.withSizeKeepingCentre (outer * 0.70f, outer * 0.70f));
+        wheel.setUsingNonZeroWinding (false);
+        g.setColour (text());
+        g.fillPath (wheel);
         return;
     }
 
@@ -156,7 +206,7 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
     if ((bool) button.getProperties().getWithDefault ("circle", false))
     {
         auto bounds = button.getLocalBounds().toFloat();
-        const float d = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        const float d = discSide (button, juce::jmin (bounds.getWidth(), bounds.getHeight()));
         auto disc = bounds.withSizeKeepingCentre (d, d);
         const bool on = button.getToggleState() || shouldDrawButtonAsDown;
         g.setColour (on ? fuchsia() : ink());

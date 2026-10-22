@@ -105,7 +105,13 @@ and precise, so there are several:
   exempt with TAP, user tempo, follow off, harmony. And only once the
   confidence has **settled**: >= `kEntryConfSettled` (0.60) for 4 s, or 6 s
   ready for everything else (item 129: first four strokes right 26 -> 36 of
-  54 BRANO, 33 -> 36 MIXER; +1.3 s median).
+  54 BRANO, 33 -> 36 MIXER; +1.3 s median). And the **first** entry of a song
+  waits (8 s at most) while the activation folded onto the tempo stands as
+  high half a beat off as on it (`BeatHypothesis::halfBeatContrast` > 0.70,
+  `HalfLevelCheck`): that tempo is half the pulse, and AUTO doubles it
+  *before* the part plays (item 147: unseen songs read at half - SEX BOMB,
+  CELEBRATION, I FEEL GOOD - come in at the pulse; right tempo +1.7 / +2.2 /
+  +2.6 MIXER / BRANO / IPAD, no file worse).
 - **Octave**: partly ambiguous, and for straight slow grooves with hat eighths
   (50 vs 100) **acoustically undecidable** - same sound as half-time at 100.
   AUTO keeps the pulse in a percussionist's range (`updateAutoOctave`). A dense

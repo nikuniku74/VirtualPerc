@@ -1628,6 +1628,62 @@ void vpRunNewInputTests (int& passed, int& failed)
                 "and goes at once on \xc3\xb7" "2/\xc3\x97" "2; STOP starts the count again");
     }
 
+    // The first entry and half the pulse (docs/TODO.md item 147): the entry
+    // waits while the half-beat contrast is unknown or high, doubles once after
+    // 3 s high on one tempo, and never waits more than 8 s.
+    {
+        using V = vp::HalfLevelCheck::Verdict;
+        constexpr double dt = 0.01;
+        // Seconds until the first verdict other than wait, and that verdict.
+        auto until = [&] (vp::HalfLevelCheck& c, float contrast, float bpm, bool canDouble, double sec)
+        {
+            for (double t = 0.0; t < sec; t += dt)
+            {
+                c.observe (dt, contrast);
+                const V v = c.update (dt, bpm, canDouble);
+                if (v != V::wait)
+                    return std::pair { t, v };
+            }
+            return std::pair { -1.0, V::wait };
+        };
+        vp::HalfLevelCheck atPulse, unknown, half, noRoom, moving, dip;
+        const auto p = until (atPulse, 0.03f, 120.0f, true, 10.0);
+        const auto u = until (unknown, -1.0f, 120.0f, true, 10.0);
+        const auto h = until (half, 0.90f, 62.0f, true, 10.0);
+        const auto after = until (half, 0.04f, 124.0f, true, 10.0);
+        const auto n = until (noRoom, 0.90f, 90.0f, false, 10.0);
+        // High, but the reading hops between an intro's tempo and the band's.
+        V movingVerdict = V::wait;
+        double movingAt = -1.0;
+        for (double t = 0.0; t < 10.0 && movingAt < 0.0; t += dt)
+        {
+            moving.observe (dt, 0.90f);
+            const V v = moving.update (dt, std::fmod (t, 2.0) < 1.0 ? 82.0f : 126.0f, true);
+            if (v != V::wait) { movingVerdict = v; movingAt = t; }
+        }
+        // One reading at the line among high ones does not let the part in.
+        V dipVerdict = V::wait;
+        for (int i = 0; i < 100 && dipVerdict == V::wait; ++i)
+        {
+            dip.observe (dt, i == 50 ? 0.70f : 0.88f);
+            dipVerdict = dip.update (dt, 62.0f, false);
+        }
+        std::printf ("half-level  pulse %.2f  unknown %.2f  half doubles at %.2f, then %.2f  no room %.2f  moving %.2f\n",
+                     p.first, u.first, h.first, after.first, n.first, movingAt);
+        expect (p.first >= 0.0 && p.first < 0.05 && p.second == V::enter,
+                "an entry at the pulse goes in at once");
+        expect (u.second == V::enter && std::fabs (u.first - vp::kHalfLevelWaitSec) < 0.05,
+                "an entry the fold cannot judge waits 8 s at most");
+        expect (h.second == V::doubleLevel && std::fabs (h.first - vp::kHalfLevelHighSec) < 0.05
+                    && after.second == V::enter && after.first < 0.05,
+                "half the pulse doubles after 3 s and then goes in");
+        expect (n.second == V::enter && std::fabs (n.first - vp::kHalfLevelWaitSec) < 0.05,
+                "with no room to double it waits, then enters as before");
+        expect (movingVerdict == V::enter && std::fabs (movingAt - vp::kHalfLevelWaitSec) < 0.05,
+                "a tempo still moving is never doubled");
+        expect (dipVerdict == V::wait, "one reading at the line does not open the entry");
+    }
+
     // The IN button (docs/TODO.md item 140): in MIXER the analysis reads the
     // chosen input only; MIX averages them; on the iPad's own microphone the
     // choice made for the interface does not apply.

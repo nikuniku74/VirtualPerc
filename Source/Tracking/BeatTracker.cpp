@@ -310,6 +310,7 @@ void BeatTracker::reset() noexcept
     waitForQuantize = false;
     heardMusic = false;
     hadPlayed = false;
+    halfLevel = {};
     sounding = false;
     needsResync = false;
     resyncGridArmed = false;
@@ -407,6 +408,7 @@ void BeatTracker::stop() noexcept
     if (hadPlayed)
         needsResync = true;
     hadPlayed = false;
+    halfLevel = {};
     waitForSongBeat = false;
     barTrustEstablished = false;
     std::fill (downbeatVotes, downbeatVotes + 4, 0.0f);
@@ -596,7 +598,10 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 || entryConfWaitSamples >= static_cast<int> (sampleRate * kEntryConfWaitSec);
             if (entryReady && ! confSettled)
                 entryConfWaitSamples += std::max (0, numSamples);
-            if (entryReady && confSettled)
+            // And not on half the pulse: the first entry of a song waits while
+            // the half-beats stand as high as the beats (holdEntryForLevel).
+            const bool levelHeld = entryReady && confSettled && holdEntryForLevel (numSamples);
+            if (entryReady && confSettled && ! levelHeld)
             {
                 // The decoder has already done the causal lock here: three
                 // peaks on a line feed, four through a room, plus the checks
@@ -614,8 +619,8 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
                 lockHoldSamples = 0;
                 entryWaitSamples = 0;
             }
-            else if (periodic && ! entryTempoAgrees && confidence > 0.22f && heldBpm > 50.0f
-                     && beatCount >= 2)
+            else if (! levelHeld && periodic && ! entryTempoAgrees && confidence > 0.22f
+                     && heldBpm > 50.0f && beatCount >= 2)
             {
                 entryWaitSamples += std::max (0, numSamples);
             }
@@ -719,6 +724,30 @@ void BeatTracker::setTempoOctaveAuto (bool on) noexcept
     autoWant = userOctave;
     autoHoldSamples = 0;
     neural.setUserOctave (octaveAuto ? autoOctave : userOctave, ! octaveAuto);
+}
+
+bool BeatTracker::holdEntryForLevel (int numSamples) noexcept
+{
+    // Only the first entry of a song, only when AUTO owns the level, and not
+    // for a tempo somebody gave the app (the entry exemptions above).
+    if (hadPlayed || ! octaveAuto || ! tempoFollow || entryConfExempt)
+        return false;
+    const bool canDouble = autoOctave < 1 && heldBpm * 2.0f <= kOctaveTooFast;
+    // Waiting only helps when the answer can still change: a level AUTO may
+    // not double, unless it has just doubled and the new reading is due.
+    // THE MESSAGE: an intro at 84.6 held for nothing (169 is past the bound),
+    // the entry slid onto a 4:3 jump of the band's 126 and played at 63.
+    if (! canDouble && ! halfLevel.doubled)
+        return false;
+    const auto verdict = halfLevel.update (std::max (0, numSamples) / sampleRate, heldBpm, canDouble);
+    if (verdict == HalfLevelCheck::Verdict::doubleLevel)
+    {
+        ++autoOctave;
+        autoWant = autoOctave;
+        autoHoldSamples = 0;
+        neural.setUserOctave (autoOctave);
+    }
+    return verdict != HalfLevelCheck::Verdict::enter;
 }
 
 void BeatTracker::updateAutoOctave (float bpm, bool periodic, int numSamples,
@@ -2089,6 +2118,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // app is not waiting for the network to be sure of it.
     entryConfExempt = tempoOwned || tapEstablished || ! tempoFollow || harmonicSourceActive
                       || startImmediately;
+    if (haveHyp)
+        halfLevel.observe (std::max (0, numSamples) / sampleRate, hyp.halfBeatContrast);
     if (! entryTempoAgrees && haveHyp && hyp.combBpm > 0.0f && hyp.bpm > 0.0f)
         for (const float octave : { 0.5f, 1.0f, 2.0f })
             if (std::fabs (hyp.bpm / hyp.combBpm / octave - 1.0f) < kEntryCombAgree)

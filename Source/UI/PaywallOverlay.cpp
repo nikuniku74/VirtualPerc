@@ -557,7 +557,7 @@ juce::String PaywallOverlay::legalText() const
         return t ("Payment is charged to your Apple ID at confirmation of purchase. This is a one-time purchase, "
                   "not a subscription: it does not renew. You can restore it on your other devices with "
                   "Restore purchases.",
-                  "Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto. E' un acquisto "
+                  "Il pagamento viene addebitato sul tuo ID Apple alla conferma dell'acquisto. È un acquisto "
                   "singolo, non un abbonamento: non si rinnova. Puoi ripristinarlo sugli altri tuoi dispositivi "
                   "con Ripristina acquisti.");
     return t ("Payment is charged to your Apple ID at confirmation of purchase, or when the free trial ends. "

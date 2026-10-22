@@ -731,8 +731,8 @@ namespace
         return vpui::L (
             "Shorter means less delay and more risk of dropouts. AUTO takes whatever "
             "the interface is already giving.",
-            "Piu' corto, meno ritardo e piu' rischio di buchi. AUTO prende quello "
-            "che l'interfaccia sta gia' dando.");
+            "Più corto, meno ritardo e più rischio di buchi. AUTO prende quello "
+            "che l'interfaccia sta già dando.");
     }
 
     juce::String inputNote()
@@ -777,17 +777,43 @@ namespace
             "ELAB. OFF toglie il guadagno automatico di iOS: è quello che vuole l'analisi.");
     }
 
-    /** How tall that sentence comes out at a given width. Measured rather than
-        assumed: the same three sentences wrap to two lines beside a portrait
-        iPad and to five in a landscape column half as wide. */
-    int noteHeight (const juce::String& text, int width)
+    /** The sentence wrapped at a width exactly as drawNote draws it, so the
+        layout asks for the height the text really takes. The old estimate
+        (total width over the line) came out a line short on a phone, and
+        drawFittedText then shrank the type to about 8 pt to make it fit. */
+    void layoutNote (juce::GlyphArrangement& ga, const juce::String& text, int width)
     {
         const juce::Font f = noteFont();
-        const float total = juce::GlyphArrangement::getStringWidth (f, text);
-        // Wrapping breaks at spaces, so a line never fills to the last pixel.
-        const float usable = juce::jmax (1.0f, static_cast<float> (width) * 0.94f);
-        const int lines = juce::jlimit (1, 8, static_cast<int> (std::ceil (total / usable)));
-        return juce::roundToInt (f.getHeight() * 1.28f) * lines;
+        ga.addJustifiedText (f, text, 0.0f, f.getAscent(), static_cast<float> (juce::jmax (1, width)),
+                             juce::Justification::left, f.getHeight() * 0.28f);
+    }
+
+    /** How tall that sentence comes out at a given width: two lines beside a
+        portrait iPad, five in a landscape column half as wide. */
+    int noteHeight (const juce::String& text, int width)
+    {
+        juce::GlyphArrangement ga;
+        layoutNote (ga, text, width);
+        if (ga.getNumGlyphs() == 0)
+            return 0;
+        return static_cast<int> (std::ceil (ga.getBoundingBox (0, -1, true).getBottom()
+                                            + noteFont().getDescent()));
+    }
+
+    void drawNote (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area)
+    {
+        if (noteHeight (text, area.getWidth()) > area.getHeight())
+        {
+            // Only a window too small for even the shrunk controls gets here:
+            // smaller type then, rather than a caption across the card's edge.
+            g.setFont (noteFont());
+            g.drawFittedText (text, area, juce::Justification::topLeft, 8);
+            return;
+        }
+        juce::GlyphArrangement ga;
+        layoutNote (ga, text, area.getWidth());
+        ga.draw (g, juce::AffineTransform::translation (static_cast<float> (area.getX()),
+                                                        static_cast<float> (area.getY())));
     }
 
     constexpr int kStatusLines = 9;

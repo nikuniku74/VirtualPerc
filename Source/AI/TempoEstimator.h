@@ -117,6 +117,10 @@ public:
 
     CandidateScore scoreFor (float bpmCandidate) const noexcept;
 
+    /** Frames of evidence about the music now playing (see evidenceFrames):
+        how much the fold behind beatPhaseFor has actually heard. */
+    int evidenceCount() const noexcept { return evidenceFrames(); }
+
 private:
     void  refresh() noexcept;
     /** The activation folded onto `lag`, one bin per phase, read straight off

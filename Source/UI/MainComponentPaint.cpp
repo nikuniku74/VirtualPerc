@@ -162,14 +162,23 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.setColour (heroCol.withAlpha (0.40f));
         g.drawText (bpmText, numberR.translated (0, 3),
                     juce::Justification::centred, false);
-        // Faux extra weight: the same digits nudged a hair each way.
-        g.setColour (text().withAlpha (heroLost ? 0.35f : 1.0f));
+        // Faux extra weight: the same digits nudged a hair each way. Dimmed as
+        // one layer: five copies at 0.35 each stacked to ~0.88 where they
+        // overlap, so a lost tempo, or one read off a room before START that
+        // nobody vouches for, stood on the card as bright as a locked one.
+        // A tempo the listener set (FISSO, TAP) is theirs, not a reading.
+        const bool dimDigits = heroLost || (! heroLive && snap.tempoFollow && ! snap.tapLocked);
+        if (dimDigits)
+            g.beginTransparencyLayer (0.35f);
+        g.setColour (text());
         const float fw = juce::jmax (0.6f, f.getHeight() * 0.014f);
         const auto nr = numberR.toFloat();
         for (const auto& d : { juce::Point<float> (-fw, 0.0f), juce::Point<float> (fw, 0.0f),
                                juce::Point<float> (0.0f, -fw * 0.6f), juce::Point<float> (0.0f, fw * 0.6f),
                                juce::Point<float> (0.0f, 0.0f) })
             g.drawText (bpmText, nr.translated (d.x, d.y), juce::Justification::centred, false);
+        if (dimDigits)
+            g.endTransparencyLayer();
     }
     else
     {
@@ -247,9 +256,22 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                                                : vpui::L (" (manual)", " (manuale)")));
         if (! parts.isEmpty())
         {
+            // Whole notes only, most urgent first: two of them together ran to
+            // 486 pt in a row of 340-375, and drawFittedText squeezed both and
+            // then cut them - the two warnings that matter most. What does not
+            // fit whole is the least urgent and waits for the line to clear.
+            const juce::String sep (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
+            const auto room = static_cast<float> (rows.tempoLine.getWidth());
+            juce::String line = parts[0];
+            for (int i = 1; i < parts.size(); ++i)
+            {
+                const auto longer = line + sep + parts[i];
+                if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), longer) > room)
+                    break;
+                line = longer;
+            }
             g.setColour (hearsItself || snap.octaveInDoubt ? stateSearching() : text());
-            g.drawFittedText (parts.joinIntoString (juce::String (juce::CharPointer_UTF8 ("  \xc2\xb7  "))),
-                              rows.tempoLine, juce::Justification::centred, 1);
+            g.drawFittedText (line, rows.tempoLine, juce::Justification::centred, 1);
         }
     }
 
@@ -273,7 +295,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // One dot per quarter of the bar: three in 3/4 (METRO).
         const int nb = meterIsThree() ? 3 : 4;
         const float step = static_cast<float> (band.getWidth()) / static_cast<float> (nb);
-        const bool running = (snap.bpm > 40.0f || snap.barDeclared) && (heroLive || snap.barDeclared);
+        const bool running = (snap.bpm > 40.0f || snap.barDeclared) && (heroBeating || snap.barDeclared);
         const auto dotX = [&band, step] (int i)
         {
             return static_cast<float> (band.getX()) + step * (static_cast<float> (i) + 0.5f);
@@ -428,8 +450,6 @@ void MainComponent::paintSettings (juce::Graphics& g)
     paintRadial (g, { full.getCentreX(), full.getY() + 28.0f },
                  full.getWidth() * 0.55f, fuchsia(), 0.10f);
 
-    paintCardList (g, settingsCards);
-
     {
         auto titleR = settingsRows.title;
         auto brand = titleR.removeFromLeft (20);
@@ -444,11 +464,15 @@ void MainComponent::paintSettings (juce::Graphics& g)
                     (float) settingsRows.title.getBottom() + 2.0f,
                     (float) settingsRows.title.getWidth(), 1.2f);
     }
+}
 
+void MainComponent::paintSettingsPage (juce::Graphics& g)
+{
+    // The cards and their captions, in the scrolling page's coordinates.
+    paintCardList (g, settingsCards);
     g.setColour (mute());
-    g.setFont (noteFont());
-    g.drawFittedText (clockNote(), settingsRows.clockNote, juce::Justification::centredLeft, 8);
-    g.drawFittedText (bufferNote(), settingsRows.bufferNote, juce::Justification::centredLeft, 8);
+    drawNote (g, clockNote(), settingsRows.clockNote);
+    drawNote (g, bufferNote(), settingsRows.bufferNote);
 
     // The live numbers (clock, buffer, latency, route, part) used to be printed in
     // a STATO card here; taken off the page for the product (user's call, 2026-10-16).

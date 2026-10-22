@@ -246,6 +246,8 @@ public:
             harmonicSourceActive = false;
             harmonicBeatIndex = -1;
             noNetworkTempoSamples = 0;
+            // A new source earns its own level check before its first entry.
+            halfLevel = {};
             follower.cancelPhaseRecovery();
             sawInputStart = true;
             // Keep the tempo model across an arrangement entrance, but ask
@@ -536,6 +538,7 @@ public:
 
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept;
+    bool holdEntryForLevel (int numSamples) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
     /** One source's opinion about the bar, acted on or not. Returns true when
         it moved the count, so the caller can stop asking. */
@@ -631,6 +634,9 @@ private:
     int entryConfHeldSamples = 0;
     int entryConfWaitSamples = 0;
     bool entryConfExempt = false;
+    /** The first entry after STOP or a new source waits while the level may
+        be half the pulse; see holdEntryForLevel and HalfLevelCheck. */
+    HalfLevelCheck halfLevel;
     /** How long a direct feed has held a confident, comb-agreed lock with START on. */
     int lineLockSamples = 0;
     bool startImmediately = false;

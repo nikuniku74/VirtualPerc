@@ -76,6 +76,11 @@ inline juce::String kitName (vp::KitSound s)
 inline juce::String barLabel (vp::FollowBar b)
 {
     using B = vp::FollowBar;
+    // Core still calls it "SHAKER OFF" (probes match on that), the shaker's
+    // old name for the part: on the stage it read as the shaker voice being
+    // switched off, beside a SHAKER fader at 88%.
+    if (b == B::paused)
+        return L ("LISTENING - PART STOPPED", "IN ASCOLTO - PARTE FERMA");
     const char* en = nullptr;
     switch (b)
     {
@@ -89,7 +94,7 @@ inline juce::String barLabel (vp::FollowBar b)
         case B::recalin:         en = "RECALIBRATING"; break;
         case B::waitBeat:        en = "WAITING FOR THE BEAT"; break;
         case B::waitStart:       en = "WAITING FOR THE BAND"; break;
-        case B::paused:          en = "LISTENING - SHAKER OFF"; break;
+        case B::paused:          break;   // above
     }
     return L (en != nullptr ? en : "?", vp::toBarString (b));
 }

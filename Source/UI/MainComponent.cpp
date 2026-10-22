@@ -292,6 +292,10 @@ MainComponent::MainComponent()
         s.setRotaryParameters (juce::MathConstants<float>::pi * 1.2f,
                                juce::MathConstants<float>::pi * 2.8f, true);
         s.setMouseDragSensitivity (180);
+        // Levels move only under a finger or a drag. On a Mac a scroll over
+        // the page landed on whatever knob was under the pointer and turned
+        // it (REVERB went 30 -> 18% while scrolling SETUP).
+        s.setScrollWheelEnabled (false);
         s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         s.setRange (minV, maxV, 0.01);
         s.setValue (initial, juce::dontSendNotification);
@@ -466,14 +470,18 @@ MainComponent::MainComponent()
     // a page rather than a set of buttons drawn over the transport.
     addChildComponent (settingsOverlay);
     settingsOverlay.toFront (false);
-    settingsOverlay.addAndMakeVisible (intensitySlider);
-    settingsOverlay.addAndMakeVisible (intensityLabel);
-    settingsOverlay.addAndMakeVisible (reverbSlider);
-    settingsOverlay.addAndMakeVisible (reverbLabel);
+    // On the scrolling page. The two knobs keep a vertical drag for their own
+    // value; anywhere else a drag scrolls the page.
+    settingsOverlay.page.addAndMakeVisible (intensitySlider);
+    settingsOverlay.page.addAndMakeVisible (intensityLabel);
+    settingsOverlay.page.addAndMakeVisible (reverbSlider);
+    settingsOverlay.page.addAndMakeVisible (reverbLabel);
+    intensitySlider.setViewportIgnoreDragFlag (true);
+    reverbSlider.setViewportIgnoreDragFlag (true);
 
     auto setupPageBtn = [this] (juce::TextButton& b, juce::Colour fill)
     {
-        settingsOverlay.addAndMakeVisible (b);
+        settingsOverlay.page.addAndMakeVisible (b);
         b.setColour (juce::TextButton::buttonColourId, fill);
         b.setColour (juce::TextButton::textColourOffId, text());
         b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.18f));
@@ -487,11 +495,16 @@ MainComponent::MainComponent()
     settingsClose.setButtonText ({});
     settingsClose.getProperties().set ("circle", true);
     settingsClose.getProperties().set ("closeIcon", true);
+    settingsClose.getProperties().set ("disc", 26);
     settingsClose.setTitle (vpui::L ("Close", "Chiudi"));
     setupPageBtn (accountButton, ink());
+    // The heading does not scroll: close and PRO stay where the thumb is.
+    settingsOverlay.addAndMakeVisible (settingsClose);
+    settingsOverlay.addAndMakeVisible (accountButton);
     setupPageBtn (infoButton, ink());
     infoButton.getProperties().set ("circle", true);
-    infoButton.setTitle (vpui::L ("Info: input modes", "Info: modalita' d'ingresso"));
+    infoButton.getProperties().set ("disc", 24);
+    infoButton.setTitle (vpui::L ("Info: input modes", "Info: modalità d'ingresso"));
     infoButton.onClick = [this] { showInputInfo (false); };
     // A child of the whole page, not of the settings: on the first launch it
     // comes up over the console. The splash is added after it and stays above.
@@ -576,6 +589,7 @@ MainComponent::MainComponent()
     // Above the settings overlay when a track is loaded: main-stage scrub bar, or
     // the INGRESSO card when SETUP is open.
     addAndMakeVisible (trackWaveform);
+    trackWaveform.setViewportIgnoreDragFlag (true);   // its drag seeks
     trackWaveform.setVisible (false);
 
    #if JUCE_IOS
@@ -1679,7 +1693,7 @@ void MainComponent::loadInternalTrack (juce::URL url, std::unique_ptr<juce::Audi
             juce::MessageBoxIconType::WarningIcon,
             vpui::L ("Track not readable", "Brano non leggibile"),
             vpui::L ("The chosen file is not a supported audio format, or is not available offline.",
-                     "Il file scelto non e' un formato audio supportato oppure non e' disponibile offline."));
+                     "Il file scelto non è un formato audio supportato oppure non è disponibile offline."));
         return;
     }
 
@@ -1737,13 +1751,21 @@ void MainComponent::layoutTrackWaveform()
     }
 
     juce::Rectangle<int> bounds;
+    juce::Component* parent = this;
     if (settingsOverlay.isVisible() && ! settingsRows.trackWave.isEmpty())
-        bounds = getLocalArea (&settingsOverlay, settingsRows.trackWave);
+    {
+        // On the settings page it lives on the page, so it scrolls with its
+        // card instead of staying put over the cards moving under it.
+        parent = &settingsOverlay.page;
+        bounds = settingsRows.trackWave;
+    }
     else
     {
         const auto rows = stageRows (stageArea());
         bounds = rows.trackWave.isEmpty() ? juce::Rectangle<int>{} : rows.trackWave.reduced (2, 4);
     }
+    if (trackWaveform.getParentComponent() != parent)
+        parent->addChildComponent (trackWaveform);
 
     if (bounds.isEmpty())
     {
@@ -2524,7 +2546,7 @@ void MainComponent::updateBeatDots()
         // the card repaints three times a beat, not every frame (item 108).
         const float msInto = (bar * quarters - std::floor (bar * quarters)) * 60000.0f / bpm;
         const float step = msInto < 90.0f ? 1.0f : (msInto < 180.0f ? 0.45f : 0.0f);
-        const float flash = heroLive ? step * (beat == 0 ? 1.0f : 0.6f) : 0.0f;
+        const float flash = heroBeating ? step * (beat == 0 ? 1.0f : 0.6f) : 0.0f;
         if (std::abs (flash - heroFlash) > 0.001f)
         {
             heroFlash = flash;
@@ -2554,7 +2576,7 @@ void MainComponent::updateBeatDots()
         // screen calls this 120 times. One more repaint when it stops, so the
         // ball does not stay frozen in the air.
         beatPos = bar * quarters;
-        const bool animate = heroLive || snap.barDeclared;
+        const bool animate = heroBeating || snap.barDeclared;
         const double nowMs = juce::Time::getMillisecondCounterHiRes();
         if ((animate || beatAnimating) && nowMs - lastBeatAnimMs >= 15.0 && ! beatAnimArea.isEmpty())
         {
@@ -2914,6 +2936,12 @@ void MainComponent::timerCallback()
                               || snap.followBar == vp::FollowBar::paused)
                           && trust == vp::TempoTrust::none;
         heroLive = ! neutral && snap.bpm > 40.0f;
+        // "IN ASCOLTO - NON ANCORA" keeps its red, but a ball bouncing and a
+        // card flashing on that tempo read as a lock: on a Mac microphone in
+        // an empty room it bounced at 210.4 BPM before START.
+        const bool beforeStart = snap.followBar == vp::FollowBar::ready
+                                 || snap.followBar == vp::FollowBar::paused;
+        heroBeating = heroLive && ! (beforeStart && trust == vp::TempoTrust::out);
         stateSmooth = stateSmooth.getAlpha() == 0 ? target : stateSmooth.interpolatedWith (target, 0.10f);
         // Green is earned: a locked tracker with low confidence blooms
         // half-strength, so a drifting grid reads before it turns amber.

@@ -113,6 +113,7 @@ private:
 
     void setSettingsOpen (bool open);
     void paintSettings (juce::Graphics&);
+    void paintSettingsPage (juce::Graphics&);
     void layoutSettings (juce::Rectangle<int> area);
 
     void loadPrefs();
@@ -234,10 +235,52 @@ private:
         still a MainComponent member - the overlay only owns the surface. */
     struct SettingsOverlay final : juce::Component
     {
-        explicit SettingsOverlay (MainComponent& o) : owner (o) { setOpaque (true); }
+        explicit SettingsOverlay (MainComponent& o) : owner (o), page (o)
+        {
+            setOpaque (true);
+            // The cards scroll under a fixed heading when a phone cannot hold
+            // them at their natural size: shrinking all of them to fit took
+            // the buttons to 30 pt and the captions under their own text.
+            viewport.setViewedComponent (&page, false);
+            viewport.setScrollBarsShown (false, false, true, false);
+            viewport.setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::nonHover);
+            page.addMouseListener (&scrollGuard, true);
+            addAndMakeVisible (viewport);
+        }
+        ~SettingsOverlay() override { page.removeMouseListener (&scrollGuard); }
         void paint (juce::Graphics& g) override { owner.paintSettings (g); }
         void resized() override { owner.layoutSettings (getLocalBounds()); }
+
+        struct Page final : juce::Component
+        {
+            explicit Page (MainComponent& o) : owner (o) {}
+            void paint (juce::Graphics& g) override { owner.paintSettingsPage (g); }
+            MainComponent& owner;
+        };
+
+        /** A drag that moves the page is a scroll, not a press. JUCE leaves the
+            press with the button, and the button travels with the finger, so
+            the release clicked whatever the scroll started on; every step of
+            a scroll puts that button back up. */
+        struct ScrollGuard final : juce::MouseListener
+        {
+            explicit ScrollGuard (juce::Viewport& v) : viewport (v) {}
+            void mouseDown (const juce::MouseEvent&) override { downY = viewport.getViewPositionY(); }
+            void mouseDrag (const juce::MouseEvent& e) override
+            {
+                if (std::abs (viewport.getViewPositionY() - downY) < 2)
+                    return;
+                if (auto* b = dynamic_cast<juce::Button*> (e.eventComponent))
+                    b->setState (juce::Button::buttonNormal);
+            }
+            juce::Viewport& viewport;
+            int downY = 0;
+        };
+
         MainComponent& owner;
+        Page page;
+        juce::Viewport viewport;
+        ScrollGuard scrollGuard { viewport };
     };
     SettingsOverlay settingsOverlay { *this };
 
@@ -642,6 +685,9 @@ private:
         followed at all. */
     float heroFlash = 0.0f;
     bool heroLive = false;
+    /** The card beats (flash, ball): live, and not a tempo the app says is
+        not there yet before START. */
+    bool heroBeating = false;
     VoiceKnob inputGainSlider;   // a VoiceKnob only for the drag zoom; no onTap
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };

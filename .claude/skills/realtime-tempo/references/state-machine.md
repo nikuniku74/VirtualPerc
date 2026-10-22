@@ -2,6 +2,32 @@
 
 Moved verbatim from SKILL.md section 6 on 2026-10-07. Chronological log: newest entries are often at the top of a section, older ones further down; grep for the symbol you are touching. When you change a decision, update the entry that justified it.
 
+## First entry waits while the tempo may be half the pulse (2026-10-22, docs/TODO.md item 147)
+
+`BeatTracker::holdEntryForLevel`, called once an entry is otherwise ready
+(after the settled confidence below): the decoder publishes
+`BeatHypothesis::halfBeatContrast` - `TempoEstimator::beatPhaseFor (bpm)`'s
+contrast, how high the folded activation stands half a beat from its peak,
+only with >= 4 s of comb evidence. Across every logged second of the bench and
+40 unseen songs, three modes: at the pulse median 0.01 (p90 0.31), at half
+the pulse median 0.86 (p25 0.71), at double 0.02 (blind: the 50/100 case).
+`HalfLevelCheck` (Core/Types.h) smooths it over 1 s, waits while it is unknown
+or > 0.70, doubles AUTO once after 3 s high on one tempo (+-4%), and gives up
+after 8 s. Only the first entry after STOP / a new epoch (`! hadPlayed`), only
+under AUTO, only when the double is <= `kOctaveTooFast`, same exemptions as
+`entryConfExempt`. Why the half side works and the double does not: the
+fine-tuned network is near zero half a beat off on most songs, so a tempo at
+half shows its missing beats as half-beats; at double nothing is missing.
+Where it came from: unseen funk at 118-126 acquired on a two-beat interval
+(`tryFastAcquire`'s "below 90 BPM the interval is the only fact" rule
+re-anchored an HMM that said 125 with margin 8), entering before the comb had
+spoken. Measured: right tempo MIXER 79.6 -> 81.3, BRANO 72.2 -> 74.4, IPAD
+73.1 -> 75.7, both halves, no file worse, bench `cmp` and first four strokes
+unchanged; EVERYTIME in ~4 s later. Rejected the same day: resetting the
+entry waits on a cold epoch (one file), refusing the slow interval when the
+HMM names exactly its double with a peak mid-interval (11/15 acquisitions
+right, but only 1-2 songs change), the raw comb before entry (too weak).
+
 ## Entry waits for a settled confidence (2026-10-21, docs/TODO.md item 129)
 
 `BeatTracker::updateState`, listening: on top of every other entry condition

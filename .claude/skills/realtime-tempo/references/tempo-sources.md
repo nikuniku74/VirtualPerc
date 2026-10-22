@@ -3497,6 +3497,17 @@ AUTO.
 
 ### The octave (half / double time) is partly unsolvable
 
+**Half the pulse at the first entry is now caught (2026-10-22, docs/TODO.md
+item 147).** On unseen funk read at half (SEX BOMB 126 -> 64, CELEBRATION
+119 -> 58) the network was not split at all - 0.86-0.88 on every beat,
+0.02-0.05 half a beat off - and the decoder alone on those activations read
+the pulse. The half came from acquisition (a two-beat interval taken as the
+quarter) and an entry before the comb spoke. The half-beat contrast of the
+fold at the decoder's tempo separates the two levels cleanly once it has 4 s
+(at the pulse median 0.01, at half 0.86), so the first entry waits and AUTO
+doubles before the part plays (`HalfLevelCheck`, state-machine.md). It says
+nothing about a tempo at *double*: that side is the case below.
+
 **Read this first (2026-10-06, docs/TODO.md item 96).** The numbers below were
 measured on the network before it was fine-tuned on the band's songs. On the
 fine-tuned model the activation half a beat off the true beat, over the beat's

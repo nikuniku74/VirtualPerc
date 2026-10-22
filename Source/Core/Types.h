@@ -530,6 +530,90 @@ struct OctaveDoubt
     int    octaveAtEntry = 0;
     bool   done = false;
 };
+
+/** The first entry after STOP or a new source must not come in on half the
+    pulse. The decoder publishes how high the activation folded onto its tempo
+    stands half a beat from the peak (BeatHypothesis::halfBeatContrast): at
+    the pulse the half-beat is near zero (median 0.01, 90th percentile 0.31,
+    every second of the bench and the unseen songs in MIXER / BRANO / IPAD),
+    on a tempo that is half the pulse the half-beats are beats (median 0.86,
+    25th percentile 0.71). It is the "too slow" side only: a tempo double the
+    pulse shows nothing here, and that is the 50/100 case no audio settles.
+
+    Before the entry the fold holds a few seconds and reads noisily, so the
+    entry waits while the reading is unknown or high, and if it stays high on
+    one tempo for kHalfLevelHighSec AUTO doubles the level - before the part
+    plays, which is when the level is chosen (BeatTracker::updateAutoOctave).
+    Never longer than kHalfLevelWaitSec: then it enters on what there is, as
+    before. Bench + 40 unseen songs (docs/TODO.md item 147), right tempo
+    MIXER -12 79.6 -> 81.3%, BRANO 72.2 -> 74.4, IPAD 73.1 -> 75.7, on both
+    halves of the titles, no file worse; SEX BOMB, CELEBRATION, I FEEL GOOD,
+    SALLY live from half to the pulse. Cost: EVERYTIME (already right) in
+    ~4 s later; the bench's first four strokes unchanged. */
+constexpr float  kHalfLevelContrast  = 0.70f;
+constexpr double kHalfLevelHighSec   = 3.0;
+constexpr double kHalfLevelWaitSec   = 8.0;
+// One second of smoothing: a single reading must not open or close the wait
+// (it did: a 0.70 between 0.85s let FLAMINGO 2400 in at 83 instead of 164).
+constexpr double kHalfLevelSmoothSec = 1.0;
+// The high stretch must sit on one tempo (log2, about 4%): a decoder still
+// moving from an intro's reading to the band's has not said which level is
+// half. A guard, not a measured fix: no file of the bench or the unseen songs
+// reaches it (THE MESSAGE, first blamed on it, was the wait the tracker now
+// skips when the level cannot be doubled).
+constexpr float  kHalfLevelSteady    = 0.06f;
+
+struct HalfLevelCheck
+{
+    enum class Verdict { enter, wait, doubleLevel };
+
+    /** Every block: the decoder's latest reading, or -1 while it cannot say. */
+    void observe (double dt, float reading) noexcept
+    {
+        if (reading < 0.0f)
+            contrast = -1.0f;
+        else if (contrast < 0.0f)
+            contrast = reading;
+        else
+            contrast += (reading - contrast)
+                        * static_cast<float> (1.0 - std::exp (-dt / kHalfLevelSmoothSec));
+    }
+
+    /** Once per block while an entry is otherwise ready. `bpm` is the tempo
+        the part would come in on; `canDouble` whether AUTO may move the level
+        and its double stays inside AUTO's range. */
+    Verdict update (double dt, float bpm, bool canDouble) noexcept
+    {
+        if (waited > kHalfLevelWaitSec)
+            return Verdict::enter;
+        waited += dt;
+        if (contrast < 0.0f)
+            return Verdict::wait;
+        if (contrast <= kHalfLevelContrast)
+        {
+            high = 0.0;
+            return Verdict::enter;
+        }
+        if (high == 0.0 || highBpm < 1.0f || std::fabs (std::log2 (bpm / highBpm)) > kHalfLevelSteady)
+        {
+            highBpm = bpm;
+            high = 0.0;
+        }
+        high += dt;
+        if (canDouble && ! doubled && high >= kHalfLevelHighSec)
+        {
+            doubled = true;
+            high = 0.0;
+            contrast = -1.0f;   // the next reading is the new level's
+            return Verdict::doubleLevel;
+        }
+        return Verdict::wait;
+    }
+
+    float  contrast = -1.0f, highBpm = 0.0f;
+    double waited = 0.0, high = 0.0;
+    bool   doubled = false;
+};
 constexpr double kTrustSteadySec = 4.0;
 // 5-9% of the time above it, and in time there 16%; the same at 0.08, so the
 // line sits in a flat stretch rather than on the edge of a few cases.

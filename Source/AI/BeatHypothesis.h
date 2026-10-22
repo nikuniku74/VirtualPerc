@@ -127,6 +127,11 @@ struct BeatHypothesis
         is what says the octave is in doubt (docs/TODO.md item 143). */
     float    combRawBpm  = 0.0f;
     bool     levelSettled = false;
+    /** How high the activation folded onto `bpm` stands half a beat from its
+        peak, 0..1 (TempoEstimator::beatPhaseFor), or -1 while the fold holds
+        too little evidence to say. Near one the half-beats are as strong as
+        the beats: `bpm` is half the pulse (docs/TODO.md item 147). */
+    float    halfBeatContrast = -1.0f;
 
     /** Reserved diagnostic field. The bar-cadence octave experiment was
         removed after it halved a correct 100 BPM half-time groove; the
