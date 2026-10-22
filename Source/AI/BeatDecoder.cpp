@@ -736,13 +736,30 @@ void BeatDecoder::reset() noexcept
 void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
 {
     const int request = std::clamp (octaves, -2, 2);
-    // A slower level the listener asked for is published, everything else is
-    // decoded (see `outputShift`). Going between two published levels, or to
+    // A level is either decoded or, in the cases below, only published (see
+    // `outputShift`). Going between two published levels, or to
     // the natural one, moves nothing that was measured: the tempo is the same,
     // only what is announced changes, so no grid is thrown away. The count and
     // the tempo the tracker holds do change at once, which `gridSerial` tells
     // it.
-    const bool published = manual && request < 0;
+    //
+    // A manual /2 is now decoded too, so the grid, the fits and the bar count
+    // run at the level that is played. Published, the decoder kept the fast
+    // grid and took every other beat: the class it kept slipped onto the
+    // offbeat for stretches (UN'ORA SOLA after /2 at 30 s: on the offbeat from
+    // 45 to 77 s) and the bar was counted in fast beats. 6 slow files read at
+    // double in BRANO, /2 at 30 s, published -> decoded: p90 phase error
+    // 335 -> 47 ms (UN'ORA SOLA 44k), 143 -> 50 (VIVERE 44k), 125 -> 51 (48k);
+    // the one 61 -> 80, 73 -> 81, 64 -> 83%; EMOZIONE 28 -> 35 ms, one 48 -> 71
+    // (44k), 71 -> 47 (48k). Published only where decoding cannot follow: a
+    // halved tempo under kMinBpm, or before there is a tempo at all. Decided
+    // when the request changes, not every block, so a tempo near the floor
+    // does not flip between the two and rebuild the grid each time.
+    const int current = outputShift != 0 ? outputShift : octaveShift;
+    const bool published = manual && request < 0
+        && (request == current
+                ? outputShift != 0
+                : bpm * std::exp2 (static_cast<float> (request - octaveShift)) < kMinBpm);
     const int newOutput = published ? request : 0;
     const int wanted = published ? 0 : request;
     if (newOutput != outputShift)

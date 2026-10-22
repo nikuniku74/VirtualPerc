@@ -703,6 +703,18 @@ grid's pulse also fixed LET ME LOVE YOU but kept grids provisional for longer
 48k's entry by half a second: rejected. The song bench is not deterministic
 under heavy concurrent load (I WANNA DANCE 44k); run it alone.
 
+**Superseded (2026-10-22, docs/TODO.md item 138): a manual /2 is decoded
+again; published only when the halved tempo would fall under kMinBpm or there
+is no tempo yet, decided when the request changes.** With the fine-tuned
+network the published class slipped onto the offbeat for stretches (UN'ORA
+SOLA after /2 at 30 s: offbeat from 45 to 77 s, p90 335 ms). Whole bench, /2 at
+5 s, published -> decoded: where /2 reaches the right level (29 files) p90 68.8
+-> 57.1 ms, one 81.1 -> 80.6%, surges 0.17 -> 0.20/min; where it reaches a wrong
+slow level (27) p90 271 -> 126 ms but >25 ms 46.5 -> 51.8% and surges 0.10 ->
+0.32/min (short). Six slow files read at double, /2 at 30 s: p90 335 -> 47,
+143 -> 50, 125 -> 51 ms; one 61 -> 80, 73 -> 81, 64 -> 83%. The record below is
+the earlier decision, kept for its reasons.
+
 **Kept (2026-09-29), a manual /2 is published, not decoded (docs/TODO.md
 item 63).** `BeatDecoder::setUserOctave (n, manual)`: a listener's slower level
 (/2, /4) leaves the decoder at the natural level and divides at publication
