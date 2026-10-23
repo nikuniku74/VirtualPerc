@@ -59,6 +59,11 @@ mic / line in
   projected the same way.
 - Time constants are in **seconds**, never a per-block blend (a blend makes the
   constant depend on buffer size - measured).
+- **FISSO (`! tempoFollow`) listens to nothing** (item 153): no hypothesis
+  reaches the tracker, the clock runs free at the listener's tempo, the part
+  plays from START like START SUBITO, trust is always `sure`, DINAMICA and
+  the drift guard are off. The network is still fed so SEGUI comes back warm.
+  The audio thread never writes `userBpm`; it publishes `appliedUserBpmGen()`.
 - **The octave never changes under a sounding part** automatically. It is chosen
   before entry; ÷2/×2 and TAP are the manual way out.
 - A sounding phase correction is a **glide** (`TempoFollower::glidePhase`), never

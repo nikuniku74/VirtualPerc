@@ -504,11 +504,22 @@ MainComponent::MainComponent()
             ed->selectAll();
         }
     };
+    // On return JUCE copies the typed text into the label, hides the editor
+    // (this callback) and only then calls onTextChange. Refreshing here wrote
+    // the old tempo back into the label first, so onTextChange read the old
+    // number and nothing changed (2026-10-23): the button's label comes back
+    // after the change has gone through.
     bpmEdit.onEditorHide = [this]
     {
         bpmEdit.setVisible (false);
-        refreshTempoModeButtons();
-        savePrefs();
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (safe != nullptr)
+            {
+                safe->refreshTempoModeButtons();
+                safe->savePrefs();
+            }
+        });
     };
 
     // The settings page and everything on it. Added after the console so it is
@@ -1162,8 +1173,22 @@ void MainComponent::refreshTempoModeButtons()
     bpmNudgeUp.setVisible (showNudge);
     if (! bpmEdit.isBeingEdited())
     {
-        const float bpm = engine.settings().userBpm.load() > 50.0f ? engine.settings().userBpm.load()
-                                                                   : (snap.bpm > 50.0f ? snap.bpm : 120.0f);
+        // A TAP in FIXED moves the clock, not userBpm: copy it back here, on
+        // this thread, and only once the engine has taken the last typed
+        // tempo - before that the snapshot still shows the old one.
+        auto& cfg = engine.settings();
+        if (! follow && engine.appliedUserBpmGen() == cfg.userBpmGen.load())
+        {
+            // Read after the generation, not the snapshot taken before it.
+            // Only a TAP: otherwise the clock's figure carries its phase
+            // steering (51-53 for a typed 50 against a band at 125) and the
+            // exact tempo the listener typed would be overwritten by it.
+            const auto now = engine.snapshot();
+            if (now.tapLocked && now.bpm > 50.0f && std::abs (now.bpm - cfg.userBpm.load()) > 0.05f)
+                cfg.userBpm.store (now.bpm);
+        }
+        const float bpm = cfg.userBpm.load() >= 50.0f ? cfg.userBpm.load()
+                                                     : (snap.bpm > 50.0f ? snap.bpm : 120.0f);
         bpmEdit.setText (juce::String (bpm, 1), juce::dontSendNotification);
         bpmEntryButton.setButtonText (juce::String (bpm, 1) + " BPM");
     }

@@ -1393,8 +1393,14 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         inputPeakEnv += (blockPeak - inputPeakEnv) * release;
     const bool loudEnough = inputPeakEnv > (speakerFollow ? 0.0010f : 0.0020f);
     BeatHypothesis hyp;
-    const bool neuralHaveHyp = neural.tryLoad (hyp);
-    const bool haveHyp = selectHarmonicSource (hyp, neuralHaveHyp, numSamples);
+    // FISSO listens to nothing (the listener's call, 2026-10-23): no network
+    // or harmony hypothesis reaches the clock, so no phase pull, no snap, no
+    // bar rotation, no tempo step - it runs free at the typed (or tapped)
+    // tempo. The network is still fed, so SEGUI comes back warm. Every phase
+    // or bar move below is gated on a hypothesis; the kick and onset paths
+    // are gated on tempoFollow already.
+    const bool neuralHaveHyp = tempoFollow && neural.tryLoad (hyp);
+    const bool haveHyp = tempoFollow && selectHarmonicSource (hyp, neuralHaveHyp, numSamples);
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
     const bool periodic = haveHyp && hyp.valid && nnBpm >= 50.0f;
@@ -2374,7 +2380,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // decoder's sounding keep and the phase re-placement all mean "a part is
     // playing on a grid we found", and none of them may defend a grid that
     // was never found. Listener's request (docs/TODO.md item 88).
-    out.percussionShouldPlay = sounding || (startImmediately && armed);
+    // FISSO too: the tempo is the listener's, there is nothing to find before
+    // playing it - the part is heard from START (2026-10-23, the listener's
+    // request; it used to wait for the grid like a followed tempo).
+    out.percussionShouldPlay = sounding || ((startImmediately || ! tempoFollow) && armed);
     // The decoder holds its own metrical level under a playing part for the
     // same reason `updateAutoOctave` holds the shift above it.
     neural.setSounding (sounding);
@@ -2405,6 +2414,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.setTempoMotionDiagnostics (haveHyp ? &hyp : nullptr);
     if (! armed)
         out.followBar = FollowBar::paused;
+    else if (! tempoFollow)
+        out.followBar = FollowBar::following;   // FISSO: playing the listener's tempo
     else if (! inputIsLive && heldBpm > 40.0f
              && (currentState == TrackingState::following
                  || currentState == TrackingState::lowConfidence

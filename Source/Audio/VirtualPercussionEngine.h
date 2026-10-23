@@ -100,6 +100,10 @@ public:
     /** Strokes the FEEL knob `k` has started so far (screen only). Cheaper
         than a whole snapshot, so the UI can read it every frame. */
     std::uint32_t partStrokes (int k) const noexcept { return percussion.partStrokes (k); }
+    /** The FIXED tempo the listener typed last (`userBpmGen`) that the audio
+        thread has taken. Until it equals userBpmGen the typed one is still on
+        its way, and nothing may write userBpm back from the clock. */
+    std::uint32_t appliedUserBpmGen() const noexcept { return appliedUserGen.load (std::memory_order_acquire); }
 
     /** Measure this rig's round trip instead of taking the device's word for
         it: a short sweep goes out, whatever comes back is captured, and the two
@@ -385,6 +389,8 @@ private:
     int                clapSteadyBars = 0;
     int                clapRotationsSeen = 0;
     std::atomic<bool>  lastClapAllowed { false };
+    std::atomic<std::uint32_t> appliedUserGen { 0 };
+    std::uint32_t takenUserGen = 0;   // audio thread only
     /** Section boundaries found, and where the eight-bar sentence has got to. */
     int                sectionCount = 0;
     std::atomic<int>   lastSections { 0 };

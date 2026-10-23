@@ -13,6 +13,7 @@
 
 #include "UI/MainComponent.h"
 #include "UI/Localization.h"
+#include "UI/MainComponentShared.h"   // shownLabel, for the FIXED check
 
 #include <atomic>
 #include <csignal>
@@ -215,6 +216,10 @@ struct VPShotsAccess final : juce::Timer
             {
                 // FIXED: TAP and the tempo to type; then the field open.
                 mc.applyTempoFollow (false);
+                strokesAtStart = 0;
+                for (int k = 0; k < 4; ++k)
+                    strokesAtStart += mc.engine.partStrokes (k);
+                firstStrokeSec = -1.0;
                 mc.startPressed();
                 entryShot = false;
                 phase = 4;
@@ -237,6 +242,20 @@ struct VPShotsAccess final : juce::Timer
         }
         if (phase == 4)
         {
+            if (firstStrokeSec < 0.0)
+            {
+                std::uint32_t n = 0;
+                for (int k = 0; k < 4; ++k)
+                    n += mc.engine.partStrokes (k);
+                if (n != strokesAtStart)
+                {
+                    firstStrokeSec = elapsed;
+                    const auto snap = mc.engine.snapshot();
+                    const auto trust = vp::tempoTrust (snap, true, false);
+                    std::printf ("  FIXED: first stroke %.2f s after START, label \"%s\", trust %d\n",
+                                 elapsed, shownLabel (snap, trust).toRawUTF8(), static_cast<int> (trust));
+                }
+            }
             if (elapsed >= 4.0)
             {
                 shoot (s.name);
@@ -246,12 +265,42 @@ struct VPShotsAccess final : juce::Timer
                 save (mc.createComponentSnapshot (mc.getLocalBounds(), true, 2.0f),
                       dir.getChildFile (juce::String (s.name) + "-scrivi.png"));
                 mc.bpmEdit.hideEditor (true);
-                mc.stopPressed();
-                mc.applyTempoFollow (true);
-                entryShot = false;
-                phase = 2;
+                // The typed tempo has to stick: type, press return, read the
+                // engine (the bug of 2026-10-23: return put the old one back).
+                // Return is handled on a later message, so the result is read
+                // a few ticks on (phase 5).
+                typedStep = 0;
+                phase = 5;
                 elapsed = 0.0;
             }
+            return;
+        }
+        if (phase == 5)
+        {
+            const char* const typed[] = { "98,5", "300", "40" };
+            if (elapsed < 0.3)
+                return;
+            if (typedStep > 0)
+                std::printf ("  typed %s -> fixed tempo %.1f, button \"%s\"\n", typed[typedStep - 1],
+                             static_cast<double> (mc.engine.settings().userBpm.load()),
+                             mc.bpmEntryButton.getButtonText().toRawUTF8());
+            if (typedStep < 3)
+            {
+                mc.bpmEntryButton.onClick();
+                if (auto* ed = mc.bpmEdit.getCurrentTextEditor())
+                {
+                    ed->setText (typed[typedStep]);
+                    ed->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+                }
+                ++typedStep;
+                elapsed = 0.0;
+                return;
+            }
+            mc.stopPressed();
+            mc.applyTempoFollow (true);
+            entryShot = false;
+            phase = 2;
+            elapsed = 0.0;
             return;
         }
         if (phase == 3)
@@ -315,6 +364,9 @@ struct VPShotsAccess final : juce::Timer
     int index = 0, phase = 0;
     double elapsed = 0.0;
     bool entryShot = false;
+    int typedStep = 0;
+    std::uint32_t strokesAtStart = 0;
+    double firstStrokeSec = -1.0;
 };
 
 class ShotsApp final : public juce::JUCEApplicationBase

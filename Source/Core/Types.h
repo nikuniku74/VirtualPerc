@@ -641,6 +641,9 @@ inline bool tempoOut (TrackingState st, float shortFitResidual) noexcept
 
 inline TempoTrust tempoTrust (const EngineSnapshot& s, bool steady, bool silent) noexcept
 {
+    // FISSO: the tempo is the listener's, not a reading to doubt. Always green.
+    if (! s.tempoFollow)
+        return TempoTrust::sure;
     if (! followBarJudged (s.followBar) && ! (s.followBar == FollowBar::paused && ! silent))
         return TempoTrust::none;
     if (tempoOut (s.state, s.shortFitResidual))

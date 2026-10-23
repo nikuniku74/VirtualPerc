@@ -1382,6 +1382,57 @@ int main (int argc, char** argv)
                      mixer35, mixer8, mixer2, file4);
         expect (mixer35 == 1 && mixer8 == 1 && mixer2 == 0 && file4 == 0,
                 "a STOP held 3 s on a live input with no beat restarts the analysis once");
+
+        // FIXED: a tempo typed while the part plays stays the one typed. The
+        // audio thread used to write the clock's figure into userBpm every
+        // block, and a typed tempo stored between its read and its write was
+        // lost (2026-10-23). It may only say which typed tempo it has taken.
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::make_unique<vp::StubBeatModel>());
+            eng.prepare (sr, block, 1);
+            eng.setFixedBpm (120.0f);
+            eng.start();
+            feedSilence (eng, sr, block, 1.0f);
+            eng.setFixedBpm (98.5f);
+            feedSilence (eng, sr, block, 1.0f);
+            const float kept = eng.settings().userBpm.load();
+            const bool taken = eng.appliedUserBpmGen() == eng.settings().userBpmGen.load();
+            const float shown = eng.snapshot().bpm;
+            std::printf ("typed fixed tempo  kept %.2f  taken %d  clock %.2f\n",
+                         static_cast<double> (kept), taken ? 1 : 0, static_cast<double> (shown));
+            expect (kept == 98.5f && taken && std::fabs (shown - 98.5f) < 1.0f,
+                    "a typed FIXED tempo is kept, taken by the engine and played");
+        }
+
+        // FIXED plays from START and listens to nothing: a 120 click coming
+        // in does not move a 100, not even by phase steering, and the light
+        // is green throughout (2026-10-23).
+        {
+            vp::VirtualPercussionEngine eng;
+            eng.setBeatModel (std::make_unique<vp::StubBeatModel>());
+            eng.prepare (sr, block, 1);
+            eng.setFixedBpm (100.0f);
+            eng.setClickInjectEnabled (true);
+            eng.setClickInjectBpm (120.0f);
+            eng.start();
+            feedSilence (eng, sr, block, 0.6f);   // a quarter at 100 is 0.6 s
+            const bool playingAtOnce = eng.snapshot().percussionAudible;
+            float lo = 1000.0f, hi = 0.0f;
+            bool green = true;
+            for (int i = 0; i < 40; ++i)
+            {
+                feedSilence (eng, sr, block, 0.1f);
+                const auto s = eng.snapshot();
+                lo = std::min (lo, s.bpm);
+                hi = std::max (hi, s.bpm);
+                green = green && vp::tempoTrust (s, false, false) == vp::TempoTrust::sure;
+            }
+            std::printf ("FIXED vs 120 click  playing at once %d  bpm %.2f..%.2f  green %d\n",
+                         playingAtOnce ? 1 : 0, static_cast<double> (lo), static_cast<double> (hi), green ? 1 : 0);
+            expect (playingAtOnce && lo == 100.0f && hi == 100.0f && green,
+                    "FIXED plays from START, holds its tempo exactly against a click, and stays green");
+        }
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed == 0 ? 0 : 1;
     }

@@ -462,7 +462,7 @@ void VirtualPercussionEngine::setFixedBpm (float bpm) noexcept
     bpm = std::clamp (bpm, 50.0f, 200.0f);
     cfg.tempoFollow.store (false, std::memory_order_relaxed);
     cfg.userBpm.store (bpm, std::memory_order_relaxed);
-    cfg.userBpmGen.fetch_add (1u, std::memory_order_relaxed);
+    cfg.userBpmGen.fetch_add (1u, std::memory_order_release);
 }
 
 void VirtualPercussionEngine::notifyTrackSeek() noexcept
@@ -1642,8 +1642,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         const bool follow = cfg.tempoFollow.load (std::memory_order_relaxed);
         tracker.setTempoFollow (follow);
         if (! follow)
-            tracker.setUserTempo (cfg.userBpm.load (std::memory_order_relaxed),
-                                  cfg.userBpmGen.load (std::memory_order_relaxed));
+        {
+            // The generation first, then the value: setFixedBpm stores the
+            // value before it counts, so a generation seen here has its value.
+            const auto gen = cfg.userBpmGen.load (std::memory_order_acquire);
+            tracker.setUserTempo (cfg.userBpm.load (std::memory_order_relaxed), gen);
+            takenUserGen = gen;   // published with the BPM it produced, below
+        }
     }
     {
         const int nudge = cfg.barNudge.load (std::memory_order_relaxed);
@@ -1996,8 +2001,13 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         percussion.setBarTrusted (clapAllowed);
         lastClapAllowed.store (clapAllowed, std::memory_order_relaxed);
     }
-    if (! cfg.tempoFollow.load (std::memory_order_relaxed) && tr.bpm > 50.0f)
-        cfg.userBpm.store (tr.bpm, std::memory_order_relaxed);
+    // userBpm is the listener's, written on the message thread. It used to be
+    // overwritten here with the clock's tempo every block, which raced a typed
+    // one: stored between this thread reading it and writing it back, the new
+    // tempo was replaced by the old one before it was ever applied ("I type
+    // the BPM, press return, the old number comes back", 2026-10-23). The page
+    // now copies a TAP'd tempo back itself, once appliedUserBpmGen() says the
+    // typed one has been taken.
     // The clock's own tempo, not the BPM on the display. `tr.bpm` is blank
     // until the tracker has locked and reads 0 before then, so the percussion
     // was being told 120 while the clock ran at whatever it had actually found.
@@ -2036,7 +2046,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // something - and the same going the other way: coming back in on the "a"
     // of three is not an entrance. `wrappedBar` is the clock saying the count
     // has just come round, which is the only moment either is worth doing.
-    const bool followDynamics = wantDynamics;
+    // Not in FISSO: there the part plays the listener's tempo whatever comes
+    // in, heard from START, never stood down by a quiet room (2026-10-23).
+    const bool followDynamics = wantDynamics && cfg.tempoFollow.load (std::memory_order_relaxed);
     bool sectionJustChanged = false;
     percussion.setDynamics (followDynamics ? bandDynamics.level() : 1.0f);
     if (! followDynamics)
@@ -2153,6 +2165,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     pushOutputToRing (numSamples, master);
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
+    // After the BPM: a page that sees this generation sees its tempo.
+    appliedUserGen.store (takenUserGen, std::memory_order_release);
     lastTarget.store (tr.targetBpm, std::memory_order_relaxed);
     lastClockBpm.store (tr.clock.soundingTempoBpm > 40.0f
                             ? tr.clock.soundingTempoBpm : tr.clock.tempoBpm,

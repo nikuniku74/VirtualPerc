@@ -350,6 +350,8 @@ namespace
         using T = vp::TempoTrust;
         // The guard has the part silent: say so, and say when it is on its
         // way back, so a gap never reads as the app having broken.
+        if (! s.tempoFollow)
+            return vpui::L ("FIXED TEMPO", "TEMPO FISSO");
         if (s.driftGuarded)
             return t == T::out ? vpui::L ("OUT OF TEMPO - PAUSED", "FUORI TEMPO - IN PAUSA")
                                : vpui::L ("REJOINING THE BEAT", "RIENTRA ALLA BATTUTA");
@@ -792,7 +794,8 @@ namespace
             "## TEMPO\n"
             "**FOLLOW**: the app listens to the band and follows its tempo, also when it slows down "
             "or speeds up. The normal choice.\n"
-            "**FIXED**: the tempo stops where it is and no longer follows the band. Beside TAP, "
+            "**FIXED**: the tempo stops where it is and the app listens to nothing: the "
+            "percussion plays from START at that tempo, the light always green. Beside TAP, "
             "in place of ÷2 and ×2, the tempo appears: touch it and type an exact one (50 to 200 "
             "BPM). On the iPad the - and + keys move it by 1 BPM.\n"
             "**START NOW**: on, after START the percussion comes in as soon as the app has found the "
@@ -850,7 +853,8 @@ namespace
             "## TEMPO\n"
             "**SEGUI**: l'app ascolta la band e ne segue il tempo, anche quando rallenta o "
             "accelera. È la scelta normale.\n"
-            "**FISSO**: il tempo si ferma dov'è e non segue più la band. Accanto a TAP, al posto "
+            "**FISSO**: il tempo si ferma dov'è e l'app non ascolta più niente: le percussioni "
+            "suonano da START a quel tempo, con la spia sempre verde. Accanto a TAP, al posto "
             "di ÷2 e ×2, compare il tempo: toccalo e scrivi quello esatto (da 50 a 200 BPM). "
             "Sull'iPad i tasti - e + lo spostano di 1 BPM.\n"
             "**START SUBITO**: acceso, dopo START le percussioni partono appena l'app ha trovato "
