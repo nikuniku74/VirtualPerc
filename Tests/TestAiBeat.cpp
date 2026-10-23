@@ -11036,7 +11036,8 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
 
     // A song change has no adjacent old/new intervals across the pause. The
     // new pulse must be heard even when the old grid refuses its quarters.
-    auto afterPause = [] (float from, float to, bool fill)
+    auto afterPause = [] (float from, float to, bool fill, double jitter = 0.0,
+                          int* independentIntervals = nullptr)
     {
         vp::BeatDecoder dec;
         dec.prepare (50.0);
@@ -11054,13 +11055,19 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
             const float rate = now < 30.0 || (fill && now >= 35.0) ? from : to;
             const double origin = now < 30.0 ? 0.5 : 33.2;
             const double beats = (now - origin) * rate / 60.0;
-            const double distance = (beats - std::round (beats)) * 60.0 / rate;
+            double distance = (beats - std::round (beats)) * 60.0 / rate;
+            if (now < 30.0)
+                distance -= jitter * std::sin (std::round (beats) * 1.7);
             const float a = now >= 30.0 && now < 33.0 ? 0.02f
                 : 0.02f + 0.92f * static_cast<float> (
                     std::exp (-0.5 * distance * distance / (0.027 * 0.027)));
             const auto h = dec.observe (a, 0.02f, 1.0f - a, 0.5f, 0.5f);
-            if (h.transitionSerial != transition && h.transitionIntervals == 7)
+            if (h.transitionSerial != transition && h.transitionIntervals >= 7)
+            {
                 continuous &= h.gridSerial == grid;
+                if (independentIntervals != nullptr)
+                    *independentIntervals = h.transitionIntervals;
+            }
             grid = h.gridSerial;
             transition = h.transitionSerial;
             last = h.bpm;
@@ -11082,8 +11089,8 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
                              { 140.0f, 122.0f } })
     {
         const auto result = afterPause (pair.first, pair.second, false);
-        // The 120->106 case damages the recent fit; it retains the ordinary
-        // recovery's 18.34 s rather than granting a second authority there.
+        // A small move on a damaged fit stays with ordinary motion recovery:
+        // wide-step proof must not freeze the following section of a song.
         const double deadline = pair.first == 120.0f && pair.second == 106.0f ? 20.0 : 8.0;
         expect (result.first >= 0.0 && result.first < deadline && result.second < 1.0f,
                 "a sounding direct feed recovers after a pause within its causal regression deadline");
@@ -11092,6 +11099,17 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
     expect (pause.second < 0.1f, "a pause at the same tempo preserves the held pulse");
     const auto fill = afterPause (120.0f, 150.0f, true);
     expect (fill.second < 0.04f, "four fill quarters after a pause cannot release the held tempo");
+    for (double jitter : { 0.035, 0.070 })
+    {
+        int intervals = 0;
+        const auto noisy = afterPause (120.0f, 150.0f, false, jitter, &intervals);
+        expect (noisy.first >= 0.0 && noisy.first < 8.0 && noisy.second < 1.0f
+                    && intervals == 15,
+                "a wide step over a damaged fit earns sixteen completed quarters before recovery");
+    }
+    const auto noisyFill = afterPause (120.0f, 150.0f, true, 0.035);
+    expect (noisyFill.second < 0.04f,
+            "a short fill over a damaged fit cannot impersonate a wide tempo change");
 
     // Quarter-by-quarter detector: with 6 ms of onset scatter the interval
     // detector stands down (4 of these 12 steps confirmed before), and a +44 ms

@@ -5957,6 +5957,40 @@ Segnalazione dell'utente: in modalità IPAD, col MIC al minimo segue perfetto; a
 
 - [ ] Ascolto e verifica su iPad/interfaccia reale. Nessuna installazione o calibrazione hardware effettuata in questa verifica.
 
+### 156. Recupero dei salti ampi su una griglia confusa (2026-10-23) 🟡 banco host verificato — resta dispositivo
+
+- Base di confronto: item 155, `1f072a6` (stessi sorgenti/modello della versione conservata a inizio lavoro). Regola globale, nessun titolo/file/intervallo di BPM riconosciuto; solo audio già consegnato al motore.
+- La prova da otto picchi dell'item 155 resta identica quando il vecchio fit è coerente. Quando è confuso, un **salto ampio non d'ottava** può essere confermato da **sedici** picchi consecutivi coerenti con il pettine assestato. Il confine di salto ampio è quello già usato dal motore (`kOctaveThreshold`, 0.25 log2, circa 19%); i piccoli cambi restano al recupero ordinario del moto. Nessuna nuova soglia tarata sui file.
+- La nuova pulsazione riusa il fit sugli ultimi otto picchi, il regime parte da CERCO e il clock resta continuo. La pubblicazione riporta 15 intervalli realmente osservati; il consumer già gestisce le prove con almeno 7 intervalli. Solo memoria fissa nel worker: nessuna attesa, I/O o allocazione nel percorso audio.
+- **Test causali:** vecchia pulsazione a 120 con jitter deterministico di 35/70 ms, pausa e salto a 150: **16.22 → 6.62 s** e **10.62 → 7.02 s**. Servono tutti i 16 picchi; nessun nuovo `gridSerial`. Il fill breve con la vecchia griglia confusa non viene adottato. `--tempo-step` **40/0**. Il piccolo 120→106 resta **18.34 s**, non eredita il guadagno della variante scartata.
+- **Scartato A:** sedici picchi anche sui piccoli cambi. Su NSF104min il totale guadagna 81 battiti corretti ma ne perde 35: 34 a 301–336 s dopo il cambio successivo, con 121 invece di 80–85. La media del set nasconde una regressione di sezione; non adottata. Anche i suoi recuperi 38→24/35→16/27→21 s non sono risultati della versione finale.
+- **Scartato B:** togliere del tutto la protezione del vecchio fit, usando otto picchi. Accelera più casi, ma BRANO di un file aggiuntivo perde 0.48 pp di tempo corretto. Nessuna eccezione per salvarlo: variante respinta.
+
+**Banco completato:** 325 coppie causali prima/dopo; **322 identiche bit per bit, 3 modificate**. Comprende il banco di 56 file, 40 file aggiuntivi, 3 set interi, 96 prove microfono/stanza, il set di 44 min con i suoi 4 estratti, e altri 11 brani interi più 20 min del live FBI 17.11.11 (24 prove MIXER/BRANO, circa 66 min di audio). Questi ultimi sono nuovi a questo banco, senza affermazioni sull'esposizione del modello durante l'addestramento.
+
+**Recuperi reali:** stesso riferimento locale e stesso gate (clock entro il 4% per 4 s continui): BRANO corretto **3.73 s prima**; set MIXER di 136 min **20.09 s prima**; set di 44 min MIXER **7.77 s e4.37 s prima**. Sono quattro passaggi dei tre confronti modificati, non una media su tutti i cambi. Il riferimento della sezione è la mediana dei battiti del maestro nei 10 s da prova+4 s a prova+14 s; lo usa solo il valutatore, mai l'app. Tempi assoluti e finestre in `recoveries.json`.
+
+| Materiale / percorso | Corretto % | Ottava errata % | Disp. ms | p90 ms | >25 ms % | Uno % |
+|---|---:|---:|---:|---:|---:|---:|
+| Banco 56 / MIXER | 86.55 → 86.55 | 4.79 → 4.79 | 12.65 → 12.65 | 38.86 → 38.86 | 20.23 → 20.23 | 81.32 → 81.32 |
+| Banco 56 / BRANO | 78.80 → 78.83 | 11.84 → 11.84 | 13.99 → 13.99 | 39.02 → 39.02 | 21.79 → 21.80 | 73.98 → 74.09 |
+| Aggiuntivi 40 / MIXER | 72.60 → 72.60 | 16.78 → 16.78 | 30.06 → 30.06 | 73.30 → 73.30 | 27.27 → 27.27 | 73.28 → 73.28 |
+| Aggiuntivi 40 / BRANO | 69.48 → 69.48 | 18.93 → 18.93 | 14.89 → 14.89 | 57.58 → 57.58 | 24.11 → 24.11 | 69.39 → 69.39 |
+| Set interi 3 / MIXER | 56.23 → 56.35 | 20.95 → 20.95 | 13.45 → 13.51 | 43.81 → 43.75 | 23.98 → 23.98 | 79.77 → 79.57 |
+| Set 44 min / MIXER | 87.71 → 88.15 | 2.43 → 2.43 | 11.32 → 11.36 | 32.24 → 32.26 | 17.36 → 17.14 | 75.94 → 77.43 |
+| Set 44 min / BRANO | 87.84 → 87.84 | 2.54 → 2.54 | 11.76 → 11.76 | 36.04 → 36.04 | 18.79 → 18.79 | 84.44 → 84.44 |
+
+- **Regressioni:** nessun file perde quota di tempo corretto o copertura udibile; nessun aumento di sedicesimi saltati per file. Nei tre confronti modificati: salti **11→9**, sedicesimi saltati **3→2**, piegamenti di velocità **50→51**. Gli altri 322 confronti sono identici. La correzione di fase può produrre un piegamento di velocità locale: non tutti gli indicatori secondari migliorano.
+- **Controllo per sezione:** il set di 104 min problematico è identico bit per bit alla base, quindi la regressione di A a 301–336 s è assente. Sui tratti prima corretti: nessuna nuova perdita continua di almeno 4 s. In totale 64 battiti diventano corretti e 1 passa fuori dal gate del 4% isolatamente; non dichiarare zero battiti individuali persi.
+- **Precisione e uno:** sulla coorte comune corretta, p90 BRANO 28.54→29.09 ms, set di 136 min 53.62→53.58 ms, set di 44 min 32.24→32.29 ms; l'uno migliora in tutti e tre. Le medie condizionate della tabella includono i battiti ora corretti: per questo l'uno aggregato dei 3 set scende 79.77→79.57% anche se sui battiti comuni del set modificato sale 73.34→73.55%.
+- **Attacchi:** tutti i file modificati, compresi i set interi, passano i gate esistenti (+1.5 pp fuori 25 ms, +1 uscita/min). Sul set di 136 min p25 7.4565→7.4623%, uscite 3.0266→3.0340/min; sul set di 44 min p25 2.4700→2.4608%, uscite invariate. Piccole oscillazioni misurate, non precisione identica ovunque.
+- **IPAD e nuovi brani:** 96/96 simulazioni microfono/stanza e 24/24 prove sul materiale aggiunto identiche; anche gli 8 estratti del set di 44 min sono identici. Nessuna verifica fisica del microfono è implicata.
+- **Limiti:** piccolo 120→106 e i sei testimoni lunghi NSF 203/241/1623/4507/5868 s e LIVE 1758 s restano invariati. Non è il recupero universale di tutti i cambi: migliorano i salti ampi che raggiungono la prova indipendente; restano i piccoli cambi confusi e l'ambiguità d'ottava.
+- **Ascolto preparato:** [MIXER prima](../build-host/vp-slow-changes-20261023/listening/MIXER_set_prima.wav) / [dopo](../build-host/vp-slow-changes-20261023/listening/MIXER_set_dopo.wav), [BRANO prima](../build-host/vp-slow-changes-20261023/listening/BRANO_prima.wav) / [dopo](../build-host/vp-slow-changes-20261023/listening/BRANO_dopo.wav). Clic ricostruiti dalla fase del clock sullo stesso audio/volume; non è un render del timbro delle percussioni e non è stato ascoltato fisicamente qui.
+
+- **Test e build finali:** `--tempo-step` 40/0 (6 nuove asserzioni), `--state-timing` 14/0, `--bar` 15/0, `--phase-lock` 20/0, `--tempo-slow` 13/0, `--new-input` 27/0, `--transport` 8/0, `--audio-input` 11/0, `--harmonic-entry` PASS. **Suite completa 717 superati / 27 falliti:** nomi e molteplicità coincidono esattamente con i 27 preesistenti; nessun fallimento aggiunto. La probe CLI `--tempo-step` è separata dal conteggio della suite predefinita, quindi le sue sei nuove asserzioni non aumentano il 717. Mac e iOS Release senza firma compilati; dopo l'ultima build due tracce modificate intere e il prefisso di un lungo invariato sono riprodotti identici. Log `full-c.log`, `repeat.json` e impronte di 116 audio/riferimenti salvati in `build-host/vp-slow-changes-20261023/`. I difetti preesistenti restano aperti.
+- [ ] Ascolto e calibrazione su iPad/interfaccia reale. I riferimenti offline servono solo a giudicare gli output, mai a guidare l'app.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

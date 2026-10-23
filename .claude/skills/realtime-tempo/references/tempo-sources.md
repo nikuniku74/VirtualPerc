@@ -3645,3 +3645,33 @@ The ordinary entry policy is unchanged. The full before/after decision, phase,
 bar and onset metrics, current test accounting and limitations are recorded in
 verification.md and TODO155. Do not cite the earlier, less guarded variants'
 NSF lag wins: the retained guard leaves the named long-set witnesses unchanged.
+
+
+## Wide steps over a damaged held fit (2026-10-23, TODO 156)
+
+Extend the independent-pulse history to sixteen completed eligible maxima.
+A clean old fit still uses exactly its latest eight, unchanged. A damaged old
+fit must supply sixteen coherent consecutive quarters against the settled
+salient comb, and only for a wide non-octave disagreement (the existing
+`kOctaveThreshold`, 0.25 log2). Small changes retain ordinary motion recovery.
+This is the same wide-step boundary as the interval detector, not a new BPM,
+song or filename exception. All old octave exclusions remain.
+
+Retain/fix phase on the latest eight actual peaks as before; publish fifteen
+observed proof intervals (the tracker accepts independent proofs >=7), with no
+gridSerial increment. Regime begins unknown; a new tempo is not acceleration.
+The audio path has no waits, allocation or I/O; history is fixed worker state.
+
+Two broader variants were measured and rejected. A sixteen-peak proof on small
+moves improved whole-set average but hid a regression in the next section:
+NSF104min gained81/lost35 correct beats,34 lost at301–336s (121 instead of80–85).
+Do not accept whole-set average as proof of no regressions; inspect common-beat
+loss clusters. Its earlier241/4507/5868 lag gains are NOT selected gains.
+Dropping the old-fit residual guard entirely (eight peaks) helped more changes
+but lost0.484pp on one additional BRANO file. No per-title patch was made.
+
+The existing small-move motion path and the wide-step independent proof must
+remain separate. Controlled noisy120->150 probes with35/70ms old jitter read
+16.22->6.62sec and10.62->7.02sec, with all15 observed intervals and no grid
+re-anchor; a short fill does not qualify. Small120->106 remains18.34sec.
+SelectedC:325paired probes,322bit-identical,3changed. No file loses correct tempo share or sounding coverage; no new skipped subdivision per file or lost-correct run>=4sec.64gained/1isolated lost truth beat. Same local target/4sec lock gate is3.73sec earlier BRANO,20.09sec on the136min MIXER set,7.77/4.37sec on the44min MIXER set.96mic+24fresh comparisons identical. The six old long-set witnesses remain unchanged; do not quote rejectedA/B gains. Full tables, onset/common-cohort gates and build/test accounting: verification.md and TODO156.

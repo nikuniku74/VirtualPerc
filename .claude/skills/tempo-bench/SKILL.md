@@ -83,6 +83,13 @@ Report the decision metrics, in this order:
 Phase and the one are only meaningful where the octave is right; truth.py
 already restricts them.
 
+For continuous sets, also compare the previously correct beats by section.
+Inspect contiguous runs that were correct before and are now wrong (the
+existing four-second sustained-lock window is a useful witness). A gain in
+whole-set correct share can hide a lost following song: TODO156 rejected a
+variant with81gained/35lost for this reason. Inspect phase/bar on the common
+correct cohort too; adding correct beats changes the conditional population.
+
 ## 4. Regression gates
 
 ```bash

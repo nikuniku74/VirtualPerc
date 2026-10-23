@@ -1606,7 +1606,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
     {
-        // The independent eight-peak proof starts a new pulse: later grid
+        // The independent pulse proof starts a new pulse: later grid
         // nudges and returns from a pause must stay continuous too.
         if (hyp.transitionIntervals >= 7)
             glideRebuiltGrid = true;

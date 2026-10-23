@@ -1722,29 +1722,38 @@ bool BeatDecoder::stepLacksComb (float newBpm) const noexcept
 
 bool BeatDecoder::combHasNewPulse (float combBpm) const noexcept
 {
-    // A clean but starving held fit can defend the wrong song indefinitely.
-    // Eight ungated quarters plus a settled comb may replace it; an already
-    // incoherent fit stays with ordinary motion recovery (TODO 155).
+    // A starving held grid can defend the wrong song indefinitely. A damaged
+    // old fit needs twice the independent pulse history before replacement
+    // (TODO 155/156); simply dropping its guard regresses real material.
     if (! lineFeed || ! sounding || provisional || ! tempo.levelSettled()
         || tempo.salience() <= kOctaveSnapSalience || combBpm < kMinBpm
-        || bpm < kMinBpm || ungatedPeakCount < kShortFit
-        || shortFitResidual >= kMotionCurveResidual)
+        || bpm < kMinBpm)
         return false;
     const float apart = std::fabs (std::log2 (combBpm / bpm));
     // A subdivision remains the listener's decision under a sounding part.
     if (apart <= kStaleGridThreshold
         || std::fabs (apart - std::round (apart)) <= kStaleGridThreshold)
         return false;
+    // A damaged old fit needs twice the independent history: a fill or a
+    // continuing acceleration must not be mistaken for a settled new pulse.
+    const int count = shortFitResidual < kMotionCurveResidual ? kShortFit : kUngatedHistory;
+    if (ungatedPeakCount < count)
+        return false;
+    const int first = kUngatedHistory - count;
+    // Small disagreements remain the motion fit's job. Replacing that fit
+    // can freeze the next section; only a wide step earns this longer proof.
+    if (count > kShortFit && apart <= kOctaveThreshold)
+        return false;
     const double period = 60.0 / combBpm;
-    const double measured = (ungatedPeaks[kShortFit - 1] - ungatedPeaks[0])
-                          / (kShortFit - 1);
+    const double measured = (ungatedPeaks[kUngatedHistory - 1] - ungatedPeaks[first])
+                          / (count - 1);
     if (std::fabs (measured / period - 1.0) > kFastDriftToleranceLine)
         return false;
-    for (int k = 1; k < kShortFit; ++k)
+    for (int k = first + 1; k < kUngatedHistory; ++k)
     {
         const double interval = ungatedPeaks[k] - ungatedPeaks[k - 1];
         if (interval <= 0.0 || std::fabs (std::log2 (interval / period)) > kStaleGridThreshold
-            || std::fabs (ungatedPeaks[k] - ungatedPeaks[0] - k * measured)
+            || std::fabs (ungatedPeaks[k] - ungatedPeaks[first] - (k - first) * measured)
                    > kMotionCurveResidual * period)
             return false;
     }
@@ -3208,6 +3217,8 @@ void BeatDecoder::updateTempo() noexcept
                        > kGridStaleBeats * 60.0 / static_cast<double> (bpm);
     }
     const bool newPulse = gridStarving && combHasNewPulse (combRawBpm);
+    const int pulseIntervals = shortFitResidual < kMotionCurveResidual
+                                   ? kShortFit - 1 : kUngatedHistory - 1;
     const bool gridUncorroborated = sounding && combAgreedBpm < kMinBpm && gridStarving;
     const bool nonOctaveDisagreement = combReady && (provisional || gridUncorroborated)
                                        && ! octaveArgument
@@ -3714,17 +3725,17 @@ void BeatDecoder::updateTempo() noexcept
             {
                 // These eight completed peaks already measured the new grid;
                 // reacquiring would throw away the evidence that released it.
-                double period = (ungatedPeaks[kShortFit - 1] - ungatedPeaks[0])
+                double period = (ungatedPeaks[kUngatedHistory - 1] - ungatedPeaks[kUngatedHistory - kShortFit])
                               / (kShortFit - 1);
                 bpm = std::clamp (static_cast<float> (60.0 / period), kMinBpm, kMaxBpm);
                 double meanTime = 0.0;
                 for (int k = 0; k < kShortFit; ++k)
                 {
-                    storeBeatForFit (ungatedPeaks[k], ungatedStrength[k],
-                                     ungatedLowBand[k], ungatedHighBand[k]);
-                    meanTime += ungatedPeaks[k] / kShortFit;
+                    storeBeatForFit (ungatedPeaks[k + kUngatedHistory - kShortFit], ungatedStrength[k + kUngatedHistory - kShortFit],
+                                     ungatedLowBand[k + kUngatedHistory - kShortFit], ungatedHighBand[k + kUngatedHistory - kShortFit]);
+                    meanTime += ungatedPeaks[k + kUngatedHistory - kShortFit] / kShortFit;
                 }
-                lastBeatSec = ungatedPeaks[kShortFit - 1];
+                lastBeatSec = ungatedPeaks[kUngatedHistory - 1];
                 // Phase comes from the whole line, including on this first
                 // publication; the newest crest alone carries its own jitter.
                 gridAnchorSec = meanTime + 0.5 * (kShortFit - 1) * period;
@@ -3743,7 +3754,7 @@ void BeatDecoder::updateTempo() noexcept
                 transitionState = TempoTransitionState::rapid;
                 transitionReason = TempoTransitionReason::confirmed;
                 transitionPeriodSec = static_cast<float> (period);
-                transitionIntervals = kShortFit - 1;
+                transitionIntervals = pulseIntervals;
                 transitionConfidence = 1.0f;
                 transitionRapidDeadlineSec = timeSec + kTransitionRapidLifetimeBeats * period;
                 transitionRefitBeats = kTransitionCombLagBeats;
@@ -5390,18 +5401,18 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
 
     if (eligiblePeak)
     {
-        for (int k = 0; k + 1 < kShortFit; ++k)
+        for (int k = 0; k + 1 < kUngatedHistory; ++k)
         {
             ungatedPeaks[k] = ungatedPeaks[k + 1];
             ungatedStrength[k] = ungatedStrength[k + 1];
             ungatedLowBand[k] = ungatedLowBand[k + 1];
             ungatedHighBand[k] = ungatedHighBand[k + 1];
         }
-        ungatedPeaks[kShortFit - 1] = eventTimeSec;
-        ungatedStrength[kShortFit - 1] = prevPulse;
-        ungatedLowBand[kShortFit - 1] = std::max (prevLowBand, std::max (prevPrevLowBand, lowBand));
-        ungatedHighBand[kShortFit - 1] = std::max (prevHighBand, std::max (prevPrevHighBand, highBand));
-        ungatedPeakCount = std::min (kShortFit, ungatedPeakCount + 1);
+        ungatedPeaks[kUngatedHistory - 1] = eventTimeSec;
+        ungatedStrength[kUngatedHistory - 1] = prevPulse;
+        ungatedLowBand[kUngatedHistory - 1] = std::max (prevLowBand, std::max (prevPrevLowBand, lowBand));
+        ungatedHighBand[kUngatedHistory - 1] = std::max (prevHighBand, std::max (prevPrevHighBand, highBand));
+        ungatedPeakCount = std::min (kUngatedHistory, ungatedPeakCount + 1);
     }
 
     snapStalePulseToCombFold();

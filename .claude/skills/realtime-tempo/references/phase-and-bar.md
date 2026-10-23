@@ -254,3 +254,10 @@ Across the14 changed paired runs: phase jumps40→14, skipped sixteenths13→4;
 none adds a skipped sixteenth per file. The other287 paired traces are identical,
 including96 IPAD room simulations. Full metrics and the conditional/cohort
 caveat are in verification.md; true device/listening remains.
+
+
+Item156 (2026-10-23) adds a sixteen-peak proof for wide non-octave changes
+against a damaged old fit. Its metadata is fifteen intervals; the existing
+`transitionIntervals >=7` policy covers both proof lengths. Phase still comes
+from the latest eight-point fitted line and uses the same continuous clock.
+No new phase controller or re-entry rule was introduced.

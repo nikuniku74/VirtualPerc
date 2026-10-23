@@ -562,10 +562,11 @@ private:
     // whole octaves). The post-hole refusal defends a lattice the fold has
     // corroborated; one it never agreed with is not a leftover to protect.
     float combAgreedBpm = 0.0f;
-    double ungatedPeaks[kShortFit] {};
-    float ungatedStrength[kShortFit] {};
-    float ungatedLowBand[kShortFit] {};
-    float ungatedHighBand[kShortFit] {};
+    static constexpr int kUngatedHistory = 2 * kShortFit;
+    double ungatedPeaks[kUngatedHistory] {};
+    float ungatedStrength[kUngatedHistory] {};
+    float ungatedLowBand[kUngatedHistory] {};
+    float ungatedHighBand[kUngatedHistory] {};
     int ungatedPeakCount = 0;
     // How well the beats being fitted are placed against what this song has
     // been giving (the tracker's own EvidenceTrust, fed per accepted beat).

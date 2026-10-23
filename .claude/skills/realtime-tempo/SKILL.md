@@ -99,7 +99,9 @@ and precise, so there are several:
   comb to agree (`stepLacksComb`).
 - **Stale pulse across a song change** (item 155): on direct feeds, a clean
   held fit that is starving can be challenged by eight coherent *ungated*
-  completed peaks agreeing with the settled comb. Retain their fitted history
+  completed peaks agreeing with the settled comb. For a damaged fit, item156
+  requires sixteen and a wide non-octave step (existing0.25log2 boundary);
+  small moves keep ordinary motion recovery. Retain their fitted history
   and the comb, emit a tempo transition without a grid re-anchor, and classify
   the new regime from unknown (new tempo is not proof of continuing motion).
   Later small grid/re-entry corrections glide across pauses of the same source;
@@ -157,13 +159,15 @@ quarter of a song (median < 1 ms). **Phase is near the network's ceiling; the op
 are decisions (octave, the one, entry), not precision.** Any threshold measured
 before 2026-10-02 was measured on the old network's activations.
 
-The current 56-file song bench after item 155 (2026-10-23) reads right tempo
-78.80% BRANO / 86.55% MIXER, versus 78.54 / 86.34 on its matching baseline;
+The current 56-file song bench after items155/156 (2026-10-23) reads right tempo
+78.83% BRANO / 86.55% MIXER (item155:78.80/86.55; its own baseline78.54/86.34);
 scatter 13.99 / 12.65 ms versus 13.98 / 12.64. The corpus/aggregation differs
 from the historical 54-file figures above: compare matching runs, not dates.
 Whole sets, 40 additional files and a new 44-minute recording are included in
 `references/verification.md` / TODO155; 301 paired probes, no file loses correct
-tempo share and no per-file skipped-sixteenth increase. Hardware listening remains.
+tempo share and no per-file skipped-sixteenth increase. Item156 adds24fresh pairs
+(325total), confirms322identical/3improved, and checks long-set lost-correct
+sections as well as aggregates; see verification.md. Hardware listening remains.
 
 ## 5. Things we refuse to do
 
