@@ -276,9 +276,9 @@ Playback is an octave up (`kTriangleTune = 2`). Until then
 is told). **On** waits for the next bar line while the part sounds - a player
 joins on the one - and is immediate when nothing sounds (before START, waiting
 to come in, before the first pulse). **Off** is immediate; a knob carrying
-shaker or cembalo first **shakes out**: 16 32nds on the grid (two per pulse),
-2 dB down each (`kOutroStrokes`, `kOutroStartVelocity` 0.70, `kOutroDecay`
-0.794), shaker alternating down/up, cembalo all `cembaloUp`. Below `pick`'s
+shaker or cembalo first **shakes out**: 24 32nds on the grid (two per pulse,
+three quarters), 1.4 dB down each (`kOutroStrokes`, `kOutroStartVelocity`
+0.70, `kOutroDecay` 0.85; 16 at 2 dB was heard and asked a little longer), shaker alternating down/up, cembalo all `cembaloUp`. Below `pick`'s
 0.08 gain floor `trigger(..., level)` keeps fading. Congas and clap stop dead.
 Hear it: `VPRender --no-congas --click --cembalo-on-at 5.5 --shaker-off-at 17.5`.
 Checked by `VPTests --percussion` (knob-join, shake-out). Numbers chosen by

@@ -10,6 +10,65 @@ namespace
         const auto disc = static_cast<float> (static_cast<double> (b.getProperties().getWithDefault ("disc", 0.0)));
         return disc > 0.0f ? juce::jmin (disc, side) : side;
     }
+
+    /** A level laid flat, the one look the MIC bar and the FEEL levels share:
+        a pill track, what is filled, and a round thumb a finger can find.
+        The thin 6 x 28 marker it replaces was hard to see and harder to take
+        (2026-10-23). */
+    struct LevelBar
+    {
+        juce::Rectangle<float> track;
+        float thumbR = 10.0f;
+    };
+
+    LevelBar levelBar (juce::Rectangle<float> area, float thumbShare = 0.30f)
+    {
+        LevelBar b;
+        b.thumbR = juce::jlimit (8.0f, 22.0f, area.getHeight() * thumbShare);
+        const float th = juce::jlimit (6.0f, 18.0f, b.thumbR * 0.80f);
+        const float inset = b.thumbR + 1.0f;
+        b.track = juce::Rectangle<float> (area.getX() + inset, area.getCentreY() - th * 0.5f,
+                                          juce::jmax (4.0f, area.getWidth() - 2.0f * inset), th);
+        return b;
+    }
+
+    void paintLevelTrack (juce::Graphics& g, const LevelBar& b, float alpha)
+    {
+        const float rr = b.track.getHeight() * 0.5f;
+        g.setColour (sliderTrack().withMultipliedAlpha (alpha));
+        g.fillRoundedRectangle (b.track, rr);
+        g.setColour (text().withAlpha (0.08f * alpha));
+        g.drawRoundedRectangle (b.track.reduced (0.5f), rr, 1.0f);
+    }
+
+    /** The filled part, rounded at both ends and never shorter than its own
+        height, so a low value is still a pill and not a sliver. */
+    void paintLevelFill (juce::Graphics& g, const LevelBar& b, float amount,
+                         juce::ColourGradient grad)
+    {
+        if (amount <= 0.004f)
+            return;
+        const float w = juce::jmax (b.track.getHeight(), b.track.getWidth() * juce::jmin (1.0f, amount));
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (b.track.withWidth (w), b.track.getHeight() * 0.5f);
+    }
+
+    void paintLevelThumb (juce::Graphics& g, const LevelBar& b, float pos, juce::Colour ring, float alpha)
+    {
+        const float r = b.thumbR;
+        const juce::Point<float> c (b.track.getX() + b.track.getWidth() * juce::jlimit (0.0f, 1.0f, pos),
+                                    b.track.getCentreY());
+        // A soft shadow under it, so it stands on the track rather than in it.
+        g.setColour (juce::Colours::black.withAlpha (0.32f * alpha));
+        g.fillEllipse (c.x - r - 1.0f, c.y - r + 1.0f, 2.0f * r + 2.0f, 2.0f * r + 2.0f);
+        g.setColour (juce::Colour (0xfff5f5f7).withMultipliedAlpha (alpha));
+        g.fillEllipse (c.x - r, c.y - r, 2.0f * r, 2.0f * r);
+        const float ringW = juce::jmax (2.0f, r * 0.20f);
+        g.setColour (ring.withMultipliedAlpha (alpha));
+        g.drawEllipse (c.x - r + ringW * 0.5f, c.y - r + ringW * 0.5f, 2.0f * r - ringW, 2.0f * r - ringW, ringW);
+        const float dot = r * 0.26f;
+        g.fillEllipse (c.x - dot, c.y - dot, 2.0f * dot, 2.0f * dot);
+    }
 }
 
 MainComponent::AppLookAndFeel::AppLookAndFeel()
@@ -73,48 +132,22 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
         return;
     }
 
+    // The guide's (?): drawn at the weight of the cross beside it, not in the
+    // small grey of a label.
+    if ((bool) button.getProperties().getWithDefault ("helpIcon", false))
+    {
+        g.setColour (text());
+        g.setFont (fontUi (static_cast<float> (area.getHeight()) * 0.62f));
+        g.drawText ("?", area, juce::Justification::centred, false);
+        return;
+    }
+
     const juce::String label = button.getButtonText();
     juce::Font f = getTextButtonFont (button, button.getHeight());
     const float w = juce::GlyphArrangement::getStringWidth (f, label);
     const float room = static_cast<float> (area.getWidth());
     if (w > room && w > 1.0f)
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
-
-    if ((bool) button.getProperties().getWithDefault ("stageIcon", false))
-    {
-        // Four corners: pointing out to fill the screen with the reading,
-        // pointing in (and fuchsia) to come back to the console.
-        const auto box = button.getLocalBounds().toFloat().withSizeKeepingCentre (18.0f, 18.0f);
-        const bool on = button.getToggleState();
-        const float arm = 6.0f;
-        juce::Path p;
-        const auto corner = [&p, arm] (juce::Point<float> c, float dx, float dy)
-        {
-            p.startNewSubPath (c.x + dx * arm, c.y);
-            p.lineTo (c);
-            p.lineTo (c.x, c.y + dy * arm);
-        };
-        if (! on)
-        {
-            corner (box.getTopLeft(), 1.0f, 1.0f);
-            corner (box.getTopRight(), -1.0f, 1.0f);
-            corner (box.getBottomLeft(), 1.0f, -1.0f);
-            corner (box.getBottomRight(), -1.0f, -1.0f);
-        }
-        else
-        {
-            const auto c = box.getCentre();
-            const float k = 2.5f;
-            corner ({ c.x - k, c.y - k }, -1.0f, -1.0f);
-            corner ({ c.x + k, c.y - k }, 1.0f, -1.0f);
-            corner ({ c.x - k, c.y + k }, -1.0f, 1.0f);
-            corner ({ c.x + k, c.y + k }, 1.0f, 1.0f);
-        }
-        g.setColour (on ? fuchsia() : text());
-        g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
-                                               juce::PathStrokeType::rounded));
-        return;
-    }
 
     if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
     {
@@ -235,9 +268,8 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           const juce::Colour& backgroundColour,
                                                           bool, bool shouldDrawButtonAsDown)
 {
-    // The gear and the stage switch are bare icons: no fill, no edge, no bar.
-    if ((bool) button.getProperties().getWithDefault ("gearIcon", false)
-        || (bool) button.getProperties().getWithDefault ("stageIcon", false))
+    // The gear is a bare icon: no fill, no edge, no bar.
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
         return;
 
     if ((bool) button.getProperties().getWithDefault ("circle", false))
@@ -417,6 +449,31 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
                                                       float sliderPos, float rotaryStartAngle,
                                                       float rotaryEndAngle, juce::Slider& slider)
 {
+    // FEEL in SETUP: a level laid flat, its name and value above it.
+    if ((bool) slider.getProperties().getWithDefault ("hBar", false))
+    {
+        auto full = juce::Rectangle<int> (x, y, width, height).toFloat();
+        const float a = slider.isEnabled() ? 1.0f : 0.45f;
+        auto head = full.removeFromTop (juce::jmin (18.0f, full.getHeight() * 0.40f));
+        const auto b = levelBar (full);
+        head = head.withX (b.track.getX()).withRight (b.track.getRight());
+        g.setFont (fontUi (12.0f));
+        g.setColour (mute().withMultipliedAlpha (a));
+        g.drawText (slider.getProperties().getWithDefault ("knobName", "").toString(), head,
+                    juce::Justification::centredLeft, true);
+        g.setColour (text().withMultipliedAlpha (a));
+        g.drawText (juce::String (juce::roundToInt (slider.getValue() * 100.0)) + "%", head,
+                    juce::Justification::centredRight, false);
+        paintLevelTrack (g, b, a);
+        const auto accent = fuchsia().withMultipliedAlpha (a);
+        paintLevelFill (g, b, sliderPos,
+                        juce::ColourGradient (accent.withMultipliedBrightness (0.62f), b.track.getX(), 0.0f,
+                                              accent, b.track.getX() + b.track.getWidth() * juce::jmax (0.05f, sliderPos),
+                                              0.0f, false));
+        paintLevelThumb (g, b, sliderPos, fuchsia(), a);
+        return;
+    }
+
     auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (3.0f);
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     if (radius < 6.0f)
@@ -455,39 +512,34 @@ void MainComponent::AppLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, 
 
     if (micMeter && (bool) slider.getProperties().getWithDefault ("micBar", false))
     {
-        // Phone-width status row: the same meter laid flat, with the gain as a
-        // marker you drag sideways. Fuchsia inside the analysis band, then
-        // amber and red once it is too hot - the colours the disc used.
+        // The status row: the same meter laid flat, the gain as a round thumb
+        // you drag sideways. Fuchsia inside the analysis band, then amber and
+        // red once it is too hot - the colours the disc used. The band is a
+        // lighter stretch of the track with a tick at each end.
         const auto full = juce::Rectangle<int> (x, y, width, height).toFloat();
-        const float barH = 12.0f;
-        const auto bar = full.withSizeKeepingCentre (juce::jmax (8.0f, full.getWidth() - 10.0f), barH);
-        const float rr = barH * 0.5f;
         const float a = slider.isEnabled() ? 1.0f : 0.45f;
-        g.setColour (sliderTrack().withMultipliedAlpha (a));
-        g.fillRoundedRectangle (bar, rr);
+        // A smaller thumb on the status row, where the bar is short; the
+        // zoomed bar (96 tall) gets a big one.
+        const auto b = levelBar (full, 0.22f);
+        paintLevelTrack (g, b, a);
 
-        const float bandFrom = meterPosition (kInputLowPeak);
-        const float bandTo = meterPosition (kInputHighPeak);
-        g.setColour (fuchsia().withAlpha ((gDarkMode ? 0.22f : 0.18f) * a));
-        g.fillRect (bar.getX() + bar.getWidth() * bandFrom, bar.getY(),
-                    bar.getWidth() * (bandTo - bandFrom), bar.getHeight());
+        const float x0 = b.track.getX() + b.track.getWidth() * meterPosition (kInputLowPeak);
+        const float x1 = b.track.getX() + b.track.getWidth() * meterPosition (kInputHighPeak);
+        g.setColour (fuchsia().withAlpha ((gDarkMode ? 0.20f : 0.16f) * a));
+        g.fillRect (juce::Rectangle<float>::leftTopRightBottom (x0, b.track.getY(), x1, b.track.getBottom()));
+        g.setColour (fuchsia().withAlpha (0.70f * a));
+        for (const float tx : { x0, x1 })
+            g.fillRoundedRectangle (tx - 1.0f, b.track.getY() - 3.0f, 2.0f, b.track.getHeight() + 6.0f, 1.0f);
 
+        juce::ColourGradient grad (fuchsia(), b.track.getX(), 0.0f,
+                                   juce::Colour (0xffff3b30), b.track.getRight(), 0.0f, false);
+        grad.addColour (0.62, fuchsia());
+        grad.addColour (0.82, juce::Colour (0xffffa726));
+        grad.multiplyOpacity (a);
         if (micLook.amount > 0.012f)
-        {
-            juce::ColourGradient grad (fuchsia(), bar.getX(), 0.0f,
-                                       juce::Colour (0xffff3b30), bar.getRight(), 0.0f, false);
-            grad.addColour (0.62, fuchsia());
-            grad.addColour (0.82, juce::Colour (0xffffa726));
-            g.saveState();
-            g.reduceClipRegion (bar.withWidth (bar.getWidth() * micLook.amount).toNearestInt());
-            g.setGradientFill (grad);
-            g.fillRoundedRectangle (bar, rr);
-            g.restoreState();
-        }
+            paintLevelFill (g, b, micLook.amount, grad);
 
-        const float mx = bar.getX() + bar.getWidth() * sliderPos;
-        g.setColour (text().withMultipliedAlpha (a));
-        g.fillRoundedRectangle (mx - 3.0f, full.getCentreY() - 14.0f, 6.0f, 28.0f, 3.0f);
+        paintLevelThumb (g, b, sliderPos, fuchsia(), a);
         return;
     }
 

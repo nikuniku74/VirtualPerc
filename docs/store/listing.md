@@ -43,7 +43,7 @@ For live use, choose MIXER mode: it is the most precise. The app needs to receiv
 
 MADE FOR PLAYING LIVE
 - Finds the tempo and the first beat of the bar by itself and keeps them, without a click track.
-- One big START / STOP, a tap tempo, and a few knobs you can reach in the dark.
+- One big START / STOP, a tap tempo, and a few faders you can reach in the dark.
 - Works on a mixer feed (USB class-compliant interfaces), the microphone, or a loaded track.
 - Keeps playing when the screen locks; mixes with other apps instead of silencing them.
 

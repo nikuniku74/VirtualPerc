@@ -84,13 +84,13 @@ namespace
     constexpr double kRetriggerGuardSec = 0.020;
 
     // The shake-out when a shaker or a cembalo is switched off: 32nds on the
-    // grid for two quarters, each stroke 2 dB under the last (-30 dB by the
-    // end), so the softer, darker layers take over as it goes - the hand
-    // shaking fast and the sound walking away. Picked by reasoning, not yet
-    // heard (2026-10-23).
-    constexpr int   kOutroStrokes = 16;
+    // grid for three quarters, each stroke 1.4 dB under the last (-33 dB by
+    // the end), so the softer, darker layers take over as it goes - the hand
+    // shaking fast and the sound walking away. Two quarters at 2 dB was heard
+    // and asked "a little longer" (2026-10-23).
+    constexpr int   kOutroStrokes = 24;
     constexpr float kOutroStartVelocity = 0.70f;
-    constexpr float kOutroDecay = 0.794f;
+    constexpr float kOutroDecay = 0.85f;
 
     struct Svf
     {

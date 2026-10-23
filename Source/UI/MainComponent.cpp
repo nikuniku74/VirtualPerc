@@ -64,10 +64,6 @@ MainComponent::MainComponent()
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
     settingsButton.setButtonText ({});
     settingsButton.getProperties().set ("gearIcon", true);
-    setupBtn (stageButton, juce::Colour (0xff0a0a0c));
-    stageButton.getProperties().set ("stageIcon", true);
-    stageButton.setTitle (vpui::L ("Stage view", "Vista palco"));
-    stageButton.onClick = [this] { setStageMode (! stageMode); };
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
     setupBtn (meterButton, ink());
@@ -78,6 +74,19 @@ MainComponent::MainComponent()
     setupBtn (tapButton, ink());
     setupBtn (halveButton, ink());
     setupBtn (doubleButton, ink());
+    setupBtn (bpmEntryButton, ink());
+    bpmEntryButton.setTitle (vpui::L ("Type the tempo", "Scrivi il tempo"));
+    bpmEntryButton.onClick = [this]
+    {
+        vp::haptic (vp::Haptic::select);
+        // Typed inside the button itself: the field is see-through, the
+        // button keeps its shape and gives up its label while it is open.
+        bpmEdit.setBounds (bpmEntryButton.getBounds().reduced (8));
+        bpmEntryButton.setButtonText ({});
+        bpmEdit.setVisible (true);
+        bpmEdit.toFront (true);
+        bpmEdit.showEditor();
+    };
 
     addAndMakeVisible (styleSelect);
     addChildComponent (styleMenu);
@@ -449,25 +458,58 @@ MainComponent::MainComponent()
     setupFader (reverbSlider, reverbLabel, reverbValue, "REVERB",
                 0.0, 1.0, 0.30,
                 [this] (float v) { engine.settings().reverbAmount.store (v); });
+    // FEEL in SETUP: two levels side by side, dragged sideways like the MIC
+    // bar, instead of two knobs (2026-10-23). The drag spans the bar's own
+    // width, set in layoutSettings.
+    for (auto* s : { &intensitySlider, &reverbSlider })
+    {
+        s->getProperties().set ("hBar", true);
+        s->setSliderStyle (juce::Slider::RotaryHorizontalDrag);
+    }
 
     addAndMakeVisible (bpmEdit);
     bpmEdit.setJustificationType (juce::Justification::centred);
     bpmEdit.setColour (juce::Label::textColourId, fuchsia());
-    bpmEdit.setColour (juce::Label::backgroundColourId, ink());
+    bpmEdit.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     bpmEdit.setFont (fontUi (16.0f));
     bpmEdit.setEditable (true, true, false);
     bpmEdit.setText ("120", juce::dontSendNotification);
+    // Out of range is brought to the nearest end of it (50-200, what the
+    // engine plays), not ignored: a typed 220 means "as fast as it goes".
     bpmEdit.onTextChange = [this]
     {
-        const float v = bpmEdit.getText().getFloatValue();
-        if (v >= 50.0f && v <= 200.0f)
+        const float v = bpmEdit.getText().replaceCharacter (',', '.').getFloatValue();
+        if (v > 0.0f)
         {
-            engine.setFixedBpm (v);
+            engine.setFixedBpm (juce::jlimit (50.0f, 200.0f, v));
             refreshTempoModeButtons();
             savePrefs (false);
         }
     };
-    bpmEdit.onEditorHide = [this] { savePrefs(); };
+    bpmEdit.onEditorShow = [this]
+    {
+        if (auto* ed = bpmEdit.getCurrentTextEditor())
+        {
+            ed->setInputRestrictions (5, "0123456789.,");
+            ed->setKeyboardType (juce::TextEditor::decimalKeyboard);
+            ed->setJustification (juce::Justification::centred);
+            ed->setFont (fontUi (20.0f));
+            ed->setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+            ed->setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            ed->setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+            ed->setColour (juce::TextEditor::textColourId, text());
+            ed->setColour (juce::TextEditor::highlightColourId, fuchsia().withAlpha (0.45f));
+            ed->setColour (juce::CaretComponent::caretColourId, fuchsia());
+            ed->applyColourToAllText (text());
+            ed->selectAll();
+        }
+    };
+    bpmEdit.onEditorHide = [this]
+    {
+        bpmEdit.setVisible (false);
+        refreshTempoModeButtons();
+        savePrefs();
+    };
 
     // The settings page and everything on it. Added after the console so it is
     // the last child: a full-bounds opaque child on top is what makes the page
@@ -505,11 +547,13 @@ MainComponent::MainComponent()
     // The heading does not scroll: close and PRO stay where the thumb is.
     settingsOverlay.addAndMakeVisible (settingsClose);
     settingsOverlay.addAndMakeVisible (accountButton);
-    setupPageBtn (infoButton, ink());
-    infoButton.getProperties().set ("circle", true);
-    infoButton.getProperties().set ("disc", 24);
-    infoButton.setTitle (vpui::L ("Info: input modes", "Info: modalità d'ingresso"));
-    infoButton.onClick = [this] { showInputInfo (false); };
+    setupPageBtn (guideButton, ink());
+    guideButton.getProperties().set ("circle", true);
+    guideButton.getProperties().set ("disc", 26);
+    guideButton.getProperties().set ("helpIcon", true);
+    guideButton.setTitle (vpui::L ("Guide to the settings", "Guida alle impostazioni"));
+    guideButton.onClick = [this] { showGuide(); };
+    settingsOverlay.addAndMakeVisible (guideButton);
     // A child of the whole page, not of the settings: on the first launch it
     // comes up over the console. The splash is added after it and stays above.
     addChildComponent (inputInfo);
@@ -821,7 +865,7 @@ void MainComponent::refreshThemeColours()
         &sub16, &naturalButton, &swingButton, &meterButton,
         &dynamicsButton, &halveButton, &doubleButton,
         &barButton, &tapButton,
-        &settingsButton, &settingsClose, &accountButton, &infoButton, &procButton,
+        &settingsButton, &settingsClose, &accountButton, &guideButton, &procButton,
         &loopModeButton,
         &clockAuto, &clock44, &clock48, &clock88, &clock96,
         &bufAuto, &buf64, &buf128, &buf256, &buf512
@@ -860,7 +904,7 @@ void MainComponent::refreshThemeColours()
     inputGainLabel.setColour (juce::Label::textColourId, mute());
     inputGainValue.setColour (juce::Label::textColourId, fuchsia());
     bpmEdit.setColour (juce::Label::textColourId, fuchsia());
-    bpmEdit.setColour (juce::Label::backgroundColourId, ink());
+    bpmEdit.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     themeButton.setButtonText (darkMode ? "DARK" : "LIGHT");
     themeButton.setToggleState (! darkMode, juce::dontSendNotification);
 
@@ -1116,12 +1160,12 @@ void MainComponent::refreshTempoModeButtons()
     const bool showNudge = ! follow && ! isCompact();
     bpmNudgeDown.setVisible (showNudge);
     bpmNudgeUp.setVisible (showNudge);
-    bpmEdit.setVisible (showNudge);
-    if (showNudge && ! bpmEdit.isBeingEdited())
+    if (! bpmEdit.isBeingEdited())
     {
-        const float bpm = snap.bpm > 50.0f ? snap.bpm
-                                           : engine.settings().userBpm.load();
+        const float bpm = engine.settings().userBpm.load() > 50.0f ? engine.settings().userBpm.load()
+                                                                   : (snap.bpm > 50.0f ? snap.bpm : 120.0f);
         bpmEdit.setText (juce::String (bpm, 1), juce::dontSendNotification);
+        bpmEntryButton.setButtonText (juce::String (bpm, 1) + " BPM");
     }
 }
 
@@ -1934,28 +1978,6 @@ void MainComponent::refreshInternalTrackButtons()
     paintChoice (trackPlayButton, trackTransport.isPlaying() && internalTrackSelected());
 }
 
-void MainComponent::setStageMode (bool on)
-{
-    stageMode = on;
-    stageButton.setToggleState (on, juce::dontSendNotification);
-    vp::haptic (vp::Haptic::select);
-    savePrefs();
-    resized();
-    repaint();
-}
-
-void MainComponent::setConsoleShown (bool shown)
-{
-    juce::Component* console[] = { &styleSelect, &sub4, &sub8, &sub16, &dynamicsButton, &naturalButton,
-                                   &swingButton, &meterButton, &shakerVolSlider, &congaVolSlider,
-                                   &cembaloVolSlider, &clapVolSlider, &absorbVolSlider, &hornVolSlider,
-                                   &uplifterVolSlider, &riserVolSlider };
-    for (auto* c : console)
-        c->setVisible (shown);
-    if (! shown)
-        subdivisionTrack = {};
-}
-
 void MainComponent::setSettingsOpen (bool open)
 {
     settingsButton.setToggleState (open, juce::dontSendNotification);
@@ -2006,8 +2028,6 @@ void MainComponent::loadPrefs()
     bufferChoice = (buf == 64 || buf == 128 || buf == 256 || buf == 512) ? buf : 0;
 
     inputProcessing = prefs->getBoolValue ("inputProcessing", false);
-    stageMode = prefs->getBoolValue ("stageMode", false);
-    stageButton.setToggleState (stageMode, juce::dontSendNotification);
 
     // Clamped low deliberately: a remembered channel from a rig that is not
     // plugged in today would open inputs that do not exist.
@@ -2274,7 +2294,6 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("clockHz", clockHz);
     prefs->setValue ("bufferFrames", bufferChoice);
     prefs->setValue ("inputProcessing", inputProcessing);
-    prefs->setValue ("stageMode", stageMode);
     prefs->setValue ("followSource", engine.settings().followSource.load());
     prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
     prefs->setValue ("analysisChannel", engine.settings().analysisChannel.load());
@@ -3290,6 +3309,14 @@ void MainComponent::showInputInfo (bool firstRun)
 {
     inputInfo.setContent (vpui::L ("INPUT MODES", "MODALIT\xc3\x80 D'INGRESSO"), inputNote());
     inputInfo.setConfirmText (firstRun ? vpui::L ("GOT IT", "HO CAPITO") : juce::String());
+    inputInfo.setBounds (getLocalBounds());
+    inputInfo.open();
+}
+
+void MainComponent::showGuide()
+{
+    inputInfo.setContent (vpui::L ("SETTINGS GUIDE", "GUIDA ALLE IMPOSTAZIONI"), guideText());
+    inputInfo.setConfirmText ({});
     inputInfo.setBounds (getLocalBounds());
     inputInfo.open();
 }

@@ -19,7 +19,8 @@
     What App Review looks at is all here and deliberately not hidden: the price
     and period next to the button, the trial length, the auto-renew and
     cancellation text, Restore, and links to the Terms and the Privacy Policy. */
-class PaywallOverlay final : public juce::Component
+class PaywallOverlay final : public juce::Component,
+                             private juce::Timer
 {
 public:
     PaywallOverlay();
@@ -60,6 +61,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override;
 
     /** Replace before shipping: both are shown on the page and reviewed. The
         Terms are Apple's standard EULA, which is what an app with no EULA of
@@ -91,7 +93,7 @@ private:
 
     struct Geometry
     {
-        juce::Rectangle<int> brand, headline, sub, statusCard, price, legal, noticeRow, links;
+        juce::Rectangle<int> brand, logo, dots, headline, sub, statusCard, price, legal, noticeRow, links;
         juce::Rectangle<int> bullets[3], planRect[3], cta;
         int bulletCount = 0;
         float scale = 1.0f;
@@ -112,6 +114,10 @@ private:
     juce::String dateText (double unixSeconds) const;
     juce::String planName (const juce::String& id) const;
     juce::Font headlineFont() const;
+    /** The four quarters turning over under the headline, as on the stage. */
+    void timerCallback() override;
+    void paintDots (juce::Graphics&) const;
+    juce::Image logo;
     void refreshControls();
     void updateNoticeText();
     void layoutAll();

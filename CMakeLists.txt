@@ -540,7 +540,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
         ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
     target_compile_definitions (VPPaywall PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 VP_HAS_LOOP_BANK=0)
-    target_link_libraries (VPPaywall PRIVATE
+    target_link_libraries (VPPaywall PRIVATE VpBrandData
         juce::juce_audio_utils
         juce::juce_gui_extra
         juce::juce_dsp

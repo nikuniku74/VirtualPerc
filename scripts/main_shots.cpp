@@ -178,7 +178,10 @@ namespace
 /** Steps through the shots on the message thread, a tick every 50 ms. */
 struct VPShotsAccess final : juce::Timer
 {
-    struct Shot { const char* name; int w, h; bool stage; };
+    /** What a shot shows: the page playing, or SETUP (its top, its end) or
+        the guide over it, with the song still coming in. */
+    enum Mode { playing, settings, settingsEnd, guide, fixedTempo };
+    struct Shot { const char* name; int w, h; Mode mode; };
 
     VPShotsAccess (MainComponent& m, const juce::File& d, std::function<void (int)> done)
         : mc (m), dir (d), finished (std::move (done))
@@ -197,8 +200,6 @@ struct VPShotsAccess final : juce::Timer
         if (index >= static_cast<int> (std::size (shots)))
         {
             stopTimer();
-            if (mc.stageMode)
-                mc.setStageMode (false);
             finished (0);
             return;
         }
@@ -208,13 +209,61 @@ struct VPShotsAccess final : juce::Timer
             if (gDevice.load() == nullptr || elapsed < 1.0)
                 return;
             mc.setSize (s.w, s.h);
-            if (mc.stageMode != s.stage)
-                mc.setStageMode (s.stage);
             mc.resized();
+            elapsed = 0.0;
+            if (s.mode == fixedTempo)
+            {
+                // FIXED: TAP and the tempo to type; then the field open.
+                mc.applyTempoFollow (false);
+                mc.startPressed();
+                entryShot = false;
+                phase = 4;
+                return;
+            }
+            if (s.mode != playing)
+            {
+                mc.setSettingsOpen (true);
+                if (s.mode == settingsEnd)
+                    mc.settingsOverlay.viewport.setViewPosition (0, 100000);
+                if (s.mode == guide)
+                    mc.showGuide();
+                phase = 3;
+                return;
+            }
             mc.startPressed();
             phase = 1;
-            elapsed = 0.0;
             entryShot = false;
+            return;
+        }
+        if (phase == 4)
+        {
+            if (elapsed >= 4.0)
+            {
+                shoot (s.name);
+                // Shot at once: offscreen the field has no window to keep
+                // its focus and closes again on the next message.
+                mc.bpmEntryButton.onClick();
+                save (mc.createComponentSnapshot (mc.getLocalBounds(), true, 2.0f),
+                      dir.getChildFile (juce::String (s.name) + "-scrivi.png"));
+                mc.bpmEdit.hideEditor (true);
+                mc.stopPressed();
+                mc.applyTempoFollow (true);
+                entryShot = false;
+                phase = 2;
+                elapsed = 0.0;
+            }
+            return;
+        }
+        if (phase == 3)
+        {
+            if (elapsed >= 1.0)
+            {
+                shoot (s.name);
+                mc.inputInfo.close();
+                mc.setSettingsOpen (false);
+                phase = 2;
+                elapsed = 0.0;
+            }
             return;
         }
         if (phase == 1)
@@ -252,10 +301,16 @@ struct VPShotsAccess final : juce::Timer
     juce::File dir;
     std::function<void (int)> finished;
     static constexpr Shot shots[] = {
-        { "iphone", 393, 852, false },
-        { "iphone-palco", 393, 852, true },
-        { "ipad", 834, 1194, false },
-        { "ipad-orizzontale-palco", 1194, 834, true },
+        { "iphone", 393, 852, playing },
+        { "iphone-impostazioni", 393, 852, settings },
+        { "iphone-impostazioni-fine", 393, 852, settingsEnd },
+        { "iphone-guida", 393, 852, guide },
+        { "iphone-fisso", 393, 852, fixedTempo },
+        { "ipad", 834, 1194, playing },
+        { "ipad-impostazioni", 834, 1194, settings },
+        { "ipad-guida", 834, 1194, guide },
+        { "ipad-fisso", 834, 1194, fixedTempo },
+        { "ipad-orizzontale", 1194, 834, playing },
     };
     int index = 0, phase = 0;
     double elapsed = 0.0;

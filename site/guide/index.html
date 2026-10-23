@@ -6,10 +6,10 @@
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0f0e12">
 <title>Guide - Virtual Percussionist</title>
-<meta name="description" content="How to use Virtual Percussionist: input modes, MIXER for live, levels, clock and buffer.">
+<meta name="description" content="How to use Virtual Percussionist: every setting, MIXER for live, tempo, input, levels, clock and buffer.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Guide - Virtual Percussionist">
-<meta property="og:description" content="How to use Virtual Percussionist: input modes, MIXER for live, levels, clock and buffer.">
+<meta property="og:description" content="How to use Virtual Percussionist: every setting, MIXER for live, tempo, input, levels, clock and buffer.">
 <meta property="og:image" content="https://virtualpercussionist.it/assets/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" type="image/png" href="../favicon.png">
@@ -31,41 +31,73 @@
 <main>
 <article>
 <div class="en">
-  <h1>Guide: input modes</h1>
+  <h1>Guide to the settings</h1>
+  <p>The same guide as the <strong>?</strong> at the top of the settings page in the app.</p>
   <div class="card">
-    <strong>For live use, choose MIXER. It is the most precise mode.</strong> The app has to receive the signal and send the percussion out at the same time, so connect an audio interface or mixer that gives it both an input and an output: it listens to the tempo of the band and plays the percussion in real time.
+    <strong>For live use, choose MIXER. It is the most precise mode.</strong> The app has to receive the band's signal and send the percussion out at the same time: connect an audio interface or a mixer that gives it an input and an output together.
   </div>
-  <h2>MIXER and IPAD</h2>
-  <p>MIXER is for a close microphone or a send from the desk. IPAD is for the microphone that hears the room; there the app removes shaker and congas from what it hears, so it does not follow itself.</p>
-  <h2>TRACK</h2>
-  <p>TRACK reads a file and sends it to both the analysis and the output, AirPods included. LOAD chooses the file; drag the waveform (below, or on the stage) to seek. PLAY pauses. With nothing loaded, PLAY plays the built-in demo song.</p>
-  <h2>MIC level</h2>
-  <p>MIC sets how much the analysis hears: raise it until the knob ring enters the fuchsia band. Below it, the analysis gets the tempo wrong; above it, amber and then red, and nothing more is gained.</p>
-  <h2>PROC. OFF</h2>
-  <p>PROC. OFF removes iOS automatic gain and echo cancelling: that is what the analysis wants.</p>
-  <h2>KICK (NO)</h2>
-  <p>The button starts on <strong>NO KICK</strong>, and that is right for almost everyone: leave it there. Set a channel only if your mixer can send the bass drum <em>alone</em> on its own input: tap the button until it shows <strong>KICK 2</strong>, <strong>KICK 3</strong>&hellip; the number of the input that carries it (input 1 is always the full mix, so the kick is never there). The app then uses the kick to date the beat more precisely. It lights up only when the kick really lands on the beat; a channel that is not a kick is ignored, so a wrong choice does no harm, but it adds nothing either. Tap past the last input to go back to NO KICK, which switches the whole kick path off.</p>
-  <h2>Clock and buffer</h2>
-  <p>AUTO follows the interface's clock and does not touch it: with the mixer at 48 kHz the app opens at 48 kHz. A fixed value is requested from the interface, and changing it while playing makes it restart. A shorter buffer means less delay and more risk of dropouts; AUTO takes whatever the interface is already giving.</p>
+  <h2>At the top</h2>
+  <p><strong>?</strong> opens the guide. <strong>PRO</strong> opens the full version: purchase, restore, terms and privacy. <strong>X</strong> closes the settings.</p>
+  <h2>Tempo</h2>
+  <p><strong>FOLLOW</strong>: the app listens to the band and follows its tempo, also when it slows down or speeds up. The normal choice.</p>
+  <p><strong>FIXED</strong>: the tempo stops where it is and no longer follows the band. Beside TAP, in place of &divide;2 and &times;2, the tempo appears: touch it and type an exact one (50 to 200 BPM). On the iPad the &minus; and + keys move it by 1 BPM.</p>
+  <p><strong>START NOW</strong>: on, after START the percussion comes in as soon as the app has found the tempo. Off, it waits until it is sure a band is playing and the tempo is right, so it does not play into an empty room or come in on an intro at the wrong tempo. If the music is already playing when you press START, it comes in at once anyway.</p>
+  <p><strong>PAUSE IF OFF</strong>: if the app loses the tempo (red light for 3 seconds) the percussion stops, and comes back by itself when the tempo is right again. Not in FIXED.</p>
+  <h2>Clock</h2>
+  <p>The sample rate. <strong>AUTO</strong> uses the interface's and does not change it: almost always the right choice. <strong>44.1 / 48 / 88.2 / 96</strong> ask the interface for that rate; changing it while playing restarts the audio.</p>
+  <h2>Buffer</h2>
+  <p>How much audio the app works on at a time. Shorter means less delay but more risk of clicks and gaps in the sound. <strong>AUTO</strong> takes what the interface already gives. If you hear clicks, choose a higher value.</p>
+  <h2>Input</h2>
+  <p>The first button chooses where the app listens; tap it to go to the next one.</p>
+  <p><strong>MIXER</strong>: a send from the desk or a close microphone, through an audio interface. The most precise, the one for live.</p>
+  <p><strong>IPAD</strong>: the iPad's microphone hears the room, and the app takes its own percussion out of what it hears. If I HEAR MYSELF appears, the percussion reaches the microphone as loud as the song: turn it down or move the iPad away.</p>
+  <p><strong>TRACK</strong>: the app plays a file and listens to it. <strong>LOAD</strong> chooses the file, <strong>PLAY</strong> pauses; drag the waveform to jump to a point. With nothing loaded, PLAY plays the built-in demo song.</p>
+  <p><strong>PROC.</strong>: iOS's automatic sound processing. Leave it OFF: the analysis works best on the signal as it is.</p>
+  <p><strong>KICK</strong>: the button starts on NO KICK, and that is right for almost everyone. Set a channel only if your mixer can send the bass drum <em>alone</em> on its own input: tap until it shows KICK 2, KICK 3&hellip; the input that carries it (input 1 is always the full mix). The app then uses the kick to be even more precise on the beat; it lights up when the hits land in time. A channel that is not a kick is ignored, so a wrong choice does no harm.</p>
+  <p><strong>IN MIX / IN 1, IN 2&hellip;</strong>: in MIXER, which input the tempo is read from. MIX averages them all; choose one if the send has its own input, so voice and guitars stay out of the analysis.</p>
+  <p><strong>MIC</strong> (the bar at the top of the main page): how loud the app hears the signal. Drag the thumb until the level sits in the fuchsia band between the two ticks. Below it the analysis gets the tempo wrong; above it the colour turns amber, then red.</p>
+  <h2>Feel</h2>
+  <p><strong>ENERGY</strong>: how much the part fills in with light strokes and small ornaments. Low is cleaner, high is livelier.</p>
+  <p><strong>REVERB</strong>: how much room around the percussion.</p>
+  <h2>Percussion / tests</h2>
+  <p><strong>DARK / LIGHT</strong>: dark or light theme.</p>
+  <p><strong>CLICK TEST</strong>: sends a 120 BPM click into the analysis, to try the app without a band. Press again to stop it.</p>
+  <p><strong>LATENCY</strong>: measures the delay of your rig. With the output coming back to the input, press it: the app sends a short sound, measures how long it takes to come back (RT &hellip; ms) and uses that number to play in time. Press again to clear the measurement.</p>
   <p>More questions? See <a href="../support/">Support</a>.</p>
 </div>
 <div class="it">
-  <h1>Guida: modalità d'ingresso</h1>
+  <h1>Guida alle impostazioni</h1>
+  <p>La stessa guida del <strong>?</strong> in alto nella pagina impostazioni dell'app.</p>
   <div class="card">
-    <strong>Per il live scegli MIXER. È la modalità più precisa.</strong> L'app deve ricevere il segnale e inviare il suono delle percussioni nello stesso momento, quindi collega un'interfaccia audio o un mixer che le dia sia un ingresso sia un'uscita: ascolta il tempo della band e manda le percussioni in tempo reale.
+    <strong>Per il live scegli MIXER. &Egrave; la modalit&agrave; pi&ugrave; precisa.</strong> L'app deve ricevere il segnale della band e mandare fuori le percussioni nello stesso momento: collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita insieme.
   </div>
-  <h2>MIXER e IPAD</h2>
-  <p>MIXER è per un microfono vicino o una mandata del banco. IPAD è per il microfono che sente la stanza; qui l'app toglie shaker e conga da quello che ascolta, per non seguire se stessa.</p>
-  <h2>BRANO</h2>
-  <p>BRANO legge un file e lo manda sia all'analisi sia all'uscita, anche nelle AirPods. CARICA sceglie il file; l'onda (sotto, o sul palco) si trascina per saltare. PLAY mette in pausa. Con niente caricato, PLAY suona il brano di prova incluso.</p>
-  <h2>Livello MIC</h2>
-  <p>MIC regola quanto sente l'analisi: alzalo finché l'anello del knob entra nella fascia fucsia. Sotto, l'analisi sbaglia il tempo; sopra, ambra e poi rosso, e non guadagna più niente.</p>
-  <h2>ELAB. OFF</h2>
-  <p>ELAB. OFF toglie guadagno automatico ed eco di iOS: è quello che vuole l'analisi.</p>
-  <h2>CASSA (NO)</h2>
-  <p>Il pulsante parte su <strong>CASSA NO</strong>, ed è la scelta giusta per quasi tutti: lascialo così. Imposta un canale solo se il tuo mixer può mandare la cassa <em>da sola</em> su un ingresso dedicato: tocca il pulsante finché compare <strong>CASSA 2</strong>, <strong>CASSA 3</strong>&hellip; con il numero dell'ingresso che la porta (l'ingresso 1 è sempre il mix completo, quindi la cassa non è mai lì). L'app usa allora la cassa per datare il battito con più precisione. Si accende solo quando la cassa cade davvero sul battito; un canale che non è una cassa viene ignorato, quindi una scelta sbagliata non fa danni, ma non aggiunge nulla. Oltre l'ultimo ingresso si torna a CASSA NO, che spegne tutto il percorso della cassa.</p>
-  <h2>Clock e buffer</h2>
-  <p>AUTO segue il clock dell'interfaccia e non lo tocca: con il mixer a 48 kHz l'app si apre a 48 kHz. Un valore fisso lo chiede all'interfaccia, e cambiarlo mentre suona la fa ripartire. Un buffer più corto significa meno ritardo e più rischio di buchi; AUTO prende quello che l'interfaccia sta già dando.</p>
+  <h2>In alto</h2>
+  <p><strong>?</strong> apre la guida. <strong>PRO</strong> apre la versione completa: acquisto, ripristino, termini e privacy. <strong>X</strong> chiude le impostazioni.</p>
+  <h2>Tempo</h2>
+  <p><strong>SEGUI</strong>: l'app ascolta la band e ne segue il tempo, anche quando rallenta o accelera. &Egrave; la scelta normale.</p>
+  <p><strong>FISSO</strong>: il tempo si ferma dov'&egrave; e non segue pi&ugrave; la band. Accanto a TAP, al posto di &divide;2 e &times;2, compare il tempo: toccalo e scrivi quello esatto (da 50 a 200 BPM). Sull'iPad i tasti &minus; e + lo spostano di 1 BPM.</p>
+  <p><strong>START SUBITO</strong>: acceso, dopo START le percussioni partono appena l'app ha trovato il tempo. Spento, aspettano di essere sicure che una band stia suonando e che il tempo sia giusto: cos&igrave; non suonano in una stanza vuota e non entrano su un'intro con il tempo sbagliato. Se la musica suona gi&agrave; quando premi START, entrano comunque subito.</p>
+  <p><strong>PAUSA SE FUORI</strong>: se l'app perde il tempo (spia rossa per 3 secondi) le percussioni si fermano, e rientrano da sole quando il tempo torna giusto. Non vale in FISSO.</p>
+  <h2>Clock</h2>
+  <p>La frequenza di campionamento. <strong>AUTO</strong> usa quella dell'interfaccia e non la cambia: &egrave; quasi sempre la scelta giusta. <strong>44.1 / 48 / 88.2 / 96</strong> la chiedono all'interfaccia; cambiarla mentre suona fa ripartire l'audio.</p>
+  <h2>Buffer</h2>
+  <p>Quanto audio l'app lavora alla volta. Pi&ugrave; corto vuol dire meno ritardo, ma pi&ugrave; rischio di scatti e buchi nel suono. <strong>AUTO</strong> prende quello che l'interfaccia d&agrave; gi&agrave;. Se senti scatti, scegli un valore pi&ugrave; alto.</p>
+  <h2>Ingresso</h2>
+  <p>Il primo pulsante sceglie da dove ascolta l'app; toccalo per passare al successivo.</p>
+  <p><strong>MIXER</strong>: una mandata dal banco o un microfono vicino, attraverso un'interfaccia audio. La pi&ugrave; precisa, quella per il live.</p>
+  <p><strong>IPAD</strong>: il microfono dell'iPad ascolta la stanza, e l'app toglie le proprie percussioni da quello che sente. Se compare SENTO ME STESSO, le percussioni arrivano al microfono forti come il brano: abbassale o allontana l'iPad.</p>
+  <p><strong>BRANO</strong>: l'app suona un file e lo ascolta. <strong>CARICA</strong> sceglie il file, <strong>PLAY</strong> mette in pausa; trascina l'onda per saltare in un punto. Con niente caricato, PLAY suona il brano di prova incluso.</p>
+  <p><strong>ELAB.</strong>: il trattamento automatico del suono di iOS. Lascialo su OFF: l'analisi lavora meglio sul segnale cos&igrave; com'&egrave;.</p>
+  <p><strong>CASSA</strong>: il pulsante parte su CASSA NO, ed &egrave; la scelta giusta per quasi tutti. Imposta un canale solo se il tuo mixer pu&ograve; mandare la cassa <em>da sola</em> su un ingresso dedicato: tocca finch&eacute; compare CASSA 2, CASSA 3&hellip; l'ingresso che la porta (l'ingresso 1 &egrave; sempre il mix completo). L'app usa allora la cassa per essere ancora pi&ugrave; precisa sul colpo; si accende quando i colpi cadono a tempo. Un canale che non &egrave; una cassa viene ignorato, quindi una scelta sbagliata non fa danni.</p>
+  <p><strong>IN MIX / IN 1, IN 2&hellip;</strong>: in MIXER, da quale ingresso leggere il tempo. MIX fa la media di tutti; scegline uno se la mandata ha un ingresso suo, cos&igrave; voce e chitarre restano fuori dall'analisi.</p>
+  <p><strong>MIC</strong> (la barra in alto nella pagina principale): quanto forte l'app sente il segnale. Trascina il pallino finch&eacute; il livello sta nella fascia fucsia fra le due tacche. Sotto, l'analisi sbaglia il tempo; sopra, il colore diventa ambra e poi rosso.</p>
+  <h2>Feel</h2>
+  <p><strong>ENERGIA</strong>: quanto la parte si arricchisce di colpi leggeri e piccoli abbellimenti. Bassa &egrave; pi&ugrave; pulita, alta pi&ugrave; viva.</p>
+  <p><strong>REVERB</strong>: quanto ambiente intorno alle percussioni.</p>
+  <h2>Percussioni / prove</h2>
+  <p><strong>DARK / LIGHT</strong>: tema scuro o chiaro.</p>
+  <p><strong>CLICK TEST</strong>: manda all'analisi un clic a 120 BPM, per provare l'app senza band. Ripremi per spegnerlo.</p>
+  <p><strong>LATENZA</strong>: misura il ritardo del tuo impianto. Con l'uscita che torna nell'ingresso, premila: l'app manda un breve suono, misura quanto ci mette a tornare (RT &hellip; ms) e usa quel numero per suonare a tempo. Ripremi per cancellare la misura.</p>
   <p>Altre domande? Vedi <a href="../support/">Assistenza</a>.</p>
 </div>
 </article>

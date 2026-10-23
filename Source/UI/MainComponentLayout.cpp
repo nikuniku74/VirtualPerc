@@ -75,8 +75,7 @@ bool MainComponent::isLandscape() const
 
 bool MainComponent::isCompact() const noexcept
 {
-    // The stage view is the one-column page at any size.
-    return compactLayout || stageMode;
+    return compactLayout;
 }
 
 void MainComponent::updateCompactLayout() noexcept
@@ -150,7 +149,8 @@ void MainComponent::applyCompactVisibility()
     const bool showNudge = ! compact && ! engine.settings().tempoFollow.load();
     bpmNudgeDown.setVisible (showNudge);
     bpmNudgeUp.setVisible (showNudge);
-    bpmEdit.setVisible (showNudge);
+    if (! bpmEdit.isBeingEdited())
+        bpmEdit.setVisible (false);
 
     if (compact && settingsOverlay.isVisible())
         setSettingsOpen (false);
@@ -250,12 +250,6 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     auto r = compactPadded (getLocalBounds());
     r.removeFromBottom (juce::jmin (52, juce::jmax (0, r.getHeight() / 8)));
     CompactGeom g;
-    if (stageMode)
-    {
-        // Everything above START is the reading.
-        g.tempo = r;
-        return g;
-    }
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
     constexpr int kChrome = 12;      // compact card padding (no title strip)
@@ -314,28 +308,6 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         return juce::jmax (1, juce::roundToInt (static_cast<float> (v) * fit));
     };
 
-    // Stage view: the column is the screen and grows with it. The number grows
-    // until its width stops it (five figures take ~2.7 times their height),
-    // the quarters and the sixteenths take most of the rest, and the controls
-    // keep the size a thumb wants; what is left goes above and below the card.
-    int bpmGrow = 0, beatsGrow = 0, grooveGrow = 0, gapGrow = 0, innerGrow = 0;
-    if (stageMode && area.getHeight() > kCompactTempoNatural)
-    {
-        const int extra = area.getHeight() - kCompactTempoNatural;
-        bpmGrow = juce::jlimit (0, extra * 55 / 100,
-                                juce::roundToInt (static_cast<float> (area.getWidth()) * 0.36f) - kCompactBpmH);
-        const int rest = extra - bpmGrow;
-        beatsGrow = rest * 45 / 100;
-        grooveGrow = juce::jmin (rest * 25 / 100, 72 - kCompactGrooveH);
-        // What is still left stays inside the card, above and below the
-        // number, more than outside it: a small card floating in a tall
-        // screen read as empty. Not into the number itself, which is already
-        // as wide as the card lets it be.
-        const int left = rest - beatsGrow - grooveGrow;
-        innerGrow = left * 70 / 100;
-        gapGrow = left - innerGrow;
-    }
-
     StageRows s;
     // FOLLOWING / IN ASCOLTO. SEGUI/FISSO stay off this row: a Split View
     // column cannot spend that width, and the colour already carries the mode.
@@ -345,33 +317,33 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     {
         const int side = juce::jmin (s.pill.getHeight(), 44);
         s.settings = s.pill.removeFromRight (side);
-        s.stageToggle = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
         // The level bar takes the right-hand part of what is left, as long as
-        // the state keeps ~90 pt for its dot and word.
-        const int meterW = clampW (72, 130, s.pill.getWidth() * 3 / 10);
+        // the state keeps ~90 pt for its dot and word. A little wider since
+        // the stage switch left this row (2026-10-23): at 93 pt the round
+        // thumb, the level and the fuchsia band were on top of each other.
+        const int meterW = clampW (100, 160, s.pill.getWidth() * 38 / 100);
         if (s.pill.getWidth() > meterW + 90)
         {
             s.meter = s.pill.removeFromRight (meterW);
             s.pill.removeFromRight (8);
         }
     }
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA) + gapGrow / 2));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
     // The phase orb rides on top of the number, inside the card.
     s.lane = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLaneH)));
-    area.removeFromTop (takeAtMost (area.getHeight(), innerGrow / 2));
-    const int bpmH = px (kCompactBpmH) + bpmGrow;
+    const int bpmH = px (kCompactBpmH);
     s.bpm = area.removeFromTop (takeAtMost (area.getHeight(), bpmH));
     // The number has the whole width now: the octave buttons moved down next
     // to TAP, so "128.4" can be as large as the column lets it.
     s.bpmNumber = s.bpm.reduced (4, 0);
     s.bpmLabel = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLabelH)));
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB) + innerGrow - innerGrow / 2));
-    s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH) + beatsGrow));
-    s.groove = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGrooveH) + grooveGrow));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
+    s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
+    s.groove = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGrooveH)));
     s.tempoLine = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactNoteH)));
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC) + gapGrow - gapGrow / 2));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC)));
     // ÷2 | TAP | ×2. Declaring the one is still a tap on the number.
     {
         auto row = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)));
@@ -449,7 +421,6 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     {
         const int side = juce::jmin (s.pill.getHeight(), 44);
         s.settings = s.pill.removeFromRight (side);
-        s.stageToggle = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
         const int meterW = clampW (90, 180, s.pill.getWidth() * 3 / 10);
@@ -633,7 +604,6 @@ void MainComponent::resized()
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.
     settingsButton.toFront (false);
-    stageButton.toFront (false);
     // ...but an open SETUP page stays above START, the MIC bar and SETUP
     // itself; the waveform then goes on top, inside the page or on the stage.
     if (settingsOverlay.isVisible())
@@ -704,13 +674,9 @@ void MainComponent::layoutFull()
         r.removeFromTop (stage.getHeight() + 14);
 
     const auto rows = stageRows (stage);
-    halveButton.setBounds (rows.octaveDown);   // the whole cell, 56 pt tall
-    doubleButton.setBounds (rows.octaveUp);
+    placeTapRow (rows.octaveDown, rows.tap, rows.octaveUp);   // whole cells, 56 pt tall
     settingsButton.setBounds (rows.settings);
-    stageButton.setBounds (rows.stageToggle);
-    setConsoleShown (true);
     barButton.setBounds ({});
-    tapButton.setBounds (rows.tap);
     tapStrip = {};
     tapZone.setBounds (juce::Rectangle<int>::leftTopRightBottom (
         stage.getX(), rows.bpm.getY(), stage.getRight(), rows.beats.getBottom()));
@@ -722,13 +688,13 @@ void MainComponent::layoutFull()
         if (! follow && ! rows.tempoNudge.isEmpty())
         {
             auto nudge = rows.tempoNudge;
+            // The value itself is the button beside TAP now; − and + stay.
             const int nudgeW = juce::jmax (36, nudge.getHeight());
-            const int editW = 78;
-            const int total = nudgeW * 2 + editW + 8;
+            const int total = nudgeW * 2 + 8;
             auto block = nudge.withSizeKeepingCentre (juce::jmin (nudge.getWidth(), total),
                                                       nudge.getHeight());
             bpmNudgeDown.setBounds (block.removeFromLeft (nudgeW).reduced (2));
-            bpmEdit.setBounds (block.removeFromLeft (editW).reduced (2, 4));
+            block.removeFromLeft (8);
             bpmNudgeUp.setBounds (block.removeFromLeft (nudgeW).reduced (2));
         }
     }
@@ -736,21 +702,38 @@ void MainComponent::layoutFull()
     layoutConsole (r);
 }
 
+void MainComponent::placeTapRow (juce::Rectangle<int> octaveDown, juce::Rectangle<int> tap,
+                                 juce::Rectangle<int> octaveUp)
+{
+    // FIXED has no octave to choose: the tempo is the listener's. TAP and
+    // the tempo itself, half the row each.
+    const bool fixed = ! engine.settings().tempoFollow.load();
+    halveButton.setVisible (! fixed);
+    doubleButton.setVisible (! fixed);
+    bpmEntryButton.setVisible (fixed);
+    if (! fixed)
+    {
+        halveButton.setBounds (octaveDown);
+        doubleButton.setBounds (octaveUp);
+        tapButton.setBounds (tap);
+        bpmEntryButton.setBounds ({});
+        return;
+    }
+    auto row = octaveDown.getUnion (octaveUp);
+    const int gap = 12;
+    tapButton.setBounds (row.removeFromLeft ((row.getWidth() - gap) / 2));
+    row.removeFromLeft (gap);
+    bpmEntryButton.setBounds (row);
+}
+
 void MainComponent::layoutCompact()
 {
     cards.clearQuick();
     const auto g = compactGeom();
     const auto rows = compactTempoRows (g.tempo);
-    auto placeOctave = [] (juce::Rectangle<int> col, juce::TextButton& b)
-    {
-        b.setBounds (col);   // the whole cell: 56 pt tall, never the old 26-36 chip
-    };
-    placeOctave (rows.octaveDown, halveButton);
-    placeOctave (rows.octaveUp, doubleButton);
+    placeTapRow (rows.octaveDown, rows.tap, rows.octaveUp);
     settingsButton.setBounds (rows.settings);
-    stageButton.setBounds (rows.stageToggle);
     barButton.setBounds ({});
-    tapButton.setBounds (rows.tap);
     tapStrip = {};
     tapZone.setBounds (juce::Rectangle<int>::leftTopRightBottom (
         g.tempo.getX(), rows.bpm.getY(), g.tempo.getRight(), rows.beats.getBottom()));
@@ -763,9 +746,6 @@ void MainComponent::layoutCompact()
         return innerCard (bounds, 8, 6, 0);
     };
 
-    setConsoleShown (! stageMode);
-    if (stageMode)
-        return;
     layoutMisure (card (g.misure, ""));
     layoutVoicesRow (card (g.knobs, ""));
 }
@@ -784,8 +764,11 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     // sits behind its neighbours so PRO keeps every point it had.
     settingsClose.setBounds (head.removeFromRight (head.getHeight()).withSizeKeepingCentre (44, 44));
     settingsClose.toBack();
-    accountButton.setBounds (head.removeFromRight (juce::jmin (110, head.getWidth() / 3))
+    accountButton.setBounds (head.removeFromRight (juce::jmin (90, head.getWidth() / 4))
                                  .reduced (2));
+    // The guide: drawn 26 like the cross, 44 to the touch.
+    guideButton.setBounds (head.removeFromRight (head.getHeight() + 10).withSizeKeepingCentre (44, 44));
+    guideButton.toBack();
     settingsRows.title = head.withTrimmedRight (8);
     r.removeFromTop (14);
 
@@ -799,7 +782,6 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     const int gap = 10;
     const int titleH = 18;
     const int padY = 10;
-    const int noteGap = 8;
     const int rowH = 58;
 
     auto card = [&] (juce::Rectangle<int> bounds, const juce::String& title)
@@ -840,19 +822,17 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     enum { kTempo = 0, kClock, kBuffer, kInput, kFeel, kTests, kCards };
     const int inputRows = inputTwoRows ? 2 : 1;
     const int waveExtra = trackWaveformHeight() > 0 ? trackWaveformHeight() + 6 : 0;
-    const int clockNoteH = noteGap + noteHeight (clockNote(), bodyW);
-    const int bufferNoteH = noteGap + noteHeight (bufferNote(), bodyW);
     int rowFit = rowH;
-    int feelFit = 132;
     int h[kCards] {};
     int want = 0;
     const auto measure = [&]
     {
         h[kTempo]  = chrome + rowFit;
-        h[kClock]  = chrome + rowFit + clockNoteH;
-        h[kBuffer] = chrome + rowFit + bufferNoteH;
+        // The captions under CLOCK and BUFFER are in the guide (?) now.
+        h[kClock]  = chrome + rowFit;
+        h[kBuffer] = chrome + rowFit;
         h[kInput]  = chrome + rowFit * inputRows + waveExtra;
-        h[kFeel]   = chrome + feelFit;
+        h[kFeel]   = chrome + rowFit;
         h[kTests]  = chrome + rowFit;
         want = (kCards - 1) * gap;
         for (const int n : h)
@@ -861,18 +841,17 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
     measure();
 
     // Short of the natural height, the controls give way a little - rows of
-    // buttons down to 50 (44 pt buttons), the FEEL knobs down to 100 - and the
+    // buttons and the FEEL levels down to 50 (44 pt buttons) - and the
     // captions never do. Still short (a phone always is), the page scrolls at
     // that size. Every card scaled alike to fit took the buttons to 30 pt and
     // left the captions less room than their text.
     if (want > viewH)
     {
-        const int shrinkable = rowH * (4 + inputRows) + 132;
+        const int shrinkable = rowH * (5 + inputRows);
         const int fixedPart = want - shrinkable;
         const float s = juce::jlimit (0.0f, 1.0f, static_cast<float> (viewH - fixedPart)
                                                       / static_cast<float> (shrinkable));
         rowFit = juce::jmax (50, juce::roundToInt (static_cast<float> (rowH) * s));
-        feelFit = juce::jmax (100, juce::roundToInt (132.0f * s));
         measure();
     }
 
@@ -918,14 +897,12 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         auto body = card (take (h[kClock]), "CLOCK");
         buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                    { &clockAuto, &clock44, &clock48, &clock88, &clock96 });
-        settingsRows.clockNote = body.withTrimmedTop (noteGap);
     }
 
     {
         auto body = card (take (h[kBuffer]), "BUFFER");
         buttonRow (body.removeFromTop (juce::jmin (rowFit, body.getHeight())),
                    { &bufAuto, &buf64, &buf128, &buf256, &buf512 });
-        settingsRows.bufferNote = body.withTrimmedTop (noteGap);
     }
 
     {
@@ -949,28 +926,22 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
         else
             settingsRows.trackWave = {};
 
-        // The long explanation moved behind the (i) at the card's top right.
+        // The long explanation is in the guide, behind (?) in the heading.
         settingsRows.inputNote = {};
-        const auto cardBounds = settingsCards.getReference (settingsCards.size() - 1).bounds;
-        // Drawn 24 pt, touched as 44 around the same centre; behind the row of
-        // buttons below, which keep the 10 pt it reaches into.
-        infoButton.setBounds (juce::Rectangle<int> (cardBounds.getRight() - 12 - 24, cardBounds.getY() + 4, 24, 24)
-                                  .withSizeKeepingCentre (44, 44));
-        infoButton.toBack();
     }
 
     {
+        // Two levels side by side, each its name and value over a bar. A drag
+        // across the whole bar is the whole range.
         auto body = card (take (h[kFeel]), "FEEL");
-        const int nKnobs = 2;
-        const int colW = juce::jmin (body.getWidth() / nKnobs, juce::jmax (72, body.getHeight() + 12));
-        auto row = body.withSizeKeepingCentre (colW * nKnobs, body.getHeight());
-        auto placeKnob = [&] (juce::Label& name, juce::Slider& s)
-        {
-            name.setVisible (false);
-            s.setBounds (row.removeFromLeft (colW));
-        };
-        placeKnob (intensityLabel, intensitySlider);
-        placeKnob (reverbLabel, reverbSlider);
+        auto row = body.withSizeKeepingCentre (body.getWidth(), juce::jmin (body.getHeight(), 56));
+        const int half = (row.getWidth() - 20) / 2;
+        for (auto* l : { &intensityLabel, &reverbLabel })
+            l->setVisible (false);
+        intensitySlider.setBounds (row.removeFromLeft (half));
+        reverbSlider.setBounds (row.removeFromRight (half));
+        for (auto* s : { &intensitySlider, &reverbSlider })
+            s->setMouseDragSensitivity (juce::jmax (60, s->getWidth() - 30));
     }
 
     buttonRow (card (take (h[kTests]), vpui::L ("PERCUSSION / TESTS", "PERCUSSIONI / PROVE")),

@@ -731,32 +731,8 @@ namespace
         b.setColour (juce::TextButton::textColourOffId, text());
     }
 
-    juce::Font noteFont() { return fontUi (11.5f, false); }
-
-    /** The sentence under each group of settings. Shared because layoutSettings
-        needs its height and paintSettings needs its text, and a card sized
-        against one string and filled with another is how a caption ends up
-        clipped on the narrow side of the page. */
-    juce::String clockNote()
-    {
-        return vpui::L (
-            "AUTO follows the interface's clock and does not touch it: with the mixer at "
-            "48 kHz the app opens at 48 kHz. A fixed value is requested from the "
-            "interface, and changing it while playing makes it restart.",
-            "AUTO segue il clock dell'interfaccia e non lo tocca: con il mixer a "
-            "48 kHz l'app si apre a 48 kHz. Un valore fisso lo chiede "
-            "all'interfaccia, e cambiarlo mentre suona la fa ripartire.");
-    }
-
-    juce::String bufferNote()
-    {
-        return vpui::L (
-            "Shorter means less delay and more risk of dropouts. AUTO takes whatever "
-            "the interface is already giving.",
-            "Più corto, meno ritardo e più rischio di buchi. AUTO prende quello "
-            "che l'interfaccia sta già dando.");
-    }
-
+    /** The input explanation on the first launch. The captions that sat under
+        CLOCK and BUFFER went into the guide (2026-10-23). */
     juce::String inputNote()
     {
         return vpui::L (
@@ -775,7 +751,7 @@ namespace
             "TRACK reads a file and sends it to both the analysis and the output, AirPods "
             "included. LOAD chooses the file; drag the waveform (below, or on the stage) "
             "to seek. PLAY pauses.\n\n"
-            "MIC sets how much the analysis hears: raise it until the knob ring enters the "
+            "MIC sets how much the analysis hears: drag the bar until the level sits in the "
             "fuchsia band. Below it, the analysis gets the tempo wrong; above it, amber and "
             "then red, and nothing more is gained.\n\n"
             "PROC. OFF removes iOS automatic gain: that is what the analysis wants.",
@@ -793,49 +769,137 @@ namespace
             "BRANO legge un file e lo manda sia all'analisi sia all'uscita, anche nelle "
             "AirPods. CARICA sceglie il file; l'onda (sotto, o sul palco) si trascina per "
             "saltare. PLAY mette in pausa.\n\n"
-            "MIC regola quanto sente l'analisi: alzalo finché l'anello del knob entra "
+            "MIC regola quanto sente l'analisi: trascina la barra finché il livello sta "
             "nella fascia fucsia. Sotto, l'analisi sbaglia il tempo; sopra, ambra e poi "
             "rosso, e non guadagna più niente.\n\n"
             "ELAB. OFF toglie il guadagno automatico di iOS: è quello che vuole l'analisi.");
     }
 
-    /** The sentence wrapped at a width exactly as drawNote draws it, so the
-        layout asks for the height the text really takes. The old estimate
-        (total width over the line) came out a line short on a phone, and
-        drawFittedText then shrank the type to about 8 pt to make it fit. */
-    void layoutNote (juce::GlyphArrangement& ga, const juce::String& text, int width)
+    /** The settings guide behind "?" (2026-10-23): every card and every
+        button, in the order they appear, in plain words. "## " starts a
+        heading and **...** is bold (InfoPopup). Keep it in step with the
+        page: a button renamed or added here is a sentence to change. */
+    juce::String guideText()
     {
-        const juce::Font f = noteFont();
-        ga.addJustifiedText (f, text, 0.0f, f.getAscent(), static_cast<float> (juce::jmax (1, width)),
-                             juce::Justification::left, f.getHeight() * 0.28f);
-    }
-
-    /** How tall that sentence comes out at a given width: two lines beside a
-        portrait iPad, five in a landscape column half as wide. */
-    int noteHeight (const juce::String& text, int width)
-    {
-        juce::GlyphArrangement ga;
-        layoutNote (ga, text, width);
-        if (ga.getNumGlyphs() == 0)
-            return 0;
-        return static_cast<int> (std::ceil (ga.getBoundingBox (0, -1, true).getBottom()
-                                            + noteFont().getDescent()));
-    }
-
-    void drawNote (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area)
-    {
-        if (noteHeight (text, area.getWidth()) > area.getHeight())
-        {
-            // Only a window too small for even the shrunk controls gets here:
-            // smaller type then, rather than a caption across the card's edge.
-            g.setFont (noteFont());
-            g.drawFittedText (text, area, juce::Justification::topLeft, 8);
-            return;
-        }
-        juce::GlyphArrangement ga;
-        layoutNote (ga, text, area.getWidth());
-        ga.draw (g, juce::AffineTransform::translation (static_cast<float> (area.getX()),
-                                                        static_cast<float> (area.getY())));
+        return vpui::L (
+            "## FOR LIVE: MIXER\n"
+            "It is the most precise mode. The app has to receive the band's signal and send the "
+            "percussion out at the same time: connect an audio interface or a mixer that gives it "
+            "an input and an output together.\n\n"
+            "## AT THE TOP\n"
+            "**?** opens this guide. **PRO** opens the full version: purchase, restore, terms and "
+            "privacy. **X** closes the settings.\n\n"
+            "## TEMPO\n"
+            "**FOLLOW**: the app listens to the band and follows its tempo, also when it slows down "
+            "or speeds up. The normal choice.\n"
+            "**FIXED**: the tempo stops where it is and no longer follows the band. Beside TAP, "
+            "in place of ÷2 and ×2, the tempo appears: touch it and type an exact one (50 to 200 "
+            "BPM). On the iPad the - and + keys move it by 1 BPM.\n"
+            "**START NOW**: on, after START the percussion comes in as soon as the app has found the "
+            "tempo. Off, it waits until it is sure a band is playing and the tempo is right, so it "
+            "does not play into an empty room or come in on an intro at the wrong tempo. If the "
+            "music is already playing when you press START, it comes in at once anyway.\n"
+            "**PAUSE IF OFF**: if the app loses the tempo (red light for 3 seconds) the percussion "
+            "stops, and comes back by itself when the tempo is right again. Not in FIXED.\n\n"
+            "## CLOCK\n"
+            "The sample rate. **AUTO** uses the interface's and does not change it: almost always the "
+            "right choice. **44.1 / 48 / 88.2 / 96** ask the interface for that rate; changing it "
+            "while playing restarts the audio.\n\n"
+            "## BUFFER\n"
+            "How much audio the app works on at a time. Shorter means less delay but more risk of "
+            "clicks and gaps in the sound. **AUTO** takes what the interface already gives. If you "
+            "hear clicks, choose a higher value.\n\n"
+            "## INPUT\n"
+            "The first button chooses where the app listens; tap it to go to the next one.\n"
+            "**MIXER**: a send from the desk or a close microphone, through an audio interface. The "
+            "most precise, the one for live.\n"
+            "**IPAD**: the iPad's microphone hears the room, and the app takes its own percussion "
+            "out of what it hears. If I HEAR MYSELF appears, the percussion reaches the microphone "
+            "as loud as the song: turn it down or move the iPad away.\n"
+            "**TRACK**: the app plays a file and listens to it. **LOAD** chooses the file, **PLAY** "
+            "pauses; drag the waveform to jump to a point.\n"
+            "**PROC.**: iOS's automatic sound processing. Leave it OFF: the analysis works best on "
+            "the signal as it is.\n"
+            "**KICK**: if the kick drum has its own input on the interface, choose it here (KICK 2, "
+            "3...): the app uses it to be even more precise on the beat. It lights up when the hits "
+            "land in time. NO KICK switches it off.\n"
+            "**IN MIX / IN 1, IN 2...**: in MIXER, which input the tempo is read from. MIX averages "
+            "them all; choose one if the send has its own input, so voice and guitars stay out of "
+            "the analysis.\n"
+            "**MIC** (the bar at the top of the main page): how loud the app hears the signal. Drag "
+            "the thumb until the level sits in the fuchsia band between the two ticks. Below it the "
+            "analysis gets the tempo wrong; above it the colour turns amber, then red.\n\n"
+            "## FEEL\n"
+            "**ENERGY**: how much the part fills in with light strokes and small ornaments. Low is "
+            "cleaner, high is livelier.\n"
+            "**REVERB**: how much room around the percussion.\n\n"
+            "## PERCUSSION / TESTS\n"
+            "**DARK / LIGHT**: dark or light theme.\n"
+            "**CLICK TEST**: sends a 120 BPM click into the analysis, to try the app without a band. "
+            "Press again to stop it.\n"
+            "**LATENCY**: measures the delay of your rig. With the output coming back to the input, "
+            "press it: the app sends a short sound, measures how long it takes to come back "
+            "(RT ... ms) and uses that number to play in time. Press again to clear the measurement.",
+            "## PER IL LIVE: MIXER\n"
+            "È la modalità più precisa. L'app deve ricevere il segnale della band e mandare fuori "
+            "le percussioni nello stesso momento: collega un'interfaccia audio o un mixer che le "
+            "dia un ingresso e un'uscita insieme.\n\n"
+            "## IN ALTO\n"
+            "**?** apre questa guida. **PRO** apre la versione completa: acquisto, ripristino, "
+            "termini e privacy. **X** chiude le impostazioni.\n\n"
+            "## TEMPO\n"
+            "**SEGUI**: l'app ascolta la band e ne segue il tempo, anche quando rallenta o "
+            "accelera. È la scelta normale.\n"
+            "**FISSO**: il tempo si ferma dov'è e non segue più la band. Accanto a TAP, al posto "
+            "di ÷2 e ×2, compare il tempo: toccalo e scrivi quello esatto (da 50 a 200 BPM). "
+            "Sull'iPad i tasti - e + lo spostano di 1 BPM.\n"
+            "**START SUBITO**: acceso, dopo START le percussioni partono appena l'app ha trovato "
+            "il tempo. Spento, aspettano di essere sicure che una band stia suonando e che il "
+            "tempo sia giusto: così non suonano in una stanza vuota e non entrano su un'intro con "
+            "il tempo sbagliato. Se la musica suona già quando premi START, entrano comunque "
+            "subito.\n"
+            "**PAUSA SE FUORI**: se l'app perde il tempo (spia rossa per 3 secondi) le percussioni "
+            "si fermano, e rientrano da sole quando il tempo torna giusto. Non vale in FISSO.\n\n"
+            "## CLOCK\n"
+            "La frequenza di campionamento. **AUTO** usa quella dell'interfaccia e non la cambia: "
+            "è quasi sempre la scelta giusta. **44.1 / 48 / 88.2 / 96** la chiedono "
+            "all'interfaccia; cambiarla mentre suona fa ripartire l'audio.\n\n"
+            "## BUFFER\n"
+            "Quanto audio l'app lavora alla volta. Più corto vuol dire meno ritardo, ma più "
+            "rischio di scatti e buchi nel suono. **AUTO** prende quello che l'interfaccia dà già. "
+            "Se senti scatti, scegli un valore più alto.\n\n"
+            "## INGRESSO\n"
+            "Il primo pulsante sceglie da dove ascolta l'app; toccalo per passare al successivo.\n"
+            "**MIXER**: una mandata dal banco o un microfono vicino, attraverso un'interfaccia "
+            "audio. La più precisa, quella per il live.\n"
+            "**IPAD**: il microfono dell'iPad ascolta la stanza, e l'app toglie le proprie "
+            "percussioni da quello che sente. Se compare SENTO ME STESSO, le percussioni arrivano "
+            "al microfono forti come il brano: abbassale o allontana l'iPad.\n"
+            "**BRANO**: l'app suona un file e lo ascolta. **CARICA** sceglie il file, **PLAY** "
+            "mette in pausa; trascina l'onda per saltare in un punto.\n"
+            "**ELAB.**: il trattamento automatico del suono di iOS. Lascialo su OFF: l'analisi "
+            "lavora meglio sul segnale così com'è.\n"
+            "**CASSA**: se la cassa della batteria ha un ingresso suo sull'interfaccia, sceglilo "
+            "qui (CASSA 2, 3...): l'app la usa per essere ancora più precisa sul colpo. Si accende "
+            "quando i colpi cadono a tempo. CASSA NO la spegne.\n"
+            "**IN MIX / IN 1, IN 2...**: in MIXER, da quale ingresso leggere il tempo. MIX fa la "
+            "media di tutti; scegline uno se la mandata ha un ingresso suo, così voce e chitarre "
+            "restano fuori dall'analisi.\n"
+            "**MIC** (la barra in alto nella pagina principale): quanto forte l'app sente il "
+            "segnale. Trascina il pallino finché il livello sta nella fascia fucsia fra le due "
+            "tacche. Sotto, l'analisi sbaglia il tempo; sopra, il colore diventa ambra e poi "
+            "rosso.\n\n"
+            "## FEEL\n"
+            "**ENERGIA**: quanto la parte si arricchisce di colpi leggeri e piccoli abbellimenti. "
+            "Bassa è più pulita, alta più viva.\n"
+            "**REVERB**: quanto ambiente intorno alle percussioni.\n\n"
+            "## PERCUSSIONI / PROVE\n"
+            "**DARK / LIGHT**: tema scuro o chiaro.\n"
+            "**CLICK TEST**: manda all'analisi un clic a 120 BPM, per provare l'app senza band. "
+            "Ripremi per spegnerlo.\n"
+            "**LATENZA**: misura il ritardo del tuo impianto. Con l'uscita che torna "
+            "nell'ingresso, premila: l'app manda un breve suono, misura quanto ci mette a tornare "
+            "(RT ... ms) e usa quel numero per suonare a tempo. Ripremi per cancellare la misura.");
     }
 
     constexpr int kStatusLines = 9;

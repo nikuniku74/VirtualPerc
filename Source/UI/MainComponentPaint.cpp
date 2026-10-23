@@ -208,7 +208,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const bool heroLost = shownColour (snap, trust) == stateLost();
         // Extra weight as one outline, filled and stroked 1.7% of the height
         // each side. The old five copies nudged 1.4% each way stair-stepped
-        // every edge once the number was stage-sized; asked for chubbier
+        // every edge once the number was large; asked for chubbier
         // (2026-10-23), so a little more than they gave.
         juce::Path shape;
         digits.createPath (shape);
@@ -342,7 +342,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // The lit beat wears a halo of 1.8 radii, so the radius has to leave
         // room for it inside the row - otherwise the glow spills onto the line
         // of text below, which is what it did.
-        const float rad = std::min ({ stageMode ? 52.0f : 24.0f,
+        const float rad = std::min ({ 24.0f,
                                         static_cast<float> (rows.beats.getHeight()) * 0.27f,
                                         static_cast<float> (bandW) / (meterIsThree() ? 3.0f : 4.0f) * 0.30f });
         const float y = static_cast<float> (band.getCentreY());
@@ -529,7 +529,7 @@ void MainComponent::paintGrooveLane (juce::Graphics& g, juce::Rectangle<float> b
         return;
 
     const float colW = band.getWidth() / static_cast<float> (steps);
-    const float rowH = juce::jmin (stageMode ? 16.0f : 9.0f, band.getHeight() / static_cast<float> (rowsOn));
+    const float rowH = juce::jmin (9.0f, band.getHeight() / static_cast<float> (rowsOn));
     const float top = band.getCentreY() - rowH * static_cast<float> (rowsOn) * 0.5f;
     const int now = running ? juce::jlimit (0, steps - 1, static_cast<int> (
                                   std::fmod (juce::jmax (0.0f, beatPos), static_cast<float> (quarters)) * 4.0f))
@@ -588,8 +588,14 @@ void MainComponent::paintSettings (juce::Graphics& g)
         g.fillRoundedRectangle (brand.withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
         g.setColour (text());
         g.setFont (fontUi (13.0f));
-        g.drawFittedText (vpui::L ("VIRTUAL PERCUSSIONIST  \xc2\xb7  SETTINGS", "VIRTUAL PERCUSSIONIST  \xc2\xb7  IMPOSTAZIONI"),
-                          titleR, juce::Justification::centredLeft, 1);
+        // On a phone, with (?) in the heading, the app's name does not fit
+        // beside the page's: the page's name alone, rather than "IMPOS...".
+        const juce::String page = vpui::L ("SETTINGS", "IMPOSTAZIONI");
+        const juce::String named = vpui::L ("VIRTUAL PERCUSSIONIST  \xc2\xb7  SETTINGS",
+                                           "VIRTUAL PERCUSSIONIST  \xc2\xb7  IMPOSTAZIONI");
+        const bool fits = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), named)
+                          <= static_cast<float> (titleR.getWidth());
+        g.drawFittedText (fits ? named : page, titleR, juce::Justification::centredLeft, 1);
         g.setColour (fuchsia().withAlpha (0.55f));
         g.fillRect ((float) settingsRows.title.getX(),
                     (float) settingsRows.title.getBottom() + 2.0f,
@@ -601,9 +607,6 @@ void MainComponent::paintSettingsPage (juce::Graphics& g)
 {
     // The cards and their captions, in the scrolling page's coordinates.
     paintCardList (g, settingsCards);
-    g.setColour (mute());
-    drawNote (g, clockNote(), settingsRows.clockNote);
-    drawNote (g, bufferNote(), settingsRows.bufferNote);
 
     // The live numbers (clock, buffer, latency, route, part) used to be printed in
     // a STATO card here; taken off the page for the product (user's call, 2026-10-16).

@@ -15,7 +15,7 @@ Virtual Percussionist segue il tempo di quello che suoni e aggiunge shaker, cong
 
 COME SI USA
 1. Scegli l'ingresso in Impostazioni: MIXER, IPAD o BRANO.
-2. Alza il livello MIC finché l'anello del knob entra nella fascia fucsia.
+2. Trascina la barra MIC finché il livello sta nella fascia fucsia.
 3. Premi START. L'app trova da sola il tempo e il primo battere della battuta, e la parte entra al battere successivo.
 4. STOP la ferma subito. Uno STOP/START rapido riallinea la parte senza ricominciare l'analisi.
 5. Scegli lo stile (marcha, rock, dance, pop, samba, funk, reggae, bossa, due-uno) o lascia fare ad AUTO; regola swing, energia, riverbero e il volume di ogni strumento.
@@ -58,7 +58,7 @@ Virtual Percussionist follows the tempo of what you play and adds shaker, congas
 
 HOW TO USE IT
 1. Choose the input in Settings: MIXER, IPAD or TRACK.
-2. Raise the MIC level until the knob ring enters the fuchsia band.
+2. Drag the MIC bar until the level sits in the fuchsia band.
 3. Tap START. The app finds the tempo and the first beat of the bar by itself, and the part comes in on the next beat.
 4. STOP silences it at once. A quick STOP/START re-aligns the part without restarting the analysis; a long STOP between two songs readies the app for the next one.
 5. Pick a style (marcha, rock, dance, pop, samba, funk, reggae, bossa, one-two) or let AUTO choose; set swing, energy, reverb and the volume of each instrument.

@@ -45,7 +45,9 @@ public:
 };
 
 /** The body: laid out once per size and painted, nothing to select or edit.
-    Inside a Viewport, so a finger still scrolls it where it is too long. */
+    Inside a Viewport, so a finger still scrolls it where it is too long.
+    Two marks, enough for the settings guide: a line starting "## " is a
+    heading, and **text** is bold - the name of the button being explained. */
 class InfoPopup::TextView final : public juce::Component
 {
 public:
@@ -56,7 +58,33 @@ public:
     {
         juce::AttributedString a;
         a.setJustification (juce::Justification::topLeft);
-        a.append (text, fontUi (kPt, false), ::text());
+        const auto lines = juce::StringArray::fromLines (text);
+        for (int i = 0; i < lines.size(); ++i)
+        {
+            const auto& line = lines[i];
+            const auto end = i + 1 < lines.size() ? juce::String ("\n") : juce::String();
+            if (line.startsWith ("## "))
+            {
+                a.append (line.substring (3) + end, fontUi (kPt + 1.5f, true), fuchsia());
+                continue;
+            }
+            // A little air between two explained buttons, less than a blank line.
+            if (line.startsWith ("**") && i > 0 && lines[i - 1].isNotEmpty() && ! lines[i - 1].startsWith ("## "))
+                a.append ("\n", fontUi (kPt * 0.45f, false), ::text());
+            // Split on "**": the odd pieces are the bold ones.
+            juce::StringArray parts;
+            juce::String rest = line;
+            while (rest.contains ("**"))
+            {
+                parts.add (rest.upToFirstOccurrenceOf ("**", false, false));
+                rest = rest.fromFirstOccurrenceOf ("**", false, false);
+            }
+            parts.add (rest);
+            for (int p = 0; p < parts.size(); ++p)
+                if (parts[p].isNotEmpty())
+                    a.append (parts[p], fontUi (kPt, (p & 1) != 0), ::text());
+            a.append (end, fontUi (kPt, false), ::text());
+        }
         tl.createLayout (a, static_cast<float> (juce::jmax (40, width)));
         setSize (juce::jmax (40, width), static_cast<int> (std::ceil (tl.getHeight())) + 4);
         repaint();
@@ -86,6 +114,7 @@ InfoPopup::InfoPopup()
     textView = std::make_unique<TextView>();
     body.setViewedComponent (textView.get(), false);
     body.setScrollBarsShown (true, false);
+    body.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, juce::Colours::grey.withAlpha (0.55f));
     addAndMakeVisible (body);
 }
 

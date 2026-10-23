@@ -2390,7 +2390,7 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
     }
 
     // A knob switched on while the part plays joins on the next one, and a
-    // shaker switched off shakes out (16 32nds, fading) and then stops
+    // shaker switched off shakes out (24 32nds, fading) and then stops
     // (TODO item 150).
     {
         constexpr double sr = 48000.0;
@@ -2469,8 +2469,8 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
         const double dropDb = 10.0 * std::log10 ((early + 1e-12) / (late + 1e-12));
         std::printf ("shake-out  strokes=%u  fade %.1f dB (first quarter second vs third)\n",
                      outro, dropDb);
-        expect (outro == 16 && dropDb > 8.0,
-                "a shaker switched off shakes out in 16 fading strokes and stops");
+        expect (outro == 24 && dropDb > 6.0,
+                "a shaker switched off shakes out in 24 fading strokes and stops");
     }
 }
 

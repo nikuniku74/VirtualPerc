@@ -1,5 +1,6 @@
 #include "UI/PaywallOverlay.h"
 #include "UI/MainComponentShared.h"
+#include "VpBrandData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,11 @@ namespace
     const char* const kTermsUrl   = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 
     constexpr int kMaxColumn = 520;
+    // Type 15% larger than the first version, which read small from a stand
+    // (2026-10-23); the page still scales down as one to fit a phone.
+    constexpr float kType = 1.15f;
+    // The quarters under the headline turn over at 120 BPM.
+    constexpr double kDotBeatMs = 500.0;
 
     int textHeight (const juce::String& s, const juce::Font& f, int width)
     {
@@ -103,9 +109,9 @@ public:
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         g.setColour ((down || over ? ::text() : mute()));
-        g.setFont (fontUi (12.5f * scale, false));
+        g.setFont (fontUi (12.5f * kType * scale, false));
         g.drawText (text, getLocalBounds(), juce::Justification::centred, true);
-        const auto w = juce::GlyphArrangement::getStringWidth (fontUi (12.5f * scale, false), text);
+        const auto w = juce::GlyphArrangement::getStringWidth (fontUi (12.5f * kType * scale, false), text);
         const float y = getHeight() * 0.5f + 8.0f * scale;
         g.fillRect (getWidth() * 0.5f - w * 0.5f, y, w, 1.0f);
     }
@@ -145,22 +151,22 @@ public:
         auto right = inner.removeFromRight (inner.getWidth() * 0.36f);
         auto itemH = inner.getHeight() * 0.5f;
         g.setColour (::text().withAlpha (alpha));
-        g.setFont (fontUi (17.0f * scale));
+        g.setFont (fontUi (17.0f * kType * scale));
         g.drawText (title, inner.removeFromTop (itemH).toNearestInt(), juce::Justification::bottomLeft, true);
         g.setColour (mute().withAlpha (alpha));
-        g.setFont (fontUi (12.0f * scale, false));
+        g.setFont (fontUi (12.0f * kType * scale, false));
         g.drawFittedText (detail, inner.toNearestInt().withTrimmedTop (2), juce::Justification::topLeft, 2);
 
         g.setColour (::text().withAlpha (alpha));
-        g.setFont (fontUi (17.0f * scale));
+        g.setFont (fontUi (17.0f * kType * scale));
         g.drawText (rightTop, right.removeFromTop (itemH).toNearestInt(), juce::Justification::bottomRight, true);
         g.setColour (mute().withAlpha (alpha));
-        g.setFont (fontUi (12.0f * scale, false));
+        g.setFont (fontUi (12.0f * kType * scale, false));
         g.drawText (rightBottom, right.toNearestInt().withTrimmedTop (2), juce::Justification::topRight, true);
 
         if (! badge.isEmpty())
         {
-            const auto f = fontUi (10.5f * scale);
+            const auto f = fontUi (10.5f * kType * scale);
             const float w = juce::GlyphArrangement::getStringWidth (f, badge) + 16.0f * scale;
             juce::Rectangle<float> pill (getWidth() - w - 16.0f * scale, 0.0f, w, 16.0f * scale + 2.0f);
             g.setColour (fuchsia());
@@ -335,7 +341,54 @@ PaywallOverlay::PaywallOverlay()
     privacyLink->onClick = [] { juce::URL (kPrivacyUrl).launchInDefaultBrowser(); };
     licensesLink->onClick = [this] { showLicenses(); };
 
+    logo = juce::ImageCache::getFromMemory (VpBrandData::LaunchLogo_png, VpBrandData::LaunchLogo_pngSize);
     refreshControls();
+}
+
+void PaywallOverlay::visibilityChanged()
+{
+    if (isVisible())
+        startTimerHz (30);
+    else
+        stopTimer();
+}
+
+void PaywallOverlay::timerCallback()
+{
+    if (! geo.dots.isEmpty())
+        repaint (geo.dots.expanded (12));
+}
+
+void PaywallOverlay::paintDots (juce::Graphics& g) const
+{
+    if (geo.dots.isEmpty())
+        return;
+    // Four quarters, the one larger, the beat lit in fuchsia and fading
+    // through it: the stage's own picture of a bar, turning over at 120.
+    const double ms = juce::Time::getMillisecondCounterHiRes();
+    const int at = static_cast<int> (std::fmod (ms / kDotBeatMs, 4.0));
+    const float through = static_cast<float> (std::fmod (ms, kDotBeatMs) / kDotBeatMs);
+    const float s = geo.scale;
+    const auto band = geo.dots.toFloat();
+    const float step = juce::jmin (band.getWidth() / 4.0f, 46.0f * s);
+    const float y = band.getCentreY();
+    for (int i = 0; i < 4; ++i)
+    {
+        const float r = (i == 0 ? 9.0f : 7.0f) * s;
+        const float x = band.getX() + step * (static_cast<float> (i) + 0.5f);
+        if (i == at)
+        {
+            const float lit = 1.0f - 0.55f * through;
+            paintRadial (g, { x, y }, r * 3.2f, fuchsia(), 0.45f * lit);
+            g.setColour (fuchsia().withAlpha (lit));
+            g.fillEllipse (x - r, y - r, 2.0f * r, 2.0f * r);
+        }
+        else
+        {
+            g.setColour (::text().withAlpha (i == 0 ? 0.30f : 0.18f));
+            g.drawEllipse (x - r, y - r, 2.0f * r, 2.0f * r, 1.4f);
+        }
+    }
 }
 
 PaywallOverlay::~PaywallOverlay() = default;
@@ -588,7 +641,7 @@ juce::String PaywallOverlay::ctaText() const
 
 juce::Font PaywallOverlay::headlineFont() const
 {
-    return fontDisplay (30.0f * geo.scale);
+    return fontDisplay (30.0f * kType * geo.scale);
 }
 
 // ---- controls ---------------------------------------------------------------
@@ -684,13 +737,19 @@ void PaywallOverlay::layoutAll()
     auto area = safe.subtractedFrom (getLocalBounds()).reduced (20, 10);
 
     geo = {};
-    const auto closeRect = area.removeFromTop (38).removeFromRight (30).withSizeKeepingCentre (30, 30);
-    area.removeFromTop (6);
+    // The heading, as on the settings page: the name on the left over a
+    // fuchsia rule, the cross on the same row, at the top.
+    auto head = area.removeFromTop (38);
+    const auto closeRect = head.removeFromRight (30).withSizeKeepingCentre (30, 30);
+    const auto brandRect = head.withTrimmedRight (12);
+    area.removeFromTop (14);
 
     const bool twoCol = area.getWidth() >= 640 && area.getWidth() > area.getHeight() * 1.15f;
     // A tablet in portrait: the same page, larger, instead of a phone-sized
     // column in the middle of a big screen.
-    const float zoom = (! twoCol && area.getWidth() >= 800 && area.getHeight() >= 900) ? 1.4f : 1.0f;
+    // 700, not 800: an 11" iPad leaves 780 inside its margins and got the
+    // phone column with half the screen empty under it (2026-10-23).
+    const float zoom = (! twoCol && area.getWidth() >= 700 && area.getHeight() >= 900) ? 1.4f : 1.0f;
     const int colW = twoCol ? juce::jmin (kMaxColumn - 100, (area.getWidth() - 40) / 2)
                             : juce::jmin (static_cast<int> (kMaxColumn * zoom), area.getWidth());
 
@@ -701,18 +760,24 @@ void PaywallOverlay::layoutAll()
     auto pass = [&] (float s, juce::Array<Item>& left, juce::Array<Item>& right, Geometry& g,
                      int& leftH, int& rightH)
     {
-        auto F = [&] (float h, bool bold) { return fontUi (h * s, bold); };
+        auto F = [&] (float h, bool bold) { return fontUi (h * kType * s, bold); };
         const int bulletW = colW - static_cast<int> (26 * s);
         left.clear();
         right.clear();
         g.scale = s;
 
-        left.add ({ &g.brand, static_cast<int> (20 * s) });
-        left.add ({ nullptr, static_cast<int> (6 * s) });
-        left.add ({ &g.headline, textHeight (headlineText(), fontDisplay (30.0f * s), colW) });
+        // Someone who is in gets the app's mark, as an icon tile.
+        if (onStatus)
+        {
+            left.add ({ &g.logo, static_cast<int> (juce::jmin (static_cast<float> (colW) * 0.46f, 200.0f * s)) });
+            left.add ({ nullptr, static_cast<int> (16 * s) });
+        }
+        left.add ({ &g.headline, textHeight (headlineText(), fontDisplay (30.0f * kType * s), colW) });
         left.add ({ nullptr, static_cast<int> (6 * s) });
         left.add ({ &g.sub, textHeight (subText(), F (15.0f, false), colW) });
-        left.add ({ nullptr, static_cast<int> (14 * s) });
+        left.add ({ nullptr, static_cast<int> (8 * s) });
+        left.add ({ &g.dots, static_cast<int> (34 * s) });
+        left.add ({ nullptr, static_cast<int> (10 * s) });
         if (! onStatus)
         {
             const char* const en[] = { "Follows the tempo of the band, live",
@@ -723,23 +788,23 @@ void PaywallOverlay::layoutAll()
                                        "Massima precisione dal mixer; anche microfono o brano caricato" };
             g.bulletCount = 3;
             for (int i = 0; i < 3; ++i)
-                left.add ({ &g.bullets[i], juce::jmax (static_cast<int> (26 * s),
+                left.add ({ &g.bullets[i], juce::jmax (static_cast<int> (30 * s),
                                                        textHeight (t (en[i], it[i]), F (14.0f, false), bulletW) + 6) });
         }
 
         if (onStatus)
-            right.add ({ &g.statusCard, static_cast<int> (112 * s) });
+            right.add ({ &g.statusCard, static_cast<int> (130 * s) });
         else if (ready)
         {
             for (int i = 0; i < planCount(); ++i)
             {
                 if (i > 0)
                     right.add ({ nullptr, static_cast<int> (8 * s) });
-                right.add ({ &g.planRect[i], static_cast<int> ((i == 0 ? 76 : 64) * s) });
+                right.add ({ &g.planRect[i], static_cast<int> ((i == 0 ? 84 : 72) * s) });
             }
         }
         else
-            right.add ({ &g.statusCard, static_cast<int> (112 * s) });   // "reading the store" / "unreachable"
+            right.add ({ &g.statusCard, static_cast<int> (130 * s) });   // "reading the store" / "unreachable"
         right.add ({ nullptr, static_cast<int> (14 * s) });
         if (! (onStatus && lifetimeInView()))
             right.add ({ &g.cta, static_cast<int> (54 * s) });
@@ -754,7 +819,7 @@ void PaywallOverlay::layoutAll()
         right.add ({ nullptr, static_cast<int> (8 * s) });
         right.add ({ &g.legal, textHeight (legalText(), F (10.5f, false), colW) });
         right.add ({ nullptr, static_cast<int> (6 * s) });
-        right.add ({ &g.links, static_cast<int> (56 * s) });   // two rows
+        right.add ({ &g.links, static_cast<int> (64 * s) });   // two rows
 
         auto sum = [] (const juce::Array<Item>& v) { int n = 0; for (auto& i : v) n += i.h; return n; };
         leftH = sum (left);
@@ -798,6 +863,9 @@ void PaywallOverlay::layoutAll()
     }
 
     geo = g;
+    geo.brand = brandRect;
+    if (! geo.logo.isEmpty())
+        geo.logo = geo.logo.withSizeKeepingCentre (geo.logo.getHeight(), geo.logo.getHeight());
     closeButton->setBounds (closeRect);
     ctaButton->setBounds (geo.cta);
     for (int i = 0; i < 3; ++i)
@@ -830,17 +898,38 @@ void PaywallOverlay::paint (juce::Graphics& g)
     paintRadial (g, { full.getCentreX(), full.getY() + 40.0f }, full.getWidth() * 0.6f, fuchsia(), 0.14f);
 
     const float s = geo.scale;
-    auto F = [&] (float h, bool bold) { return fontUi (h * s, bold); };
+    auto F = [&] (float h, bool bold) { return fontUi (h * kType * s, bold); };
 
-    // brand
+    // The heading, drawn the way the settings page draws its own.
     {
         auto b = geo.brand;
         g.setColour (fuchsia());
-        g.fillRoundedRectangle (b.removeFromLeft (static_cast<int> (20 * s)).withSizeKeepingCentre (static_cast<int> (8 * s), static_cast<int> (8 * s)).toFloat(), 1.8f);
+        g.fillRoundedRectangle (b.removeFromLeft (20).withSizeKeepingCentre (8, 8).toFloat(), 1.8f);
         g.setColour (::text());
-        g.setFont (F (13.0f, true));
+        g.setFont (fontUi (13.0f));
         g.drawText ("VIRTUAL PERCUSSIONIST", b, juce::Justification::centredLeft, true);
+        g.setColour (fuchsia().withAlpha (0.55f));
+        g.fillRect (static_cast<float> (geo.brand.getX()), static_cast<float> (geo.brand.getBottom()) + 2.0f,
+                    static_cast<float> (geo.brand.getWidth()), 1.2f);
     }
+
+    if (logo.isValid() && ! geo.logo.isEmpty())
+    {
+        // An icon tile: rounded, so its own dark ground reads as a shape on
+        // the page in either theme rather than as a square left behind.
+        const auto r = geo.logo.toFloat();
+        const float corner = r.getWidth() * 0.22f;
+        paintRadial (g, r.getCentre(), r.getWidth() * 0.9f, fuchsia(), 0.18f);
+        juce::Path tile;
+        tile.addRoundedRectangle (r, corner);
+        g.saveState();
+        g.reduceClipRegion (tile);
+        g.drawImage (logo, r, juce::RectanglePlacement::centred);
+        g.restoreState();
+        g.setColour (::text().withAlpha (0.10f));
+        g.drawRoundedRectangle (r.reduced (0.5f), corner, 1.0f);
+    }
+    paintDots (g);
 
     drawWrapped (g, headlineText(), headlineFont(), ::text(), geo.headline);
     drawWrapped (g, subText(), F (15.0f, false), mute(), geo.sub);
@@ -884,10 +973,10 @@ void PaywallOverlay::paint (juce::Graphics& g)
             }();
             g.setColour (mute());
             g.setFont (F (12.0f, true));
-            g.drawText (t ("YOUR PLAN", "IL TUO PIANO"), in.removeFromTop (static_cast<int> (18 * s)), juce::Justification::centredLeft, true);
+            g.drawText (t ("YOUR PLAN", "IL TUO PIANO"), in.removeFromTop (static_cast<int> (18 * kType * s)), juce::Justification::centredLeft, true);
             g.setColour (::text());
             g.setFont (F (20.0f, true));
-            g.drawText (personal ? juce::String ("FULL") : planName (status.activePlanId), in.removeFromTop (static_cast<int> (28 * s)), juce::Justification::centredLeft, true);
+            g.drawText (personal ? juce::String ("FULL") : planName (status.activePlanId), in.removeFromTop (static_cast<int> (28 * kType * s)), juce::Justification::centredLeft, true);
 
             juce::String line, detail;
             if (personal)
@@ -921,7 +1010,7 @@ void PaywallOverlay::paint (juce::Graphics& g)
             }
             g.setColour (status.access == vp::store::Access::trial ? stateLocked() : ::text());
             g.setFont (F (14.0f, true));
-            g.drawText (line, in.removeFromTop (static_cast<int> (20 * s)), juce::Justification::centredLeft, true);
+            g.drawText (line, in.removeFromTop (static_cast<int> (20 * kType * s)), juce::Justification::centredLeft, true);
             drawWrapped (g, detail, F (12.0f, false), mute(), in);
         }
         else

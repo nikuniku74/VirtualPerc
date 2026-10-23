@@ -204,6 +204,8 @@ private:
     juce::Rectangle<int> compactPadded (juce::Rectangle<int> area) const;
     void layoutFull();
     void layoutCompact();
+    /** ÷2 | TAP | ×2, or in FIXED, TAP | the tempo to type. */
+    void placeTapRow (juce::Rectangle<int> octaveDown, juce::Rectangle<int> tap, juce::Rectangle<int> octaveUp);
     void applyCompactVisibility();
     void layoutMisure (juce::Rectangle<int> body);
     void prepareHits (double sampleRate);
@@ -329,7 +331,7 @@ private:
         stage rows are: a caption cannot drift away from the row it explains. */
     struct SettingsRows
     {
-        juce::Rectangle<int> title, clockNote, bufferNote, inputNote, trackWave, status;
+        juce::Rectangle<int> title, inputNote, trackWave, status;
     };
     SettingsRows settingsRows;
 
@@ -340,8 +342,6 @@ private:
                              tempoLine, beats, trackWave, part;
         /** Under the quarters: the part's sixteenths, a row per FEEL knob. */
         juce::Rectangle<int> groove;
-        /** The stage-view switch, on the status row beside SETUP. */
-        juce::Rectangle<int> stageToggle;
         /** The three columns the tempo row is divided into. The number gets the
             middle one and nothing else: given the whole row it grew until it ran
             under the two buttons and out of the column. */
@@ -452,7 +452,12 @@ private:
     juce::TextButton guardButton { vpui::L ("PAUSE IF OFF", "PAUSA SE FUORI") };
     juce::TextButton bpmNudgeDown { juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")) };
     juce::TextButton bpmNudgeUp { "+" };
+    /** The field the exact tempo is typed into: shown over bpmEntryButton
+        only while it is being written. */
     juce::Label      bpmEdit;
+    /** FIXED: beside TAP, in place of ÷2 and ×2, the tempo itself - touch it
+        and type an exact one (50-200, the app's range). 2026-10-23. */
+    juce::TextButton bpmEntryButton;
     juce::TextButton debugButton { "DBG" };
     juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
@@ -460,22 +465,16 @@ private:
     juce::TextButton trackLoadButton { vpui::L ("LOAD", "CARICA") };
     juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };
-    /** Stage view: only the reading and the controls a player reaches for,
-        as large as the screen allows (setStageMode). */
-    juce::TextButton stageButton;
-    bool stageMode = false;
-    void setStageMode (bool on);
-    /** The style card and the faders, shown or not as one: the stage view
-        leaves them out. */
-    void setConsoleShown (bool shown);
     juce::TextButton settingsClose { vpui::L ("CLOSE", "CHIUDI") };
     juce::TextButton accountButton { "PRO" };
-    /** The (i) on the INPUT card: opens the explanation of the input modes. */
-    juce::TextButton infoButton { "i" };
+    /** The (?) in the settings heading: the guide to every card on the page.
+        It replaced the (i) that explained the INPUT card alone (2026-10-23). */
+    juce::TextButton guideButton { "?" };
+    /** The input explanation on the first launch, and the guide. */
     InfoPopup inputInfo;
-    /** The input explanation, once, on the first launch ("Got it"); afterwards
-        only from the (i). */
+    /** The input explanation, once, on the first launch ("Got it"). */
     void showInputInfo (bool firstRun);
+    void showGuide();
     bool inputInfoChecked = false;
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
