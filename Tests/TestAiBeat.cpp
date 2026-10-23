@@ -2388,6 +2388,90 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
         expect ((mask & 0x1111u) == 0x1111u && perc.partStrokes (0) > 8,
                 "the lane mask shows the shaker's quarters and its stroke count moves");
     }
+
+    // A knob switched on while the part plays joins on the next one, and a
+    // shaker switched off shakes out (16 32nds, fading) and then stops
+    // (TODO item 150).
+    {
+        constexpr double sr = 48000.0;
+        constexpr int block = 256;
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (120.0f);
+        clock.setTargetTempo (120.0f, 1.0f);
+        clock.setLocked (true);
+        clock.snapDownbeat (0.0f);
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setGroove (120.0f, 4);
+        perc.setSubdivision (vp::Subdivision::sixteenth);
+        perc.setCongasEnabled (false);
+        std::vector<float> l (block), r (block);
+        auto crossesOne = [] (const vp::ClockTick& t)
+        {
+            for (int p = 0; p < t.pulsesFired; ++p)
+                if (t.pulseBeatInBar[p] == 0 && t.pulseIndex[p] == 0)
+                    return true;
+            return false;
+        };
+        int pos = 0;
+        auto blockAt = [&] () { const auto t = clock.advance (block); perc.render (l.data(), r.data(), block, t, true); pos += block; return t; };
+
+        // Into the second beat of a bar, then switch the cembalo on.
+        bool sawBeatOne = false;
+        while (pos < static_cast<int> (sr * 10.0))
+        {
+            const auto t = blockAt();
+            for (int p = 0; p < t.pulsesFired; ++p)
+                if (pos > static_cast<int> (sr * 3.0) && t.pulseBeatInBar[p] == 1 && t.pulseIndex[p] == 2)
+                    sawBeatOne = true;
+            if (sawBeatOne)
+                break;
+        }
+        perc.setCembaloEnabled (true);
+        bool silentBefore = true, crossed = false;
+        while (! crossed && pos < static_cast<int> (sr * 20.0))
+        {
+            const auto before = perc.partStrokes (2);
+            const auto t = blockAt();
+            crossed = crossesOne (t);
+            if (! crossed && perc.partStrokes (2) != before)
+                silentBefore = false;
+        }
+        for (int i = 0; i < static_cast<int> (sr * 0.5) / block; ++i)
+            blockAt();
+        std::printf ("knob-join  silent until the one=%d  crossed=%d  cembalo strokes after=%u\n",
+                     silentBefore ? 1 : 0, crossed ? 1 : 0, perc.partStrokes (2));
+        expect (silentBefore && crossed && perc.partStrokes (2) > 0,
+                "a knob switched on mid-bar waits for the next one, then plays");
+
+        // The shaker switched off mid-bar: its shake-out, fading, then nothing.
+        perc.setCembaloEnabled (false);
+        for (int i = 0; i < static_cast<int> (sr * 1.5) / block; ++i)
+            blockAt();
+        const auto atOff = perc.partStrokes (0);
+        perc.setShakerEnabled (false);
+        double early = 0.0, late = 0.0;
+        const int quarterBlocks = static_cast<int> (sr * 0.25) / block;
+        for (int i = 0; i < static_cast<int> (sr * 3.0) / block; ++i)
+        {
+            blockAt();
+            double e = 0.0;
+            for (int s = 0; s < block; ++s)
+                e += static_cast<double> (l[static_cast<size_t> (s)]) * l[static_cast<size_t> (s)];
+            if (i >= 1 && i < 1 + quarterBlocks)
+                early += e;
+            else if (i >= 1 + 2 * quarterBlocks && i < 1 + 3 * quarterBlocks)
+                late += e;
+        }
+        const auto outro = perc.partStrokes (0) - atOff;
+        const double dropDb = 10.0 * std::log10 ((early + 1e-12) / (late + 1e-12));
+        std::printf ("shake-out  strokes=%u  fade %.1f dB (first quarter second vs third)\n",
+                     outro, dropDb);
+        expect (outro == 16 && dropDb > 8.0,
+                "a shaker switched off shakes out in 16 fading strokes and stops");
+    }
 }
 
 

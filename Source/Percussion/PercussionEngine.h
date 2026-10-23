@@ -44,10 +44,13 @@ public:
         recordings are embedded; set before prepare(). */
     void setUseRecordedSamples (bool on) noexcept { useRecordedSamples = on; }
     void setEnabled (bool on) noexcept { enabled = on; }
-    void setCongasEnabled (bool on) noexcept { groove.setCongasEnabled (on); }
-    void setShakerEnabled (bool on) noexcept { groove.setShakerEnabled (on); }
-    void setCembaloEnabled (bool on) noexcept { groove.setCembaloEnabled (on); }
-    void setClapEnabled (bool on) noexcept { groove.setClapEnabled (on); }
+    /** The four FEEL knobs. Off takes effect at once (a shaker or cembalo
+        shakes out first); on, while the part is sounding, waits for the next
+        one. See `knobWanted`. */
+    void setShakerEnabled (bool on) noexcept { knobWanted[0] = on; }
+    void setCongasEnabled (bool on) noexcept { knobWanted[1] = on; }
+    void setCembaloEnabled (bool on) noexcept { knobWanted[2] = on; }
+    void setClapEnabled (bool on) noexcept { knobWanted[3] = on; }
     /** See `GrooveEngine::setBarTrusted`. */
     void setBarTrusted (bool trusted) noexcept { groove.setBarTrusted (trusted); }
     void setGroove (float bpm, int pulsesPerBeat) noexcept;
@@ -201,7 +204,7 @@ private:
                                Stroke stroke, float force, std::uint32_t seed, bool ownTake = false) noexcept;
     Voice& allocateVoice() noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset,
-                    KitSound part = KitSound::count) noexcept;
+                    KitSound part = KitSound::count, float level = 1.0f) noexcept;
     void   releaseStroke (Stroke stroke) noexcept;
     void   discardPendingVoices() noexcept;
     void   applyPendingGrooveControls() noexcept;
@@ -261,6 +264,20 @@ private:
     std::atomic<std::uint32_t> barStepsShown[kKnobs] {};
     std::uint32_t barStepsNow[kKnobs] {};
     void noteStroke (KitSound part, Stroke stroke, int step) noexcept;
+
+    // Each knob as asked for and as playing (what the groove is told). A knob
+    // switched on while the part sounds joins on the next one, as a player
+    // would, not on whatever sixteenth the finger landed; switched off it
+    // stops at once - a shaker or a cembalo after a short shake-out, the hand
+    // shaking fast and the sound going away (`outroLeft` strokes still to
+    // play). Asked for by the percussionist, 2026-10-23.
+    bool  knobWanted[kKnobs] { true, true, false, false };
+    bool  knobOn[kKnobs] { true, true, false, false };
+    int   outroLeft[kKnobs] {};
+    float outroVelocity[kKnobs] {};
+    void  applyKnob (int knob, bool on) noexcept;
+    KitSound knobSound (int knob) const noexcept;
+    int   playOutros (int offset, float pulseSamples, int step) noexcept;
 };
 
 } // namespace vp

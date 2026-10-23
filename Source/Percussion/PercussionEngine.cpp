@@ -83,6 +83,15 @@ namespace
     // closer than this is the clock stuttering, not the groove.
     constexpr double kRetriggerGuardSec = 0.020;
 
+    // The shake-out when a shaker or a cembalo is switched off: 32nds on the
+    // grid for two quarters, each stroke 2 dB under the last (-30 dB by the
+    // end), so the softer, darker layers take over as it goes - the hand
+    // shaking fast and the sound walking away. Picked by reasoning, not yet
+    // heard (2026-10-23).
+    constexpr int   kOutroStrokes = 16;
+    constexpr float kOutroStartVelocity = 0.70f;
+    constexpr float kOutroDecay = 0.794f;
+
     struct Svf
     {
         float low = 0.0f;
@@ -1235,6 +1244,8 @@ void PercussionEngine::reset() noexcept
     {
         barStepsNow[k] = 0;
         barStepsShown[k].store (0, std::memory_order_relaxed);
+        applyKnob (k, knobWanted[k]);
+        outroLeft[k] = 0;
     }
     applyPendingGrooveControls();
     std::fill (rrCursor, rrCursor + kStrokes, 0);
@@ -1263,6 +1274,8 @@ void PercussionEngine::silence() noexcept
     reverb.reset();
     samplesSinceHit = 1000000;
     hasSeenPulse = false;
+    for (int k = 0; k < kKnobs; ++k)
+        outroLeft[k] = 0;
     applyPendingGrooveControls();
 }
 
@@ -1348,6 +1361,54 @@ const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float vel
     return bank[st][layer][rr];
 }
 
+void PercussionEngine::applyKnob (int knob, bool on) noexcept
+{
+    knobOn[knob] = on;
+    switch (knob)
+    {
+        case 0:  groove.setShakerEnabled (on);  break;
+        case 1:  groove.setCongasEnabled (on);  break;
+        case 2:  groove.setCembaloEnabled (on); break;
+        default: groove.setClapEnabled (on);    break;
+    }
+}
+
+KitSound PercussionEngine::knobSound (int knob) const noexcept
+{
+    const int raw = knob == 0 ? shakerSound : knob == 1 ? congaSound
+                  : knob == 2 ? cembaloSound : clapSound;
+    return raw >= 0 && raw < static_cast<int> (KitSound::count)
+               ? static_cast<KitSound> (raw) : static_cast<KitSound> (knob);
+}
+
+int PercussionEngine::playOutros (int offset, float pulseSamples, int step) noexcept
+{
+    // Two strokes a pulse: 32nds on a sixteenths clock. The shaker alternates
+    // its two strokes as the hand goes back and forth; the cembalo is the
+    // jingles shaken, its return stroke every time.
+    int played = 0;
+    for (int k = 0; k < kKnobs; ++k)
+    {
+        const auto sound = knobSound (k);
+        for (int j = 0; j < 2 && outroLeft[k] > 0; ++j)
+        {
+            const bool back = ((kOutroStrokes - outroLeft[k]) & 1) != 0;
+            const Stroke st = sound == KitSound::cembalo ? Stroke::cembaloUp
+                            : back ? Stroke::shakerUp : Stroke::shakerDown;
+            const float vel = outroVelocity[k];
+            // `pick` will not go under 0.08 of gain; below that the level
+            // carries on down so the end is a fade, not a step.
+            trigger (st, vel, offset + static_cast<int> (std::lround (pulseSamples * 0.5f * static_cast<float> (j))),
+                     static_cast<KitSound> (k), std::min (1.0f, vel / 0.08f));
+            noteStroke (static_cast<KitSound> (k), st, step);
+            outroVelocity[k] *= kOutroDecay;
+            --outroLeft[k];
+            ++played;
+        }
+    }
+    return played;
+}
+
 void PercussionEngine::noteStroke (KitSound part, Stroke stroke, int step) noexcept
 {
     // For the screen only: which knob played, and on which sixteenth.
@@ -1361,7 +1422,7 @@ void PercussionEngine::noteStroke (KitSound part, Stroke stroke, int step) noexc
 }
 
 void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
-                                KitSound part) noexcept
+                                KitSound part, float level) noexcept
 {
     stroke = stoppedConga (stroke);
     if (part == KitSound::count)
@@ -1395,8 +1456,8 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
     v.sample = &s;
     v.pos = -(sampleOffset + hold);
     v.length = static_cast<int> (s.left.size());
-    v.gainL = gain * (1.0f - spread);
-    v.gainR = gain * (1.0f + spread);
+    v.gainL = gain * level * (1.0f - spread);
+    v.gainR = gain * level * (1.0f + spread);
     v.active = true;
     ++totalHits;
 }
@@ -1416,6 +1477,30 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     // fix. Tails that have already begun are left alone.
     if (tick.reanchored)
         discardPendingVoices();
+
+    // The knobs. Off is now, with a shake-out if the hand has one. On is now
+    // only while nothing sounds (before START, waiting to come in, before the
+    // first pulse); a part already playing takes it on the next one, below.
+    {
+        const bool sounding = audible && hasSeenPulse;
+        for (int k = 0; k < kKnobs; ++k)
+        {
+            if (knobOn[k] && ! knobWanted[k])
+            {
+                applyKnob (k, false);
+                const auto sound = knobSound (k);
+                if (sounding && (sound == KitSound::shaker || sound == KitSound::cembalo))
+                {
+                    outroLeft[k] = kOutroStrokes;
+                    outroVelocity[k] = kOutroStartVelocity;
+                }
+            }
+            else if (! knobOn[k] && knobWanted[k] && ! sounding)
+                applyKnob (k, true);
+            if (! audible)
+                outroLeft[k] = 0;
+        }
+    }
 
     {
         // A guard against firing the same grid position twice - which the clock
@@ -1475,12 +1560,19 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                 {
                     barStepsShown[k].store (barStepsNow[k], std::memory_order_relaxed);
                     barStepsNow[k] = 0;
+                    // A knob switched on during the last bar comes in here.
+                    if (knobWanted[k] && ! knobOn[k])
+                    {
+                        applyKnob (k, true);
+                        outroLeft[k] = 0;
+                    }
                 }
             }
             if (idx == 0)
                 lastBarBeat = barBeat;
 
-            if (! playing)
+            const bool outro = audible && (outroLeft[0] | outroLeft[1] | outroLeft[2] | outroLeft[3]) != 0;
+            if (! playing && ! outro)
                 continue;
             if (samplesSinceHit + offset < minGap)
                 continue;
@@ -1491,7 +1583,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             const int step = (barBeat * 4 + (idx * 4) / per) % GrooveEngine::kStepsPerBar;
 
             GrooveEvent events[GrooveEngine::kMaxEvents];
-            const int n = groove.eventsAt (barCounter, step, events, GrooveEngine::kMaxEvents);
+            int n = playing ? groove.eventsAt (barCounter, step, events, GrooveEngine::kMaxEvents) : 0;
             for (int e = 0; e < n; ++e)
             {
                 const int delay = static_cast<int> (std::lround (events[e].delayBeats
@@ -1500,6 +1592,8 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                          events[e].part);
                 noteStroke (events[e].part, events[e].stroke, step);
             }
+            if (outro)
+                n += playOutros (offset, beatSamples / static_cast<float> (per), step);
             if (n > 0)
                 samplesSinceHit = -offset;
         }

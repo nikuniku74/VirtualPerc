@@ -95,6 +95,9 @@ int main (int argc, char** argv)
     vp::Subdivision subdivision = vp::Subdivision::eighth;
     float dynamics = 1.0f;
     bool arc = false;
+    // Quarters into the part at which a knob is switched, to hear the join on
+    // the next one and the shake-out (docs/TODO.md item 150). -1 = never.
+    double shakerOffAt = -1.0, cembaloOnAt = -1.0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -117,6 +120,8 @@ int main (int argc, char** argv)
         else if (a == "--raw")       raw = true;   // no peak normalisation: compare voice levels
         else if (a == "--dynamics")  dynamics = std::stof (next());
         else if (a == "--arc")       arc = true;
+        else if (a == "--shaker-off-at")  shakerOffAt = std::stod (next());
+        else if (a == "--cembalo-on-at")  cembaloOnAt = std::stod (next());
         else if (a == "--no-congas") congas = false;
         else if (a == "--no-shaker") shaker = false;
         else if (a == "--cembalo")   cembalo = true;
@@ -144,7 +149,8 @@ int main (int argc, char** argv)
                          "              [--no-congas] [--no-shaker] [--cembalo] [--clap]\n"
                          "              [--cembalo-vol 0.9] [--clap-vol 0.9]\n"
                          "              [--sub 4|8|16] [--natural] [--procedural]\n"
-                         "              [--dynamics 1.0] [--arc]\n");
+                         "              [--dynamics 1.0] [--arc]\n"
+                         "              [--shaker-off-at 9.5] [--cembalo-on-at 5.5]   (quarters into the part)\n");
             return 1;
         }
     }
@@ -244,6 +250,11 @@ int main (int argc, char** argv)
             const double u = 1.0 - std::cos (2.0 * 3.14159265358979 * through);
             perc.setDynamics (static_cast<float> (0.06 + 0.94 * (u * 0.5)));
         }
+        const double quarters = static_cast<double> (pos - lead) / (kSr * beatSec);
+        if (shakerOffAt >= 0.0 && quarters >= shakerOffAt)
+            perc.setShakerEnabled (false);
+        if (cembaloOnAt >= 0.0 && quarters >= cembaloOnAt)
+            perc.setCembaloEnabled (true);
         perc.render (bl.data(), br.data(), n, tick, audible);
         std::memcpy (L.data() + pos, bl.data(), sizeof (float) * static_cast<size_t> (n));
         std::memcpy (R.data() + pos, br.data(), sizeof (float) * static_cast<size_t> (n));

@@ -269,6 +269,21 @@ Playback is an octave up (`kTriangleTune = 2`). Until then
 `synthesizeTriangle` is the fallback (modes 5.3-12.5 kHz, beater at sample
 0). UI chip/knob fill is turchese `0xff2ee8d0`.
 
+### Switching a knob mid-song (2026-10-23, docs/TODO.md item 150)
+
+`PercussionEngine` keeps each knob as asked (`knobWanted`, set from
+`EngineSettings` every block) and as playing (`knobOn`, what `GrooveEngine`
+is told). **On** waits for the next bar line while the part sounds - a player
+joins on the one - and is immediate when nothing sounds (before START, waiting
+to come in, before the first pulse). **Off** is immediate; a knob carrying
+shaker or cembalo first **shakes out**: 16 32nds on the grid (two per pulse),
+2 dB down each (`kOutroStrokes`, `kOutroStartVelocity` 0.70, `kOutroDecay`
+0.794), shaker alternating down/up, cembalo all `cembaloUp`. Below `pick`'s
+0.08 gain floor `trigger(..., level)` keeps fading. Congas and clap stop dead.
+Hear it: `VPRender --no-congas --click --cembalo-on-at 5.5 --shaker-off-at 17.5`.
+Checked by `VPTests --percussion` (knob-join, shake-out). Numbers chosen by
+reasoning; the listener's ear decides.
+
 ## 8. Feel: swing, humanize, ghosts
 
 **Swing** (`humanDelay`) is a **warp**, not a late off-eighth - and what it warps
