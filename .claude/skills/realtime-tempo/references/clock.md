@@ -176,3 +176,14 @@ beats outside 25 ms 26.3 -> 18.7%, surges 0.58 -> 0.33 /min, 42 files better, no
 worse. Entry waits for the comb to agree with the decoder (`entryTempoAgrees`, cap
 12 s). Still open: in 25 of 54 files the first four strokes after entry are more
 than 80 ms off, mostly a grid that entered on the off-beat.
+
+
+**Caller continuity after new-pulse proof (2026-10-23, TODO155).** No new PLL
+controller or time constant is introduced. BeatTracker uses the existing
+`glidePhase(-move,1.0f)` for small grid nudges and sounding re-entry after the
+independent eight-peak tempo proof. The move is capped at0.20beat, so that
+explicit glide spends at most20% rate over one beat instead of skipping the
+phase in one callback. The policy survives level epochs of the same input,
+and clears on explicit source/mode replacement/reset. Outside that proof the
+legacy behavior is preserved, as required by the measured no-regression gates.
+See phase-and-bar.md and verification.md for the complete paired measurements.

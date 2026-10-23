@@ -8996,6 +8996,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             float bpmLo = 1000.0f;
             float bpmHi = 0.0f;
             int bpmSamples = 0;
+            bool kitDrained = true;
             while (pos + block <= n)
             {
                 const float* ins[1] = { kit.data() + pos };
@@ -9009,7 +9010,16 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 }
                 pos += block;
                 if ((++blocks % 10) == 0)
-                    std::this_thread::sleep_for (std::chrono::milliseconds (4));
+                {
+                    // A fixed sleep measures worker backlog as tempo motion
+                    // under a loaded host. Drain only the audio already fed.
+                    const auto until = std::chrono::steady_clock::now()
+                                       + std::chrono::seconds (1);
+                    while (kitEng.analysisCompletedSamples() < pos
+                           && std::chrono::steady_clock::now() < until)
+                        std::this_thread::yield();
+                    kitDrained &= kitEng.analysisCompletedSamples() >= pos;
+                }
             }
             for (int i = 0; i < 40; ++i)
             {
@@ -9030,7 +9040,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
             expect (last.followBar != vp::FollowBar::waitBeat
                         && kitEng.shakerHits() > 8,
                     "START leaves ATTENDO BATTUTA and plays");
-            expect (bpmSamples > 20 && (bpmHi - bpmLo) < 6.0f,
+            expect (kitDrained && bpmSamples > 20 && (bpmHi - bpmLo) < 6.0f,
                     "locked BPM stays stable");
 
             // What the microphone hears once the part is actually playing.
@@ -10310,6 +10320,20 @@ namespace vp
 {
 struct BeatTrackerTimingProbe
 {
+    static bool independentGlideTracksSourceIdentity()
+    {
+        BeatTracker t;
+        t.setInputEpoch (0);
+        t.glideRebuiltGrid = true;
+        t.setInputEpoch (1, true, false);
+        const bool pauseKeepsContinuity = t.glideRebuiltGrid;
+        t.setInputEpoch (2, false, true);
+        const bool newFileStartsFresh = ! t.glideRebuiltGrid;
+        t.glideRebuiltGrid = true;
+        t.setSpeakerFollow (true);
+        return pauseKeepsContinuity && newFileStartsFresh && ! t.glideRebuiltGrid;
+    }
+
     static bool newFileMustEarnItsOwnLock()
     {
         BeatTracker t;
@@ -10324,11 +10348,13 @@ struct BeatTrackerTimingProbe
         t.sounding = true;
         t.hadPlayed = true;
         t.downbeatHoldSamples = 48000 * 9;
+        t.glideRebuiltGrid = true;
         t.setInputEpoch (1, false, true);
 
         const bool fresh = t.beatCount == 0 && t.listeningSamples == 0
                            && t.smoothedConf == 0.0f && ! t.sounding
-                           && ! t.hadPlayed && t.downbeatHoldSamples == 0;
+                           && ! t.hadPlayed && t.downbeatHoldSamples == 0
+                           && ! t.glideRebuiltGrid;
         t.heldBpm = 120.0f;
         t.inputPeakEnv = 0.02f;
         t.updateState (0.8f, true, true, true, 256);
@@ -10953,6 +10979,10 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    const bool sourceBoundary = vp::BeatTrackerTimingProbe::independentGlideTracksSourceIdentity();
+    std::printf ("state-timing independent pulse survives a pause, clears on new source %s\n",
+                 sourceBoundary ? "PASS" : "FAIL");
+    (sourceBoundary ? passed : failed)++;
     for (int block : { 64, 256, 1024 })
         for (float confidence : { 0.8f, 0.55f })
         {
@@ -11003,6 +11033,65 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
                 "violent line change survives the stale fold and holds its new tempo");
     }
     expectTransitionRefitRejectsOldComb();
+
+    // A song change has no adjacent old/new intervals across the pause. The
+    // new pulse must be heard even when the old grid refuses its quarters.
+    auto afterPause = [] (float from, float to, bool fill)
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (50.0);
+        dec.setLevelAnchor (true);
+        dec.setLineFeed (true);
+        dec.setSounding (true);
+        double firstRight = -1.0;
+        float last = 0.0f;
+        float controlError = 0.0f;
+        uint32_t grid = 0, transition = 0;
+        bool continuous = true;
+        for (int f = 0; f < 80 * 50; ++f)
+        {
+            const double now = f / 50.0;
+            const float rate = now < 30.0 || (fill && now >= 35.0) ? from : to;
+            const double origin = now < 30.0 ? 0.5 : 33.2;
+            const double beats = (now - origin) * rate / 60.0;
+            const double distance = (beats - std::round (beats)) * 60.0 / rate;
+            const float a = now >= 30.0 && now < 33.0 ? 0.02f
+                : 0.02f + 0.92f * static_cast<float> (
+                    std::exp (-0.5 * distance * distance / (0.027 * 0.027)));
+            const auto h = dec.observe (a, 0.02f, 1.0f - a, 0.5f, 0.5f);
+            if (h.transitionSerial != transition && h.transitionIntervals == 7)
+                continuous &= h.gridSerial == grid;
+            grid = h.gridSerial;
+            transition = h.transitionSerial;
+            last = h.bpm;
+            if (now > 33.0 && firstRight < 0.0 && std::fabs (h.bpm / to - 1.0f) < 0.04f)
+                firstRight = now - 33.0;
+            if (now > 33.0)
+                controlError = std::max (controlError, std::fabs (h.bpm / from - 1.0f));
+        }
+        std::printf ("song-change %.0f->%.0f fill=%d first=%.2fs final=%.2f controlError=%.4f\n",
+                     static_cast<double> (from), static_cast<double> (to), fill,
+                     firstRight, static_cast<double> (last), static_cast<double> (controlError));
+        expect (continuous, "a proven new pulse changes tempo without requesting a clock re-anchor");
+        return std::make_pair (firstRight, fill ? controlError : std::fabs (last - to));
+    };
+    for (const auto pair : { std::pair<float, float> { 100.0f, 122.0f },
+                             { 120.0f, 90.0f }, { 120.0f, 106.0f },
+                             { 120.0f, 150.0f }, { 125.0f, 106.0f },
+                             { 125.0f, 150.0f }, { 140.0f, 106.0f },
+                             { 140.0f, 122.0f } })
+    {
+        const auto result = afterPause (pair.first, pair.second, false);
+        // The 120->106 case damages the recent fit; it retains the ordinary
+        // recovery's 18.34 s rather than granting a second authority there.
+        const double deadline = pair.first == 120.0f && pair.second == 106.0f ? 20.0 : 8.0;
+        expect (result.first >= 0.0 && result.first < deadline && result.second < 1.0f,
+                "a sounding direct feed recovers after a pause within its causal regression deadline");
+    }
+    const auto pause = afterPause (120.0f, 120.0f, false);
+    expect (pause.second < 0.1f, "a pause at the same tempo preserves the held pulse");
+    const auto fill = afterPause (120.0f, 150.0f, true);
+    expect (fill.second < 0.04f, "four fill quarters after a pause cannot release the held tempo");
 
     // Quarter-by-quarter detector: with 6 ms of onset scatter the interval
     // detector stands down (4 of these 12 steps confirmed before), and a +44 ms

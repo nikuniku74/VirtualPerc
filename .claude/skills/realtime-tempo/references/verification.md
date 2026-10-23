@@ -1069,3 +1069,88 @@ bit-identical across serial and parallel runs. Use
 `scripts/analysis/bench_fast.py run TAG [VAR=VALUE...]` and
 `bench_fast.py cmp BASE TAG...` (50 runs in ~1 minute). Numbers are not
 comparable with the older slow benches; the new baseline tag is `fb0`.
+
+
+## Song/tempo changes with independent completed peaks (2026-10-23, TODO 155)
+
+**Source and procedure.** Shared BeatDecoder/BeatTracker rule for MIXER and
+BRANO, causal only. No filenames, track metadata, BPM exceptions or teacher
+beats reach the algorithm. Baseline snapshots/executables are in
+`build-host/vp-mixer-changes-20261023/`; the previous core-fix 291-run baseline
+was reused where byte-identical source/model existed. HEAD became 65e04c9 while
+working (the prior audio-input fixes were committed externally); current work
+preserves those fixes. Actual ONNX, same build-host, after-current-block pacing.
+301 paired probes: 195 direct/file/long + 96 room/mic + 8 fresh slices + 2 fresh
+full-set paths. The 44-minute NSF2009 recording was not used to derive the rule;
+its four slices are not independent extra recordings. Teacher is a grader only.
+
+| Materiale / percorso | Corretto % | Ottava errata % | Disp. ms | p90 ms | >25 ms % | Uno % |
+|---|---:|---:|---:|---:|---:|---:|
+| Banco, MIXER | 86.34 → 86.55 | 4.79 → 4.79 | 12.64 → 12.65 | 38.84 → 38.86 | 20.21 → 20.23 | 80.98 → 81.32 |
+| Banco, BRANO | 78.54 → 78.80 | 11.84 → 11.84 | 13.98 → 13.99 | 38.98 → 39.02 | 21.71 → 21.79 | 73.64 → 73.98 |
+| FBI/Rebecca, MIXER | 72.47 → 72.60 | 16.78 → 16.78 | 30.04 → 30.06 | 73.32 → 73.30 | 27.32 → 27.27 | 73.21 → 73.28 |
+| FBI/Rebecca, BRANO | 69.33 → 69.48 | 18.93 → 18.93 | 14.87 → 14.89 | 57.68 → 57.58 | 24.15 → 24.11 | 68.73 → 69.39 |
+| 3 set interi, MIXER | 55.28 → 56.23 | 20.93 → 20.95 | 13.53 → 13.45 | 44.12 → 43.81 | 24.14 → 23.98 | 79.49 → 79.77 |
+| Set nuovo 44 min, MIXER | 86.62 → 87.71 | 2.45 → 2.43 | 11.38 → 11.32 | 32.31 → 32.24 | 17.36 → 17.36 | 76.37 → 75.94 |
+| Set nuovo 44 min, BRANO | 10.96 → 87.84 | 72.52 → 2.54 | 8.83 → 11.76 | 24.04 → 36.04 | 9.19 → 18.79 | 92.64 → 84.44 |
+
+Decision percentages follow truth.py: after20sec, while sounding, tempo from
+clock phase/rate, tolerance4%; phase and bar only at the correct level. Group
+columns are the existing per-file n-weighted summaries, not a pooled global
+phase median. The new full set's changed cohort must not be mistaken for phase
+regression: BRANO653 previously correct beats have exactly identical phase/bar;
+4,579 are newly correct, none lost. MIXER common5,159: scatter11.378→11.350ms,
+p90 32.310→32.349ms, one76.37→76.75%; 66 gained/1 lost at the tempo gate, net+65.
+No file-level correct-tempo share decreases, and no file sounds less.
+
+**Clock events.** Of301 traces287 are byte-identical. Across the14 changed
+comparisons (including the two new full-set paths): phase jumps40→14, skipped
+sixteenths13→4, rate-surges97→95. No *per-file* skipped-sixteenth increase.
+Across the original195 only: jumps30→14, skipped9→4, surges62→63. The extra
+surge count is not hidden: completed-peak reacquisition/monotonic phase closure
+can bend rate for one beat where a snap previously moved phase instantly.
+Recorded unmatched events include BRANOFLAMINGO at81.35s (-7.27%,0.58s),
+NSF2013 at2420.14s (-6.31%,0.49s), SONG00 at5927/5973s (+3.53/+3.07%,0.49s).
+These are bounded rate corrections, not new skipped subdivisions. Held fixed
+material outside the independent proof is bit-identical.
+
+**Onset gates.** `drums.py` scores every changed short file with the existing
+bench_fast/onset_fit metrics; unchanged files contribute zero difference.
+`drums_long.py` also scores both changed old whole sets and both new whole-set
+paths, in bounded60sec spectrogram chunks, with onset caches beside local
+symlinks in the task build folder (no writes to the user's audio directories).
+No file crosses the existing +1.5pp >25ms or +1exit/min gates. Mean short-file
+deltas over all56main files: MIXER p25-0.0045pp, exits0.0000/min; BRANO+0.0059pp,
++0.00234/min. Over40extra files: MIXER-0.0161pp,-0.00732/min;
+BRANO+0.0263pp,+0.00592/min. New full set: MIXER p25 2.60→2.47%, exits1.50→1.52/min;
+BRANO9.58→2.80%,2.93→1.50/min. These gates allow small fluctuations; they do
+not mean every phase sample or secondary percentage is numerically equal.
+
+**Scope of the win.** A clean old short fit that starves on the old grid can
+now be challenged by eight ungated quarters and the settled comb. A damaged
+old fit is deliberately left to ordinary recovery. The retained rule does NOT
+improve the six named long-set witnesses (NSF203/241/1623/4507/5868s and
+LIVE1758s); earlier variants did, but introduced other regressions. Paused
+synthetic changes include100→122,120→90,120→150,125→150,140→106/122 reaching
+the new tempo inside8sec;120→106 retains its ordinary18.34sec. No special-case
+BPMs exist in production; these are regression witnesses. Octave and12/8
+ambiguities, true hardware calibration and listening remain open.
+
+**Tests and builds.** Added paused-change/fill/no-grid-reanchor assertions,
+source identity across musical pause vs explicit replacement/mode change,
+and causal worker drainage of the pre-existing ONNX kit stability fixture.
+Under load the latter's fixed4ms sleep could measure stale worker publications
+as a39.8BPM span; the BPM limit was not loosened. A bounded1sec wait only for
+samples already fed now makes that fixture judge the engine. This adds no
+wait to production. Gates: step34/0, state14/0, bar15/0, phase-lock20/0,
+slow13/0, new-input27/0, transport8/0, audio-input11/0, harmonic-entryPASS.
+Host app/VPTrack/VPTests and unsigned iOSRelease compile.
+Full selected suite: **717 passed / 27 failed** (`full-accepted.log`). Failure names and multiplicities match the 27 pre-existing failures exactly (Counter comparison against `vp-core-fixes-20261023/comparison.json`); no added failures. This does not close those pre-existing defects. Final brace-only warning cleanup repeats state14/0, step34/0 and two changed-file pulse probes byte-identically; host and unsigned iOS Release rebuild successfully.
+
+**Reproduce.** In the saved experiment folder: `run.py`, `run_extra.py`,
+`compare.py`, `common.py`, `drums.py`, `drums_long.py`; all pulse files and JSON
+metrics are retained (unchanged intermediate traces are losslessly symlinked
+to their baseline to save disk). Four40sec before/after clock-click mixes in
+`listening/` are reconstruction diagnostics, not rendered percussion audio;
+no human/iPad listening was performed here. Rejected source snapshots and
+metrics are retained; see tempo-sources.md for why they were rejected.

@@ -287,6 +287,7 @@ void BeatTracker::reset() noexcept
     effectiveSubdivision = Subdivision::sixteenth;
     lastBeatSerial = 0;
     lastGridSerial = 0;
+    glideRebuiltGrid = false;
     seenSerials = false;
     lastLeadMs = 0.0f;
     samplesSinceBeat = 0;
@@ -1605,6 +1606,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
 
     if (haveHyp && transitionConsumer.consume (hyp, tempoOwned))
     {
+        // The independent eight-peak proof starts a new pulse: later grid
+        // nudges and returns from a pause must stay continuous too.
+        if (hyp.transitionIntervals >= 7)
+            glideRebuiltGrid = true;
         // The jump - tempo set at once, phase spent inside a beat - is for a
         // step the decoder is sure of. On a direct feed a step confirmed on
         // intervals that barely agree is wrong too often to be played as
@@ -1918,7 +1923,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // So the response is now graded the way a player's is. Past a third of
         // a beat the grid really is somewhere else and stopping to rejoin is
         // right. Between an eighth and a third it is a lean: move part of the
-        // way at once, cap that move, and leave the rest to the phase loop -
+        // way (a glide after an independent pulse recovery), cap that move,
+        // and leave the rest to the phase loop -
         // without stopping, because a percussionist who is a fifth of a beat
         // out does not drop out, they lean.
         constexpr float kRegrabBeats = 0.33f;    // stop and rejoin above this
@@ -1937,7 +1943,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
             else
             {
                 const float move = std::clamp (rebuiltGridError, -kNudgeCeiling, kNudgeCeiling);
-                follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
+                if (glideRebuiltGrid)
+                    follower.glidePhase (-move, 1.0f);
+                else
+                    follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
             }
         }
     }
@@ -2195,7 +2204,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
                                        ? std::clamp (snapErr, -kSoundingSnapCeiling,
                                                      kSoundingSnapCeiling)
                                        : snapErr;
-                follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
+                if (sounding && glideRebuiltGrid)
+                    follower.glidePhase (-move, 1.0f);
+                else
+                    follower.snapPhase (wrap01 (follower.beatPhase() - move), true);
             }
         }
     }

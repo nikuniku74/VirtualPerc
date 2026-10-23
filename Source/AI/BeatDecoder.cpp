@@ -1720,6 +1720,37 @@ bool BeatDecoder::stepLacksComb (float newBpm) const noexcept
     return std::fabs (comb - newBpm) >= std::fabs (comb - bpm);
 }
 
+bool BeatDecoder::combHasNewPulse (float combBpm) const noexcept
+{
+    // A clean but starving held fit can defend the wrong song indefinitely.
+    // Eight ungated quarters plus a settled comb may replace it; an already
+    // incoherent fit stays with ordinary motion recovery (TODO 155).
+    if (! lineFeed || ! sounding || provisional || ! tempo.levelSettled()
+        || tempo.salience() <= kOctaveSnapSalience || combBpm < kMinBpm
+        || bpm < kMinBpm || ungatedPeakCount < kShortFit
+        || shortFitResidual >= kMotionCurveResidual)
+        return false;
+    const float apart = std::fabs (std::log2 (combBpm / bpm));
+    // A subdivision remains the listener's decision under a sounding part.
+    if (apart <= kStaleGridThreshold
+        || std::fabs (apart - std::round (apart)) <= kStaleGridThreshold)
+        return false;
+    const double period = 60.0 / combBpm;
+    const double measured = (ungatedPeaks[kShortFit - 1] - ungatedPeaks[0])
+                          / (kShortFit - 1);
+    if (std::fabs (measured / period - 1.0) > kFastDriftToleranceLine)
+        return false;
+    for (int k = 1; k < kShortFit; ++k)
+    {
+        const double interval = ungatedPeaks[k] - ungatedPeaks[k - 1];
+        if (interval <= 0.0 || std::fabs (std::log2 (interval / period)) > kStaleGridThreshold
+            || std::fabs (ungatedPeaks[k] - ungatedPeaks[0] - k * measured)
+                   > kMotionCurveResidual * period)
+            return false;
+    }
+    return true;
+}
+
 void BeatDecoder::commit (float candidateBpm, float rate) noexcept
 {
     if (candidateBpm < kMinBpm || candidateBpm > kMaxBpm)
@@ -1934,6 +1965,7 @@ void BeatDecoder::clearTempoTransition (TempoTransitionReason reason) noexcept
     // are not two ends of one interval.
     transitionPrevEventSec = -1.0;
     transitionPrevStrength = 0.0f;
+    ungatedPeakCount = 0;
     strongOffGridPeakSec = -1.0;
     // The beats this was waiting for are gone with everything else, and the
     // fold is the right thing to acquire a tempo from again.
@@ -3175,6 +3207,7 @@ void BeatDecoder::updateTempo() noexcept
         gridStarving = beatTime[newestI] - beatTime[olderI]
                        > kGridStaleBeats * 60.0 / static_cast<double> (bpm);
     }
+    const bool newPulse = gridStarving && combHasNewPulse (combRawBpm);
     const bool gridUncorroborated = sounding && combAgreedBpm < kMinBpm && gridStarving;
     const bool nonOctaveDisagreement = combReady && (provisional || gridUncorroborated)
                                        && ! octaveArgument
@@ -3592,6 +3625,9 @@ void BeatDecoder::updateTempo() noexcept
     // and the fold's evidence, and let the next beats re-acquire from the
     // activation. That is what an input restart does, and it is why moving the
     // microphone gain was the only thing that ever unstuck this.
+    // Exception: a complete ungated eight-peak lattice independently agrees
+    // with the settled comb. It already measured the new tempo, so retain it
+    // and publish a transition instead of reacquiring from nothing (item 155).
     if (combReady && combMayCorrect && bpm > kMinBpm && combBpm > kMinBpm)
     {
         const float apart = std::fabs (std::log2 (combBpm / bpm));
@@ -3603,7 +3639,7 @@ void BeatDecoder::updateTempo() noexcept
         // re-acquired repeatedly, taking time-out from 3.1 to 6.7 per cent of the
         // run and mean error from 1.9 to 3.7. This exists only for the gap that
         // nothing else covers.
-        if (apart > kStaleGridThreshold && apart < kOctaveThreshold)
+        if (newPulse || (apart > kStaleGridThreshold && apart < kOctaveThreshold))
         {
             if (staleGridBpm < kMinBpm
                 || std::fabs (std::log2 (combBpm / staleGridBpm)) > kStaleGridVoteHold)
@@ -3622,12 +3658,16 @@ void BeatDecoder::updateTempo() noexcept
             staleGridBpm = 0.0f;
         }
 
-        if (staleGridBeats >= kStaleGridVoteBeats)
+        if (newPulse || staleGridBeats >= kStaleGridVoteBeats)
         {
             staleGridBeats = 0;
             staleGridBpm = 0.0f;
-            tempo.restartEvidence();
-            ++gridSerial;
+            // A proven rate change must not request the tracker's grid snap.
+            if (! newPulse)
+            {
+                tempo.restartEvidence();
+                ++gridSerial;
+            }
             clearTempoTransition (TempoTransitionReason::reset);
             lastBeatSec = -1.0;
             longFitPeriodHeld = false;
@@ -3670,6 +3710,45 @@ void BeatDecoder::updateTempo() noexcept
             shortFitResidual = 1.0f;
             enterRegime (TempoRegime::unknown);
             dropIoiLead();
+            if (newPulse)
+            {
+                // These eight completed peaks already measured the new grid;
+                // reacquiring would throw away the evidence that released it.
+                double period = (ungatedPeaks[kShortFit - 1] - ungatedPeaks[0])
+                              / (kShortFit - 1);
+                bpm = std::clamp (static_cast<float> (60.0 / period), kMinBpm, kMaxBpm);
+                double meanTime = 0.0;
+                for (int k = 0; k < kShortFit; ++k)
+                {
+                    storeBeatForFit (ungatedPeaks[k], ungatedStrength[k],
+                                     ungatedLowBand[k], ungatedHighBand[k]);
+                    meanTime += ungatedPeaks[k] / kShortFit;
+                }
+                lastBeatSec = ungatedPeaks[kShortFit - 1];
+                // Phase comes from the whole line, including on this first
+                // publication; the newest crest alone carries its own jitter.
+                gridAnchorSec = meanTime + 0.5 * (kShortFit - 1) * period;
+                float fittedPeriod = static_cast<float> (period), residual = 1.0f, coverage = 0.0f;
+                double fittedAnchor = -1.0;
+                if (fitPeriod (kShortFit, fittedPeriod, residual, coverage, fittedAnchor))
+                {
+                    period = fittedPeriod;
+                    bpm = 60.0f / fittedPeriod;
+                    gridAnchorSec = fittedAnchor;
+                }
+                established = intervalAcquired = true;
+                combAgreedBpm = bpm;
+                // A new tempo does not yet prove continuous motion.
+                enterRegime (TempoRegime::unknown);
+                transitionState = TempoTransitionState::rapid;
+                transitionReason = TempoTransitionReason::confirmed;
+                transitionPeriodSec = static_cast<float> (period);
+                transitionIntervals = kShortFit - 1;
+                transitionConfidence = 1.0f;
+                transitionRapidDeadlineSec = timeSec + kTransitionRapidLifetimeBeats * period;
+                transitionRefitBeats = kTransitionCombLagBeats;
+                ++transitionSerial;
+            }
             return;
         }
     }
@@ -5308,6 +5387,22 @@ BeatHypothesis BeatDecoder::observe (float pBeat, float pDownbeat, float pNone,
                                   || (eventTimeSec - lastBeatSec)
                                          >= static_cast<double> (refrFrac)
                                                 * static_cast<double> (eventReferencePeriod));
+
+    if (eligiblePeak)
+    {
+        for (int k = 0; k + 1 < kShortFit; ++k)
+        {
+            ungatedPeaks[k] = ungatedPeaks[k + 1];
+            ungatedStrength[k] = ungatedStrength[k + 1];
+            ungatedLowBand[k] = ungatedLowBand[k + 1];
+            ungatedHighBand[k] = ungatedHighBand[k + 1];
+        }
+        ungatedPeaks[kShortFit - 1] = eventTimeSec;
+        ungatedStrength[kShortFit - 1] = prevPulse;
+        ungatedLowBand[kShortFit - 1] = std::max (prevLowBand, std::max (prevPrevLowBand, lowBand));
+        ungatedHighBand[kShortFit - 1] = std::max (prevHighBand, std::max (prevPrevHighBand, highBand));
+        ungatedPeakCount = std::min (kShortFit, ungatedPeakCount + 1);
+    }
 
     snapStalePulseToCombFold();
 

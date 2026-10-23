@@ -228,3 +228,29 @@ tempo change never takes this path. Drop the epoch with
 `notifyTrackSeek`/`notifyBarReentry` and a 60 BPM file loaded under a 120 one
 keeps 60 until STOP. Verify with `VPTests --new-input` (measured: 60.0 -> 120.0,
 one restart; with the consumption disabled, 60.0 -> 60.2, no restart).
+
+
+### Continuity after an independent new pulse (2026-10-23, TODO155)
+
+The eight-completed-peak song/tempo recovery in BeatDecoder announces a
+seven-interval tempo transition, not gridSerial. BeatTracker latches
+`glideRebuiltGrid` when it adopts that proof. Both the small rebuilt-grid nudge
+and the ordinary return-after-recovering path then use `glidePhase(-move,1)`
+while sounding (same0.20beat cap, spent over one beat). Fixing only the first
+path left a0.171beat forward jump on a later musical re-entry and skipped a
+sixteenth. Apply the same continuity policy to both, for every source earning
+the proof; never by song/title/BPM.
+
+A level epoch may be a quiet passage/pause, not a new source. Keep this policy
+through those epochs; reset it on explicit replacement (`dropQueued`), reset(),
+or speaker/direct mode change. The timing probe verifies all three source
+identity cases; the new-file lock fixture also checks a stale policy is cleared.
+Large silent re-joins/manual placements and legacy paths before an independent
+proof retain their previous behavior. Making all legacy small snaps glide was
+measured to change an unrelated title's correct-tempo share (-0.60pp), so that
+wider change was rejected. This is a causal source policy, not a song exception.
+
+Across the14 changed paired runs: phase jumps40→14, skipped sixteenths13→4;
+none adds a skipped sixteenth per file. The other287 paired traces are identical,
+including96 IPAD room simulations. Full metrics and the conditional/cohort
+caveat are in verification.md; true device/listening remains.

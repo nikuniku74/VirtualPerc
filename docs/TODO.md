@@ -5925,6 +5925,38 @@ Segnalazione dell'utente: in modalità IPAD, col MIC al minimo segue perfetto; a
 - Tracciati e log conservati in `build-host/vp-core-audit-20261023` (prima MIXER/BRANO) e `build-host/vp-core-fixes-20261023` (prima IPAD/set, dopo, confronto e test). Il modello e il decoder non cambiano. Il banco usa attese deterministiche del worker; l'analisi riceve solo il blocco corrente anche in BRANO. Nessuna analisi di audio futuro.
 - [ ] **Dispositivo / ascolto:** interfaccia multicanale, selezionare IN/CASSA oltre il secondo e oltre l'ottavo; BRANO breve fino alla fine e PLAY per riavviarlo. Microfono iPad fisico, percorsi USB e ascolto restano da provare.
 
+### 155. Cambi di brano/tempo: prova indipendente della nuova pulsazione (2026-10-23) 🟡 banco host verificato — resta dispositivo
+
+- Richiesta: migliorare MIXER e verificare anche BRANO e materiale nuovo, sempre causale, senza eccezioni per titolo/file/BPM.
+- `BeatDecoder`: conserva gli ultimi otto picchi già completati, prima del filtro della griglia. Una griglia che continua a fare un fit coerente ma scarta la musica nuova può essere sostituita solo quando gli otto picchi sono consecutivi/coerenti e concordano col pettine assestato. Esclusi i rapporti d'ottava; un fit già incoerente resta al recupero ordinario. Riutilizzate le soglie esistenti.
+- Conservati i picchi come storia del nuovo fit, senza riacquisirli e senza `gridSerial` nuovo. Tempo e posizione iniziali sono dalla retta sugli otto picchi; nessuna posizione ricavata da un attacco isolato. Un nuovo tempo non prova un accelerando: il regime viene classificato nuovamente, senza forzare VIVO.
+- Dopo questa prova indipendente le piccole correzioni della griglia e il rientro da una pausa usano `glidePhase`, con il clock continuo. La scelta si conserva nelle epoche di livello della stessa sorgente; si azzera su file/sorgente nuovi e sul cambio IPAD/diretto. Nessuna regola riconosce un brano.
+- Test: cambi dopo pausa, pausa allo stesso tempo, fill di quattro quarti, seriale della griglia continuo, identità della sorgente. Il controllo ONNX del kit drena solo l'audio già consegnato: un sonno fisso confondeva il ritardo del worker sotto carico con instabilità di BPM.
+- Tentativi scartati e motivi nella reference `tempo-sources.md`; dati completi in `build-host/vp-mixer-changes-20261023/`.
+
+**Confronto host completato:** 301 coppie prima/dopo, ONNX reale, blocchi causali (`VP_OFFLINE_PACING=1` drena solo il blocco già consegnato). 56 file del banco e 40 aggiuntivi su MIXER/BRANO/IPAD; 3 set interi su MIXER; una registrazione ulteriore di 44 minuti su MIXER/BRANO, anche in quattro estratti da 5 minuti. Gli estratti provengono dallo stesso set nuovo, non sono altri 20 minuti indipendenti.
+
+| Materiale / percorso | Tempo corretto prima | Dopo |
+|---|---:|---:|
+| Banco, MIXER | 86.34% | 86.55% |
+| Banco, BRANO | 78.54% | 78.80% |
+| FBI/Rebecca, MIXER | 72.47% | 72.60% |
+| FBI/Rebecca, BRANO | 69.33% | 69.48% |
+| 3 set interi, MIXER | 55.28% | 56.23% |
+| Set nuovo 44 min, MIXER | 86.62% | 87.71% |
+| Set nuovo 44 min, BRANO | 10.96% | 87.84% |
+
+- **Regressioni:** 287/301 tracce identiche bit per bit; 14 cambiano. Nessun file perde quota di tempo corretto o battiti udibili. Nessun aumento di sedicesimi saltati per file. Nei 14 confronti modificati salti di fase **40 → 14**, sedicesimi saltati **13 → 4**; gli altri sono identici. IPAD **96/96** identici, estratti nuovi **8/8** identici.
+- **Precisione:** sul banco p90 MIXER 38.84 → 38.86 ms, BRANO 38.98 → 39.02; dispersione 12.64 → 12.65 / 13.98 → 13.99 ms. Contro gli attacchi nessun file supera i gate preesistenti (+1.5 pp fuori 25 ms, +1 uscita/min). Sui set lunghi gli stessi controlli passano. Sul set nuovo BRANO le uscite scendono 2.93 → 1.50/min e gli attacchi fuori 25 ms 9.58 → 2.80%.
+- **Coorti diverse:** sul set nuovo BRANO 4 579 battiti diventano corretti, nessuno prima corretto viene perso. Sui 653 già corretti fase e uno restano identici: p90 24.04 ms, uno 92.64%. La misura condizionata a *tutti* i battiti ora corretti (p90 36.04 ms, uno 84.44%) comprende i tratti aggiunti e non è un confronto sulla stessa coorte.
+- **Limiti:** i cinque testimoni lunghi NSF a 203/241/1623/4507/5868 s e quello del set 48 min a 1758 s restano invariati con la regola prudente. Non è la soluzione di tutti i cambi: se il vecchio fit è già incoerente resta il recupero ordinario. Resta l'ambiguità d'ottava; niente accelerazione delle soglie d'entrata. Alcuni piegamenti di velocità del clock aumentano localmente durante la correzione di fase, senza nuovi salti: il totale dei confronti modificati passa 97 → 95 eventi.
+- **Test:** `--tempo-step` 34/0, `--state-timing` 14/0, `--bar` 15/0, `--phase-lock` 20/0, `--tempo-slow` 13/0, `--new-input` 27/0, `--transport` 8/0, `--audio-input` 11/0, `--harmonic-entry` PASS. Mac e iOS Release senza firma compilati.
+- **Suite completa:** 717 superati / 27 falliti. I 27 fallimenti coincidono per nome e molteplicità con quelli preesistenti: nessun fallimento aggiunto. Log `full-accepted.log`. Non è una suite tutta verde; i difetti preesistenti restano aperti.
+- Clic del clock, stesso audio/volume: [MIXER prima](../build-host/vp-mixer-changes-20261023/listening/MIXER_prima.wav) / [dopo](../build-host/vp-mixer-changes-20261023/listening/MIXER_dopo.wav); [BRANO nuovo prima](../build-host/vp-mixer-changes-20261023/listening/BRANO_nuovo_prima.wav) / [dopo](../build-host/vp-mixer-changes-20261023/listening/BRANO_nuovo_dopo.wav). Sono clic ricostruiti dalle tracce misurate, non un render del timbro delle percussioni.
+
+
+- [ ] Ascolto e verifica su iPad/interfaccia reale. Nessuna installazione o calibrazione hardware effettuata in questa verifica.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

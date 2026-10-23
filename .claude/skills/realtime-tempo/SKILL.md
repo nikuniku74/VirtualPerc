@@ -97,6 +97,13 @@ and precise, so there are several:
   (2-4 quarters leaving the 8-beat line by `k*step`), wide non-octave steps on a
   line feed. Under a sounding part on a direct feed every step also needs the
   comb to agree (`stepLacksComb`).
+- **Stale pulse across a song change** (item 155): on direct feeds, a clean
+  held fit that is starving can be challenged by eight coherent *ungated*
+  completed peaks agreeing with the settled comb. Retain their fitted history
+  and the comb, emit a tempo transition without a grid re-anchor, and classify
+  the new regime from unknown (new tempo is not proof of continuing motion).
+  Later small grid/re-entry corrections glide across pauses of the same source;
+  explicit replacement/mode change clears that policy. No title/BPM exceptions.
 - **Ramps**: followed by the short fit, the direct-feed motion evidence that
   releases FISSO (`motionFit*`, `fastTempo*`) and the IOI lead (`ioiLead`). The
   residual-shape bridge (`TempoMotionTracker`) was removed (item 94: active
@@ -142,13 +149,21 @@ Against the offline teacher (Beat This!) on the real-song bench:
 | causal line over last 8 peaks | 10.2 | 13.8% |
 | clock after phase line + glide (current) | ~11.8 | ~18.7% |
 
-Decisions, current model (2026-10-08, 54 files): right tempo/octave 81.7% of
+Historical decisions (2026-10-08, 54 files): right tempo/octave 81.7% of
 beats on loaded files and 81.1% on the MIXER at -12 dB (1.2.6: 78.3 / 76.7%),
 right one 75.0 / 78.8% (item 106; 69.5 / 75.7 before), scatter 12.1 / 11.8 ms, beats > 25 ms 19.3 / 18.4%,
 rate surges 0.18 / 0.23 per minute; no drift between the first and the last
 quarter of a song (median < 1 ms). **Phase is near the network's ceiling; the open problems
 are decisions (octave, the one, entry), not precision.** Any threshold measured
 before 2026-10-02 was measured on the old network's activations.
+
+The current 56-file song bench after item 155 (2026-10-23) reads right tempo
+78.80% BRANO / 86.55% MIXER, versus 78.54 / 86.34 on its matching baseline;
+scatter 13.99 / 12.65 ms versus 13.98 / 12.64. The corpus/aggregation differs
+from the historical 54-file figures above: compare matching runs, not dates.
+Whole sets, 40 additional files and a new 44-minute recording are included in
+`references/verification.md` / TODO155; 301 paired probes, no file loses correct
+tempo share and no per-file skipped-sixteenth increase. Hardware listening remains.
 
 ## 5. Things we refuse to do
 

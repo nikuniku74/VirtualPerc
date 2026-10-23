@@ -323,6 +323,7 @@ private:
     bool  recentPeriod (float& period) const noexcept;
     void  commit (float candidateBpm, float rate) noexcept;
     bool  stepLacksComb (float newBpm) const noexcept;
+    bool  combHasNewPulse (float combBpm) const noexcept;
     float scoreConfidence() const noexcept;
     void  pushLongFit (float bpmValue) noexcept;
     bool  longFitSpread (float& spread, float& trend) const noexcept;
@@ -561,6 +562,11 @@ private:
     // whole octaves). The post-hole refusal defends a lattice the fold has
     // corroborated; one it never agreed with is not a leftover to protect.
     float combAgreedBpm = 0.0f;
+    double ungatedPeaks[kShortFit] {};
+    float ungatedStrength[kShortFit] {};
+    float ungatedLowBand[kShortFit] {};
+    float ungatedHighBand[kShortFit] {};
+    int ungatedPeakCount = 0;
     // How well the beats being fitted are placed against what this song has
     // been giving (the tracker's own EvidenceTrust, fed per accepted beat).
     // A direct-feed FISSO release needs it: a fill moves both fits while the

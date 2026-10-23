@@ -3591,3 +3591,57 @@ Deciding this case needs something from outside the audio: TAP, or a manual
 ÷2/×2. Those controls were removed from the UI in item 15 as redundant with the
 auto path; this measurement says they were not redundant for this class of
 material, and the question is reopened there.
+
+
+## Independent pulse after a song/tempo change (2026-10-23, TODO 155)
+
+The accepted-grid watchdog was voting on evidence the old grid itself had
+filtered: at a wrong tempo it could admit one event every few seconds and then
+defend that sparse lattice with a clean short fit. The experimental replacement
+keeps eight completed eligible peaks *before* the on-grid gate, including their
+strength/low/high bands. It needs a sounding direct feed, a starving old grid,
+a coherent old short fit, and an independent eight-peak consecutive lattice
+agreeing with the settled, salient comb. The octave exclusions remain. The
+limits are the existing short window, stale-grid distance, motion residual and
+line/comb agreement, not new song-specific thresholds.
+
+Retain those peaks as the new fit history and retain the comb. Publish a
+seven-interval rapid transition without incrementing gridSerial; the initial
+period/phase come from the whole fitted line. Do not infer LIVE from a change:
+it establishes a new tempo, not continuing motion. Ordinary regime detection
+must classify the new history.
+
+The caller remembers this independent-pulse recovery so subsequent small grid
+nudges and returns from a pause glide. A level epoch is not source identity:
+keep the choice through pauses, clear it on explicit input replacement
+(dropQueued), reset and speaker/direct mode change. See phase-and-bar.md.
+
+Rejected variants (all causal; saved sources, traces and comparison JSONs in
+build-host/vp-mixer-changes-20261023):
+
+- Drop/reacquire after proof: discards the eight observations just earned,
+  slows a synthetic 125->106 change and sends the BRANO medley to a wrong level.
+- Accept proof over an already incoherent short fit: speeds some changes but
+  loses 0.58 pp on an accelerating passage. The existing residual guard reserves
+  this repair for a clean held lattice, leaving damaged fits to normal motion.
+- Announce the proof as gridSerial: the tracker treats it as a displaced grid
+  and snaps under the part. Use the existing tempo-transition serial instead.
+- Make every legacy small grid snap a glide: moves unrelated material too
+  (MIXER -0.60 pp correct tempo). Rejected; the continuity rule is owned by an
+  independent pulse proof, for every source that earns it.
+- Force LIVE after the eight-peak proof: the lead can overshoot a newly found
+  steady tempo, ~156 over ~150 for several seconds, one net correct beat lost
+  on one file. Reclassify from unknown; no per-BPM/title exception.
+- Clear continuity at every level epoch / cover only the grid-serial nudge:
+  a later musical pause loses the policy and the ordinary re-entry snap skips
+  a sixteenth. Source identity and all sounding re-entry paths must agree.
+
+Selected source: candidate9 in the saved experiment directory. Full corpus:
+301 before/after pairs, 287 bit-identical, 14 changed, no file loses correct
+level/tempo share or sounding truth-beat coverage; no file adds skipped
+sixteenths. This includes 96 microphone/room simulations bit-identical and
+an independently supplied 44-minute continuous set (also four 5-minute slices).
+The ordinary entry policy is unchanged. The full before/after decision, phase,
+bar and onset metrics, current test accounting and limitations are recorded in
+verification.md and TODO155. Do not cite the earlier, less guarded variants'
+NSF lag wins: the retained guard leaves the named long-set witnesses unchanged.

@@ -94,6 +94,8 @@ public:
     void setStartImmediately (bool on) noexcept { startImmediately = on; }
     void setSpeakerFollow (bool on) noexcept
     {
+        if (speakerFollow != on)
+            glideRebuiltGrid = false;
         speakerFollow = on;
         neural.setLineFeed (! on);
     }
@@ -232,6 +234,10 @@ public:
                         bool dropQueued = false) noexcept
     {
         const bool changed = ! seenEpoch || epoch != lastInputEpoch;
+        if (changed && dropQueued)
+        {
+            glideRebuiltGrid = false;
+        }
             if (seenEpoch && epoch != lastInputEpoch)
             {
                 // A tap owns the tempo until this point: every block retargets
@@ -585,6 +591,7 @@ private:
     double sampleRate = 48000.0;
     uint32_t lastBeatSerial = 0;
     uint32_t lastGridSerial = 0;
+    bool glideRebuiltGrid = false;
     /** How long the decoder has held FISSO on one grid under a sounding part;
         see TempoFollower::setFixedDirectFeed. */
     uint32_t fixedGridSerial = 0;
