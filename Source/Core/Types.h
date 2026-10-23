@@ -322,6 +322,11 @@ struct EngineSnapshot
     float selfShare            = 0.0f;
     /** OctaveDoubt says the part may have come in on the wrong octave. */
     bool  octaveInDoubt        = false;
+    /** What each FEEL knob played (PercussionEngine::partStrokes and
+        partBarSteps): strokes so far, and the sixteenths of the last whole
+        bar. For the screen only. */
+    uint32_t partStrokes[4]    = {};
+    uint32_t partBarSteps[4]   = {};
     /** Share of the pre-make-up analysis signal below 200 Hz. Diagnostics: it
         is what says whether the input has a rhythm section in it. */
     float lowShare             = 0.0f;

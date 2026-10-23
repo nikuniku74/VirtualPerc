@@ -80,6 +80,42 @@ void MainComponent::AppLookAndFeel::drawButtonText (juce::Graphics& g, juce::Tex
     if (w > room && w > 1.0f)
         f = f.withHeight (juce::jmax (7.0f, f.getHeight() * room / w));
 
+    if ((bool) button.getProperties().getWithDefault ("stageIcon", false))
+    {
+        // Four corners: pointing out to fill the screen with the reading,
+        // pointing in (and fuchsia) to come back to the console.
+        const auto box = button.getLocalBounds().toFloat().withSizeKeepingCentre (18.0f, 18.0f);
+        const bool on = button.getToggleState();
+        const float arm = 6.0f;
+        juce::Path p;
+        const auto corner = [&p, arm] (juce::Point<float> c, float dx, float dy)
+        {
+            p.startNewSubPath (c.x + dx * arm, c.y);
+            p.lineTo (c);
+            p.lineTo (c.x, c.y + dy * arm);
+        };
+        if (! on)
+        {
+            corner (box.getTopLeft(), 1.0f, 1.0f);
+            corner (box.getTopRight(), -1.0f, 1.0f);
+            corner (box.getBottomLeft(), 1.0f, -1.0f);
+            corner (box.getBottomRight(), -1.0f, -1.0f);
+        }
+        else
+        {
+            const auto c = box.getCentre();
+            const float k = 2.5f;
+            corner ({ c.x - k, c.y - k }, -1.0f, -1.0f);
+            corner ({ c.x + k, c.y - k }, 1.0f, -1.0f);
+            corner ({ c.x - k, c.y + k }, -1.0f, 1.0f);
+            corner ({ c.x + k, c.y + k }, 1.0f, 1.0f);
+        }
+        g.setColour (on ? fuchsia() : text());
+        g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+        return;
+    }
+
     if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
     {
         static juce::Image gear;
@@ -199,8 +235,9 @@ void MainComponent::AppLookAndFeel::drawButtonBackground (juce::Graphics& g, juc
                                                           const juce::Colour& backgroundColour,
                                                           bool, bool shouldDrawButtonAsDown)
 {
-    // The gear is a bare icon: no fill, no edge, no bar.
-    if ((bool) button.getProperties().getWithDefault ("gearIcon", false))
+    // The gear and the stage switch are bare icons: no fill, no edge, no bar.
+    if ((bool) button.getProperties().getWithDefault ("gearIcon", false)
+        || (bool) button.getProperties().getWithDefault ("stageIcon", false))
         return;
 
     if ((bool) button.getProperties().getWithDefault ("circle", false))

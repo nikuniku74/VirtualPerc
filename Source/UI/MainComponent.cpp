@@ -64,6 +64,10 @@ MainComponent::MainComponent()
     setupBtn (settingsButton, juce::Colour (0xff0a0a0c));
     settingsButton.setButtonText ({});
     settingsButton.getProperties().set ("gearIcon", true);
+    setupBtn (stageButton, juce::Colour (0xff0a0a0c));
+    stageButton.getProperties().set ("stageIcon", true);
+    stageButton.setTitle (vpui::L ("Stage view", "Vista palco"));
+    stageButton.onClick = [this] { setStageMode (! stageMode); };
     setupBtn (naturalButton, ink());
     setupBtn (swingButton, ink());
     setupBtn (meterButton, ink());
@@ -994,6 +998,7 @@ void MainComponent::startPressed()
     restartWallMs = juce::Time::getMillisecondCounterHiRes();
     restartLogPending = stopWallMs > 0.0 && restartWallMs - stopWallMs < 10000.0;
     userWantsArmed = true;
+    burstArmed = true;
     engine.requestStart();
     refreshStartButton();
 }
@@ -1929,6 +1934,28 @@ void MainComponent::refreshInternalTrackButtons()
     paintChoice (trackPlayButton, trackTransport.isPlaying() && internalTrackSelected());
 }
 
+void MainComponent::setStageMode (bool on)
+{
+    stageMode = on;
+    stageButton.setToggleState (on, juce::dontSendNotification);
+    vp::haptic (vp::Haptic::select);
+    savePrefs();
+    resized();
+    repaint();
+}
+
+void MainComponent::setConsoleShown (bool shown)
+{
+    juce::Component* console[] = { &styleSelect, &sub4, &sub8, &sub16, &dynamicsButton, &naturalButton,
+                                   &swingButton, &meterButton, &shakerVolSlider, &congaVolSlider,
+                                   &cembaloVolSlider, &clapVolSlider, &absorbVolSlider, &hornVolSlider,
+                                   &uplifterVolSlider, &riserVolSlider };
+    for (auto* c : console)
+        c->setVisible (shown);
+    if (! shown)
+        subdivisionTrack = {};
+}
+
 void MainComponent::setSettingsOpen (bool open)
 {
     settingsButton.setToggleState (open, juce::dontSendNotification);
@@ -1979,6 +2006,8 @@ void MainComponent::loadPrefs()
     bufferChoice = (buf == 64 || buf == 128 || buf == 256 || buf == 512) ? buf : 0;
 
     inputProcessing = prefs->getBoolValue ("inputProcessing", false);
+    stageMode = prefs->getBoolValue ("stageMode", false);
+    stageButton.setToggleState (stageMode, juce::dontSendNotification);
 
     // Clamped low deliberately: a remembered channel from a rig that is not
     // plugged in today would open inputs that do not exist.
@@ -2245,6 +2274,7 @@ void MainComponent::savePrefs (bool flush)
     prefs->setValue ("clockHz", clockHz);
     prefs->setValue ("bufferFrames", bufferChoice);
     prefs->setValue ("inputProcessing", inputProcessing);
+    prefs->setValue ("stageMode", stageMode);
     prefs->setValue ("followSource", engine.settings().followSource.load());
     prefs->setValue ("kickChannel", engine.settings().kickChannel.load());
     prefs->setValue ("analysisChannel", engine.settings().analysisChannel.load());
@@ -2520,8 +2550,55 @@ void MainComponent::refreshSwingButton()
     swingButton.setColour (juce::TextButton::textColourOffId, text());
 }
 
+void MainComponent::updateStrokeGlow (double nowMs)
+{
+    // A stroke is counted when it is scheduled and heard an output path and
+    // an attack lead later: that is when its tile lights, with the sound.
+    const double heardMs = static_cast<double> (outputLatencyMs + engine.attackLeadMs());
+    const float dt = lastGlowMs > 0.0 ? static_cast<float> ((nowMs - lastGlowMs) * 0.001) : 0.0f;
+    lastGlowMs = nowMs;
+    juce::Slider* knobs[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider };
+    for (int k = 0; k < 4; ++k)
+    {
+        const auto n = engine.partStrokes (k);
+        if (n != strokeSeen[k])
+        {
+            strokeSeen[k] = n;
+            strokeDueMs[k] = nowMs + heardMs;
+        }
+        if (strokeDueMs[k] > 0.0 && nowMs >= strokeDueMs[k])
+        {
+            strokeGlow[k] = 1.0f;
+            strokeDueMs[k] = 0.0;
+        }
+        else
+        {
+            strokeGlow[k] *= std::exp (-dt / 0.11f);
+            if (strokeGlow[k] < 0.02f)
+                strokeGlow[k] = 0.0f;
+        }
+        if (std::abs (strokeGlow[k] - strokeGlowShown[k]) > 0.04f
+            || (strokeGlow[k] == 0.0f && strokeGlowShown[k] != 0.0f))
+        {
+            strokeGlowShown[k] = strokeGlow[k];
+            knobs[k]->getProperties().set ("strokeGlow", strokeGlow[k]);
+            if (knobs[k]->isShowing())
+                knobs[k]->repaint();
+        }
+    }
+}
+
 void MainComponent::updateBeatDots()
 {
+    const double frameMs = juce::Time::getMillisecondCounterHiRes();
+    updateStrokeGlow (frameMs);
+    if (lockBurst > 0.0f)
+    {
+        lockBurst = juce::jmax (0.0f, lockBurst - static_cast<float> ((frameMs - lastBurstMs) / 1000.0));
+        lastBurstMs = frameMs;
+        if (! heroCard.isEmpty())
+            repaint (heroCard.expanded (6));
+    }
     if (layoutFading)
     {
         if (layoutFadeAmount() >= 1.0f)
@@ -2836,6 +2913,16 @@ void MainComponent::timerCallback()
         if (prefs != nullptr && ! prefs->getBoolValue ("inputInfoSeen", false))
             showInputInfo (true);
     }
+    // The first time the part comes in after START is when the app shows it
+    // has understood the band: the ring, the number landing, a Taptic tap.
+    if (burstArmed && snap.percussionAudible && ! wasAudible)
+    {
+        burstArmed = false;
+        lockBurst = 1.0f;
+        lastBurstMs = juce::Time::getMillisecondCounterHiRes();
+        vp::haptic (vp::Haptic::success);
+    }
+    wasAudible = snap.percussionAudible;
     if (restartLogPending
         && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
     {

@@ -19,6 +19,10 @@ void MainComponent::paintCardList (juce::Graphics& g, const juce::Array<Card>& l
 {
     for (const auto& c : list)
     {
+        // The frame-rate repaints (the ball, the lane, the lit tiles) are small
+        // and nowhere near most cards: skip what the clip does not touch.
+        if (! g.clipRegionIntersects (c.bounds))
+            continue;
         g.setColour (panel());
         g.fillRoundedRectangle (c.bounds.toFloat(), 20.0f);
         g.setColour (border());
@@ -54,7 +58,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // What the tracker is doing: a coloured dot and the words, nothing else.
     // The old filled pill ate a row a phone does not have, and shouted the
     // same fact the colour already carries.
-    if (! rows.pill.isEmpty())
+    if (! rows.pill.isEmpty() && g.clipRegionIntersects (rows.pill.expanded (16)))
     {
         const auto stCol = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
         const bool hot = stateIsHot (snap.followBar) || trust == vp::TempoTrust::sure;
@@ -98,7 +102,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
     // whole card is the reading (green / amber / red); neutral states get none.
     {
         auto hero = rows.bpm.getUnion (rows.beats);
-        for (const auto& part : { rows.bpmLabel, rows.lane, rows.tempoNudge, rows.tempoLine })
+        for (const auto& part : { rows.bpmLabel, rows.lane, rows.tempoNudge, rows.tempoLine, rows.groove })
             if (! part.isEmpty())
                 hero = hero.getUnion (part);
         const auto card = hero.expanded (0, 10).toFloat();
@@ -133,54 +137,102 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             g.setColour (fc.withAlpha (0.95f * heroFlash));
             g.drawRoundedRectangle (card.reduced (2.0f), 24.0f, 2.0f + 3.0f * heroFlash);
         }
+        if (lockBurst > 0.0f)
+        {
+            // The part has just come in: a ring out of the middle of the card
+            // in the trust colour, and the edge lit, fading over a second.
+            // A wave the shape of the card runs from its middle out to its
+            // edge (a circle only reached the corners of a tall card).
+            const float t = 1.0f - lockBurst;
+            const float ease = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+            const auto col = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
+            const auto c = card.getCentre();
+            const float k = 0.25f + 0.75f * ease;
+            const auto wave = card.withSizeKeepingCentre (card.getWidth() * k, card.getHeight() * k);
+            g.saveState();
+            g.reduceClipRegion (cardPath);
+            paintRadial (g, c, juce::jmax (card.getWidth(), card.getHeight()) * 0.6f * k, col, 0.45f * lockBurst);
+            g.setColour (col.withAlpha (0.85f * lockBurst));
+            g.drawRoundedRectangle (wave, 24.0f * k, 2.0f + 5.0f * lockBurst);
+            g.restoreState();
+            g.setColour (col.withAlpha (lockBurst));
+            g.drawRoundedRectangle (card.reduced (1.5f), 24.0f, 2.0f + 3.0f * lockBurst);
+        }
         g.setColour (border());
         g.drawRoundedRectangle (card.reduced (0.5f), 24.0f, 1.0f);
     }
 
     const bool haveBpm = snap.bpm > 40.0f;
-    if (haveBpm)
+    // The number (laid out glyph by glyph, drawn six times) only when the
+    // repaint reaches it, with room for its landing and its halo.
+    const bool numberInClip = g.clipRegionIntersects (
+        numberR.expanded (numberR.getWidth() / 10 + 4, numberR.getHeight() / 10 + 6));
+    if (haveBpm && numberInClip)
     {
         // Sized against the width by measurement, not by drawFittedText: with
         // one line to work with that squashes to 70% and then puts an ellipsis
         // in, so a five-character tempo in a narrow landscape column came out
         // as "11...". Measure, scale, draw.
+        //
+        // Proportional figures, at the full width. Fixed slots (every digit as
+        // wide as the widest) stopped 109.9 -> 110.0 shifting sideways, but a
+        // one then carried a zero's width and, with a tenth of the width left
+        // free, the number came out ~15-20% smaller wherever the width sets
+        // its size: the listener wanted the big one back (2026-10-23).
         const juce::String bpmText (snap.bpm, 1);
         const float wanted = static_cast<float> (numberR.getHeight()) * 1.0f;
         juce::Font f = fontDisplay (wanted);
-        const float textW = juce::GlyphArrangement::getStringWidth (f, bpmText);
+        float textW = juce::GlyphArrangement::getStringWidth (f, bpmText);
         const float roomW = static_cast<float> (numberR.getWidth());
         if (textW > roomW && textW > 1.0f)
+        {
             f = f.withHeight (juce::jmax (1.0f, wanted * roomW / textW));
+            textW = juce::GlyphArrangement::getStringWidth (f, bpmText);
+        }
+        juce::GlyphArrangement digits;
+        {
+            const auto nr = numberR.toFloat();
+            const float baseline = nr.getY() + (nr.getHeight() - f.getHeight()) * 0.5f + f.getAscent();
+            digits.addLineOfText (f, bpmText, nr.getCentreX() - textW * 0.5f, baseline);
+        }
+        // As the part comes in the number lands: a few percent large, settling
+        // over the same second as the ring (lockBurst).
+        const auto centre = numberR.toFloat().getCentre();
+        const float land = 1.0f + 0.07f * lockBurst * lockBurst;
+        const auto placed = juce::AffineTransform::scale (land, land, centre.x, centre.y);
 
-        g.setFont (f);
         // The state colour is the first thing read from a metre away: a halo
         // behind the tempo in green / amber / red, the digits dimmed when the
         // tracker has lost the tempo. Neutral (ready, paused) draws no halo.
         const auto heroCol = stateSmooth.getAlpha() == 0 ? shownColour (snap, trust) : stateSmooth;
         const bool heroLost = shownColour (snap, trust) == stateLost();
+        // Extra weight as one outline, filled and stroked 1.7% of the height
+        // each side. The old five copies nudged 1.4% each way stair-stepped
+        // every edge once the number was stage-sized; asked for chubbier
+        // (2026-10-23), so a little more than they gave.
+        juce::Path shape;
+        digits.createPath (shape);
+        shape.applyTransform (placed);
+        const juce::PathStrokeType weight (juce::jmax (1.2f, f.getHeight() * 0.034f),
+                                           juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
         // The offset copy behind the digits glows on the dark card.
+        const auto down = juce::AffineTransform::translation (0.0f, 3.0f);
         g.setColour (heroCol.withAlpha (0.40f));
-        g.drawText (bpmText, numberR.translated (0, 3),
-                    juce::Justification::centred, false);
-        // Faux extra weight: the same digits nudged a hair each way. Dimmed as
-        // one layer: five copies at 0.35 each stacked to ~0.88 where they
-        // overlap, so a lost tempo, or one read off a room before START that
-        // nobody vouches for, stood on the card as bright as a locked one.
-        // A tempo the listener set (FISSO, TAP) is theirs, not a reading.
+        g.fillPath (shape, down);
+        g.strokePath (shape, weight, down);
+        // Dimmed as one layer: a lost tempo, or one read off a room before
+        // START that nobody vouches for, must not stand on the card as bright
+        // as a locked one. A tempo the listener set (FISSO, TAP) is theirs.
         const bool dimDigits = heroLost || (! heroLive && snap.tempoFollow && ! snap.tapLocked);
         if (dimDigits)
             g.beginTransparencyLayer (0.35f);
         g.setColour (text());
-        const float fw = juce::jmax (0.6f, f.getHeight() * 0.014f);
-        const auto nr = numberR.toFloat();
-        for (const auto& d : { juce::Point<float> (-fw, 0.0f), juce::Point<float> (fw, 0.0f),
-                               juce::Point<float> (0.0f, -fw * 0.6f), juce::Point<float> (0.0f, fw * 0.6f),
-                               juce::Point<float> (0.0f, 0.0f) })
-            g.drawText (bpmText, nr.translated (d.x, d.y), juce::Justification::centred, false);
+        g.fillPath (shape);
+        g.strokePath (shape, weight);
         if (dimDigits)
             g.endTransparencyLayer();
     }
-    else
+    else if (! haveBpm)
     {
         // Two drawn bars rather than "--" in the tempo's own font. A hyphen is
         // a hairline a tenth of its em tall, so set at the size the number
@@ -219,7 +271,7 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
 
     // How the tempo is being held. SEGUI shows what the analysis thinks;
     // FISSO is the listener's lock, so the analysis label would only confuse.
-    if (! rows.tempoLine.isEmpty())
+    if (! rows.tempoLine.isEmpty() && g.clipRegionIntersects (rows.tempoLine))
     {
         const bool userFixed = ! snap.tempoFollow;
         const bool held = userFixed || snap.tempoRegime == 1;
@@ -290,7 +342,9 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         // The lit beat wears a halo of 1.8 radii, so the radius has to leave
         // room for it inside the row - otherwise the glow spills onto the line
         // of text below, which is what it did.
-        const float rad = juce::jmin (24.0f, static_cast<float> (rows.beats.getHeight()) * 0.27f);
+        const float rad = std::min ({ stageMode ? 52.0f : 24.0f,
+                                        static_cast<float> (rows.beats.getHeight()) * 0.27f,
+                                        static_cast<float> (bandW) / (meterIsThree() ? 3.0f : 4.0f) * 0.30f });
         const float y = static_cast<float> (band.getCentreY());
         // One dot per quarter of the bar: three in 3/4 (METRO).
         const int nb = meterIsThree() ? 3 : 4;
@@ -311,7 +365,8 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         const float ballR = rad * 0.40f;
         const float hopLow = rad * 1.30f, hopHigh = rad * 2.10f;
         beatAnimArea = rows.beats.expanded (static_cast<int> (rad * 2.0f),
-                                            static_cast<int> (hopHigh + ballR * 3.4f) + 4);
+                                            static_cast<int> (hopHigh + ballR * 3.4f) + 4)
+                           .getUnion (rows.groove);
         const float pos = std::fmod (juce::jmax (0.0f, beatPos), static_cast<float> (nb));
         const int at = juce::jlimit (0, nb - 1, static_cast<int> (pos));
         const float f = juce::jlimit (0.0f, 1.0f, pos - static_cast<float> (at));
@@ -335,7 +390,11 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
             g.drawEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f, 1.4f + warm * 1.2f);
             if (i == at && lit > 0.01f)
             {
+                // Kept to the card: at stage size the halo reached past it.
+                g.saveState();
+                g.reduceClipRegion (heroCard);
                 paintRadial (g, { x, y }, rr * 3.4f, fuchsia(), 0.60f * lit);
+                g.restoreState();
                 g.setColour (fuchsia().withAlpha (lit));
                 g.fillEllipse (x - rr, y - rr, rr * 2.0f, rr * 2.0f);
                 if (lit > 0.30f)
@@ -371,7 +430,12 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
                 const float grow = rr * (1.0f + (one ? 1.9f : 1.25f) * std::sqrt (ringT));
                 const float fade = (1.0f - ringT) * (1.0f - ringT);
                 if (one)
+                {
+                    g.saveState();
+                    g.reduceClipRegion (heroCard);
                     paintRadial (g, { dotX (0), y }, rad * 3.6f, fuchsia(), 0.45f * fade);
+                    g.restoreState();
+                }
                 g.setColour (fuchsia().brighter (one ? 0.35f : 0.0f).withAlpha ((one ? 0.95f : 0.70f) * fade));
                 g.drawEllipse (dotX (at) - grow, y - grow, grow * 2.0f, grow * 2.0f, one ? 3.0f : 2.0f);
             }
@@ -413,6 +477,16 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         }
     }
 
+    if (! rows.groove.isEmpty())
+    {
+        const int nb = meterIsThree() ? 3 : 4;
+        const bool running = (snap.bpm > 40.0f || snap.barDeclared) && (heroBeating || snap.barDeclared);
+        const int bandW = juce::jmin (rows.groove.getWidth() - 40,
+                                      juce::jmax (200, rows.beats.getHeight() * 6));
+        paintGrooveLane (g, rows.groove.withSizeKeepingCentre (bandW, rows.groove.getHeight()).toFloat(),
+                         nb, running);
+    }
+
     gDarkMode = ! lightTheme;
 
     // Which part is playing, and under AUTO how sure the detector is.
@@ -434,6 +508,63 @@ void MainComponent::paintStage (juce::Graphics& g, juce::Rectangle<int> area)
         g.fillRoundedRectangle (tapStrip.toFloat(), 14.0f);
         g.setColour (fuchsia().withAlpha (0.70f));
         g.drawRoundedRectangle (tapStrip.toFloat().reduced (0.5f), 14.0f, 2.4f);
+    }
+}
+
+void MainComponent::paintGrooveLane (juce::Graphics& g, juce::Rectangle<float> band,
+                                     int quarters, bool running)
+{
+    // The part a sixteenth at a time, under the quarters it divides: a row per
+    // FEEL knob in that knob's colour, the cells of the last whole bar it
+    // played, and the sixteenth being heard lit across all of them. What the
+    // shaker and the congas are doing is on the screen, not only in the ear.
+    const juce::Slider* knobs[] = { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider };
+    int on[4] {};
+    int rowsOn = 0;
+    for (int k = 0; k < 4; ++k)
+        if ((bool) knobs[k]->getProperties().getWithDefault ("voiceEnabled", true))
+            on[rowsOn++] = k;
+    const int steps = quarters * 4;
+    if (rowsOn == 0 || band.getWidth() < static_cast<float> (steps * 4))
+        return;
+
+    const float colW = band.getWidth() / static_cast<float> (steps);
+    const float rowH = juce::jmin (stageMode ? 16.0f : 9.0f, band.getHeight() / static_cast<float> (rowsOn));
+    const float top = band.getCentreY() - rowH * static_cast<float> (rowsOn) * 0.5f;
+    const int now = running ? juce::jlimit (0, steps - 1, static_cast<int> (
+                                  std::fmod (juce::jmax (0.0f, beatPos), static_cast<float> (quarters)) * 4.0f))
+                            : -1;
+    if (now >= 0)
+    {
+        g.setColour (text().withAlpha (0.08f));
+        g.fillRoundedRectangle (band.getX() + colW * static_cast<float> (now) + 1.0f,
+                                top - 3.0f, colW - 2.0f, rowH * static_cast<float> (rowsOn) + 6.0f, 3.0f);
+    }
+    for (int i = 0; i < rowsOn; ++i)
+    {
+        const int k = on[i];
+        const auto colour = knobs[k]->findColour (juce::Slider::rotarySliderFillColourId);
+        const std::uint32_t mask = snap.partBarSteps[k];
+        const float cy = top + rowH * (static_cast<float> (i) + 0.5f);
+        for (int c = 0; c < steps; ++c)
+        {
+            const float cx = band.getX() + colW * (static_cast<float> (c) + 0.5f);
+            if (((mask >> c) & 1u) != 0u)
+            {
+                const bool lit = c == now;
+                const float w = juce::jmax (3.0f, colW * 0.70f), h = juce::jmax (3.0f, rowH * 0.70f);
+                if (lit)
+                    paintRadial (g, { cx, cy }, colW * 1.4f, colour, 0.65f);
+                g.setColour (lit ? colour.brighter (0.5f) : colour.withAlpha (0.78f));
+                g.fillRoundedRectangle (cx - w * 0.5f, cy - h * 0.5f, w, h, juce::jmin (w, h) * 0.35f);
+            }
+            else
+            {
+                const float d = c % 4 == 0 ? 2.6f : 1.8f;
+                g.setColour (text().withAlpha (c % 4 == 0 ? 0.20f : 0.09f));
+                g.fillEllipse (cx - d * 0.5f, cy - d * 0.5f, d, d);
+            }
+        }
     }
 }
 

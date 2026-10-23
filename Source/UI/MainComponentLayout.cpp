@@ -75,7 +75,8 @@ bool MainComponent::isLandscape() const
 
 bool MainComponent::isCompact() const noexcept
 {
-    return compactLayout;
+    // The stage view is the one-column page at any size.
+    return compactLayout || stageMode;
 }
 
 void MainComponent::updateCompactLayout() noexcept
@@ -249,6 +250,12 @@ MainComponent::CompactGeom MainComponent::compactGeom() const
     auto r = compactPadded (getLocalBounds());
     r.removeFromBottom (juce::jmin (52, juce::jmax (0, r.getHeight() / 8)));
     CompactGeom g;
+    if (stageMode)
+    {
+        // Everything above START is the reading.
+        g.tempo = r;
+        return g;
+    }
     const int n = juce::jmax (1, r.getHeight());
     const int gap = 6;
     constexpr int kChrome = 12;      // compact card padding (no title strip)
@@ -307,6 +314,28 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
         return juce::jmax (1, juce::roundToInt (static_cast<float> (v) * fit));
     };
 
+    // Stage view: the column is the screen and grows with it. The number grows
+    // until its width stops it (five figures take ~2.7 times their height),
+    // the quarters and the sixteenths take most of the rest, and the controls
+    // keep the size a thumb wants; what is left goes above and below the card.
+    int bpmGrow = 0, beatsGrow = 0, grooveGrow = 0, gapGrow = 0, innerGrow = 0;
+    if (stageMode && area.getHeight() > kCompactTempoNatural)
+    {
+        const int extra = area.getHeight() - kCompactTempoNatural;
+        bpmGrow = juce::jlimit (0, extra * 55 / 100,
+                                juce::roundToInt (static_cast<float> (area.getWidth()) * 0.36f) - kCompactBpmH);
+        const int rest = extra - bpmGrow;
+        beatsGrow = rest * 45 / 100;
+        grooveGrow = juce::jmin (rest * 25 / 100, 72 - kCompactGrooveH);
+        // What is still left stays inside the card, above and below the
+        // number, more than outside it: a small card floating in a tall
+        // screen read as empty. Not into the number itself, which is already
+        // as wide as the card lets it be.
+        const int left = rest - beatsGrow - grooveGrow;
+        innerGrow = left * 70 / 100;
+        gapGrow = left - innerGrow;
+    }
+
     StageRows s;
     // FOLLOWING / IN ASCOLTO. SEGUI/FISSO stay off this row: a Split View
     // column cannot spend that width, and the colour already carries the mode.
@@ -316,6 +345,7 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
     {
         const int side = juce::jmin (s.pill.getHeight(), 44);
         s.settings = s.pill.removeFromRight (side);
+        s.stageToggle = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
         // The level bar takes the right-hand part of what is left, as long as
@@ -327,19 +357,21 @@ MainComponent::StageRows MainComponent::compactTempoRows (juce::Rectangle<int> a
             s.pill.removeFromRight (8);
         }
     }
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA)));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapA) + gapGrow / 2));
     // The phase orb rides on top of the number, inside the card.
     s.lane = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLaneH)));
-    const int bpmH = px (kCompactBpmH);
+    area.removeFromTop (takeAtMost (area.getHeight(), innerGrow / 2));
+    const int bpmH = px (kCompactBpmH) + bpmGrow;
     s.bpm = area.removeFromTop (takeAtMost (area.getHeight(), bpmH));
     // The number has the whole width now: the octave buttons moved down next
     // to TAP, so "128.4" can be as large as the column lets it.
     s.bpmNumber = s.bpm.reduced (4, 0);
     s.bpmLabel = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactLabelH)));
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB)));
-    s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH)));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapB) + innerGrow - innerGrow / 2));
+    s.beats = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBeatsH) + beatsGrow));
+    s.groove = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGrooveH) + grooveGrow));
     s.tempoLine = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactNoteH)));
-    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC)));
+    area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactGapC) + gapGrow - gapGrow / 2));
     // ÷2 | TAP | ×2. Declaring the one is still a tap on the number.
     {
         auto row = area.removeFromTop (takeAtMost (area.getHeight(), px (kCompactBarH)));
@@ -392,7 +424,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     // under FISSO.
     const int trackExtra = trackReader != nullptr ? trackWaveformHeight() + 6 : 0;
     const int natural = 44 + 22 + naturalBpm + 16 + 18 + 4
-                        + naturalBeats + (follow ? 0 : 28) + 18 + 18
+                        + naturalBeats + 30 + (follow ? 0 : 28) + 18 + 18
                         + 56 + 20 + trackExtra;
     const float fit = natural > area.getHeight() && natural > 0
                           ? static_cast<float> (area.getHeight()) / static_cast<float> (natural)
@@ -417,6 +449,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     {
         const int side = juce::jmin (s.pill.getHeight(), 44);
         s.settings = s.pill.removeFromRight (side);
+        s.stageToggle = s.pill.removeFromRight (side);
         if (s.pill.getWidth() > 8)
             s.pill.removeFromRight (6);
         const int meterW = clampW (90, 180, s.pill.getWidth() * 3 / 10);
@@ -437,6 +470,7 @@ MainComponent::StageRows MainComponent::stageRows (juce::Rectangle<int> area) co
     s.bpmLabel = area.removeFromTop (px (16));
     area.removeFromTop (px (4));
     s.beats = area.removeFromTop (beatsH);
+    s.groove = area.removeFromTop (px (30));
     if (! follow)
         s.tempoNudge = area.removeFromTop (px (28));
     s.tempoLine = area.removeFromTop (px (18));
@@ -535,7 +569,7 @@ void MainComponent::resized()
             f.first->setAlpha (f.second);
     layoutFadeIns.clearQuick();
     updateCompactLayout();
-    const int newMode = (compactLayout ? 1 : 0) | (isLandscape() ? 2 : 0);
+    const int newMode = (isCompact() ? 1 : 0) | (isLandscape() ? 2 : 0);
     const bool animateMode = layoutMode >= 0 && newMode != layoutMode && isShowing()
                              && ! settingsOverlay.isVisible();
     layoutMode = newMode;
@@ -599,6 +633,7 @@ void MainComponent::resized()
     // SETUP sits over the painted stage in the compact layout, so it has to be
     // above it either way.
     settingsButton.toFront (false);
+    stageButton.toFront (false);
     // ...but an open SETUP page stays above START, the MIC bar and SETUP
     // itself; the waveform then goes on top, inside the page or on the stage.
     if (settingsOverlay.isVisible())
@@ -672,6 +707,8 @@ void MainComponent::layoutFull()
     halveButton.setBounds (rows.octaveDown);   // the whole cell, 56 pt tall
     doubleButton.setBounds (rows.octaveUp);
     settingsButton.setBounds (rows.settings);
+    stageButton.setBounds (rows.stageToggle);
+    setConsoleShown (true);
     barButton.setBounds ({});
     tapButton.setBounds (rows.tap);
     tapStrip = {};
@@ -711,6 +748,7 @@ void MainComponent::layoutCompact()
     placeOctave (rows.octaveDown, halveButton);
     placeOctave (rows.octaveUp, doubleButton);
     settingsButton.setBounds (rows.settings);
+    stageButton.setBounds (rows.stageToggle);
     barButton.setBounds ({});
     tapButton.setBounds (rows.tap);
     tapStrip = {};
@@ -725,6 +763,9 @@ void MainComponent::layoutCompact()
         return innerCard (bounds, 8, 6, 0);
     };
 
+    setConsoleShown (! stageMode);
+    if (stageMode)
+        return;
     layoutMisure (card (g.misure, ""));
     layoutVoicesRow (card (g.knobs, ""));
 }

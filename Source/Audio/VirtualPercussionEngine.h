@@ -97,6 +97,9 @@ public:
         both to light when the stroke is heard, not when it is computed. */
     float clockBarPhase() const noexcept { return lastBar.load (std::memory_order_relaxed); }
     float attackLeadMs() const noexcept { return percussion.attackLeadMs(); }
+    /** Strokes the FEEL knob `k` has started so far (screen only). Cheaper
+        than a whole snapshot, so the UI can read it every frame. */
+    std::uint32_t partStrokes (int k) const noexcept { return percussion.partStrokes (k); }
 
     /** Measure this rig's round trip instead of taking the device's word for
         it: a short sweep goes out, whatever comes back is captured, and the two

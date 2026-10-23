@@ -6,6 +6,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -88,6 +89,19 @@ public:
     void alignPhrase() noexcept { barCounter = -1; lastBarBeat = -1; }
     /** Where the sentence has got to, for the probes and the debug panel. */
     int  phraseBar() const noexcept { return barCounter; }
+
+    /** What the part played, for the screen and nothing else. Per FEEL knob
+        (index = KitSound shaker, congas, cembalo, clap): strokes started so
+        far, and the sixteenths of the last whole bar that had one (bit n =
+        step n). Relaxed stores on the audio thread; read by the UI. */
+    std::uint32_t partStrokes (int knob) const noexcept
+    {
+        return knob >= 0 && knob < kKnobs ? strokesShown[knob].load (std::memory_order_relaxed) : 0u;
+    }
+    std::uint32_t partBarSteps (int knob) const noexcept
+    {
+        return knob >= 0 && knob < kKnobs ? barStepsShown[knob].load (std::memory_order_relaxed) : 0u;
+    }
     void setSeed (std::uint32_t seed) noexcept { rng.reset (seed); groove.prepare (seed ^ 0x5bf03635u); }
     void clearVoices() noexcept;
     void silence() noexcept;
@@ -241,6 +255,12 @@ private:
     int lastBarBeat = -1;
     bool hasSeenPulse = false;
     std::uint32_t voiceClock = 0;
+
+    static constexpr int kKnobs = 4;
+    std::atomic<std::uint32_t> strokesShown[kKnobs] {};
+    std::atomic<std::uint32_t> barStepsShown[kKnobs] {};
+    std::uint32_t barStepsNow[kKnobs] {};
+    void noteStroke (KitSound part, Stroke stroke, int step) noexcept;
 };
 
 } // namespace vp

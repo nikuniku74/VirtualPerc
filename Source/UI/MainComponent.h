@@ -20,6 +20,8 @@ class MainComponent final : public juce::AudioAppComponent,
 public:
     MainComponent();
     ~MainComponent() override;
+    /** The offscreen screenshot tool (scripts/main_shots.cpp). */
+    friend struct VPShotsAccess;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -114,6 +116,7 @@ private:
     void setSettingsOpen (bool open);
     void paintSettings (juce::Graphics&);
     void paintSettingsPage (juce::Graphics&);
+    void paintGrooveLane (juce::Graphics&, juce::Rectangle<float> band, int quarters, bool running);
     void layoutSettings (juce::Rectangle<int> area);
 
     void loadPrefs();
@@ -335,6 +338,10 @@ private:
     {
         juce::Rectangle<int> title, pill, bpm, bpmLabel, tempoMode, tempoNudge,
                              tempoLine, beats, trackWave, part;
+        /** Under the quarters: the part's sixteenths, a row per FEEL knob. */
+        juce::Rectangle<int> groove;
+        /** The stage-view switch, on the status row beside SETUP. */
+        juce::Rectangle<int> stageToggle;
         /** The three columns the tempo row is divided into. The number gets the
             middle one and nothing else: given the whole row it grew until it ran
             under the two buttons and out of the column. */
@@ -453,6 +460,14 @@ private:
     juce::TextButton trackLoadButton { vpui::L ("LOAD", "CARICA") };
     juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };
+    /** Stage view: only the reading and the controls a player reaches for,
+        as large as the screen allows (setStageMode). */
+    juce::TextButton stageButton;
+    bool stageMode = false;
+    void setStageMode (bool on);
+    /** The style card and the faders, shown or not as one: the stage view
+        leaves them out. */
+    void setConsoleShown (bool shown);
     juce::TextButton settingsClose { vpui::L ("CLOSE", "CHIUDI") };
     juce::TextButton accountButton { "PRO" };
     /** The (i) on the INPUT card: opens the explanation of the input modes. */
@@ -688,6 +703,12 @@ private:
     /** The card beats (flash, ball): live, and not a tempo the app says is
         not there yet before START. */
     bool heroBeating = false;
+    /** 1 -> 0 over a second from the first entry after START: the ring out of
+        the card and the number landing (paintStage). */
+    float lockBurst = 0.0f;
+    bool burstArmed = false;
+    bool wasAudible = false;
+    double lastBurstMs = 0.0;
     VoiceKnob inputGainSlider;   // a VoiceKnob only for the drag zoom; no onTap
     juce::Label  inputGainLabel { {}, "MIC" };
     juce::Label  inputGainValue { {}, "100%" };
@@ -757,6 +778,14 @@ private:
     bool beatAnimating = false;
     float outputLatencyMs = 0.0f;
     void updateBeatDots();
+    /** Every frame: each voice tile lights when a stroke of its knob is
+        heard and fades in ~0.1 s (paintVoiceFader, "strokeGlow"). */
+    void updateStrokeGlow (double nowMs);
+    std::uint32_t strokeSeen[4] {};
+    double strokeDueMs[4] {};
+    float strokeGlow[4] {};
+    float strokeGlowShown[4] {};
+    double lastGlowMs = 0.0;
     juce::Rectangle<int> tapStrip;
     TapZone tapZone { *this };
     TrackWaveform trackWaveform { *this };

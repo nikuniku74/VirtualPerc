@@ -673,9 +673,31 @@ namespace
             g.restoreState();
         }
 
+        // Each stroke the voice plays lights its tile (MainComponent::
+        // updateStrokeGlow): the part becomes something you see, every
+        // sixteenth of it, and a muted or idle voice simply stays dark.
+        const float glow = off ? 0.0f
+                               : static_cast<float> (static_cast<double> (
+                                     slider.getProperties().getWithDefault ("strokeGlow", 0.0)));
+        if (glow > 0.01f)
+        {
+            juce::Path clip;
+            clip.addRoundedRectangle (area, radius);
+            g.saveState();
+            g.reduceClipRegion (clip);
+            const float top = area.getY() + area.getHeight() * (1.0f - level);
+            g.setColour (accent.brighter (0.7f).withMultipliedAlpha (0.42f * glow * alpha));
+            g.fillRect (area.withTop (top));
+            paintRadial (g, { area.getCentreX(), top }, area.getWidth() * 1.1f,
+                         accent.brighter (0.9f), 0.85f * glow * alpha);
+            g.restoreState();
+        }
+
         // A fired effect wears its colour round the edge for as long as it sounds.
-        g.setColour ((hitKnob && hitLit ? accent : border()).withMultipliedAlpha (alpha));
-        g.drawRoundedRectangle (area.reduced (0.5f), radius, hitKnob && hitLit ? 2.4f : 1.0f);
+        const bool edgeLit = (hitKnob && hitLit) || glow > 0.05f;
+        g.setColour ((edgeLit ? accent.brighter (glow * 0.5f) : border()).withMultipliedAlpha (alpha));
+        g.drawRoundedRectangle (area.reduced (0.5f), radius,
+                                hitKnob && hitLit ? 2.4f : 1.0f + 1.6f * glow);
 
         const juce::Colour onFill = juce::Colour (0xff0a0a0c);
         const bool nameOnFill = ! off && level > 0.88f;
@@ -840,13 +862,14 @@ namespace
     constexpr int kCompactLaneH  = 22;
     constexpr int kCompactBeatsH = 46;
     constexpr int kCompactNoteH  = 18;
+    constexpr int kCompactGrooveH = 30;  // the sixteenths, four rows of 7
     constexpr int kCompactBarH   = 56;   // ÷2 | TAP | ×2, one row
     constexpr int kCompactGapA   = 22;  // status row -> hero card
     constexpr int kCompactGapB   = 2;   // lane -> dots
     constexpr int kCompactGapC   = 18;  // hero card -> control row
     constexpr int kCompactTempoNatural =
         kCompactPillH + kCompactGapA + kCompactBpmH + kCompactLabelH + kCompactLaneH
-        + kCompactGapB + kCompactBeatsH + kCompactNoteH + kCompactGapC + kCompactBarH;
+        + kCompactGapB + kCompactBeatsH + kCompactGrooveH + kCompactNoteH + kCompactGapC + kCompactBarH;
 }
 
 namespace

@@ -2343,6 +2343,11 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.leakRemain = lastLeakRemain.load (std::memory_order_relaxed);
     s.selfShare = lastSelfShare.load (std::memory_order_relaxed);
     s.octaveInDoubt = lastOctaveDoubt.load (std::memory_order_relaxed);
+    for (int k = 0; k < 4; ++k)
+    {
+        s.partStrokes[k] = percussion.partStrokes (k);
+        s.partBarSteps[k] = percussion.partBarSteps (k);
+    }
     s.lowShare = lastLowShare.load (std::memory_order_relaxed);
     s.rhythmSeen = lastRhythmSeen.load (std::memory_order_relaxed);
     s.badInputSamples = badInputSamples.load (std::memory_order_relaxed);

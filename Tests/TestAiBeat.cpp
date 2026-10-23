@@ -2362,6 +2362,32 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
         expect (perc.attackMsFor (vp::Stroke::triangleOpen) < 8.0f,
                 "triangle beater is a sharp strike so hold can sit the open on the quarter");
     }
+
+    // The stage lane draws each knob's last bar from these masks (TODO item
+    // 149): a shaker on sixteenths has to show at least its four quarters,
+    // and the stroke count the fader glows from has to move.
+    {
+        constexpr double sr = 48000.0;
+        constexpr int block = 512;
+        vp::TempoFollower clock;
+        clock.prepare (sr);
+        clock.setPulsesPerBeat (4);
+        clock.forceTempo (120.0f);
+        clock.setTargetTempo (120.0f, 1.0f);
+        clock.setLocked (true);
+        clock.snapDownbeat (0.0f);
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setGroove (120.0f, 4);
+        perc.setSubdivision (vp::Subdivision::sixteenth);
+        std::vector<float> l (block), r (block);
+        for (int pos = 0; pos < static_cast<int> (sr * 6.0); pos += block)
+            perc.render (l.data(), r.data(), block, clock.advance (block), true);
+        const uint32_t mask = perc.partBarSteps (0);
+        std::printf ("lane-mask  shaker=0x%04x  strokes=%u\n", mask, perc.partStrokes (0));
+        expect ((mask & 0x1111u) == 0x1111u && perc.partStrokes (0) > 8,
+                "the lane mask shows the shaker's quarters and its stroke count moves");
+    }
 }
 
 

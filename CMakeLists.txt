@@ -873,6 +873,35 @@ function (vp_apply_ai_options target)
 endfunction()
 
 vp_apply_ai_options (VirtualPercussionist)
+
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    # The main page as PNGs at iPhone and iPad sizes with a band coming in and
+    # the part playing, without a screen or a simulator (scripts/main_shots.cpp).
+    # Never opens the Mac's audio; never touches the user's preferences.
+    juce_add_console_app (VPShots
+        PRODUCT_NAME "VPShots"
+        NEEDS_WEB_BROWSER FALSE
+        NEEDS_CURL FALSE
+    )
+    set_target_properties (VPShots PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources (VPShots PRIVATE ${VP_CORE_SOURCES}
+        Source/UI/MainComponent.cpp Source/UI/MainComponentLookAndFeel.cpp
+        Source/UI/MainComponentLayout.cpp Source/UI/MainComponentPaint.cpp
+        Source/UI/MainComponentWidgets.cpp Source/UI/PaywallOverlay.cpp
+        Source/UI/InfoPopup.cpp Source/Platform/Subscription.cpp
+        Source/Platform/IosMicPermission.cpp scripts/main_shots.cpp)
+    target_include_directories (VPShots PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_compile_definitions (VPShots PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        VP_HAS_LOOP_BANK=0 VP_PAYWALL_ENFORCED=0 VP_UNLOCKED=0)
+    target_link_libraries (VPShots PRIVATE VpBrandData
+        juce::juce_audio_utils juce::juce_gui_extra juce::juce_dsp
+        PUBLIC juce::juce_recommended_config_flags)
+    if (TARGET VpDemoData)
+        target_link_libraries (VPShots PRIVATE VpDemoData)
+        target_compile_definitions (VPShots PRIVATE VP_HAS_DEMO_TRACK=1)
+    endif()
+    vp_apply_ai_options (VPShots)
+endif()
 if (TARGET VPTests)
     vp_apply_ai_options (VPTests)
 endif()

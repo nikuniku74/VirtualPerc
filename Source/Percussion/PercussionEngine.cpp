@@ -1231,6 +1231,11 @@ void PercussionEngine::reset() noexcept
     barCounter = 0;
     lastBarBeat = -1;
     hasSeenPulse = false;
+    for (int k = 0; k < kKnobs; ++k)
+    {
+        barStepsNow[k] = 0;
+        barStepsShown[k].store (0, std::memory_order_relaxed);
+    }
     applyPendingGrooveControls();
     std::fill (rrCursor, rrCursor + kStrokes, 0);
     reverb.reset();
@@ -1343,6 +1348,18 @@ const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float vel
     return bank[st][layer][rr];
 }
 
+void PercussionEngine::noteStroke (KitSound part, Stroke stroke, int step) noexcept
+{
+    // For the screen only: which knob played, and on which sixteenth.
+    if (part == KitSound::count)
+        part = kitSoundForStroke (stroke);
+    const int knob = static_cast<int> (part);
+    if (knob < 0 || knob >= kKnobs || step < 0 || step >= 32)
+        return;
+    barStepsNow[knob] |= 1u << step;
+    strokesShown[knob].fetch_add (1u, std::memory_order_relaxed);
+}
+
 void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
                                 KitSound part) noexcept
 {
@@ -1451,7 +1468,15 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             // bar and the fill landed in the middle of the phrase, which is
             // heard as the percussion having lost the form.
             if (barBeat == 0 && idx == 0 && lastBarBeat != 0)
+            {
                 ++barCounter;
+                // The bar just finished is the figure the screen shows.
+                for (int k = 0; k < kKnobs; ++k)
+                {
+                    barStepsShown[k].store (barStepsNow[k], std::memory_order_relaxed);
+                    barStepsNow[k] = 0;
+                }
+            }
             if (idx == 0)
                 lastBarBeat = barBeat;
 
@@ -1473,6 +1498,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
                                                                   * beatSamples));
                 trigger (events[e].stroke, events[e].velocity, offset + delay,
                          events[e].part);
+                noteStroke (events[e].part, events[e].stroke, step);
             }
             if (n > 0)
                 samplesSinceHit = -offset;
