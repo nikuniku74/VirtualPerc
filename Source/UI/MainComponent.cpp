@@ -194,7 +194,7 @@ MainComponent::MainComponent()
     kickButton.onClick = [this]
     {
         const int shown = engine.settings().kickChannel.load() + 1;   // 0 = none
-        const int most = juce::jmax (2, inputChannels);
+        const int most = availableInputChannels();
         int next = shown + 1;
         if (next < 2)
             next = 2;                       // channel 1 is the mix; the kick is never there
@@ -211,12 +211,12 @@ MainComponent::MainComponent()
     // Which input the tempo is read from in MIXER. MIX, the default and what
     // the app always did, averages every open input; an interface with the
     // send on 1 and a voice or a guitar on 2 put that in the analysis too.
-    // Cycled like the kick: MIX, 1, 2, ... up to the open inputs, never the
+    // Cycled like the kick: MIX, 1, 2, ... up to the available inputs, never the
     // kick's own channel.
     analysisButton.onClick = [this]
     {
         auto& s = engine.settings();
-        const int most = juce::jmax (2, inputChannels);
+        const int most = availableInputChannels();
         int next = s.analysisChannel.load();
         do
             next = next + 1 >= most ? -1 : next + 1;
@@ -2057,9 +2057,9 @@ void MainComponent::loadPrefs()
     // Clamped low deliberately: a remembered channel from a rig that is not
     // plugged in today would open inputs that do not exist.
     engine.settings().kickChannel.store (
-        juce::jlimit (-1, 31, prefs->getIntValue ("kickChannel", -1)));
+        juce::jlimit (-1, maxInputChannels - 1, prefs->getIntValue ("kickChannel", -1)));
     engine.settings().analysisChannel.store (
-        juce::jlimit (-1, 31, prefs->getIntValue ("analysisChannel", -1)));
+        juce::jlimit (-1, maxInputChannels - 1, prefs->getIntValue ("analysisChannel", -1)));
     // A round trip measured on this rig, if one was. Kept per install rather
     // than per session: the rig does not usually change between soundcheck and
     // the first song, and re-measuring is one press.
@@ -2708,6 +2708,13 @@ void MainComponent::updateBeatDots()
     }
 }
 
+int MainComponent::availableInputChannels() const
+{
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+        return juce::jmin (maxInputChannels, dev->getInputChannelNames().size());
+    return 0;
+}
+
 void MainComponent::applyLatencyFromDevice()
 {
     if (auto* dev = deviceManager.getCurrentAudioDevice())
@@ -2737,8 +2744,8 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
         sr = hw;
 
     const int scratchSize = juce::jmax (samplesPerBlockExpected * 4, 8192);
-    if (inputScratch.getNumSamples() < scratchSize || inputScratch.getNumChannels() < 8)
-        inputScratch.setSize (8, scratchSize, false, false, true);
+    if (inputScratch.getNumSamples() < scratchSize || inputScratch.getNumChannels() < maxInputChannels)
+        inputScratch.setSize (maxInputChannels, scratchSize, false, false, true);
     if (trackScratch.getNumSamples() < scratchSize || trackScratch.getNumChannels() < 2)
         trackScratch.setSize (2, scratchSize, false, false, true);
     trackTransport.prepareToPlay (scratchSize, sr);
@@ -2910,10 +2917,10 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
                 inputScratch.copyFrom (c, 0, *buffer, c, at, chunk);
         }
 
-        const float* inPtrs[8] {};
-        float* outPtrs[8] {};
+        const float* inPtrs[maxInputChannels] {};
+        float* outPtrs[maxInputChannels] {};
         const int used = directFile ? juce::jmin (count, trackScratch.getNumChannels())
-                                    : juce::jmin (count, 8);
+                                    : juce::jmin (count, maxInputChannels);
 
         for (int c = 0; c < used; ++c)
         {

@@ -603,16 +603,9 @@ void BeatTracker::updateState (float confidence, bool hadBeat, bool loudEnough, 
             const bool levelHeld = entryReady && confSettled && holdEntryForLevel (numSamples);
             if (entryReady && confSettled && ! levelHeld)
             {
-                // The decoder has already done the causal lock here: three
-                // peaks on a line feed, four through a room, plus the checks
-                // above. Requiring another 160 ms while START is armed was a
-                // duplicate proof. At 76 BPM the room decision arrives at the
-                // fourth quarter and its next quantised entry is exactly the
-                // first-bar deadline; spending another hold here only removes
-                // the remaining scheduling/phase margin. A live, authorised
-                // input can therefore expose the established grid immediately.
-                // Background listening still passes through LOCKING so the
-                // empty-room rejection below retains its observation window.
+                // Decoder lock plus the confidence and level gates above are
+                // the entry proof; do not add the old 160 ms LOCKING delay.
+                // Background listening keeps LOCKING's empty-room window.
                 const bool liveStart = armed && (sawInputStart || heardMusic || startImmediately);
                 currentState = liveStart ? TrackingState::following
                                          : TrackingState::locking;

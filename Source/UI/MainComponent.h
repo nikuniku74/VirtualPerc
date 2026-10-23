@@ -47,6 +47,8 @@ private:
     void nudgeFixedBpm (float delta);
     void refreshTempoModeButtons();
     void refreshStartButton();
+    int availableInputChannels() const;
+    static constexpr int maxInputChannels = 32;
     void applyLatencyFromDevice();
     void openAudioDevice (bool micGranted);
     /** Pins the clock and the buffer on the open device. claimInputChannels is

@@ -74,7 +74,7 @@ public:
 
     bool hasStreamFinished() const
     {
-        return reader != nullptr && playPos.load() >= reader->lengthInSamples - 8;
+        return finished.load();
     }
 
     /** Message thread. */
@@ -107,21 +107,24 @@ public:
         const int want = static_cast<int> (std::ceil (numOut * ratio)) + 8;
         if (want > scratch.getNumSamples())
             return;
+        // Read EOF before availability: the producer publishes its final write
+        // before readPos, so EOF cannot be paired with an older FIFO count.
+        const bool atEnd = readPos.load() >= reader->lengthInSamples;
         const int avail = fifo.getNumReady();
-        if (avail < want)
+        if (avail < want && ! atEnd)
         {
-            // Nothing ready: the file has ended, or the read thread is late.
-            if (readPos.load() < reader->lengthInSamples)
-                ++underruns;
+            ++underruns;
             return;
         }
 
         int s1, n1, s2, n2;
-        fifo.prepareToRead (want, s1, n1, s2, n2);
+        const int ready = juce::jmin (want, avail);
+        fifo.prepareToRead (ready, s1, n1, s2, n2);
         for (int c = 0; c < 2; ++c)
         {
             if (n1 > 0) scratch.copyFrom (c, 0, ring, c, s1, n1);
             if (n2 > 0) scratch.copyFrom (c, n1, ring, c, s2, n2);
+            if (ready < want) scratch.clear (c, ready, want - ready);
         }
         // Both channels consume the same count: same ratio, same state.
         const int outCh = juce::jmin (2, info.buffer->getNumChannels());
@@ -129,8 +132,22 @@ public:
         for (int c = 0; c < outCh; ++c)
             used = interp[c].process (ratio, scratch.getReadPointer (c),
                                       info.buffer->getWritePointer (c, info.startSample), numOut);
-        fifo.finishedRead (used);
-        playPos.fetch_add (used);
+        const int consumed = juce::jmin (used, ready);
+        fifo.finishedRead (consumed);
+        playPos.fetch_add (consumed);
+        // Drain the interpolator too, including with very small callbacks.
+        // Padding exists only at the known EOF; analysis still sees playback
+        // samples at the current callback, never the file reader's future.
+        if (atEnd)
+        {
+            endPadding -= used - consumed;
+            if (endPadding <= 0)
+            {
+                playPos.store (reader->lengthInSamples);
+                finished.store (true);
+                playing.store (false);
+            }
+        }
     }
 
     /** Audio thread reads; message thread may log it. */
@@ -146,6 +163,8 @@ private:
         readPos.store (frame);
         playPos.store (frame);
         needInterpReset.store (true);
+        endPadding = 8;
+        finished.store (false);
     }
 
     int useTimeSlice() override
@@ -186,10 +205,12 @@ private:
     juce::LagrangeInterpolator interp[2];
     double deviceRate = 0.0;
     std::atomic<bool> playing { false };
+    std::atomic<bool> finished { false };
     std::atomic<bool> needInterpReset { true };
     std::atomic<juce::int64> readPos { 0 };
     std::atomic<juce::int64> playPos { 0 };
     std::atomic<int> underruns { 0 };
+    int endPadding = 8;                  // audio thread, reset under swapLock
 };
 
 } // namespace vp

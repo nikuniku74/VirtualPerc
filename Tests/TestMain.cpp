@@ -1278,6 +1278,12 @@ int main (int argc, char** argv)
         vpRunHarmonicAudioTest (gPassed, gFailed);
         return gFailed ? 1 : 0;
     }
+    if (argc > 1 && std::string (argv[1]) == "--audio-input")
+    {
+        vpRunAudioInputTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
     if (argc > 1 && std::string (argv[1]) == "--state-timing")
     {
         vpRunStateTimingTest (gPassed, gFailed);

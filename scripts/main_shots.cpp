@@ -34,6 +34,7 @@ namespace
         _exit (128 + sig);
     }
 
+    bool inputChannelTest = false;
     struct NullDevice;
     std::atomic<NullDevice*> gDevice { nullptr };
     // The manager deletes the device on the message thread while the feeder
@@ -52,7 +53,13 @@ namespace
             gDevice.compare_exchange_strong (self, nullptr);
         }
         juce::StringArray getOutputChannelNames() override { return { "L", "R" }; }
-        juce::StringArray getInputChannelNames() override { return { "1", "2" }; }
+        juce::StringArray getInputChannelNames() override
+        {
+            juce::StringArray names;
+            for (int i = 1; i <= (inputChannelTest ? 32 : 2); ++i)
+                names.add (juce::String (i));
+            return names;
+        }
         juce::Array<double> getAvailableSampleRates() override { return { 44100.0, 48000.0 }; }
         juce::Array<int> getAvailableBufferSizes() override { return { 256, 512 }; }
         int getDefaultBufferSize() override { return 512; }
@@ -195,6 +202,15 @@ struct VPShotsAccess final : juce::Timer
 
     void timerCallback() override
     {
+        if (inputChannelTest)
+        {
+            elapsed += 0.05;
+            if (elapsed < 1.0 || gDevice.load() == nullptr)
+                return;
+            stopTimer();
+            finished (checkInputChannels() ? 0 : 1);
+            return;
+        }
         // The page's frame (ball, lit tiles, ring) has no display link offscreen.
         mc.updateBeatDots();
         elapsed += 0.05;
@@ -339,6 +355,63 @@ struct VPShotsAccess final : juce::Timer
         }
     }
 
+    bool checkInputChannels()
+    {
+        mc.engine.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        mc.engine.settings().analysisChannel.store (-1);
+        mc.engine.settings().kickChannel.store (-1);
+        mc.micGranted = true;
+        mc.audioOpened = true;
+        mc.applyAudioSetup (true);
+        const bool initialTwo = mc.inputChannels == 2;
+        bool analysis32 = false, kick32 = false;
+        for (int i = 0; i < 32; ++i)
+        {
+            mc.analysisButton.onClick();
+            analysis32 |= mc.engine.settings().analysisChannel.load() == 31;
+        }
+        for (int i = 0; i < 31; ++i)
+        {
+            mc.kickButton.onClick();
+            kick32 |= mc.engine.settings().kickChannel.load() == 31;
+        }
+        mc.kickButton.onClick();
+        const bool kickWrap = mc.engine.settings().kickChannel.load() == -1;
+        mc.engine.settings().kickChannel.store (30);
+        mc.engine.settings().analysisChannel.store (31);
+        mc.engine.settings().inputGain.store (1.0f);
+        mc.applyAudioSetup (true);
+        mc.analysisButton.onClick(); // wrap to MIX
+        bool skipsKick = true;
+        for (int i = 0; i < 32; ++i)
+        {
+            mc.analysisButton.onClick();
+            skipsKick &= mc.engine.settings().analysisChannel.load() != 30;
+        }
+        mc.engine.settings().analysisChannel.store (31);
+        juce::AudioBuffer<float> audio (32, 256);
+        for (int b = 0; b < 200; ++b)
+        {
+            audio.clear();
+            for (int i = 0; i < 256; ++i)
+            {
+                audio.setSample (31, i, 0.5f);
+                const int k = (b * 256 + i) % 24000;
+                audio.setSample (30, i, k < 4000 ? 0.7f * std::sin (2.0f * 3.14159265f * 70 * k / 48000)
+                                                          * std::exp (-k / 800.0f) : 0.0f);
+            }
+            mc.getNextAudioBlock ({ &audio, 0, 256 });
+        }
+        const auto snap = mc.engine.snapshot();
+        const bool routed = snap.inputPeak > 0.49f && snap.kickChannel == 30 && snap.kickOnsets > 0;
+        const bool ok = initialTwo && analysis32 && kick32 && kickWrap && skipsKick && routed;
+        std::printf ("input-channels initial2=%d IN32=%d KICK32=%d wrap=%d skip=%d peak=%.3f kick=%d hits=%d %s\n",
+                     initialTwo, analysis32, kick32, kickWrap, skipsKick, snap.inputPeak,
+                     snap.kickChannel, snap.kickOnsets, ok ? "PASS" : "FAIL");
+        std::fflush (stdout);
+        return ok;
+    }
+
     void shoot (const juce::String& name)
     {
         mc.timerCallback();
@@ -388,12 +461,14 @@ public:
         const auto args = getCommandLineParameterArray();
         if (args.isEmpty())
         {
-            std::printf ("usage: VPShots <out-dir> [song.wav] [it|en]\n");
+            std::printf ("usage: VPShots <out-dir> [song.wav] [it|en] | --input-channels\n");
             setApplicationReturnValue (2);
             quit();
             return;
         }
-        const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (args[0]);
+        inputChannelTest = args[0] == "--input-channels";
+        const auto dir = inputChannelTest ? juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                         : juce::File::getCurrentWorkingDirectory().getChildFile (args[0]);
         dir.createDirectory();
         const auto songFile = args.size() > 1
             ? juce::File::getCurrentWorkingDirectory().getChildFile (args[1])
@@ -401,19 +476,23 @@ public:
                   .getChildFile ("vp-bench/wav/39_I_WANNA_DANCE_44k.wav");
         vpui::languageOverride() = (args.size() > 2 && args[2] == "en") ? 0 : 1;
 
-        juce::AudioFormatManager formats;
-        formats.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (songFile));
-        if (reader == nullptr)
+        if (! inputChannelTest)
         {
-            std::printf ("cannot read %s\n", songFile.getFullPathName().toRawUTF8());
-            setApplicationReturnValue (1);
-            quit();
-            return;
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (songFile));
+            if (reader == nullptr)
+            {
+                std::printf ("cannot read %s\n", songFile.getFullPathName().toRawUTF8());
+                setApplicationReturnValue (1);
+                quit();
+                return;
+            }
+            song.setSize (2, static_cast<int> (juce::jmin<juce::int64> (reader->lengthInSamples,
+                                                                         static_cast<juce::int64> (reader->sampleRate * 60.0))));
+            reader->read (&song, 0, song.getNumSamples(), 0, true, true);
+
         }
-        song.setSize (2, static_cast<int> (juce::jmin<juce::int64> (reader->lengthInSamples,
-                                                                     static_cast<juce::int64> (reader->sampleRate * 60.0))));
-        reader->read (&song, 0, song.getNumSamples(), 0, true, true);
 
         // The page's preferences in a temporary home, not the user's.
         const auto home = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vpshots-home");
@@ -426,8 +505,9 @@ public:
         // comes off the message queue: that open lands on the null device.
         page->deviceManager.addAudioDeviceType (std::make_unique<NullType>());
         page->deviceManager.setCurrentAudioDeviceType ("Null", true);
-        feeder = std::make_unique<Feeder> (song);
-        feeder->startTimer (10);   // ~ a 512-frame block; the page sees blocks as they come
+        if (! inputChannelTest)
+            feeder = std::make_unique<Feeder> (song);
+        if (feeder != nullptr) feeder->startTimer (10);   // ~ a 512-frame block; the page sees blocks as they come
         steps = std::make_unique<VPShotsAccess> (*page, dir, [this] (int rc)
         {
             setApplicationReturnValue (rc);

@@ -124,14 +124,14 @@ Returning to the foreground reopens the device, whose `prepareToPlay()` starts a
 fresh analysis session. While an armed performance continues in the background,
 the 15 Hz timer remains only for the device watchdog and skips UI repainting.
 
-**First-bar entry (measured 2026-09-22).** Once START is armed and the input is
-known to be live (`sawInputStart` or `heardMusic`), a valid periodic decoder grid
-goes directly from LISTENING to FOLLOWING. Do not add a second time-based
-LOCKING proof there: `BeatDecoder` has already required three causal peaks on a
-line feed or four through a room, and the extra 160 ms consumes the margin before
-the next-quarter entry. Background listening still uses LOCKING, including its
-empty-room rejection window. `VPTests --state-timing` measures the whole causal
-deadline from the first beat through the next possible quarter:
+**First-bar decoder acquisition (measured 2026-09-22; test contract corrected
+2026-10-23).** Three causal peaks on a line feed, four through a room, can
+establish a decoder grid inside one bar. These numbers measure that grid and
+its next projected quarter, not production percussion entry: the confidence
+and half-level guards added in items 129/147 still apply. Once all guards
+are satisfied, an armed, live input goes directly to FOLLOWING without an
+extra 160 ms in LOCKING. Background listening keeps LOCKING's empty-room
+observation window. `VPTests --state-timing` checks the two facts separately:
 
 | BPM | line valid / entry / bar | room valid / entry / bar |
 |---:|---:|---:|
@@ -140,6 +140,14 @@ deadline from the first beat through the next possible quarter:
 | 140 | 1.02 / 1.44 / 1.86 s | 1.46 / 1.86 / 1.86 s |
 | 168 | 0.86 / 1.20 / 1.55 s | 1.22 / 1.55 / 1.55 s |
 
-All eight paths enter no later than the first 4/4 boundary; the unarmed
-background control remains in LOCKING. This changes only the state gate. It does
-not reduce the decoder evidence, snap the clock, or restart it.
+All eight decoder paths can offer a quarter by the first 4/4 boundary. The
+state fixture now supplies four seconds of confident observations and a known
+pulse level while the comb is absent, proves entry stays blocked, then opens
+the comb gate and checks FOLLOWING on that callback. The unarmed control
+waits for the same confidence evidence, then reaches LOCKING. Separate tests
+measure the real four-second confidence hold and six-ready-second fallback
+at buffers 64/256/1024, without bypassing either with an exemption. The fallback
+decides on the callback after it accumulates six seconds: 6.001333 / 6.005333 /
+6.037333 s; the high-confidence hold is 4.000000 / 4.000000 / 4.010667 s.
+New-file entry must also earn that hold afresh. No production timing rule was
+changed to make these tests pass.

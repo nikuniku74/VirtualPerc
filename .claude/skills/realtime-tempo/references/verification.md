@@ -2,6 +2,176 @@
 
 Moved verbatim from SKILL.md section 8 on 2026-10-07. Chronological log: newest entries are often at the top of a section, older ones further down; grep for the symbol you are touching. When you change a decision, update the entry that justified it.
 
+## Core audit fixes, 2026-10-23 (TODO 154)
+
+The three concrete bugs from the audit below are corrected: the UI enumerates
+available hardware inputs up to the existing 32-channel preference limit and
+carries them through its callback; the raw kick detector sanitizes nonfinite
+samples before its filters; TrackStreamer drains the last partial callback and
+interpolator at known EOF and explicitly publishes completion. No model,
+decoder threshold or clock behaviour changed. EOF zero padding is playback
+completion, not future-audio analysis.
+
+`VPTests --audio-input`: 11/0, covering kick recovery and 100 streamer
+configurations with mono/stereo, short/empty files, 1/256-sample callbacks,
+44.1/48/96 kHz conversion, replay and seek, compared sample by sample to a
+direct reader with the same interpolator. The identical tests isolated against
+both old headers give 0/11. The new input tests also pass 11/0 with their
+header implementations under AddressSanitizer and UndefinedBehaviorSanitizer.
+`VPShots --input-channels` uses the real UI buttons
+and callback on a 32-input fake device initially opened at two: old UI cannot
+reach IN32/CASSA32 and loses the high-channel signal; new UI passes (IN32 peak
+0.500, CASSA31 three detected strikes, wrap and kick exclusion correct).
+
+`--state-timing` now 13/0, including actual confidence-hold/fallback durations
+at 64/256/1024 and the cold-source reset. It no longer asserts that decoder
+readiness alone authorizes production entry. The first-bar acquisition numbers
+are retained as decoder-only assertions; confidence and level guards are
+supplied rather than bypassed. The production entry gates were not shortened.
+The corrected contract and callback rounding are in state-machine.md.
+
+Whole-chain before/after: **291/291 pulse files byte-identical**. All 56 main
+bench files plus 40 additional files in MIXER -12 dB, BRANO and IPAD simulation
+(-12 dB plus `--room`), and all three complete long sets in MIXER. Conditional
+right-tempo scores: main MIXER 86.34 -> 86.34%, BRANO 78.54 -> 78.54%, room
+65.32 -> 65.32%; additional MIXER 72.47 -> 72.47%, BRANO 69.33 -> 69.33%,
+room 58.21 -> 58.21%; long MIXER 55.28 -> 55.28%. Room simulation is not a
+physical iPad measurement. Exact trace identity also preserves entry, phase,
+level, the one and the pulse-derived regression metrics.
+
+Targeted gates: bar 15/0, phase-lock 20/0, tempo-step 14/0, tempo-slow 13/0,
+new-input 27/0, transport 8/0, harmonic-entry PASS. Harmonic-audio still fails
+its previously documented product target. Mac and unsigned iOS Release build.
+Full TAP A/B completed: before **692 passed / 27 failed**, after **715 / 28**.
+The after run began before the bar-fixture synchronization correction; its
+only added failure name was `seek re-aligns the one on the new downbeats`.
+All 27 other failures match the before run, including multiplicities. The
+updated bar fixture was checked separately eight times (15/0 each); the full
+suite was not repeated after this test-only edit. The 24 new audio-input and
+state-timing assertions passed in the full after run. Do not describe the full
+suite as green or silently remove the pre-existing failures. Failure names
+and original counts are in `comparison.json` beside both full-suite logs.
+Raw audit/after traces, JSON comparison and logs are preserved under
+`build-host/vp-core-audit-20261023` and `build-host/vp-core-fixes-20261023`;
+the original /tmp names are compatibility symlinks, not the durable storage.
+No physical-device validation or listening A/B yet.
+
+## Core audit baseline, 2026-10-23 (no engine change)
+
+Scope: MIXER and BRANO first; iPad microphone path inspected, no physical
+iPad/USB/room measurements. Tree `b504433`, existing JUCE submodule modification
+left untouched. Rebuilt VPTests and VPTrack with the bundled ONNX model.
+All analysis remains causal, including BRANO: future audio must never be
+used to decide the current tempo. The test runner's accelerated pacing is
+only a way to drain the causal worker deterministically, not look-ahead.
+
+192 VPTrack runs: all 56 WAVs in `~/vp-bench/wav` and all 40 in `new`, each
+as MIXER (`--gain -12`) and BRANO (`--player`), VP_OFFLINE_PACING=1. These
+additional recordings have already informed recent rules; they are outside
+the main bench, not a new blind validation set. `truth.py::score`, weighted
+by scored beats, after 20 s and while the part sounds:
+
+- Main bench MIXER: right 86.34%, octave 4.79%, other wrong 8.87%.
+- Main bench BRANO: right 78.54%, octave 11.84%, other wrong 9.62%.
+- Additional files MIXER: right 72.47%, octave 16.78%, other wrong 10.75%.
+- Additional files BRANO: right 69.33%, octave 18.93%, other wrong 11.74%.
+
+Additional-file scores have 38 nonempty scored files per path, including
+intro/stage material; do not describe these as 38 ordinary songs. Typical
+phase scatter (median of per-file medians, correct octave only) is 13.02 ms
+MIXER / 13.72 ms BRANO. This hides outliers: beat-weighted per-file scatter
+is 31.84 / 16.29 ms, and >25 ms is 28.96 / 26.45%. The main bench is
+12.64 / 14.33 ms weighted scatter and 20.21 / 22.26% >25 ms. These are
+current baseline numbers, not evidence that a proposed change improves them.
+
+Median first sounding file position: main bench 23.02 / 18.46 s, additional
+files 23.18 / 16.83 s (MIXER / BRANO). This includes leading silence and
+musical intros; it is not acquisition latency measured from a true beat.
+Main-bench first-four-good check (`entry_start.py::window`, its existing
+80 ms phase tolerance): 38/56 MIXER, 37/56 BRANO. Additional files: 13/38,
+15/38, with the stage-material caveat above. Teacher-beat sounding coverage
+after 20 s, for nonempty scored files: 92.3/97.9% main bench, 88.7/98.4%
+additional. Always report coverage/entry with conditional accuracy.
+
+Long-set spot check, NSF_LIVE_2013 first 300 s, current MIXER: at 205–220 s
+teacher medians are 105–109 BPM while clock remains 124.9–125.1, sounding
+throughout; at 225–230 s it reaches 109–107.5. At 245–270 s teacher is
+120–122 while clock remains 107.8–107.9. Confirms the stale-grid problem
+from TODO 141 survives; the whole set was not rerun. Inspect
+BeatDecoder::updateTempo (staleGridBeats, postHoleReopenSec) before changing
+the PLL. The earlier vote-clock/expiry ablations were rejected: this is not
+permission to reintroduce them without independent regression evidence.
+
+New concrete bugs identified (unfixed; small probes built only in /tmp):
+
+- MIXER channel selection, MainComponent.cpp:197/219/2722: the cycle's
+  maximum is the active input count, initially two, not the available hardware
+  channel count. Neither button can request input 3 from that state. Opening
+  more channels requires selecting them, which the cycle prevents. Separately,
+  prepareToPlay/getNextAudioBlock cap scratch/pointer arrays at eight; a
+  future selector fix must also carry the selected channel end to end.
+  Use device available input names and keep supported choices consistent with
+  callback capacity. Hardware routing was not tested.
+- Dedicated kick input bypasses the mono bus's nonfinite-sample guard:
+  VirtualPercussionEngine::mixInputs invokes KickOnsetDetector::process on
+  raw input first. One NaN permanently poisons lpLo/lpHi/env. A 48 kHz,
+  256-sample probe with 70 Hz decaying kicks produces 7 detections clean,
+  0 after one NaN; level stays nonfinite after 3.2 s of clean input, and
+  quietSeconds falsely advances. Sanitize before updating detector state and
+  test recovery; the existing bad-input test only covers the mono analysis bus.
+- TrackStreamer::getNextAudioBlock requires ceil(block*ratio)+8 ready frames
+  even at EOF; the producer cannot supply the last short tail, playPos stops
+  before hasStreamFinished's last-eight-frames test. Actual 44.1 kHz WAV to
+  48 kHz output, last 1000 source frames, 256-sample callbacks: 60 frames
+  left forever, finished=false, playing=true, nine silent callbacks, zero
+  underruns. This also prevents the UI PLAY action from rewinding a completed
+  file. Drain/pad the final partial callback and publish completion; add an EOF
+  test, since probe_streamer only checks steady playback and a middle seek.
+
+Other confirmed limitations:
+
+- mixInputs averages L/R (also BRANO). Opposite-polarity channels cancel
+  completely in analysis while stereo playback remains audible. MIXER can
+  select one channel when reachable; BRANO has no such analysis selection.
+  Any cancellation fallback must preserve normal stereo behaviour and be
+  benchmarked; do not blindly replace every mix with one channel.
+- AUTO's 168 BPM upper limit is intentional, not a newly discovered decoder
+  bug. Its effects count as octave errors against a teacher choosing 169–171.
+- A 12/8 interpretation at 3:2 is outside the octave-only resolution path
+  (TODO 139); it needs metrical evidence, not a faster phase correction.
+
+Regression checks now: --bar 15/0, --phase-lock 20/0, --tempo-step 14/0,
+--tempo-slow 13/0, --new-input 27/0, --transport 8/0, --harmonic-entry PASS.
+--state-timing FAILS twice (new-file entry, all eight first-bar cases,
+background entry). The fixtures call updateState only once/twice and do not
+satisfy the newer four-second confidence/half-level gates; this is a test
+contract mismatch, not proof of eight broken production tempos. Its
+low-confidence timing at buffers 64/256/1024 still passes. Update the fixture
+and explicitly measure the current entry contract; do not remove the safety
+gates just to restore the old first-bar assertion.
+
+--harmonic-audio FAILS: real detector path at 100 BPM without sustained pad
+enters at 23.365 s against a 4.8 s target; with pad it never gets valid phase
+(coherence 0.355). Drums-only and held-chord negative controls pass; scripted
+--harmonic-entry passing does not validate music-only acquisition. Known
+limitation, relevant to intros in both MIXER and BRANO.
+
+Priorities within the existing real-time specification: repair channel reach,
+kick sanitization and EOF; reconcile entry tests; improve level choice before
+entry and stale-grid/new-song discrimination using independent causal evidence
+without restarting a sounding clock. Keep competing levels during acquisition
+as a measured experiment, not a promised fix. A model-training experiment
+must distinguish wrong neural evidence from correct evidence vetoed by the
+decoder and reserve genuinely untouched recordings for validation. No gain
+from either experiment has been demonstrated here. Keep the current iPad
+measurement mode, echo cancellation and latency calibration; physical warm
+device/room/route tests and listening remain outstanding.
+
+Raw pulses, metrics and test logs for this audit were initially left in
+`/tmp/vp-core-audit-20261023`; the fixes above preserve them in build-host.
+At the time of this initial audit there was no full
+TAP suite, complete long-set rerun, new model, DSP edit or listening A/B.
+
 ## 8. How to verify a change - do not skip this
 
 ```bash

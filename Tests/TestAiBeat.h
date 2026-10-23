@@ -1,6 +1,7 @@
 #pragma once
 
 void vpRunAiBeatTests (int& passed, int& failed);
+void vpRunAudioInputTests (int& passed, int& failed);
 
 /** Recorded-bank variation at the velocities the groove normally uses.
     Part of `vpRunAiBeatTests`; also `VPTests --percussion`. */

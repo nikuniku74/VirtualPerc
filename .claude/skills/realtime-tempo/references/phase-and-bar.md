@@ -64,6 +64,17 @@ so one beat's timing error is averaged rather than handed over whole.
 
 ### The one exception: the kick channel
 
+**Audit fix / test synchronization (2026-10-23, TODO 154).** The raw kick
+detector now substitutes zero for NaN/±infinity before its one-pole states;
+the analysis bus's later guard cannot protect this separate input. Recovery
+is checked against the same samples explicitly replaced with zero, including
+onset dates, strengths, envelope and quiet time. The bar-reentry fixture also
+drains `analysisCompletedSamples()` through the previous section before
+flipping `ShiftBarModel::shifted`: a fixed sleep could relabel queued old
+audio with the new section's accents and intermittently fail the seek test.
+The wait is bounded and test-only. Eight updated `--bar` runs pass; this
+changes no production bar rule or audio-thread wait.
+
 `Tracking/KickOnsetDetector.h` + `BeatTracker::notifyKickOnset`. A channel
 carrying only the kick dates the beat to the sample instead of to a 20 ms frame.
 It buys **precision, not a new reference** - the absolute calibration stays on

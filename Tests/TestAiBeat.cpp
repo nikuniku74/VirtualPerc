@@ -1379,6 +1379,13 @@ void vpRunBarReentryTests (int& passed, int& failed)
             if ((++blocks % 8) == 0)
                 std::this_thread::sleep_for (std::chrono::milliseconds (1));
         }
+        // A scripted bar shift must not relabel audio still queued from the
+        // previous section. Sleep alone made the seek assertion load-dependent.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+        while (eng.analysisCompletedSamples() < pos && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        if (eng.analysisCompletedSamples() < pos)
+            expect (false, "bar fixture drains its queued audio before changing sections");
         return pos;
     };
 
@@ -2630,6 +2637,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
     gFail = &failed;
     std::printf ("\nAI beat tracking / TSM\n");
 
+    vpRunAudioInputTests (passed, failed);
+    vpRunStateTimingTest (passed, failed);
     vpRunBarReentryTests (passed, failed);
     vpRunNewInputTests (passed, failed);
     vpRunRhythmSeenTests (passed, failed);
@@ -10328,10 +10337,19 @@ struct BeatTrackerTimingProbe
         t.beatCount = 2;
         t.listeningSamples = 48000;
         t.samplesSinceBeat = 0;
-        t.entryTempoAgrees = true; // the comb names the same pulse (process() sets it)
-        t.updateState (0.8f, true, true, true, 256);
-        return fresh && waitsForCurrentSong
-               && t.currentState == TrackingState::following;
+        t.entryTempoAgrees = true;
+        bool premature = false;
+        int elapsed = 256; // the first confidence observation above
+        while (elapsed < 48000 * 5 && t.currentState == TrackingState::listening)
+        {
+            t.halfLevel.observe (256.0 / 48000.0, 0.03f);
+            t.updateState (0.8f, true, true, true, 256);
+            elapsed += 256;
+            premature |= elapsed < 48000 * 4 && t.currentState != TrackingState::listening;
+        }
+        return fresh && waitsForCurrentSong && ! premature
+               && t.currentState == TrackingState::following
+               && elapsed <= 48000 * 4 + 256;
     }
 
     static bool barTrustSurvivesWeakVotesButNotReentry()
@@ -10416,18 +10434,22 @@ struct BeatTrackerTimingProbe
             live.heldBpm = hyp.bpm;
             live.beatCount = lineFeed ? 3 : 4;
             live.samplesSinceBeat = 0;
-            // Entry waits for the comb to agree with the decoder (docs/TODO.md
-            // item 87): without it the part stays out however clean the grid.
+            // Decoder acquisition still fits inside one bar. Production entry
+            // also needs settled confidence and a known pulse level (129/147).
+            // Settle those while the comb is absent: it must still hold entry.
             live.entryTempoAgrees = false;
-            live.updateState (hyp.confidence, true, true, hyp.valid, 256);
-            const bool waitsForComb = live.currentState == TrackingState::listening;
-            // From here this measures the state machine once the comb agrees;
-            // how long the comb takes is what the song bench measures.
+            bool waitsForComb = true;
+            for (int n = 0; n < 48000 * 4 + 256; n += 256)
+            {
+                live.halfLevel.observe (256.0 / 48000.0, 0.03f);
+                live.updateState (0.8f, true, true, hyp.valid, 256);
+                waitsForComb &= live.currentState == TrackingState::listening;
+            }
+            // Once every gate is ready, do not add the old LOCKING delay.
             live.entryTempoAgrees = true;
-            live.updateState (hyp.confidence, true, true, hyp.valid, 256);
+            live.updateState (0.8f, true, true, hyp.valid, 256);
 
-            // Playback joins on the next quarter. The first beat starts this
-            // measured 4/4 bar, so its fifth beat is the hard deadline.
+            // This deadline is decoder-only, not production entry latency.
             const double quarters = std::ceil ((validSec - firstBeatSec) / beatSec
                                                 - 1.0e-9);
             const double entrySec = firstBeatSec + std::max (0.0, quarters) * beatSec;
@@ -10436,7 +10458,7 @@ struct BeatTrackerTimingProbe
                          && live.currentState == TrackingState::following
                          && entrySec <= deadlineSec + 1.0e-9;
             firstBar &= ok;
-            std::printf ("first-bar-lock %3.0f %s valid=%.2fs entry<=%.2fs bar=%.2fs %s\n",
+            std::printf ("decoder-first-bar %3.0f %s valid=%.2fs next-quarter=%.2fs bar=%.2fs ready-entry=%s\n",
                          static_cast<double> (bpm), lineFeed ? "line" : "room",
                          validSec, entrySec, deadlineSec, ok ? "PASS" : "FAIL");
         }
@@ -10450,11 +10472,50 @@ struct BeatTrackerTimingProbe
         room.beatCount = 4;
         room.samplesSinceBeat = 0;
         room.entryTempoAgrees = true;
+        bool confidenceWait = true;
+        for (int n = 0; n < 48000 * 4 - 256; n += 256)
+        {
+            room.halfLevel.observe (256.0 / 48000.0, 0.03f);
+            room.updateState (0.80f, true, true, true, 256);
+            confidenceWait &= room.currentState == TrackingState::listening;
+        }
         room.updateState (0.80f, true, true, true, 256);
 
-        const bool ok = firstBar && room.currentState == TrackingState::locking;
+        const bool ok = firstBar && confidenceWait
+                        && room.currentState == TrackingState::locking;
         std::printf ("first-bar-background state=%d %s\n",
                      static_cast<int> (room.currentState), ok ? "PASS" : "FAIL");
+        return ok;
+    }
+
+    static bool entryConfidenceTiming (int block, float confidence)
+    {
+        BeatTracker t;
+        t.sampleRate = 48000.0;
+        t.currentState = TrackingState::listening;
+        t.armed = t.sawInputStart = true;
+        t.inputPeakEnv = 0.02f;
+        t.listeningSamples = 48000;
+        t.heldBpm = 76.0f;
+        t.beatCount = 4;
+        t.entryTempoAgrees = true;
+        int elapsed = 0;
+        while (elapsed < 48000 * 7 && t.currentState == TrackingState::listening)
+        {
+            t.halfLevel.observe (block / 48000.0, 0.03f);
+            t.updateState (confidence, true, true, true, block);
+            elapsed += block;
+        }
+        const double seconds = elapsed / 48000.0;
+        const double expected = confidence >= 0.60f ? 4.0 : 6.0;
+        // The fallback counts six ready seconds, then decides on the next
+        // callback; the high-confidence hold can decide in its last callback.
+        const int readyCallbacks = static_cast<int> (std::ceil (expected * 48000.0 / block));
+        const int decisionCallbacks = readyCallbacks + (confidence < 0.60f ? 1 : 0);
+        const bool ok = t.currentState == TrackingState::following
+                       && elapsed == decisionCallbacks * block;
+        std::printf ("entry-confidence block=%d conf=%.2f wait=%.6fs %s\n",
+                     block, confidence, seconds, ok ? "PASS" : "FAIL");
         return ok;
     }
 
@@ -10892,6 +10953,12 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    for (int block : { 64, 256, 1024 })
+        for (float confidence : { 0.8f, 0.55f })
+        {
+            const bool ok = vp::BeatTrackerTimingProbe::entryConfidenceTiming (block, confidence);
+            (ok ? passed : failed)++;
+        }
     const bool newFileLock = vp::BeatTrackerTimingProbe::newFileMustEarnItsOwnLock();
     std::printf ("state-timing new file earns its own lock %s\n",
                  newFileLock ? "PASS" : "FAIL");

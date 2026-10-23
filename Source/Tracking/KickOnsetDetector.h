@@ -106,9 +106,11 @@ public:
 
         for (int i = 0; i < numSamples; ++i, ++absPos)
         {
+            // The raw kick channel bypasses the analysis bus's nonfinite guard.
+            const float sample = std::isfinite (x[i]) ? x[i] : 0.0f;
             // Band-pass by difference of two one-poles, then rectify.
-            lpLo += aLo * (x[i] - lpLo);
-            lpHi += aHi * (x[i] - lpHi);
+            lpLo += aLo * (sample - lpLo);
+            lpHi += aHi * (sample - lpHi);
             const float band = std::fabs (lpHi - lpLo);
 
             // Two envelopes: one that can keep up with a strike and one that
