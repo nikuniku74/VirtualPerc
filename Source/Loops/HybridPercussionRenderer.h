@@ -35,7 +35,7 @@ namespace vp
     clock or the phrase count. Both engines are rendered through it, which is
     what makes it a crossfade rather than a cut.
 
-    With `VP_ENABLE_RECORDED_LOOPS` off - which is the default - or with no bank
+    With `VP_ENABLE_RECORDED_LOOPS` off, or with no bank
     loaded, this object is a thin pass-through to `PercussionEngine` and the app
     behaves exactly as it did before it existed.
 */
@@ -105,7 +105,8 @@ public:
         is driven, never replaced. Returns the strokes it fired, exactly as
         `PercussionEngine::render` does. */
     int render (PercussionEngine& percussion, float* outL, float* outR,
-                int numSamples, const Input& in) noexcept;
+                int numSamples, const Input& in,
+                float* controlLeft = nullptr, float* controlRight = nullptr) noexcept;
 
     /** True when the recording is what is being heard. Diagnostics and tests. */
     bool loopIsPlaying() const noexcept

@@ -3675,3 +3675,99 @@ remain separate. Controlled noisy120->150 probes with35/70ms old jitter read
 16.22->6.62sec and10.62->7.02sec, with all15 observed intervals and no grid
 re-anchor; a short fill does not qualify. Small120->106 remains18.34sec.
 SelectedC:325paired probes,322bit-identical,3changed. No file loses correct tempo share or sounding coverage; no new skipped subdivision per file or lost-correct run>=4sec.64gained/1isolated lost truth beat. Same local target/4sec lock gate is3.73sec earlier BRANO,20.09sec on the136min MIXER set,7.77/4.37sec on the44min MIXER set.96mic+24fresh comparisons identical. The six old long-set witnesses remain unchanged; do not quote rejectedA/B gains. Full tables, onset/common-cohort gates and build/test accounting: verification.md and TODO156.
+
+### Missing-fit motion proof retained (2026-10-25, TODO157)
+
+`fixedWalkRun` now clears when a required short/quadratic fit is absent, as it
+already did when an available fit failed the motion gates. Separate strains
+cannot complete the consecutive proof through an unmeasured interval. All
+release thresholds, comb/quadratic evidence and tempo targets stay unchanged.
+A dedicated `--state-timing` test exercises this missing-fit branch.
+
+Isolated causal A/B: 325 pairs,324 byte-identical; the remaining trace changes
+no decision metric, common-correct phase/bar, audible coverage, surges, jumps
+or skipped sixteenths. Combined with the downbeat fix:325/325 byte-identical.
+No claim of faster following from this corpus. The proposed frame-timed blend
+was rejected separately; see clock.md. No title/BPM rules.
+
+
+### 2026-10-25 — TODO158, small-step stationary peak proof rejected
+
+Tried letting a damaged fit accept the existing16-peak independent-comb proof
+for small non-octave steps only when the two seven-interval half-fits agree
+within existing `kStraddleAgreeRatio`. The synthetic stationary/moving/room
+checks passed, but325 real paired probes rejected it:310identical/15changed;
+NSF_LIVE_2013 MIXER correct share76.93384→77.36307% hides a sustained lost
+previously-correct section. No exception added; `combHasNewPulse` restored.
+Do not repeat this as an unmeasured “conservative” fix. Output fade/conga
+changes separately pass the325-witness gates; they do not speed acquisition.
+
+
+### TODO159 — room refit quarantine rejected (2026-10-25)
+
+The late small-step red was **room76->82**, not128->120 as the TODO158 ledger
+reported. Before: late80.35047 BPM, worst1.670 BPM after confirmation. Extending
+the line's no-comb rule to every confirmed room transition gives82.00648 /
+0.024; line120->132,128->120,76->82,168->156 stay byte-equivalent in the
+focused diagnostic. But96 real room probes give92 exact, four changed, two
+rejected: LE_FREAK_GIANNA loses coverage despite higher correct share;
+L_UNICA_DONNA_PER_ME loses a previously correct beat (90.0356->90.0000%).
+
+A second candidate reused existing clean-fit/grid-health bounds (no missed
+index,coverage>0.80,residual<0.03, period within2% of the confirmed period).
+It barely brings the synthetic76->82 inside the existing2% bound (late80.41781,
+worst1.582);96 room probes give94 exact/two changed, still the same lost
+correct beat in L_UNICA_DONNA_PER_ME. Both candidates were **discarded**.
+The full working decoder is restored byte-for-byte to the pre-TODO159 source.
+No faster room-change claim. Do not accept a synthetic green at the cost of
+real coverage, or use a title/BPM exception. Artefacts: `room-assessment.json`,
+`room-clean-assessment.json`, `step-trace.log`, `step-room*.log` in
+`build-host/vp-red-20261025/`.
+
+The92 BPM strong-eighth fixture omitted the worker's `setSounding(true)`
+lifecycle. Its unsounded acquisition may move92->184 (first15.68s); the
+playing anchored decoder holds92.00246 for100% of valid playback frames.
+The unchanged95% assertion now tests that actual lifecycle, from first valid
+playback rather than only after25s. Plain-comb failure stays as a control;
+`--strong-eighths` runs the two assertions separately. No octave heuristic or
+production threshold changed. The six50/100 assertions remain explicit:
+two assume a removed cadence-hint producer and four demand automatic50 from
+an acoustically ambiguous100 pulse; manual÷2/×2 remains the supported answer.
+
+
+### TODO160 — manual edge quality and unsounded refit (2026-10-25)
+
+A boundary tempo can be fractionally outside50–215 BPM when fitted to20 ms
+activation frames. Rejecting that line also published residual=1: the manual
+÷2 slow-kit BRANO control sounded only15 strokes and the drift guard went red
+although the grid was on time. After an explicit manual choice, and only near
+the already-followed period, `fitPeriodBefore` can measure residual within one
+frame of uncertainty across the actual indexed span. It still returns false
+for an out-of-range period: **quality may be valid without adopting the rate**.
+Automatic period and BPM decisions retain their original bounds and values.
+`setUserOctave` records the manual flag even when the octave itself is unchanged.
+No supported range or trust threshold was widened. Focused real-model sweep:
+10/0; manual50 BRANO15→32 hits, phase−1.71→−3.71 ms across the window; MIXER
+32 hits,+0.73→−2.35 ms. Original8 ms phase bounds,30-hit bound and zero-gap
+requirements stay unchanged. Two obsolete cadence-producer assertions now
+verify explicit manual50/100 interpretations of identical activations (2/0).
+This does not claim automatic50/100 recognition; the100 control remains AUTO.
+
+The room76→82 synthetic step lost its confirmed rate to the stale comb before
+entry. Applying bounded refit quarantine whenever unsounded passed40/0 but
+lost two correct beats in one real room case and one in another: a temporary
+dropout is not a first acquisition. The scope is now only before the decoder
+has **ever sounded** since prepare/reset (`hasSounded`); later room dropouts
+retain the playing policy. The latch survives input-epoch notifications.
+Focused matrix40/0; room76→82 late80.35047→82.006,worst0.024 BPM. No faster
+already-playing room transition is claimed.
+
+Rejected: broadly admitting or clamping edge periods and reciprocal BPM. Even
+a current-period proximity guard changes automatic decisions: the kept trial
+improved one long set greatly but lost three previously correct beats around
+7746.5–7747.7 s in another, with transient clock63–74 against truth~98 BPM.
+The manual-quality-only implementation avoids changing those automatic rates.
+Earlier primary-path losses from attack calibration were independently proved
+by no-attack ablation; untouched before binaries reproduce the stored reference
+exactly. No per-title/BPM exception was introduced. Final bank acceptance and
+remaining limitations are recorded in TODO160.

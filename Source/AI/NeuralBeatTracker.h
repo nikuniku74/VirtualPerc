@@ -17,6 +17,7 @@ namespace vp
 
 class NeuralBeatTracker
 {
+    friend struct BeatTrackerTimingProbe; // Deterministic slot payloads, with no worker running.
 public:
     NeuralBeatTracker() = default;
     ~NeuralBeatTracker();

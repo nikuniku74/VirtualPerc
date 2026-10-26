@@ -187,3 +187,30 @@ phase in one callback. The policy survives level epochs of the same input,
 and clears on explicit source/mode replacement/reset. Outside that proof the
 legacy behavior is preserved, as required by the measured no-regression gates.
 See phase-and-bar.md and verification.md for the complete paired measurements.
+
+### Frame-timed anchor blend rejected (2026-10-25, TODO157)
+
+`updateTempo` advances the blend on accepted-fit updates, not every 20ms. A
+candidate moved it into `observe` to make the old claimed 0.5s literal. It gave
+no general musical gain: FAKE MIXER common-correct scatter 11.447→11.353ms,
+but T.V.B. 7.563→7.644ms and one additional beat beyond 25ms (9/99→10/99).
+It was rejected; no per-recording correction was added.
+
+The original arithmetic is retained exactly (1/25 per accepted-fit update).
+The constant is now honestly named `kAnchorBlendBeats=25`; the misleading
+seconds/frame comments are removed. No new PLL, glide or clock restart.
+Final VPAlign ramps/steps pass and are byte-identical to baseline. Final
+325/325 media traces match baseline. This is not a measured acquisition gain.
+
+### TODO165 — detected long-rest rate hold (unverified, 2026-10-26)
+
+User explicitly forbids running tests. Existing `beatGapHold` suppressed phase
+steer but not ordinary target glide or a pending explicit phase glide. While
+locked it now rejects ordinary targets and holds current BPM/glide travel;
+confirmed rapid transitions retain priority. BeatTracker excludes TAP/FISSO
+ownership. Existing detector thresholds and return steering rails are unchanged.
+Three deterministic evidence-trust assertions were added but NOT executed.
+No compilation, benchmark or device install;797/0 belongs to TODO164 only.
+This follows a detected rest, not poor residual alone: earlier broad holds
+cost accelerando response. Actual tempo motion without sufficient evidence
+can still diverge from the held rate. No measured improvement/regression claim.

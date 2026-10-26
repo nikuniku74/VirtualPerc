@@ -98,10 +98,28 @@ for g in --bar --phase-lock --state-timing --tempo-step --tempo-slow --new-input
 ./scripts/run-tests.sh        # full suite before committing
 ```
 
-Known pre-existing failures: `--level` 11/5 (168 BPM at -12 dB and clip, 91
-BPM at clip) and `--octave` 7/4 (the 50 BPM cases); 2-4 flaky cases on Linux
-hosts. Anything else failing is a regression. `--level` and `--octave` take
-~10 min each.
+Run the full suite with its **default worker pacing**, without exporting
+`VP_OFFLINE_PACING` globally. That flag is for VPTrack and compatible probes:
+two direct-worker fixtures do not release held audio, and the worker-wake test
+measures the real polling delay. TODO159's supplemental whole-suite paced run
+adds four failures that pass normally (including a mismatched-tempo canceller
+pair); do not use that total as the production regression result. Latest
+verified ledger: TODO164, default full-wake797/0;325 paired probes lose no
+regression gates.52 actual-output lifecycle pairs remove38 red openings to0.
+Nominal timing alone cannot certify heard startup. See verification.md for
+CPU cost,64-frame stress failures and physical iPad evidence. TODO163 closes
+the earlier5ms fortissimo residual:9 velocities ×3 gains ×16 strokes ×3 RR,
+0ms isolated spread (53/0). Earlier totals/remaining5ms are historical.
+The user hears a cleaner but imperfectly timed Canzone entrance; its tonal
+intro phase remains displaced despite correct BPM. No phase improvement is
+claimed. Final clean build/install pass; final launch was screen-locked.
+The full suite is slow; buffered silence alone is not a hang.
+
+Scripted bar-reentry fixtures drain already-fed input every eight callbacks
+and at section boundaries. Feeding a long section before draining couples its
+bar votes to host load. Keep the same two-bar recovery bound; never solve that
+test-harness problem by extending the deadline or globally changing worker
+pacing. TODO160 retains the initial failed run and12 old/new isolated repeats.
 
 ## 5. Decide and record
 
@@ -123,6 +141,14 @@ hosts. Anything else failing is a regression. `--level` and `--octave` take
 
 ## Traps, measured
 
+- `EngineSnapshot::percussionAudible` and the legacy `.pul` `suona` column
+  mean the tracker's permission, before drift guard/stand-down. They do not
+  prove the part is actually sounding. For entry/muting bugs, add VPTrack
+  `--audibility file`: actual rendered output peak and guard/stand-down from
+  t=0. Ordinary truth scoring excludes20s and would miss a3s false intro.
+  Keep the old clock baseline, compare actual audio separately, and test PLAY
+  followed immediately by START (0.1/0.5/1/2s), not only3/7s. TODO164 reproduced
+  Una canzone per te's false red entry despite791 passing checkpoint tests.
 - The published BPM (`s.bpm`, `s.clockBpm`) hides what is heard: judge the
   grid via the phase derivative in `--pulses`, which is what the scripts do.
 - First-harmonic resultants (`fold.py`, `phase2.py`) read swung material as
@@ -135,3 +161,15 @@ hosts. Anything else failing is a regression. `--level` and `--octave` take
   removal bit for bit against a worktree of HEAD with that code forced off,
   then judge off vs on with `cmp`/`truth` as any change (item 94: the motion
   bridge acted in 14-18 of 54 files; every diff started on its first frame).
+
+### Host sleep / DarkWake (TODO162, 2026-10-26)
+
+`pmset -g log` proved repeated Idle Sleep and maintenance DarkWake during the
+long runs. This can expire a worker's wall-clock drain deadline with queued
+audio still present; it is not evidence of an engine timing regression. An
+idle-sleep assertion started inside DarkWake does not itself promote the Mac
+to full wake. The macOS test driver now runs `caffeinate -i -u` for the test's
+lifetime: wake once, then prevent idle sleep; no deadline or musical recovery
+bound is relaxed. Keep the failed logs, the power log and a complete full-wake
+repeat. Do not dismiss a failure as sleep without that evidence. On iPad the
+audio session, not this developer-only wrapper, owns audio activity.

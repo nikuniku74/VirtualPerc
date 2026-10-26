@@ -69,7 +69,8 @@ void vpRunOnnxPhaseLockTests (int& passed, int& failed);
     in real time over about twenty runs, which is minutes, and iterating on them
     behind the rest of the suite is not practical.
 
-    `only` narrows that further to one bench - "a" to "e" - for the same reason.
+    `only` narrows that further to one bench ("a".."f"); "a-script"
+    runs only the deterministic coupling gate, "a-net" the neural pairs.
     The full suite passes nullptr and runs all of them. */
 void vpRunMakeupTests (int& passed, int& failed, const char* only = nullptr);
 
@@ -77,3 +78,11 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only = nullptr);
     the 4/4 rules and have no clap, the engine finds a one called every third
     beat (and every fourth, as the control). Also `VPTests --meter`. */
 void vpRunMeterTests (int& passed, int& failed);
+
+void vpRunDriftGuardFadeTests (int& passed, int& failed);
+
+void vpRunStrongEighthTests (int& passed, int& failed);
+
+void vpRunMetricChoiceTests (int& passed, int& failed);
+
+void vpRunPublicationTests (int& passed, int& failed);

@@ -22,6 +22,8 @@ namespace vp
 
 class VirtualPercussionEngine
 {
+    friend struct EngineAudioProbe;
+    friend struct MakeupEpochProbe;
 public:
     /** Test seam - see BeatTracker::setBeatModel. Call before prepare(). */
     void setBeatModel (std::unique_ptr<IBeatModel> model) { tracker.setBeatModel (std::move (model)); }
@@ -174,7 +176,7 @@ public:
         false and fills `error` when the bank is not usable, and in that case
         nothing changes: a bank is all there or it is not used.
 
-        With `VP_ENABLE_RECORDED_LOOPS` off - the default - loading a bank is
+        With `VP_ENABLE_RECORDED_LOOPS` off, loading a bank is
         allowed and changes nothing: the render path is the one it always was.
         The build flag is the switch; `setRecordedLoopsEnabled` is how the app
         turns it off again at runtime once the build has turned it on. */
@@ -236,6 +238,7 @@ private:
         across the same boundary, and `prepare()`/`reset()` plus
         `notifyInputRestart()` each set it themselves. */
     void resetAnalysisLevelState() noexcept;
+    bool resumedAfterSourceSilence (int numSamples, float sourcePeak, FollowSource source) noexcept;
     /** The public mirrors of three of those scalars - the epoch count, the
         make-up gain and the analysis peak - which the audio callback is the only
         writer of. Cleared at the same two lifecycle boundaries and for the same
@@ -249,7 +252,8 @@ private:
         to subtract and for the level watcher to blame us with. `master` is part
         of what the speaker emits, so it is part of what comes back on the
         microphone. */
-    void pushOutputToRing (int numSamples, float master) noexcept;
+    void pushOutputToRing (int numSamples, float master,
+                           const float* controlLeft = nullptr, const float* controlRight = nullptr) noexcept;
     void applyAnalysisMakeup (int numSamples, float rawPeak, bool levelJumped, float targetPeak,
                               float maxGain) noexcept;
     /** Watches the analysis level *before* the make-up gain and counts the
@@ -292,6 +296,7 @@ private:
     std::vector<float> mono;
     std::vector<float> outL;
     std::vector<float> outR;
+    std::vector<float> controlL, controlR;
     std::vector<float> clickScratch;
     /** Our own output split into bands at the accepted delay, one block long.
         Sized in prepare(): a fixed stack buffer used to cap this at 2048
@@ -381,6 +386,13 @@ private:
     /** The drift guard (kGuardEnterSec in Core/Types.h): how long the red has
         held, how long since it went, and whether the part is held silent. */
     bool               driftGuarded = false;
+    // The nominal witness keeps its established gate when output policy changes.
+    bool               controlGuarded = false;
+    double             controlGuardOutSec = 0.0, controlGuardInSec = 0.0;
+    float              emittedPeakLast = 0.0f;
+    juce::LinearSmoothedValue<float> guardGain { 1.0f }, controlGuardGain { 1.0f };
+    void updateDriftGuard (const BeatTracker::Output&, int numSamples) noexcept;
+    void applyDriftGuardGain (int numSamples, bool guarded, bool audible, bool controlAudible) noexcept;
     double             guardOutSec = 0.0;
     double             guardInSec = 0.0;
     std::atomic<bool>  lastDriftGuarded { false };
@@ -530,14 +542,11 @@ private:
     /** Pending UI command, final armed state, and whether STOP occurred since
         the previous callback. During playback, process() owns these mutations. */
     std::atomic<unsigned int> pendingTransport { 0 };
+    int64_t sourceSilenceSamples = 0;
     int   musicGapSamples = 0;
     bool  musicGapArmed = false;
     std::atomic<bool> lastBarTrusted { false };
     std::atomic<bool> lastBarReentry { false };
-    /** The same envelope on our *own* output, and how long our own part is
-        still answerable for a rise on the input. What we play comes back on the
-        microphone, the canceller does not always find it, and a level that rose
-        because we started playing is not the room turning into a band. */
     std::atomic<float> lastClockBpm { 0.0f };
     std::atomic<float> lastTempoTrimBpm { 0.0f };
     std::atomic<float> lastPhaseErrorBeats { 0.0f };
@@ -546,7 +555,10 @@ private:
     std::atomic<uint32_t> lastSilentSnapCount { 0 };
     std::atomic<uint32_t> lastPhaseNudgeCount { 0 };
     std::atomic<uint32_t> lastRestarts { 0 };
-    float ownPeakLast = 0.0f;
+    /** Pre-master onset witness: MASTER cannot choose source epochs.
+        The echo ring separately stores the actual emitted signal. */
+    float partPeakLast = 0.0f;
+    float previousMaster = 0.0f;
     float ownFast = 0.0f;
     float ownRef = 0.0f;
     int   ownStepSamples = 0;

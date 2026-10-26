@@ -5991,6 +5991,906 @@ Segnalazione dell'utente: in modalità IPAD, col MIC al minimo segue perfetto; a
 - **Test e build finali:** `--tempo-step` 40/0 (6 nuove asserzioni), `--state-timing` 14/0, `--bar` 15/0, `--phase-lock` 20/0, `--tempo-slow` 13/0, `--new-input` 27/0, `--transport` 8/0, `--audio-input` 11/0, `--harmonic-entry` PASS. **Suite completa 717 superati / 27 falliti:** nomi e molteplicità coincidono esattamente con i 27 preesistenti; nessun fallimento aggiunto. La probe CLI `--tempo-step` è separata dal conteggio della suite predefinita, quindi le sue sei nuove asserzioni non aumentano il 717. Mac e iOS Release senza firma compilati; dopo l'ultima build due tracce modificate intere e il prefisso di un lungo invariato sono riprodotti identici. Log `full-c.log`, `repeat.json` e impronte di 116 audio/riferimenti salvati in `build-host/vp-slow-changes-20261023/`. I difetti preesistenti restano aperti.
 - [ ] Ascolto e calibrazione su iPad/interfaccia reale. I riferimenti offline servono solo a giudicare gli output, mai a guidare l'app.
 
+### 157. Verifica separata di ingresso, tenuta e primo quarto ✅ (2026-10-25)
+
+**Esito:** respinte le modifiche d'ingresso e il raccordo rapido della fase.
+Mantenute due correzioni globali di robustezza sui dati mancanti; nessuna regola
+per titoli o BPM. **Nessuna accelerazione d'aggancio o salto di qualità musicale
+netto dimostrato:** la combinazione finale produce 325/325 tracce identiche alla
+base 7cf0307. L'ingresso originale è ripristinato, incluso `HalfLevelCheck`.
+
+- **Ingresso:** prove in parallelo respinte: FLAMINGO2400 MIXER migliora tempo 66.67→90.51%, ma l'uno sullo stesso insieme corretto perde 90.54→85.14%. Anche la variante conservativa (attese originali, reset sugli indizi interrotti) è respinta: FBI I FEEL GOOD MIXER 76.68→75.56% corretto, fase/uno e copertura peggiori. Nessuna eccezione per salvare il guadagno di un altro file.
+- **Tenuta:** scartato il raccordo realmente in 0.5s: beneficio minimo su un caso, un battito aggiuntivo oltre 25ms su un altro, nessun guadagno generale. Conservata l'aritmetica precedente e corretto il nome/commento: 25 aggiornamenti dei fit, non 0.5s. Mantenuto solo il reset di `fixedWalkRun` quando manca un fit richiesto: due prove separate non diventano consecutive.
+- **Primo quarto:** su N battiti trascorsi i voti decadono per N; si aggiunge soltanto l'ultima opinione disponibile e si interrompe la prova consecutiva di mezza battuta se manca un aggiornamento. Stesso percorso N=1 e stesso blocco manuale.
+
+**Ablazioni:** 325 coppie per intervento mantenuto: movimento 324 identiche/1
+senza differenze nelle metriche, primo quarto 323 identiche/2 senza differenze
+nelle metriche. **Combinazione finale 325/325 identiche bit per bit.** Nessuna
+perdita di tempo corretto/copertura, nuova sezione persa per almeno 4s o aumento
+di sedicesimi saltati. Fase e primo quarto valutati anche sul comune insieme
+corretto. Le varianti respinte restano archiviate, non nel motore.
+
+| Materiale | Corretto % prima→dopo | Disp. ms prima→dopo | Uno % prima→dopo |
+|---|---:|---:|---:|
+| 12 nuovi / BRANO | 80.44 → 80.44 | 15.80 → 15.80 | 68.45 → 68.45 |
+| 12 nuovi / MIXER | 48.69 → 48.69 | 50.58 → 50.58 | 53.04 → 53.04 |
+| 96 simulazioni / IPAD | 61.97 → 61.97 | 37.36 → 37.36 | 31.99 → 31.99 |
+| 3 set interi / MIXER | 56.35 → 56.35 | 13.51 → 13.51 | 79.57 → 79.57 |
+| 40 aggiuntivi / BRANO | 69.48 → 69.48 | 14.89 → 14.89 | 69.39 → 69.39 |
+| 40 aggiuntivi / MIXER | 72.60 → 72.60 | 30.06 → 30.06 | 73.28 → 73.28 |
+| Set 44min / BRANO | 87.84 → 87.84 | 11.76 → 11.76 | 84.44 → 84.44 |
+| Set 44min / MIXER | 88.15 → 88.15 | 11.36 → 11.36 | 77.43 → 77.43 |
+| Banco 56 / BRANO | 78.83 → 78.83 | 13.99 → 13.99 | 74.09 → 74.09 |
+| Banco 56 / MIXER | 86.55 → 86.55 | 12.65 → 12.65 | 81.32 → 81.32 |
+
+Medie delle metriche per file pesate sui battiti suonati; fase/uno solo al
+livello corretto. Ottave errate, p90, >25ms, uscite e surges invariati nella
+versione finale (tracce identiche). “Nuovi12” = 11 brani aggiuntivi più 20min live,
+66min di audio; nuovo rispetto al banco, senza affermazioni sul training.
+
+**Verifiche:** build console/Mac e iPad arm64 senza firma riuscite; tutti i
+controlli mirati passano. Suite completa **719 pass/27 fail**: nessun nuovo
+fallimento rispetto ai 27 noti della base, confrontati per nome e molteplicità, più
+le due nuove prove di robustezza. Rampe e salti VPAlign PASS e identici.
+Tre ripetizioni indipendenti identiche (BRANO, 44min MIXER e prefisso 6min del
+set 104min). Il test dello slot ipotesi richiede ancora oltre 1000 letture e
+zero frame mescolati: ora dura almeno 300ms, fino a 3s se servono per raccogliere
+lo stesso campione. Il fallimento 943 letture/0 mescolate era di durata della
+fixture, non un caso osservato di corruzione. Quattro attese del worker da 400ms e quattro attese di pubblicazione da
+500ms sono riallineate a 10s come VPTrack: stessi dati e assert musicali,
+nessuna prosecuzione su un hop ancora incompleto. Una prima suite completa 718/28 ha registrato un timeout del worker; il
+secondo giro, interrotto, un’anomalia della prova di pubblicazione. Conservati
+i log e riallineate le attese della fixture, senza indebolire i controlli.
+La suite finale qui riportata usa la fixture definitiva. Resta ascolto su iPad fisico.
+
+**Metodo:** engine alimentato in ordine, a blocchi 256, con VP_OFFLINE_PACING;
+nessun campione futuro nell'analisi. Riferimento offline usato solo per
+valutare gli output. 116 coppie audio/verità verificate tramite hash. Il banco
+legacy precarica i WAV; i replay grandi sono serializzati per limitare la
+memoria. Un esaurimento spazio ha invalidato alcune prove intermedie: output
+incompleti scartati/ripetuti, controllo numero righe e durata prima dello score,
+tracce identiche deduplicate. Nessun audio originale eliminato.
+
+Artefatti: `build-host/vp-entry-motion-bar-20261023/accepted-results.json`,
+`accepted-assessment.json`, `tests-accepted.json`, `repeat-accepted.json`,
+manifest sorgenti/binary e log. L'eventuale sfumatura globale sul rosso è una
+modifica separata: PAUSA SE FUORI esiste già (3s rosso, 1s fuori dal rosso poi
+battuta); in questo banco non è stata introdotta una nuova politica di uscita.
+
+
+### 158. Uscita sul rosso, congas e verifica finale 🟡 (2026-10-25)
+
+**Mantenuto:** sfumatura globale di 40ms sulla percussione quando interviene PAUSA SE FUORI e alla ripartenza in battuta; swing delle congas indipendente da Misure; guadagno congas +6dB richiesto dal musicista, applicato al suono anche quando cambia manopola. Nessuna anticipazione dei campioni e nessuna regola per brani/BPM. Le decisioni 3s rosso / 1s fuori dal rosso restano invariate.
+
+**Confronto causale completo:** 325 coppie MIXER, BRANO e simulazioni IPAD; 312 tracce identiche, 13 con differenze numeriche minime, nessun file perde tempo corretto o copertura, nessuna nuova sezione corretta persa per almeno 4s o aumento dei sedicesimi saltati. Fase e uno controllati anche sui battiti corretti comuni, tolleranza fase 1ms: zero regressioni secondo queste soglie. Non significa identità di ogni campione o assenza di ogni limite del motore.
+
+| Materiale | Corretto % prima→dopo | Disp. ms prima→dopo | Uno % prima→dopo |
+|---|---:|---:|---:|
+| 12 nuovi / BRANO | 80.44 → 80.44 | 15.80 → 15.80 | 68.45 → 68.45 |
+| 12 nuovi / MIXER | 48.69 → 48.69 | 50.58 → 50.58 | 53.04 → 53.04 |
+| 96 simulazioni / IPAD | 61.97 → 61.97 | 37.36 → 37.36 | 31.99 → 31.99 |
+| 3 set interi / MIXER | 56.35 → 56.35 | 13.51 → 13.51 | 79.57 → 79.57 |
+| 40 aggiuntivi / BRANO | 69.48 → 69.48 | 14.89 → 14.89 | 69.39 → 69.39 |
+| 40 aggiuntivi / MIXER | 72.60 → 72.60 | 30.06 → 30.06 | 73.28 → 73.28 |
+| 4 estratti nuovi / BRANO | 90.23 → 90.23 | 12.66 → 12.66 | 94.17 → 94.17 |
+| 4 estratti nuovi / MIXER | 91.31 → 91.31 | 11.97 → 11.97 | 87.53 → 87.53 |
+| Set 44min / BRANO | 87.84 → 87.84 | 11.76 → 11.76 | 84.44 → 84.44 |
+| Set 44min / MIXER | 88.15 → 88.15 | 11.36 → 11.36 | 77.43 → 77.43 |
+| Banco 56 / BRANO | 78.83 → 78.83 | 13.99 → 13.99 | 74.09 → 74.09 |
+| Banco 56 / MIXER | 86.55 → 86.55 | 12.65 → 12.65 | 81.32 → 81.32 |
+
+La piccola differenza IPAD non visibile a due decimali è 37.36107→37.36176ms. Sui battiti corretti comuni la massima differenza assoluta per file è 0.038ms di dispersione e 0.020ms di p90; >25ms, uno, ingressi, salti di fase e surges invariati. Tutti i 13 file modificati hanno zero battiti corretti persi e zero guadagnati. Quattro ripetizioni sul binary finale (BRANO, MIXER aggiuntivo/nuovo, IPAD) sono identiche al binary misurato. Audio e verità del banco restano invariati; il motore riceve soltanto il blocco corrente, la verità offline serve solo a valutare il risultato.
+
+**Controlli separati:** sfumatura 6/0 a 44.1/48kHz con blocchi 64/256/1024: monotona, 40ms, zero finale, stessa curva stereo e riferimento eco uguale al segnale emesso. La curva resta a zero durante la riacquisizione e non riaccende vecchie code. Swing congas: i due test già rossi sul confronto 1/4–1/8–1/16 ora passano, inclusi i ghost. Guadagno/routing: tre waveform identiche su tutti i quattro slot a parità di fader. Sei stili × otto battute raw: congas +5.21dB RMS medi dopo il soft limiter, shaker/cembalo/clap 0.00dB. Al massimo volume fino allo 0.227% dei campioni congas supera |x|>.999: il limiter esistente lavora di più; non è una misura di loudness percepito.
+
+**Cambi lenti:** provata separatamente una nuova prova a 16 picchi per piccoli gradini, ammessa solo con accordo dei due semitratti entro la tolleranza di stazionarietà già esistente. 325 coppie, 310 identiche/15 modificate. Respinta: nel set continuo MIXER il corretto totale sale 76.93384→77.36307%, ma perde una sezione precedentemente corretta per almeno 4s. Il guadagno medio non giustifica la perdita. Nessun nuovo acceleratore è rimasto nel decoder.
+
+**Accoppiamento master/analisi:** due tentativi globali aggiuntivi respinti. La qualifica di assenza di ritmo non supera quattro prove sintetiche (avvio e ritorni); anticipare l’evento ritmico rispetto al veto del ritorno proprio lascia 19/6 nella prova A1, quindi non corregge il difetto. Il motore mantiene il percorso precedente. Resta da risolvere la dipendenza dagli epoch in due casi sintetici, senza sacrificare il rifiuto del proprio ritorno.
+
+**Test riallineati senza allargare le tolleranze:** DANCE può tornare ad A nella quarta variante; lo swing dei sedicesimi mantiene dritti gli ottavi; il round-robin deve essere realmente differente, non necessariamente oltre il 5%; il confronto dei volumi riparte dalla stessa take; START su musica già presente usa anche contenuto ritmico basso, non una sola sinusoide acuta. Il generatore casuale della prova wobble usa ora overflow unsigned definito, mantenendo rumore e soglia precedenti. Le prove del ritorno/isolamento devono generare davvero una parte: START SUBITO su entrambi i controlli A2 e sul ritorno D; l’ingresso ordinario resta verificato separatamente. Nessun assert di tempo/ottava/attacco è stato reso verde cambiando la soglia.
+
+**Suite conclusiva:** **733 pass / 22 fail**, contro 719/27 della base. Nove
+nuovi assert (sei fade, tre routing), undici vecchi fallimenti risolti: due
+produzione/swing congas e nove casi di fixture. La fixture A2 ora esercita
+anche START SUBITO e rende visibili sei ulteriori assert rossi sul difetto
+di epoch già osservato in A1. Non sono cancellati né coperti da tolleranze più
+larghe: ripetuta A2 con il **vecchio gain 1.641** e gli stessi nuovi ingressi,
+**29/6**, tutte le dieci righe di fase/catena identiche al gain 3.274 su 30 run
+neurali. Quindi questi sei rossi non dipendono dall’aumento congas. Questo
+confronto isola il volume, non pretende di aver corretto il difetto.
+
+Registro dei **22 assert ancora rossi** (non 22 bug distinti):
+
+- 7 sul livello metrico: ottavi forti, due aspettative della vecchia euristica
+  50/100 e quattro prove audio a 50 BPM. Le euristiche automatiche respinte non
+  sono reintrodotte; ÷2/×2 resta la correzione esplicita.
+- 1 sulla stabilità tardiva del piccolo gradino 128→120 nel percorso stanza.
+- 1 sull’attacco della banca: 3.04 ms contro 2 ms, estremo shakerUp/triangleClosed.
+- 1 sull’armonia da sola nel mix con batteria: 19% sull’uno contro 33%; il caso
+  senza batteria passa, e questo non valida l’armonia isolata su qualsiasi mix.
+- 6 A1 deterministiche e 6 A2 neurali sullo stesso accoppiamento fra uscita ed
+  epoch a 138/156. Richiede ancora una correzione globale che non scambi il
+  ritorno proprio per una nuova sorgente.
+
+Le prove D ora hanno realmente ritorno 0.6 presente e zero false ripartenze;
+con ritorno 150 ms volutamente fuori ricerca possono leggere ~178–181 BPM invece
+di 138: quel test convalida il veto agli epoch, non il tempo corretto in quella
+condizione estrema. Nessuna pretesa di cancellazione perfetta.
+Controlli finali separati: fade 6/0, percussioni 25/1 (il solo attacco noto).
+Compilazioni console, Mac e iPad firmata riuscite. Diagnostica temporanea
+rimossa e app di prova disinstallata; la Full preesistente e i suoi dati sono
+rimasti intatti. Il boost riguarda il motore PATTERN a colpi usato nella prova;
+il bilanciamento degli stem LOOP registrati resta nel lavoro separato sui loop.
+
+**iPad fisico:** iPad Air 13 M3, iOS26.6.2, 48kHz/256, microfono e altoparlanti integrati, rete ONNX effettiva su CPU. Misurazione round-trip 25.812ms. Primo tentativo Mac non udito: escluso come prova di aggancio. Secondo tentativo confermato udibile dal musicista; con iPad distante il motore resta in ascolto sotto soglia, avvicinandolo a 20–30cm entra e segue il brano intorno a 104BPM. Diagnostica temporanea solo nel pacchetto di prova com.virtualpercussionist.app, rimossa dai sorgenti; app Full esistente e suoi dati non sostituiti. 236 snapshot utili: callback mediana 0.453ms, p95 2.517ms, massimo campionato 3.313ms contro 5.333ms disponibili; backlog massimo 512 campioni (10.67ms), inferenza massima campionata 0.089ms, zero xrun/buchi/restart, zero hard steal nei log VPLAG. Sono campioni al secondo, non il massimo di ogni callback. Primo ingresso al secondo120 del log, dopo lo spostamento fisico: non è una misura comparabile del tempo di aggancio dall’inizio del brano. 88 snapshot con parte udibile, con pause, nessuna pretesa di suono continuo su tutta la prova. Il musicista conferma: «A tempo e congas più presenti». Questa è una verifica reale in quella stanza, non un A/B acustico controllato né una convalida su qualsiasi impianto.
+
+Artefatti: `build-host/vp-finish-20261025/`: `audio-assessment.json`, `tempo-assessment.json`, `final-repeat.json`, `volume-before.json`, `volume-after.json`, log completi e sorgenti/binary congelati. Il rosso qui resta per i limiti di aggancio non ancora risolti, non per una regressione approvata.
+
+
+### 159. Audit dei22 rossi: volume indipendente dall’aggancio; varianti scartate (2026-10-25)
+
+Priorità MIXER/BRANO. Correzioni globali, solo campioni già ricevuti: nessuna
+lettura anticipata, nessun riconoscimento di titoli, nessuna nuova soglia
+musicale. Conservate tutte le modifiche del158.
+
+**Difetto concreto corretto:** il picco dopo MASTER era usato sia per il
+riferimento eco, sia per attribuire alla propria parte un aumento del segnale
+in ingresso. Una diversa posizione fissa del volume cambiava quindi quali
+epoch vedeva la rete anche a ingresso identico e senza ritorno. Ora la prova
+d’inizio della propria parte usa il picco prima di MASTER; il riferimento eco
+resta esattamente il suono emesso. A1 a78/100/120/138/156:25/0; A2 rete reale:
+35/0. Nei due tempi rossi138/156 scompaiono i12 assert di accoppiamento.
+Nessun anticipo sull’audio, nessun reset del clock.
+
+Il test aggiunto del MASTER alzato al secondo3 con la parte già in FISSO ha
+impedito di approvare una regressione sul ritorno microfonico: prima versione
+3.613s di false-epoch, solo budget4.051s, contro4.488s del motore precedente.
+Con il riallineamento dell’inviluppo al rapporto fra vecchio e nuovo MASTER
+si torna **esattamente a4.488s**; MIXER resta8.303s, dopo la vera sorgente a8s.
+La falsa ripartenza microfonica a4.488s è preesistente e resta visibile nel nuovo
+`--makeup fader`: non è stata spacciata per corretta. Si verifica a parte già
+forzata in FISSO sopra una stanza molto quieta e ritorno0.6/30ms. Non dimostra
+una perdita di clock mentre suona una band. La protezione D continua a
+controllare separatamente i18 ritorni presenti dall’inizio.
+
+**Test riallineato, non modifica del modello:** il test degli ottavi forti
+non chiamava `setSounding`, che il vero worker chiama quando la parte suona.
+La versione in riproduzione tiene92.00246 BPM per il100% dei frame validi;
+la soglia95% è invariata e ora copre tutta la riproduzione, anche prima dei25s.
+Il controllo senza ancora continua a dimostrare il raddoppio. Un nuovo test
+privato copre tre posizioni MASTER0/0.2/1, le decisioni epoch e il riferimento
+eco realmente scritto, compreso il silenzio a volume zero.
+
+**Varianti scartate:**
+
+- Togliere il veto del ritorno proprio risolve i casi sintetici ma regredisce
+  su sei testimoni fra123 prove audio completate (BLUE_SKY44/48 BRANO,
+  SEE_YOU_AGAIN48 MIXER, NSF_LIVE2013 MIXER, INFINITO BRANO e SONG00 MIXER).
+  Le altre prove non completate non sono contate; nessuna eccezione per titolo.
+- Ignorare la vecchia autocorrelazione anche sul microfono dopo un cambio
+  confermato porta76→82 da80.35047 a82.00648 BPM, ma su96 registrazioni stanza
+  perde copertura in LE_FREAK_GIANNA e un battito prima corretto in
+  L_UNICA_DONNA_PER_ME. Scartata.
+- Richiedere anche un fit pulito e continuo riduce la variazione a due file
+  su96, ma perde ancora lo stesso battito. Anche questa è scartata.
+  Il decoder finale è byte-identico a quello iniziale del159. Il158 indicava
+  erroneamente128→120: il rosso tardivo effettivo è **76→82 sul microfono**.
+
+Artefatti di questa verifica in `build-host/vp-red-20261025/`: sorgenti e
+binari congelati prima/dopo, `master-a-*.log`, `master-d.log`,
+`fader-before.log`, `master-fader-rebase.log`, assessment delle varianti
+scartate e log completi. L’esito conclusivo dei controlli è riportato sotto.
+
+**Banco finale:**325/325 trace esattamente identiche alla base158; zero
+regressioni rilevate su tempo/ottava, copertura, fase, uno, ingressi, salti,
+piegamenti e sedicesimi. Non significa che i limiti della base siano risolti.
+Comprende56 file × MIXER/BRANO,40 aggiuntivi × due percorsi,3 set lunghi MIXER,
+96 microfono/stanza,4 estratti nuovi × due percorsi,44min interi × due percorsi,
+12 altri materiali × due percorsi. Il primo intervento da solo aveva già
+325/325 trace identiche; anche la versione finale con protezione del MASTER
+alzato è stata rimisurata su tutte le325, non solo su un campione. Quattro
+controlli ulteriori dell’eseguibile finale coincidono col riferimento.
+
+Gates separati: battuta15/0, phase-lock20/0, tempo-slow13/0, nuova sorgente27/0,
+transport8/0, tempo-step40/0, ottavi forti2/0; state-timing e harmonic-entry
+senza errori. Mac e iPad firmata compilati dagli ultimi sorgenti; nessuna
+installazione o nuova prova fisica dell’iPad in questo intervento.
+
+**Aperti fra i22 iniziali:**9 assert:6 sul50/100 automatico (due aspettative di
+un suggerimento metrico non più prodotto e quattro prove audio);1 sul piccolo
+cambio76→82 microfono;1 sull’attacco della banca3.04ms contro2ms;1 sull’armonia
+isolata nel mix19% sull’uno contro33% (senza batteria100%). ÷2/×2 resta
+l’uscita esplicita per l’ambiguità metrica; non va presentata come riconoscimento
+automatico risolto. Il nuovo controllo del volume alzato aggiunge un rosso
+microfonico **già presente nella base**, verificato prima/dopo a4.488s.
+I12 assert di accoppiamento sono risolti nel motore; quello degli ottavi forti
+è riallineato al ciclo reale del worker. Nessun test allentato per chiudere il
+contatore. La suite finale, con tre nuovi assert, è riportata di seguito.
+
+**Suite conclusiva nel profilo normale:** **748 pass /10 fail** (758 assert),
+contro733/22 (755). Risolti13 rossi iniziali; aggiunti tre controlli: due
+passano e quello microfonico del MASTER alzato espone il limite già presente.
+Gli altri9 rossi sono esattamente quelli iniziali elencati sopra; nessun nuovo
+rosso su un comportamento prima verde. A138/156 il delta A1 è rispettivamente
+2.4920/1.4165→0.0000ms; anche A2 ha delta e spread0.000ms nel profilo normale,
+3/3 coppie con lo stesso tempo ed epoch0/0. Sweep18ritorni: zero false epoch,
+18/18 ingressi veri entro3s. `final-verification.json` contiene il confronto
+dei nomi di tutti i FAIL, non solo i totali.
+
+La prova supplementare con `VP_OFFLINE_PACING=1` sull’intera suite dà744/14:
+è un profilo **non adatto a tutta VPTests**, non la verifica conclusiva.
+Due fixture alimentano direttamente il worker senza `releaseFed`, una misura
+le sue attese reali (che quella variabile altera), una coppia del canceller
+finisce su due letture di tempo diverse (delta0.69ms). Tutti e quattro questi
+controlli passano nel profilo normale. La variabile resta per i probe causali
+VPTrack progettati per essa, non per accelerare l’intera suite.
+
+**Stato:** verifica e interventi sicuri conclusi; i limiti sopra restano aperti.
+Nessuna pretesa di aver perfezionato tutto il motore o risolto i22 assert.
+
+
+### 160. Controlli rossi: tre correzioni mantenute, due limiti aperti (2026-10-25)
+
+**Richiesta:** correggere tutto, priorità MIXER e BRANO, solo interventi globali,
+realtime e senza lettura anticipata. Non si considera accettabile rendere verde
+un controllo sintetico peggiorando un brano reale. Baseline di questo ciclo:
+**748 pass/10 fail su758** (item159); i22 rossi originari comprendono anche
+aspettative di test obsolete, non22 bug distinti del motore.
+
+**Mantenuto nel codice:**
+
+- Qualità dopo una scelta manuale al limite50–215 BPM: la quantizzazione può
+  spostare una retta pulita appena fuori intervallo. Entro l'incertezza di un
+  frame sullo span effettivo, vicino al tempo già seguito, se ne misura il
+  residuo senza adottarne il periodo. Evitato il falso rosso/mute a50 BPM
+  dopo÷2. Nessun periodo viene troncato al limite; le decisioni automatiche
+  del BPM restano invariate.
+- Durante il primo aggancio microfonico, un cambio confermato mantiene la
+  propria misura durante il refit limitato; il pettine vecchio non la riporta
+  indietro. Un `hasSounded` distingue il primo ingresso dai successivi vuoti:
+  applicare la stessa regola a ogni momentaneo silenzio perdeva copertura su
+  due tracce reali ed è stato scartato. La regola originale resta dopo che la
+  parte ha già suonato, anche attraverso gli eventi di restart dell'ingresso.
+- Ricerca del ritorno: l'inviluppo grossolano ora integra i moduli nei blocchi
+  della scansione già esistente; `abs(sample)` conservava la portante e poteva
+  proporre il ritardo sbagliato. Raffinamento sui campioni, soglie, intervalli,
+  cadenza, buffer e isteresi non cambiano. Nessun nuovo lavoro ONNX, lock,
+  allocazione o I/O nel callback.
+- Ottimizzazione equivalente della scansione: inviluppo ed energia
+  dell'ingresso, invarianti rispetto al ritardo candidato, sono calcolati una
+  volta sola per scansione. Nove celle su stack coprono tutte le dimensioni
+  possibili;17.408 punteggi prima/dopo identici bit per bit, verifica dei limiti
+  su tutte le16.384 dimensioni. Nessuna lettura futura o memoria dinamica.
+
+**Prove mirate della versione mantenuta:**
+
+| Controllo | Prima | Dopo |
+|---|---:|---:|
+| BRANO50 BPM dopo÷2: colpi prodotti |15|32|
+| MIXER50 BPM dopo÷2: fase media iniziale/finale | — |+0,73/−2,35 ms|
+| BRANO50 BPM dopo÷2: fase media iniziale/finale | — |−1,71/−3,71 ms|
+| Tempo lento e controllo100 BPM, limiti originali invariati | test automatici obsoleti + falso mute reale |10/0, zero gap|
+| Cambio microfonico76→82 prima della prima entrata: BPM tardivo |80,35047|82,006|
+| Matrice cambi rapidi, con rampe e falsi cambi come controlli |39/1|40/0|
+| MASTER alzato tardi, ritorno microfonico: primo restart |4,488 s falso|8,303 s, vera band|
+| Stesso caso MIXER |8,303 s|8,303 s|
+| Ritorno MASTER, due percorsi |1/1|2/0|
+
+**Riallineamento esplicito dei test:** due assert pretendevano un produttore di
+hint50/100 già rimosso; ora lo stesso identico segnale di attivazione deve
+rispettare le due scelte manuali÷2 e×1. I quattro controlli di motore50 BPM
+selezionano÷2 esplicitamente: restano invariati durata, almeno30 colpi, zero gap
+e limiti di fase8 ms. Il controllo100 BPM resta automatico. Nessuna pretesa di
+risolvere automaticamente50 vs100 quando l'audio è identico; i pulsanti e TAP
+rimangono il contratto documentato nell'item1. `--metric-choice` esegue i due
+nuovi controlli separatamente.
+
+La prima suite finale, eseguita durante compilazioni e misure parallele,
+espone anche due errori intermittenti nel rientro della battuta. Le12
+ripetizioni isolate per ciascuna binaria vecchia/nuova passano tutte15/0.
+La fixture consegnava molto audio prima di attendere il worker: ora attende
+l'analisi dei soli blocchi già consegnati ogni otto callback, oltre che ai
+confini delle sezioni. Questo limita l'anticipo del produttore simulato;
+nessun campione futuro, nessuna modifica del motore o del limite di due
+battute. La suite completa con questa fixture dà756/2; i due errori
+intermittenti sono assenti. Segue un'altra verifica dopo l'ottimizzazione
+equivalente dell'inviluppo eco, non una modifica della scelta del tempo.
+
+**Scartato, senza eccezioni per titoli o BPM:**
+
+- Estendere ai tempi automatici il fit ai limiti, troncando periodo e BPM:
+  migliorava molto un set ma perdeva tre battiti prima corretti in un altro.
+  Il miglioramento aggregato non compensa una regressione locale. La versione
+  mantenuta separa soltanto la qualità manuale dalla decisione del periodo.
+- Separazione armonica prima del folding: suite6/0 ma regressioni reali sul
+  conteggio. Max pooling:2/4. Conferma estesa a una finestra completa:58% dei
+  cambi sul primo quarto nel sintetico (19% prima),100% senza batteria e83%
+  nel motore; rimangono perdite di conteggio reali. `HarmonicChange.h` ripristinato
+  byte per byte. Il controllo armonico sul mix completo resta rosso.
+- Calibrazione per layer/take attraverso il limiter:1,15 ms sui48 casi
+  stroke/RR a velocity0,9, lead invariato17,854 ms; ma il proprio inviluppo
+  spostava un epoch di un callback e il suo guadagno di ripartenza, cambiando
+  due risultati MIXER/BRANO. Ablazione senza calibrazione: tracce primarie
+  identiche alla baseline. Anche la ritenzione del make-up su ingresso continuo
+  con headroom sicuro recupera solo parte della perdita: scartata. Nessuna
+  modifica produttiva a `PercussionEngine.cpp` mantenuta.
+- Due ulteriori prove in una copia separata conservano sia l'inviluppo sia
+  il guadagno: una su ingresso continuo già in riproduzione con confidenza e
+  headroom sicuro, l'altra solo sull'arrivo della sezione ritmica. Attacchi
+  26/0 e fase BRANO nel gate, ma MIXER scende97,1483→96,7681% e→96,5779%
+  rispettivamente nel controllo regressivo. Scartate entrambe senza inserirle
+  nei sorgenti principali. Non basta preservare il guadagno per separare
+  l'epoch dall'uscita; non si procede a un altro banco completo sapendo già
+  che il controllo primario perde aggancio.
+- La suite della variante combinata era758/0: è stata comunque scartata perché
+  il banco325 espone14 regressioni. Le due varianti con modifiche già bocciate
+  sono state interrotte; non sono presentate come verifiche finali riuscite.
+
+**Due limiti ancora aperti:** riconoscimento armonico sul mix e allineamento
+fra le varianti dei colpi. Il controllo attacchi ora verifica tutti e tre i RR
+con la stessa finestra40 ms dalla partenza della voce; bound2 ms e frazione80%
+invariati. Lo spread17,98 ms sulla matrice più ampia è preesistente: il codice
+produttivo e gli asset sono identici alla baseline. Il test del triangolo ora
+inserisce un attacco artificialmente tardivo e prova direttamente che non può
+spostare il lead; il controllo indipendente sugli asset conga resta attivo.
+
+Per chiuderli: rendere le decisioni epoch/analisi insensibili agli spostamenti
+degli attacchi senza indebolire il veto del ritorno reale, poi riapplicare e
+rimisurare la calibrazione per take; migliorare la selettività armonica sul
+mix mantenendo anche l'uno dei brani reali. L'ottava50/100 ambigua continua a
+richiedere la scelta esplicita dell'utente, non un riconoscitore del titolo.
+
+**Suoni:** sei render di kit prima/dopo sono identici byte per byte; conservato
+il boost congas dell'item158. I file `listen/before.wav` e `listen/core.wav`
+riguardano la calibrazione scartata, non la versione finale. L'utente ha risposto
+«Non posso ascoltare adesso»: nessun nuovo ascolto fisico iPad è dichiarato.
+
+**Carico sul Mac:** la variabilità fra lotti è forte; non confrontare percentuali
+misurate in momenti diversi. Una conferma intercalata su8 coppie MIXER mostrava
+88,2→95,3 µs medi e p99452,1→452,6 µs,3,25→3,50% di un core per la versione
+funzionale senza cache. È stato quindi eliminato il ricalcolo dell'inviluppo
+per ciascun ritardo. Nel lotto affiancato a tre varianti (4 ripetizioni):
+base29,00 µs, versione senza cache30,55, cache29,10; p99155,35/160,25/154,65 µs;
+1,2% di core per tutte. Questi sono confronti nello stesso lotto, non una
+pretesa di velocità assoluta o una prova termica dell'iPad. Rimisurato anche
+il binario finale compilato nella cartella abituale. Ultimo lotto conclusivo,
+12 prove intercalate dopo suite/banco, mediana di3 coppie: MIXER3,8→3,6% di
+un core, callback medio104,8→98,0 µs e p99452,2→452,1 µs; speaker4,8→4,8%,
+medio160,8→160,5 µs e p99721,6→673,7 µs. Il massimo speaker peggiora
+1,004→1,695 ms fra tutte le prove: non si dichiara migliorato ogni estremo.
+Nessun callback supera il budget5,333 ms; i massimi host sono sensibili allo
+scheduling. Questa misura non sostituisce una prova termica/audio sull'iPad.
+
+**Banco finale:**325/325 confronti abbinati completati;280 trace identiche,
+comprese tutte le229 MIXER/BRANO. Le45 differenze microfoniche superano tutti
+i gate senza regressioni: nessuna perdita di tempo/ottava corretto,
+copertura, primo aggancio, fase e uno sul gruppo corretto comune, sezioni
+prima corrette, né aumento di salti, piegamenti o sedicesimi saltati. Le96
+trace microfoniche coincidono anche con l'ablazione del solo inviluppo eco.
+Zero battiti corretti persi o guadagnati; massima differenza fra dispersione
+e p90 di fase sul gruppo corretto comune0,038 ms, solo microfono.
+Quindi nessun miglioramento di aggancio sul materiale reale è attribuito al
+refit iniziale: il suo miglioramento misurato è sullo step sintetico76→82.
+La suite completa a pacing di produzione con fixture riallineata è756/2.
+Gli stessi325 confronti dopo la sola cache equivalente dell'inviluppo sono
+completati, sul binario ricompilato nella cartella abituale:325/325 identici
+alla versione funzionale precedente,280/325 identici alla baseline. Nessun
+gate regressivo, nessun aumento di salti/piegamenti/sedicesimi. La ripetizione
+della suite completa sul binario ottimizzato è conclusa: **756 pass/2 fail
+su758**, contro748/10 di questo ciclo e733/22 su755 iniziali. Dei22 controlli
+rossi iniziali,20 sono corretti o riallineati al contratto reale; i tre assert
+aggiunti nell'item159 ora passano tutti. Restano esattamente i due errori di
+armonia e attacchi già descritti, nessun nuovo nome FAIL. `final-verification.json`
+verifica il multinsieme dei nomi, i325 risultati, i massimi CPU e l'integrità
+dei sorgenti. Mac e iPad firmata compilati con gli ultimi sorgenti; nessuna
+installazione o nuovo ascolto fisico iPad in questo ciclo. Il lavoro sicuro e
+le verifiche sono conclusi, **non tutti i problemi del motore sono risolti**.
+Il corpus contiene229 esecuzioni MIXER/BRANO,
+96 microfono,40 file nuovi per ciascun percorso primario,12 estratti freschi,
+4 nuovi estratti e il set completo da44 minuti, oltre ai set lunghi. Ogni
+worker riceve soltanto i blocchi già consegnati; la verità offline è usata
+soltanto dopo, per giudicare le uscite. Il clock non riparte per un cambio BPM.
+
+| Corpus, tempo/ottava corretto pesato sui battiti | Prima | Dopo |
+|---|---:|---:|
+|56 file noti MIXER|86,5485%|86,5485%|
+|56 file noti BRANO|78,8314%|78,8314%|
+|40 file aggiuntivi MIXER|72,5992%|72,5992%|
+|40 file aggiuntivi BRANO|69,4818%|69,4818%|
+|12 estratti freschi MIXER|48,6914%|48,6914%|
+|12 estratti freschi BRANO|80,4375%|80,4375%|
+|96 simulazioni microfono|61,9728%|61,9728%|
+
+Artefatti riproducibili in `build-host/vp-complete-20261025/`: baseline e
+binarie congelate, manifest dei sorgenti, `measure.py`, `assess.py`, prove delle
+varianti scartate e file di controllo. Nessun commit o push.
+
+
+### 161. Primo battito e attacchi: ulteriori candidati scartati (2026-10-25)
+
+**Esito: entrambi ancora aperti. Nessuna modifica produttiva mantenuta in
+questo ciclo.** Tutti i file Source/Tests coincidono byte per byte con il
+manifest iniziale dell'item160 ottimizzato; conservati boost congas e tutte le
+correzioni precedenti. Nessuna soglia dei controlli è stata modificata.
+
+**Primo battito, prove separate e causali:**
+
+- Baseline: mix7/13/5/12 cambi sui quattro quarti,19% sull'uno;
+  senza batteria20/0/0/0,100%; solo rullante4 eventi.
+- Far scorrere il refractory anche sulle finestre non tonali: mix20%, ma
+  senza batteria100→25%. Scartato: la soppressione dipende volutamente dalle
+  osservazioni armoniche disponibili, non solo dal tempo trascorso.
+- Sottrarre il fondo cromatico comune dopo il gate originale: mix18%, senza
+  batteria100%; nessun miglioramento. Scartato.
+- Richiedere coerenza fra le direzioni cromatiche candidate oltre alla distanza
+  dal vecchio accordo, usando lo stesso gate: mix23%, senza batteria50%.
+  Scartato; l'arrivo graduale di un accordo non è una direzione immutabile.
+- Sommare l'energia delle ottave prima della radice, invece delle magnitudini:
+  mix15%, senza batteria90%. Scartato.
+- Mediana delle direzioni normalizzate per hop, mantenendo il gate tonale e
+  la sua storia originali: mix14/6/1/11,**44%**, senza batteria100%, rullante4;
+  suite di integrazione armonia**6/0**, battuta senza batteria83% invariata.
+  Sul controllo regressivo reale**21 esecuzioni**,17 tracce identiche e4
+  peggioramenti della battuta: MIXER80,8511→74,4681% e50,8621→50%; microfono
+  65,2174→61,7391% e51,2821→48,7179%. Tempo corretto e salti/piegamenti/
+  sedicesimi invariati, ma questo non giustifica perdere l'uno. Scartato.
+  Nessuna regola per quei titoli è stata introdotta.
+
+**Attacchi, prova separata:** riprovata la calibrazione globale layer/RR con
+lead invariato17,854ms, introducendo una diversa primatura del make-up solo
+agli epoch di una sorgente continua già in riproduzione: massimo fra picco
+corrente e inviluppo veloce dell'ingresso, nella stessa scala dell'input trim.
+L'idea evita di ricavare il livello da un unico callback; la misura la boccia:
+controlli percussioni**26/0**, ma sul testimone nuovo MIXER il tempo corretto
+scende97,1483→0%; BRANO mantiene95,2471% ma peggiora il p90 sul gruppo corretto
+comune28,266→30,269ms e l'uno100→96,7742%. Microfono passa il gate. Scartata
+l'intera variante prima di estendere inutilmente il banco: non basta rendere
+più continua una primatura se cambia il livello a cui la rete riconosce
+l'ottava. Inviluppo veloce e peak del callback non sono intercambiabili.
+
+Ulteriore ablazione minima degli attacchi: sola misura raw per take/layer,
+nessuna calibrazione attraverso il limiter, lead invariato; la pausa comune
+può compensare una take tardiva. Spread**17,98→2,79ms**, ma MIXER
+97,1483→96,5779% corretto e BRANO95,2471→96,3878% con peggioramento della fase
+sul gruppo corretto comune. Anche questa prova è scartata: la regressione non
+richiede la misura post-limiter. Artefatti `rawtake-*`, `attacks-rawtake.log`.
+
+**Verifiche e limiti:** baseline congelata e tre controlli causali identici
+(noto, nuovo, fresco) prima dei confronti; nessuna lettura futura nell'analisi.
+Le truth offline sono usate soltanto dopo le uscite. I candidati con una
+regressione già dimostrata non vengono promossi a una prova325 o a una nuova
+suite completa. La precedente suite completa756/2 e il banco325 dell'item160
+restano la verifica estesa della versione ripristinata, non sono presentati
+come nuove esecuzioni di questo ciclo. Dopo il ripristino: ricompilazione e
+controlli mirati separati: armonia5/1 e percussioni25/1, esattamente i due
+errori noti.**32 nuove esecuzioni** sul binario ricompilato ripristinato,
+comprendenti MIXER, BRANO, simulazione microfono, materiale nuovo e un estratto
+fresco: tutte32 identiche byte per byte alla baseline, nessuna regressione.
+Sono un controllo del ripristino, non un miglioramento. Il manifest prova
+l'uguaglianza di tutti gli89 file Source/Tests. Risultati nei relativi log. Nessuna nuova prova
+fisica/ascolto iPad e nessuna nuova compilazione iPad necessaria per sorgenti
+produttivi invariati.
+
+Resta da separare in modo verificato le decisioni epoch/analisi dagli
+spostamenti delle voci, conservando la protezione dal ritorno acustico; e
+ottenere cambi armonici più selettivi che migliorino anche la battuta reale,
+non soltanto il sintetico. Gli esperimenti qui registrati non sono soluzioni.
+Artefatti e binarie congelate in `build-host/vp-downbeat-attacks-20261025/`.
+
+
+### 162. Attacchi leggeri/medi e primo battito: verifiche automatiche chiuse (2026-10-25/26)
+
+**Ripresa26/10: banco325 senza regressioni e suite completa764/0,
+a Mac pienamente sveglio.** Le note sotto descrivono prima le prove
+precedenti e l'interruzione, poi il risultato della ripresa. Compilazioni finali
+Mac/iPad riuscite; versione pulita installata sull'iPad. L'utente non può
+sbloccarlo adesso: nessuna nuova verifica audio fisica dichiarata.
+
+**Attacchi:** l'attacco viene misurato per layer e take attraverso trim/limiter,
+con lead di clock invariato17,854ms e pausa comune6ms disponibile anche per
+una take tardiva. La parte udibile usa questi offset. Il controllo dell'attività
+propria usa invece il riferimento stabile dell'articolazione, con le stesse
+voci/campioni e lo stesso renderer condiviso; cambiare la calibrazione non
+sposta più quel riferimento e gli epoch dell'ingresso. Due piccoli stati di
+voci e riverbero, campioni condivisi; nessuna seconda analisi dell'ingresso.
+Il riferimento dell'eco resta la forma d'onda effettivamente emessa dopo MASTER.
+Il fade di sicurezza scala entrambe le parti. I campioni sono preparati prima
+del callback, senza leggere campioni futuri della musica.
+
+La propagazione deve attraversare anche HybridPercussionRenderer: il build
+corrente ha VP_ENABLE_RECORDED_LOOPS=ON, contrariamente ai vecchi commenti
+«off per default». Senza banca resta il percorso dei colpi; con la banca il
+riferimento include la stessa quota del loop e la quota nominale dei colpi.
+Non basta aggiornare il ramo compilato quando il flag è spento.
+
+Controlli congelati `VPTests-control-tests`: percussioni**27/0** (prima25/1),
+compresa uguaglianza campione per campione fra riferimento e kit nominale
+su layer/take, sovrapposizioni e re-anchor, mentre l'audio calibrato cambia;
+nuovo ingresso**29/0**, loop**59/0**. Il test di allocazione sui2000 callback
+ibridi include anche il nuovo riferimento e passa. Frazione80%, finestra40ms,
+bound2ms e livelli dei suoni invariati; congas+6dB conservate.
+
+Banco indipendente degli attacchi `controlbus2`: **325/325**,275 tracce identiche,
+50 differenze numeriche (2 MIXER,48 microfono; BRANO tutto identico), nessun gate
+regressivo. Zero battiti corretti persi/guadagnati, nessun aumento nel numero di
+salti, piegamenti o sedicesimi saltati. Massima variazione comune di dispersione/
+p90: MIXER0,01684ms, microfono0,11828ms; nessun peggioramento del conteggio.
+Il lieve cambio del denominatore delle uscite/min su una simulazione non è un
+nuovo evento: numero di eventi invariato. Questi numeri non sono ancora una
+misura del carico/termica dell'iPad.
+
+**Primo battito:** scoperta anche una perdita di isolamento reale: la memoria
+di HarmonicChange non veniva azzerata da reset() né dal nuovo file/sorgente.
+Ora si azzera nel punto comune resetAnalysisLevelState; due test verificano
+reset e notifica differita sul callback, dopo aver formato una memoria tonale.
+Non si azzera per un normale cambio BPM.
+
+La semplice media delle tre osservazioni che confermano il nuovo accordo
+porta il sintetico19→42% sull'uno,100% senza batteria, rullante4→3 e suite6/0.
+Applicata soltanto ai due ingressi diretti per conservare il microfono, il
+banco325 dà319 identiche,6 differenze e un peggioramento: su un set continuo
+due primi battiti prima corretti (3378,9598s e5925,1011s) vanno persi;
+quota72,9041→72,7700%, tempo/fase invariati. **Non approvata.** Si sta verificando
+una ponderazione causale delle osservazioni più recenti, senza modificare
+soglie, tempi di attesa o regole per titoli.
+
+Altre ipotesi scartate: reset della conferma sulle finestre non tonali,
+diverse date dell'evento, riferimento congelato durante refractory,
+aggiornamento solo sotto il gate, salienza fra bin vicini, Hellinger,
+template di accordo, registro basso/lungo/alto, normalizzazione per ottava,
+clipping delle componenti dominanti, media solo contigua/coerente e constant-Q.
+I candidati Hellinger e finestra4096 passano6/0, ma perdono battute reali.
+La media contigua/coerente non migliora il sintetico. Cancellare i voti armonici
+su tutti i nuovi gridSerial e azzerare il detector anche agli epoch automatici
+freddi peggiora altri brani: entrambe le estensioni sono scartate. Anche il
+guard basato sulla sola confidenza, il filtro d'ingresso a maggioranza dei
+battiti, la scadenza del veto allineata ai frame e un limite superiore dell'attività
+vocale non eliminano le regressioni degli attacchi: non sono mantenuti.
+
+**Interruzione:** ripristinati i sorgenti `control-safe-source` e le binarie
+`control-tests`. Sono mantenuti soltanto il bus di controllo separato, la
+calibrazione per take a lead invariato e il reset armonico sui cambi espliciti
+di sorgente. Le successive varianti armoniche e il margine aggiuntivo per i
+colpi leggeri/medi sono conservati in `interrupted-source`, non mantenuti.
+Il controllo ampliato sui colpi leggeri/medi ha mostrato limiti residui2,73ms/
+2,04ms contro2ms: la misura1,15ms riguarda i48 casi originali a velocity0,9,
+non tutte le dinamiche. Compilazione finale Mac/iPad, CPU e suite completa
+restano da eseguire. Non si dichiara concluso l'obiettivo dei due problemi.
+
+Artefatti: `build-host/vp-final-two-20261025/`, binarie congelate per variante,
+manifest iniziale, `measure.py`/`assess.py`, punteggi e tracce. Le valutazioni
+complete devono essere rigenerate una sola volta dopo la conclusione dei
+probe, evitando di sovrascriverle con valutazioni parziali concorrenti.
+
+
+#### Ripresa26/10 — attacchi leggeri/medi e primo battito
+
+Nessuna regola per titolo/BPM, nessun campione futuro dell'ingresso. Il target
+udibile si ricava in prepare() dal massimo delle take/layer già preparate,
+escludendo il triangolo e mantenendo il limite esistente25ms+6ms. Lead del
+clock invariato17,854ms. Target corrente26,583ms, contro23,854ms nominali:
+2,729ms di margine aggiuntivo dei soli suoni, non lettura anticipata della
+musica. Nessun riavvio del clock. Congas+6dB e curve di guadagno conservate.
+
+| misura, banco unitario48kHz | prima nominale | dopo |
+|---|---:|---:|
+| scarto48 articolazioni/RR, velocity1/6 |12,625ms|0ms|
+| scarto48 articolazioni/RR, velocity0,5 |13,521ms|0ms|
+| scarto48 articolazioni/RR, velocity0,9 |17,979ms|0,77ms|
+| controllo percussioni, tre layer nel default |25/1|29/0|
+| mix armonico, cambi sull'uno |19%|42%|
+| armonia senza batteria, cambi sull'uno |100%|100%|
+| motore senza batteria, conteggio corretto |83%|83%|
+| falsi cambi sul solo rullante |4|3|
+
+Soglie2ms,80% e40ms invariate. Verificati anche velocity0,08/0,3/0,34/0,65/
+0,67: scarto massimo1,92ms. **Limite esplicito:** a velocity1,0, fuori dal focus
+leggeri/medi, resta5ms (prima17,979ms): il relativo diagnostico stretto2ms è
+rosso. Non estendere la dichiarazione di uniformità a tutti i guadagni e al
+fortissimo; la calibrazione rappresenta il centro dei layer con gain unitario.
+Il test del triangolo protegge sia il lead sia il target udibile.
+
+Il riferimento del nuovo accordo è la media delle tre osservazioni che lo
+confermano, durante l'acquisizione dell'uno sugli ingressi diretti. Appena il
+conteggio è affidabile conserva il precedente riferimento all'ultima finestra;
+il microfono mantiene questo comportamento prudente. Reset armonico solo nel
+lifecycle esplicito comune (reset/nuovo file/sorgente), non su normali cambi BPM.
+Il semplice riferimento medio continuo era regressivo e resta scartato.
+
+La calibrazione estesa esponeva due FAIL nel canceller senza ritorno sul
+microfono a128 campioni: perturbazione massima16,56% del livello medio e
+rapporto dei blocchi udibili1,1923. La previsione imparata sui blocchi passati
+può essere troppo forte per il blocco corrente. Ora la si proietta sull'ingresso
+appena ricevuto, con scala min(1, spiegato/energia prevista). Nessuna nuova
+soglia, nessun clamp della musica né nuovo fit della griglia. Le copie esatte
+mantengono scala1. Controlli eco51/0; il caso diventa6,54% e1,0760, RMS0,45%.
+Anche alzare il lead del clock non risolveva quel difetto: variante scartata.
+
+**Ablazioni e banco finale:**325 confronti per variante, tutti completati.
+
+| variante | tracce identiche | altre tracce | gate respinti |
+|---|---:|---:|---:|
+| attacchi estesi, armonia precedente (hold-target) |268|57|0|
+| + armonia solo in acquisizione (acquire-profile) |266|59|0|
+| + protezione eco, finale (projection) |264|61|0|
+
+Finale:4 MIXER,3 BRANO e54 microfono con differenze; gli altri222 dei229
+MIXER/BRANO sono identici. Nessun battito corretto perso/guadagnato sul tempo,
+nessuna perdita di copertura o prima entrata, nessun aumento di salti/surges/
+sedicesimi saltati. Dispersione/p90 sul campione comune: differenza0ms su
+MIXER/BRANO e massimo0,00783ms sul microfono. Controllati anche i singoli primi
+battiti: **zero prima corretti persi, uno guadagnato** nel materiale aggiuntivo
+(a24,0824s; quota del file97,541→98,361%). Nessuna accelerazione universale
+dell'aggancio dichiarata. Inclusi set continui e materiale aggiuntivo/fresco/
+mai usato; controlli di ricompilazione sui tre gruppi identici.
+
+**CPU Mac,256/48kHz:**quattro coppie prima/dopo alternate per percorso,
+mediana delle quattro misure; budget callback5,333ms. Misura valida in full
+wake, non termica iPad. Il riferimento separato costa CPU: non si dichiara
+costo invariato.
+
+| percorso | media callback prima→dopo | p99 prima→dopo | CPU totale, %un core |
+|---|---:|---:|---:|
+| MIXER |0,1080→0,1557ms|0,5316→0,6719ms|3,90→4,85|
+| microfono |0,1879→0,2196ms|0,8301→0,7360ms|5,45→6,10|
+
+Nessun superamento del budget nei16 run. Massimo dopo1,010ms MIXER e1,451ms
+microfono. Zero allocazioni nei2000 callback ibridi del controllo dedicato.
+
+**Banco test:** trovati anche due difetti del banco: letture della coda dallo
+snapshot fermo al precedente callback, e confronto della pubblicazione
+mescolato alla legittima invalidazione di rientro battuta. Si legge ora la
+coda viva; il confronto di lifecycle blocca l'auto-uno su entrambe le parti e
+riprova la lettura bounded prima di alimentare un altro hop, verificando la
+generazione. Gruppo --publication: prima9/10 ripetizioni verdi, una con due
+FAIL; dopo10/10 con17/0. Nessun codice di pubblicazione production modificato.
+
+I log di alimentazione del Mac provano sospensioni Idle Sleep e successivi
+DarkWake di manutenzione: non basta -i partendo da DarkWake. Quei run con
+scadenze di attesa non valgono come suite finale. Il driver macOS ora usa
+caffeinate -i -u durante i test, senza rilassare deadline/recuperi. Dodici
+ripetizioni pienamente sveglie della battuta:15/0 ciascuna. Totale finale della
+suite completa finale: **764 pass,0 fail** (baseline756/2 su758; sei nuove
+asserzioni, due FAIL originari ora verdi). Log full-fullwake.log e uscita0 del
+driver verify-fullwake.py. Nessun VP_OFFLINE_PACING globale.
+
+**iPad:**compilazione firmata riuscita e versione finale pulita installata
+(bundle com.virtualpercussionist.app). Avvio rifiutato dal dispositivo bloccato;
+l'utente risponde «Non posso adesso». Nessun nuovo ascolto, dato termico o
+misura di callback sul dispositivo dichiarato. I due render normalizzati
+listen-final hanno picco0,89 e nessun campione saturato: sono un confronto
+isolato delle articolazioni; il click indica il clock del renderer, non il
+beat della band compensato dal motore. Non sostituiscono l'ascolto iPad.
+
+Artefatti aggiuntivi:projection-assessment.json,bar-beat-regressions.json,
+cpu-fullwake-metrics.json,full-fullwake.log,host-sleep-evidence.log,
+bar-fullwake-*.log,publication-fixed-*.log,manifest finale e build/install iPad.
+
+---
+
+### 163. Fortissimo, primo battito e START dopo PLAY: verifiche finali (2026-10-26)
+
+Baseline immutabile TODO162: `build-host/vp-final-two-20261025` (764/0,
+325 coppie). Sorgenti, binari di ogni variante, tracce e confronti di questo
+intervento: `build-host/vp-pending-20261026`. L'utente ha autorizzato i test.
+
+Interventi mantenuti e misurati separatamente:
+
+- Attacco al guadagno effettivo del singolo colpo, attraverso lo stesso
+  limiter: raw precomputato sotto il knee, due passaggi limitati ai primi40ms
+  dell'asset immutabile sopra il knee. Nessuna allocazione, lock, I/O o musica
+  futura. Matrice9 velocity ×3 fader ×16 articolazioni ×3 RR: spread0ms,
+  compreso il fortissimo che prima misurava5ms;53 controlli/0 errori.
+  Riferimento nominale, clock lead e congas+6dB conservati. Ablazione325:
+  323 identiche/2 diverse, nessun gate peggiorato.
+- Una risposta chiara della rete a favore del primo attuale ferma il fallback
+  armonico su MIXER/BRANO; rete incerta e percorso stanza mantengono il
+  fallback. Variante diretta325:321 identiche/4 diverse, nessun gate
+  peggiorato, nessun vecchio beat/downbeat corretto perso. Primo corretto nel
+  set nuovo di44min:77.433628→79.056047%. Suite della combinazione prima della
+  correzione START:789/0.
+- START dopo PLAY non promuove una lettura AUTO ancora provvisoria e
+  attualmente valida nel dominio già previsto dal controllo metà/doppio.
+  Una sostituzione esplicita conserva quel controllo anche quando arriva il
+  primo nuovo grid; una pausa/intro della stessa sorgente mantiene il percorso
+  già verificato. Nessuna nuova soglia musicale. TAP, FISSO, START SUBITO e
+  ripresa di un aggancio già provato restano espliciti. Il clock non riparte
+  per un cambio di BPM.
+
+Il probe ora riproduce anche PLAY→START a3/7s, ricampionamento BRANO44.1→48k
+come il player e sostituzione esplicita del file. Ingresso sempre un blocco
+causale alla volta. Due matrici da12 confronti: Everytime BRANO0→99.101796%
+beat corretti, MIXER99.109792% invariato con p90 comune34.535→30.223ms.
+Nessun vecchio beat/downbeat corretto perso nei24 confronti; un estratto nuovo
+MIXER guadagna5 beat corretti nel caricamento esplicito. Il controllo intro
+nuovo resta difficile e invariato: non confondere un caso non risolto con una
+regressione introdotta. La battuta automatica di Everytime resta fuori dalla
+metrica del primo corretto del teacher: il miglioramento dimostrato qui riguarda
+velocità/entrata, non una promessa del100% sul primo di ogni brano.
+
+Scartati, con artefatti conservati: periodo di fase separato (p90 Everytime
+peggiore di44/48ms), nudge scalato per fiducia (p90 BRANO+2ms), veto armonico
+anche in stanza (downbeat corretti GARDEN3300 peggiorati), promozione START
+limitata a tutti i soli lock già provati e attesa completa su ogni nuova grid
+(VIVERE MIXER85→0%, ulteriori perdite sui nuovi intro). Anche l'attesa completa
+limitata ai soli file perde beat corretti sull'intro nuovo: sostituita dal
+controllo metà/doppio esistente, senza eccezioni per titolo.
+
+Prova fisica: erano attive due app distinte (`.app` e `.app.full`), con
+continui cambi di categoria e centinaia di XRUN. Chiusa la duplicata; nella
+riproduzione singola nessun nuovo XRUN, nessun vuoto del player. FULL con
+PLAY prima di START rileva circa123BPM; l'utente conferma «Sì, velocità ed
+entrata corrette». Il valore XRUN iniziale28 dopo l'apertura/cambio rotta resta
+costante durante tutti165 campioni attivi; backlog256/512, nessun gap AI,
+nessun underrun. Non attribuire il risultato alla sola modalità audio o alla
+fast path JUCE: con due app attive quelle modifiche non eliminavano gli scatti.
+BRANO usa sessione output-only Default; la preferenza di elaborazione MIC non
+la riconfigura. La notifica CategoryChange già ignorata da JUCE viene esclusa
+prima del lock inutile; le vere variazioni di rotta mantengono il percorso.
+
+La variante finale `level-proof` completa325/325:321 tracce identiche,
+4 diverse, **zero gate falliti**, nessun vecchio beat/downbeat corretto perso,
+nessun evento di clock aggiunto. Anche la precedente variante file-proof
+completa325 con lo stesso risultato ordinario; la sua perdita sul caricamento
+dell'intro resta motivo di scarto, verificato dalla matrice dedicata.
+
+CPU:32 esecuzioni in4 coppie alternate per256/64 frame, MIXER e speaker,
+contro `vp-final-two-20261025/VPCpu-final`. A256: media callback MIXER
+109.90→115.35µs, speaker102.15→163.35µs; p99 mediano498.9→492.7 e
+494.8→530.65µs. Costo totale mediano+0.15/+1.70 punti percentuali di un core;
+non chiamarlo costo zero. Massimo finale4.7525ms su5.3333ms, nessun superamento
+nel buffer di produzione256. Lo stress64 speaker mostra picchi oltre1.333ms
+in entrambe le versioni (1.9364→1.9591ms), con p99 quasi uguale
+815.4→821.4µs: non è prova di idoneità universale al buffer64. La prima serie
+con replay/compilazioni concorrenti è conservata come `loaded-cpu-*`, distinta
+dalla ripetizione senza quei carichi. Il dato fisico FULL resta callback~0.04ms
+su5.333ms, nessun nuovo XRUN durante il brano e nessun underrun.
+
+Un fixture nuovo usando un decoder reale poteva raggiungere la prima grid a
+un livello diverso dal60BPM che intendeva verificare. Conservato il suo FAIL
+nel run `full-level-proof.log`, sostituito da pubblicazioni esatte nel vero slot
+lock-free, senza worker concorrente: prova sia il veto all'ingresso prima del
+livello noto, sia l'ingresso successivo, senza allargare i4s o altri limiti.
+Il test START verifica anche ipotesi valida/assente, AUTO, sorgente nuova e
+tutte le proprietà esplicite. I fixture singoli passano. La suite completa
+predefinita `VPTests-verified` termina **791/0**. È il checkpoint verificato
+precedente alla nuova segnalazione su «Una canzone per te» (164), non la
+chiusura del nuovo difetto. Le suite scartate e interrotte restano distinte.
+
+FULL Release pulita compila, firma verificata e installazione/avvio riusciti;
+nessun hook `vp-brano-check`/`VPBRANO` nel pacchetto. Il duplicato diagnostico
+è stato rimosso dopo aver salvato Documents e Library (49MB) in
+`generic-test-data-backup`; l'inventario finale contiene soltanto FULL.
+
+### 164. PLAY→START: false partenze udibili su aggancio già rosso (2026-10-26)
+
+Segnalazione dopo il checkpoint163: in BRANO, PLAY e subito START, titolo
+«Una canzone per te». Non è una correzione per quel titolo: il caso mostra un
+errore nella politica globale dell'uscita. Baseline e prove separate in
+`build-host/vp-entry-20261026`, checkpoint163 preservato.
+
+Riprodotto con44.1→48k Lagrange e48k nativo, START a0.1/0.5/1/2/3/7s:
+la parte entra su116BPM e fit invalido1.0 già rosso, suona per i3s di grazia
+prima del drift guard. A7s un breve ritorno in attesa azzera il latch e
+permette un secondo accenno. I vecchi `.pul` registrano il consenso nominale
+del tracker (`percussionAudible`), non l'uscita dopo guard/dinamica; il truth
+score inoltre esclude i primi20s. Da soli non possono certificare l'assenza
+di quelle false partenze. Il nuovo `--audibility` misura guard, stand-down e
+picco dei campioni effettivamente resi da t=0, fuori dal callback audio.
+
+Correzione verificata: la grazia3s protegge soltanto una parte già avviata;
+un nuovo ingresso già rosso viene trattenuto prima della prima nota. Il
+latch non viene cancellato da un breve `percussionShouldPlay=false`: il
+rientro mantiene la prova esistente di1s senza rosso e la battuta. STOP/reset
+espliciti cancellano il latch. TAP/tempo posseduto, FISSO, START SUBITO e
+protezione disabilitata conservano le entrate esplicite. Non cambia tempo,
+fase, clock, decisione d'ottava o policy dell'AI; fade40ms e riferimento
+nominale restano invariati. Nessuna nuova soglia o lettura di musica futura.
+Il segnale visivo d'ingresso ora segue anche guard/stand-down, così non
+annuncia successo mentre il suono è trattenuto.
+
+Prime12 coppie sul caso segnalato: i falsi accenni iniziali sono eliminati,
+picco effettivo esattamente0 nei primi20s in tutte12; l'ingresso con BPM giusto
+(ma fase ancora imprecisa) resta a26.965s (START immediato) e~42.79s (START7s). Resta il normale
+intervento successivo del guard quando l'aggancio torna rosso: non promettere
+silenzio zero per tutto il brano o accorciare arbitrariamente la sua grazia.
+Sei nuovi controlli di stato a44.1/48k e64/256/1024frame verificano ingresso
+rosso, attesa breve, rientro su battuta, buona entrata senza nuovo ritardo,
+grazia originale a parte stabilita, controlli espliciti e reset. Il caso
+48000/64 è esattamente sul confine3s: il test rispetta la quantizzazione al
+callback successivo del timer esistente; la costante non viene allargata.
+
+
+### TODO164 — output guard verified; intro phase still imperfect (2026-10-26)
+
+Accepted Envelope artifacts: `build-host/vp-entry-20261026`; full default
+suite797/0,325 paired probes against TODO162:174 exact/151 changed, zero
+regression gates, no lost correct tempo/downbeats or extra clock events.
+40 held-out audible lifecycle pairs retain identical analysis/clock traces
+(excluding guard column21). With12 reported-song pairs,52 actual-output
+pairs remove38 red openings (24+14) to0. All12 reported-song first20s peaks
+are exactly0. Count openings using signed integer differences, not bool diff.
+
+Keep nominal control rendering AND its original3s guard/fade independent of
+the actual early-entry veto. Muting that reference changes own-onset/epoch
+history: the first two variants lost correct-tempo share on three files and
+were discarded. Actual tails retain40ms fades; initial silence stays exact0.
+Six new state checks and six fade checks pass, including explicit owners,
+brief waiting, STOP/reset, established-part grace and quantized recovery.
+
+32 paired CPU runs: at256 frames total host-core medians3.40→3.50% and
+4.20→4.35%, callback means99.2→103.3us and144.05→149.25us (MIXER/speaker).
+Final maxima1.434/1.045ms fit5.333ms.64-frame stress exceeds its budget in
+both versions; one final mic wall-time maximum is71.3445ms, retained without
+attributing an unproven cause. No universal64-frame qualification is claimed.
+
+Physical FULL Canzone playback195s: XRUN1→1, no player underruns or AI gaps,
+callback typically~0.04ms/256. User: cleaner entrance, not perfectly in time.
+Clean Release build/signature/install pass; temporary startup hook removed.
+Final normal launch is refused by iPadOS because the screen locked; this is
+not a successful final launch or a repeat physical test of the clean package.
+
+Residual: the tonal intro's quarter grid25–40s is displaced~0.2s against the
+offline teacher, despite correct BPM. Raw clock includes17.85ms kit lead;
+this is not a direct heard-onset error estimate. Decoder and activation fold
+agree on that displaced grid; harmonic phase is unavailable there. A causal
+phase-only prototype before first audible entry changes none of16875 trace
+rows and is removed. Production phase algorithm/model remain unchanged.
+No per-song offset, relaxed regression gate or future-input analysis accepted.
+See final-verification.json, phase-investigation.json and rejected logs.
+
+
+### 165. Tenuta del tempo nelle pause senza batteria — implementata, non verificata (2026-10-26)
+
+Richiesta utente: mantenere il tempo attraverso pause lunghe durante il brano;
+non eseguire test. Nessuna compilazione, suite, misura o prova iPad avviata.
+I risultati797/0 e325 di164 descrivono il checkpoint precedente, non questa modifica.
+
+Il flag causale esistente `beatGap` azzerava il phase steer ma lasciava il
+BPM inseguire target/trim; un glide già in corso continuava inoltre a spendere
+fase. Su clock agganciato ora mantiene il BPM corrente, ignora i target ordinari
+(compresi falsi cambi d'ottava) e sospende i glide per tutta la pausa rilevata.
+Il clock e il conteggio proseguono; non si riavviano e non si leggono campioni
+futuri. Il rientro usa target freschi e la protezione di fase già esistente.
+Le transizioni rapide confermate restano prioritarie; TAP/FISSO escludono il
+flag automatico. Nessuna soglia di rilevamento o regola specifica per titolo.
+
+Aggiunti tre controlli deterministici nella suite evidence-trust (non eseguiti):
+30s di pausa con target errati/glide pendente, ripresa dei target, precedenza
+della transizione confermata. Nessun nuovo comando o fixture separato.
+Limiti: la protezione dipende dal riconoscimento esistente della pausa;
+se la band cambia davvero tempo senza evidenza sufficiente, il clock conserva
+quello precedente. Eventuali regressioni non ancora misurate. L'iPad installato
+resta alla versione164, questa modifica è soltanto nei sorgenti.
+
+### 166. Tracce lunghe: nuovo aggancio dopo silenzio reale — non verificato (2026-10-26)
+
+Segnalazione: una traccia contiene più brani separati da silenzio; il motore
+resta sul BPM precedente finché l'utente preme STOP. La policy dei file
+presumeva che ogni nuovo brano fosse un nuovo caricamento e conservava sempre
+comb/modello sulle ripartenze, anche nel medesimo file lungo.
+
+`resumedAfterSourceSilence` osserva il picco della sorgente prima del make-up,
+senza il trim INPUT, sui soli BRANO/MIXER in SEGUI. Dopo almeno3s sotto1e-4
+(-80dBFS), al ritorno dell'audio richiede il percorso di restart già esistente:
+nuova epoch, scarto della vecchia coda, revoca del sounding keep e nuova prova
+d'ingresso, rimanendo armato. La prima nota di ritorno è già arrivata; nessuna
+lettura anticipata. Il contatore è saturato, nessuna allocazione/lock/I/O.
+Reset/prepare/replacement azzerano il contatore. INPUT a zero non crea una
+falsa pausa. FISSO e microfono ambientale restano esclusi.
+
+Una pausa con voce/strumenti ancora presenti conserva la policy165. Una pausa
+completamente silenziosa di almeno3s nello stesso brano riapre anch'essa
+l'acquisizione: dall'audio solo non si distingue da un confine fra brani.
+Applausi, parlato o rumore sopra la soglia non sono questo silenzio; nessuna
+promessa di riconoscere ogni cambio di brano. Il ritorno non è istantaneamente
+agganciato: deve superare le normali prove globali.
+
+Aggiunto fixture di stato a44.1/48k e64/256/1024frame: restart unico al ritorno,
+pausa breve/musica quieta conservate, speaker/FISSO/INPUT zero esclusi e reset.
+NON eseguito, come richiesto. Nessuna compilazione, misura o installazione:
+797/0 e325 restano risultati del checkpoint164, non di165/166.
+
 ## Standby
 
 Lavoro **non bloccante** se usi solo **PATTERN** (motore sintetico / `GrooveEngine`, switch LOOP spento). Il codice del ciclo Codex (tempo rapido, suddivisione congas, canceller, epoch/make-up, 156 BPM, test) è già nel tree; qui resta la **chiusura formale** e l'integrazione **loop registrati** (altro documento).

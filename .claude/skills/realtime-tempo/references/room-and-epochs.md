@@ -24,6 +24,35 @@ Moved verbatim from SKILL.md section 5 on 2026-10-07. Chronological log: newest 
 
 ### Where that epoch is decided: `updateAnalysisEpoch`
 
+**MASTER invariance (2026-10-25, TODO159).** The onset witness is now
+`partPeakLast`, the previous block's **pre-master** percussion activity. The
+canceller's `outRing` remains the actual post-master emitted waveform. Using
+that waveform's peak for both jobs made a constant MASTER position decide
+whether an identical source rise reached the worker: scripted A1 and real-net
+A2 failed at 138/156 BPM (12 assertions). Pre-master activity fixes all five
+tested tempos: A1 25/0, A2 35/0, identical analysis/epoch trajectories within
+each audible/muted pair. It preserves the conservative audible veto when
+muted; it does not make acquisition faster than the previous audible path.
+
+A **later increase** of MASTER still introduces a new physical return.
+`previousMaster` detects that operation; the existing own-onset envelope is
+rebased by previous/current gain, and the existing 0.75s blame is armed. No new
+time constant. Omitting the operation made the delayed-MASTER room fixture
+call a false epoch at3.613s (budget-only4.051s); rebasing restores the original
+4.488s exactly. MIXER stays8.303s, after the real band starts at8s. The room's
+4.488s is a **pre-existing false epoch**, not a solved microphone case: FISSO
+plays over a very quiet room, MASTER rises at3s, gain0.6/delay30ms return.
+The new `--makeup fader` keeps it visible. It does not show a reset during a
+playing band, and the fixed percussion clock does not restart on this epoch.
+Normal own-return sweep D still requires zero false epochs on its18 rows.
+
+Do not remove the own-output veto: a tested input-only variant passed A/D but
+lost phase, first-four/coverage or bar on six witnesses in123 completed real
+probes and was discarded. The previous “rise started first” exception did not
+fix the138 BPM coupling. Sources, frozen binaries and comparisons live in
+`build-host/vp-red-20261025/`.
+
+
 **Arrangement continuity experiment (2026-09-09).** A low-share entrance
 can occur after the fold already sees the band. Carrying only that fold across
 the restart while resetting the network worsened BLUE SKY's first three-second
@@ -49,7 +78,8 @@ arriving, and choruses are frequent.
 It also has one exception, and the exception has an exact scope. Our own part
 comes back on the microphone and the canceller does not always find it, so when
 the part comes in the analysis level can step up on its own account. That is us.
-`ownStepSamples` is set from the previous block's output level and, while it is
+`ownStepSamples` is set from the previous block's pre-master part activity
+(and rebased on a later MASTER increase) and, while it is
 running, **vetoes** the rise: it clears any step in progress and returns "no
 epoch". That is all it may do.
 
@@ -120,8 +150,8 @@ voted; same tone at band level: 0.639, believed).
 The veto is an early `return`, so for the blocks it covers `levelLoud`, the
 `wasQuiet` test and the *downward* decay of `levelRef` are skipped rather than
 run - the block is not seen at all. That is the whole cost of it, and it is
-measured: a legitimate band start that lands inside the blame window is called
-at +1.56 s with the part audible against +0.557 s with it muted, one second of
+historically measured before TODO159: a legitimate band start that lands inside
+the blame window was called at +1.56 s with the part audible against +0.557 s with it muted, one second of
 lateness, and nothing on a twenty-second pre-roll, which settles at 10.41 s
 either way.
 
@@ -461,3 +491,120 @@ derived hop. The 17 ms minimax trim centres the measured five-tempo envelope;
 see `.superpowers/sdd/phase-156-root-cause.md`. If you need a tighter coupling
 claim under the real model, make the model deterministic - do not take more
 runs.
+
+
+### 2026-10-25 — TODO158, rejected epoch variants and physical mic
+
+The master-up/down coupling at138/156 in deterministic makeup A1 remains
+19/6; do not declare it fixed from a local branch edit. Gating rhythm arrival
+on `hadPlayed` missed START SUBITO; moving rhythm-arrival handling before the
+own-output veto also leaves19/6. A prior-low-share qualification failed four
+focused warmup/repeat-intro fixtures and was removed. No changed epoch policy
+was kept. This needs a globally measured fix that also rejects real own return.
+
+Output guard now fades the entire percussion bus40ms before both device output
+and `pushOutputToRing`. Thus the canceller reference is the actual faded
+signal. The clock and analysis continue; no new gate timing. Physical mic
+trial and caveats are recorded under TODO158 and verification.md.
+
+The strengthened neural A2 START SUBITO fixture also exposes the coupling
+at138/156:each loses matched tempo pairs, median agreement and exact analysis
+chain equality. Old conga gain1.641 reproduces all ten phase/chain summaries
+exactly (29/6) from final3.274:the level increase is not the cause. The extreme
+150ms leak D fixture now actually returns audio and has no false epoch, but
+follows~178–181 instead of138; it proves veto behaviour only, not good tempo
+under an unremovable return. Do not silently weaken either result.
+
+
+### TODO160 — coarse envelope really is an envelope (2026-10-25)
+
+`abs(sample)` correlation still contains the carrier and can nominate the
+wrong coarse basin when the true return sits between coarse lag cells.
+Sum absolute magnitudes over each existing coarse cell, correlate those
+cell envelopes and normalise by their own energy. The sample-accurate raw
+refinement, acquisition/switch floors, search range and scan cadence stay.
+Only already received input and the rendered-output history are read; the
+work remains bounded O(window), with no new allocation or delay buffer.
+
+Late MASTER-rise room fixture: false epoch4.488s→none before the genuine band;
+first real epoch8.303s. The physical return lag1440 samples is found by3.2s
+rather than6.2s. Matching mixer fixture remains8.303s; pair2/0. Isolated
+`--leak`51/0 at default pacing, and96 real room probes show no regression
+in coverage/correct tempo, common-correct phase/bar, first four, lost runs,
+skipped pulses, jumps or surges. Of these,51 traces are byte-identical and45
+change only within those gates. Do not substitute a second coarse basin:
+that rejected candidate still produced the false epoch at4.488s.
+
+TODO160 follow-up ablations (isolated project, never in main): preserve both
+make-up envelope and gain on safe-headroom continuous already-playing epochs,
+or only on rhythm-arrival epochs. Both remove the BRANO common-phase rejection
+in the calibration witness but still lose MIXER correct share97.1483→96.7681%
+and→96.5779% respectively. Rejected after three focused paired probes each;
+no claim of a successful full-bank run. The output-to-epoch coupling is more
+than the instantaneous make-up gain. Do not repeat gain-retention alone as a
+claimed complete solution. See continuous*/rhythm-continuity* artefacts.
+
+The final echo implementation forms the fixed input cell sums/energy once per
+coarse scan, not once per candidate delay. This removes the small repeatable
+host MIXER overhead of the first implementation. The bounded nine-double stack
+array covers every window size1..16384;17,408 old/new scores are bit-identical.
+The root-build optimized VPTrack has325/325 outputs identical to the pre-cache
+functional implementation (all229 primary paths exact to before;45 room
+numerical differences unchanged). No new buffering/lookahead or heap work.
+
+
+### TODO161 — input-fast-envelope epoch prime rejected (2026-10-25)
+
+Do not substitute levelFast*inputTrim for the current raw peak to prime make-up
+on a continuing-source epoch, even bounded below by the current block peak.
+With stable-lead per-take calibration, percussion26/0, but MIXER held-out
+correct share97.1483→0%; BRANO octave unchanged yet common-correct p90
+28.266→30.269 ms and bar100→96.7742%. Source-continuity gating used the existing
+playedOnSettledLevel latch, no queued source restart, internal player or
+confidence>0.5 in MIXER. This does not preserve the network operating point.
+Entire candidate rejected, baseline audio and percussion restored exactly.
+Three paired witnesses only; no whole-bank success claim. See TODO161 and
+vp-downbeat-attacks-20261025/envelope-assessment.json.
+
+
+### TODO162 — audible/control separation and per-block prediction (2026-10-26)
+
+Calibrating layer/RR attacks changed the own-output peak, dated an input epoch
+one callback differently and re-primed the network gain from different music.
+Do not paper over that with gain retention, fast-envelope priming, a confidence
+guard, frame-quantized veto expiry or voice-level upper bounds: all were tried
+and regressed primary material. A shared renderer/sample bank now renders a
+separate nominal voice/reverb state for epoch control; the audible bank gets
+its calibrated offsets. Propagate both through HybridPercussionRenderer,
+whose compile flag is ON here, blending the same actual loop share into both.
+Guard fading scales both together. Echo uses actual post-MASTER output.
+
+With soft/medium headroom the no-return microphone128-frame fixture exposed
+stale fitted gains over-predicting the current block:16.56% of mean absolute
+perturbation and1.1923 audible-block peak ratio. Before subtracting, project
+the fitted prediction onto the current input: scale=min(1,explained/predicted
+energy). This is the least-squares scalar for the existing prediction, not a
+new threshold, source exception or peak clamp. Exact matched returns retain1.
+Focused leak51/0; worst witness6.54%,1.0760,0.45% RMS. No future samples,
+allocation, locks, I/O or extra ONNX calls in the callback.
+
+Final325:264 exact traces,61 numeric differences, zero rejected gates or extra
+clock events; all direct common-correct phase values unchanged, maximum
+microphone dispersion/p90 delta0.00783ms. CPU overhead is real and separately
+reported (at most0.95 percentage points of a host core in paired medians).
+The source-reset harmony fix is explicit lifecycle only, not automatic epochs.
+Physical iPad verification remains unavailable because the user cannot unlock
+it now; compilation/installation are not an acoustic or thermal test.
+
+### TODO166 — real silence inside one long file (unverified, 2026-10-26)
+
+Loaded input is not necessarily one song. Before preserving comb/model on a
+level return, direct MIXER/BRANO now detect3s below1e-4 pre-makeup source peak
+using a saturated sample counter, then reuse the existing explicit input
+restart on the first returned block. This drops stale publications/sounding
+ownership and reopens the first-entry proof without pressing STOP. Reset
+clears the counter; INPUT zero, FISSO and speaker are excluded. Music-bearing
+drumless rests retain TODO165. A fully silent internal break is ambiguous and
+also reacquires; applause/noisy gaps above the threshold are not detected by
+this rule. Thresholds are provisional, not corpus-calibrated. Added lifecycle
+fixture, not run: user forbids tests. No build/device/bench or regression claim.

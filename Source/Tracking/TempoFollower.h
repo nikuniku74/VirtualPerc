@@ -69,10 +69,10 @@ public:
     {
         fixedDirectFeed = on;
     }
-    /** A rest while a part is already sounding. The counted tempo stays;
-        phase debt is not spent as a rate bend until the next beat, and the
-        beats just after the rest use the holding rail rather than the
-        direct-live one. */
+    /** A detected rest on an established automatic grid holds the current BPM
+        as well as phase steering/glides. Confirmed rapid transitions still
+        pass; explicit tempo ownership must disable this flag. After the rest,
+        fresh targets resume and phase steering retains its existing rail. */
     void setBeatGapHold (bool on) noexcept { beatGapHold = on; }
     /** The decoder has a clean short fit moving away from a held direct-feed
         tempo. This does not select a tempo; it only lets phase drift build the

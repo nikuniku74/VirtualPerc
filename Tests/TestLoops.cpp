@@ -1170,6 +1170,8 @@ void vpRunLoopTests (int& passed, int& failed)
         clock.snapPhase (0.0f);
 
         std::vector<float> l (256, 0.0f), r (256, 0.0f);
+        std::vector<float> controlL (256, 0.0f), controlR (256, 0.0f);
+        bool checkedControl = false, controlHasRecording = true;
         vp::HybridPercussionRenderer::Input in;
         in.audible = true;
         in.bpm = 120.0f;
@@ -1179,7 +1181,7 @@ void vpRunLoopTests (int& passed, int& failed)
         for (int i = 0; i < 2000; ++i)
         {
             in.tick = clock.advance (256);
-            hybrid.render (percussion, l.data(), r.data(), 256, in);
+            hybrid.render (percussion, l.data(), r.data(), 256, in, controlL.data(), controlR.data());
         }
 
         vpBeginAllocationWatch();
@@ -1187,12 +1189,19 @@ void vpRunLoopTests (int& passed, int& failed)
         {
             in.regime = (i / 400) % 2 == 0 ? vp::TempoRegime::fixed : vp::TempoRegime::live;
             in.tick = clock.advance (256);
-            hybrid.render (percussion, l.data(), r.data(), 256, in);
+            hybrid.render (percussion, l.data(), r.data(), 256, in, controlL.data(), controlR.data());
+            if (hybrid.loopBlend() == 1.0f)
+            {
+                checkedControl = true;
+                controlHasRecording = controlHasRecording && l == controlL && r == controlR;
+            }
         }
         const long long allocs = vpEndAllocationWatch();
         std::printf ("        allocations in 2000 hybrid callbacks with handovers: %lld\n", allocs);
         expect (allocs == 0,
                 "hybrid: handing the part between the two engines allocates nothing either");
+        expect (checkedControl && controlHasRecording,
+                "hybrid: the control reference includes the actual recorded-loop share");
     }
 
     passed += gPassed;

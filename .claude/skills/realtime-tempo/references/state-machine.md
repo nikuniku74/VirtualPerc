@@ -2,6 +2,61 @@
 
 Moved verbatim from SKILL.md section 6 on 2026-10-07. Chronological log: newest entries are often at the top of a section, older ones further down; grep for the symbol you are touching. When you change a decision, update the entry that justified it.
 
+## Output must not grant a bad entry the established-part grace (TODO164)
+
+The drift guard's3s grace is for an established part. A first judged-red entry
+must remain silent immediately; otherwise an unproved grid sounds for3s before
+being silenced. Keep the latch across brief tracker waiting states and reset
+its recovery timer; a return to waiting is not permission to revive old notes.
+Explicit STOP/reset clear it, and explicit tempo/START SUBITO retain their
+entry choices. Recovery still needs1s out of red and a bar boundary; the40ms
+fade is unchanged. This is output-only: keep the nominal tracker/control bus
+and AI sounding policy stable. See VirtualPercussionEngine::updateDriftGuard.
+
+The new actual-output probe reproduces the reported PLAY→immediate START on
+Una canzone per te at both rates and six START delays.12 paired trials remove
+all initial false notes (actual output peak0 for first20s), while the first
+correct-BPM entrance stays where it was; its intro phase remains inaccurate. The legacy `.pul` `suona` is
+nominal and truth score omits20s: neither alone can judge audible startup.
+Six deterministic guard fixtures cover both rates and64/256/1024 buffers;
+no musical threshold was added or relaxed. TODO164 closes797/0 and325 paired
+probes with zero regression gates;52 audible pairs remove38 red openings to0.
+Nominal control generation AND its original guard fade must stay independent
+of the actual early veto; changing either lost three files in rejected trials.
+The tonal intro still has a displaced quarter grid; see verification.md.
+
+## START after PLAY and explicit source replacement (2026-10-26, TODO163)
+
+`heldBpm` may be a provisional reading, not a proven lock. START must not
+promote a currently valid, unresolved AUTO half-level directly to FOLLOWING:
+it would mark the part sounding and freeze the wrong octave before the
+existing `HalfLevelCheck` can decide. Preserve existing explicit ownership
+(TAP/FISSO/START SUBITO), proven resume, and the ordinary warm path where no
+current neural hypothesis can pose that level question.
+
+An explicit `dropQueued` source replacement latches `newFileEntryPending`;
+the first new grid still supplies a target, but must clear
+`holdEntryForLevel(0)` before its shortcut to FOLLOWING. The zero adds no
+fictitious audio time. A regular pause/intro epoch keeps its measured legacy
+recovery. Proven FOLLOWING clears the latch; reset clears it too. No title,
+new musical threshold, timeout, or automatic octave shift under a sounding part.
+
+Both12-case lifecycle matrices use PLAY then START at3/7s, MIXER/BRANO and
+actual Lagrange44.1→48k player conversion. One includes explicit load before
+PLAY.24 pairs: no formerly correct beat/downbeat lost or common-correct phase
+regression over1ms. Everytime BRANO0→99.101796% correct tempo; MIXER99.109792%
+unchanged with common p90 phase34.535→30.223ms. New live material gains5 correct
+beats on MIXER in each lifecycle (different START delay); the new intro is
+unchanged. Physical FULL playback reads123BPM; user confirms speed/entrance.
+The heard stricter variant and accepted narrower one have bit-identical
+Everytime traces in all four matching resampled/delayed cases.
+
+Rejected: making every provisional START wait, or making every new grid
+re-earn full entry proof. The latter loses MIXER VIVERE85→0% and33 bank gates;
+the former loses correct beats on a new intro and a fresh BRANO excerpt.
+Even limiting full proof to explicit files costs the intro. Keep the existing
+half-level domain; do not resurrect those broader waits as a universal fix.
+
 ## First entry waits while the tempo may be half the pulse (2026-10-22, docs/TODO.md item 147)
 
 `BeatTracker::holdEntryForLevel`, called once an entry is otherwise ready
@@ -151,3 +206,19 @@ decides on the callback after it accumulates six seconds: 6.001333 / 6.005333 /
 6.037333 s; the high-confidence hold is 4.000000 / 4.000000 / 4.010667 s.
 New-file entry must also earn that hold afresh. No production timing rule was
 changed to make these tests pass.
+
+### Entry candidates rejected (2026-10-25, TODO157)
+
+Parallel confidence/level proofs were tested, then a conservative candidate kept
+the original serial wait but cleared high-level proof on missing readiness or
+unknown contrast. Both were rejected globally; no title/BPM exception was added.
+The parallel candidate improved FLAMINGO2400 MIXER correct tempo 66.67→90.51%
+but worsened the one on common-correct beats 90.54→85.14%. The conservative
+candidate still lost on held-out FBI I FEEL GOOD MIXER: correct 76.68→75.56%,
+worse phase and bar, and less audible coverage. Its MANIAC IPAD gain does not
+justify another file losing. `updateState` entry logic and `HalfLevelCheck`
+are restored to baseline. No faster entry is claimed.
+
+The final combination changes only motion proof and missing downbeat opinions:
+325/325 causal traces are byte-identical to 7cf0307, including entry and output.
+See verification.md / TODO157 for tests. Physical iPad listening remains.

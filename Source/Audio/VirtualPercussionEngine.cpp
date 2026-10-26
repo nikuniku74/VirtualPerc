@@ -180,11 +180,19 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
     harmony.prepare (sampleRate);
     standingDown = false;
     wantStandDown = false;
-    driftGuarded = false;
+    driftGuarded = controlGuarded = false;
     guardOutSec = guardInSec = 0.0;
+    controlGuardOutSec = controlGuardInSec = 0.0;
+    emittedPeakLast = 0.0f;
+    guardGain.reset (sampleRate, 0.040);
+    controlGuardGain.reset (sampleRate, 0.040);
+    guardGain.setCurrentAndTargetValue (1.0f);
+    controlGuardGain.setCurrentAndTargetValue (1.0f);
     clapSteadyBars = 0;
     outL.assign (static_cast<size_t> (maxBlock), 0.0f);
     outR.assign (static_cast<size_t> (maxBlock), 0.0f);
+    controlL.assign (static_cast<size_t> (maxBlock), 0.0f);
+    controlR.assign (static_cast<size_t> (maxBlock), 0.0f);
     clickScratch.assign (static_cast<size_t> (maxBlock), 0.0f);
     for (auto& b : leakBand)
         b.assign (static_cast<size_t> (maxBlock), 0.0f);
@@ -261,6 +269,7 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     // re-`prepare()` onto a source forty decibels down: the new session analysed
     // its input at a gain of 1.0 where a new engine reached 23.7, and reported
     // the old session's epoch count on its first block.
+    harmony.reset();
     peakEnv = 0.0f;
     makeupGain = 1.0f;
     levelFast = 0.0f;
@@ -283,9 +292,11 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     // (`prepare()`, `reset()`) set it to zero themselves.
     preserveCombOnEpoch = false;
     barReentryPending.store (false, std::memory_order_relaxed);
+    sourceSilenceSamples = 0;
     musicGapSamples = 0;
     musicGapArmed = false;
-    ownPeakLast = 0.0f;
+    partPeakLast = 0.0f;
+    previousMaster = 0.0f;
     ownFast = 0.0f;
     ownRef = 0.0f;
     ownStepSamples = 0;
@@ -331,6 +342,12 @@ void VirtualPercussionEngine::resetLeakEstimate() noexcept
 void VirtualPercussionEngine::reset() noexcept
 {
     tracker.reset();
+    driftGuarded = controlGuarded = false;
+    guardOutSec = guardInSec = 0.0;
+    controlGuardOutSec = controlGuardInSec = 0.0;
+    emittedPeakLast = 0.0f;
+    guardGain.setCurrentAndTargetValue (1.0f);
+    controlGuardGain.setCurrentAndTargetValue (1.0f);
     lastHypValid.store (false, std::memory_order_relaxed);
     clearAnalysisLevelMirrors();
     lastTempoTransitionState.store (
@@ -375,6 +392,10 @@ void VirtualPercussionEngine::stop() noexcept
     stopRestartDone = false;
     beatLostWhileStopped = false;
     tracker.stop();
+    driftGuarded = controlGuarded = false;
+    guardOutSec = guardInSec = 0.0;
+    controlGuardOutSec = controlGuardInSec = 0.0;
+    emittedPeakLast = 0.0f;
     percussion.silence();
     hybrid.stop();
 }
@@ -718,19 +739,6 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
         }
         return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
     };
-    auto envelopeScoreAt = [this, window, back, xx, &histAt] (int d) noexcept -> double
-    {
-        double xy = 0.0, yy = 0.0;
-        for (int i = 0; i < window; ++i)
-        {
-            const int ri = (ringWrite - d - back + i + ringSize) & (ringSize - 1);
-            const float y = outRing[static_cast<size_t> (ri)];
-            xy += static_cast<double> (std::abs (histAt (window, i)))
-                  * std::abs (y);
-            yy += static_cast<double> (y) * y;
-        }
-        return yy > 1.0e-12 ? xy / std::sqrt (xx * yy) : -1.0e9;
-    };
 
     // What it costs to give up a delay already held.
     //
@@ -771,6 +779,34 @@ void VirtualPercussionEngine::updateLeakDelay (int numSamples, bool speaker) noe
         leakScanCountdown = (speaker ? (leakDelayLocked ? 4 : 1) : 8)
                             * std::max (numSamples, leakSearchSamples);
         const int step = std::max (16, window / 8);
+        // Coarse-cell sums remove the carrier; the input side is invariant across delays.
+        std::array<double, 9> inputEnvelope {}; // ceil(window / floor(window/8)) can need nine cells.
+        double xxEnvelope = 0.0;
+        for (int start = 0, cell = 0; start < window; start += step, ++cell)
+        {
+            double x = 0.0;
+            for (int i = start; i < std::min (window, start + step); ++i)
+                x += std::abs (histAt (window, i));
+            inputEnvelope[static_cast<size_t> (cell)] = x;
+            xxEnvelope += x * x;
+        }
+        auto envelopeScoreAt = [this, window, back, step, xxEnvelope, &inputEnvelope] (int d) noexcept
+        {
+            double xy = 0.0, yy = 0.0;
+            for (int start = 0, cell = 0; start < window; start += step, ++cell)
+            {
+                double y = 0.0;
+                for (int i = start; i < std::min (window, start + step); ++i)
+                {
+                    const int ri = (ringWrite - d - back + i + ringSize) & (ringSize - 1);
+                    y += std::abs (outRing[static_cast<size_t> (ri)]);
+                }
+                xy += inputEnvelope[static_cast<size_t> (cell)] * y;
+                yy += y * y;
+            }
+            return yy > 1.0e-12 && xxEnvelope > 1.0e-12
+                       ? xy / std::sqrt (xxEnvelope * yy) : -1.0e9;
+        };
         int coarseBest = best;
         double coarseScore = envelopeScoreAt (coarseBest);
         for (int d = lo; d <= hi; d += step)
@@ -1171,12 +1207,22 @@ void VirtualPercussionEngine::subtractSpeakerLeak (int numSamples, bool speaker)
     if (explained / xx < static_cast<double> (minShare) && ! (speaker && corr > 0.12))
         return;
 
+    // A fit learned from past blocks can over-predict this one. Project its
+    // prediction onto the current input before subtracting: a stale estimate
+    // must not add energy to a feed carrying no return. Exact returns keep 1.
+    double predicted = 0.0;
+    for (int b = 0; b < kLeakBands; ++b)
+        for (int c = 0; c < kLeakBands; ++c)
+            predicted += static_cast<double> (use[b]) * use[c]
+                         * gram[std::min (b, c)][std::max (b, c)];
+    const float scale = predicted > explained
+        ? static_cast<float> (std::max (0.0, explained) / predicted) : 1.0f;
     for (int i = 0; i < n; ++i)
     {
         float sub = 0.0f;
         for (int b = 0; b < kLeakBands; ++b)
             sub += use[b] * leakBand[b][static_cast<size_t> (i)];
-        mono[static_cast<size_t> (i)] -= sub;
+        mono[static_cast<size_t> (i)] -= scale * sub;
     }
 }
 
@@ -1374,12 +1420,14 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
         return false;
     }
 
-    // Our own part, on the same envelope. It reaches the microphone a little
+    // Our own part before MASTER: changing the output volume must not change
+    // which input rise the worker sees as a new source. Keep the echo reference
+    // post-master separately (pushOutputToRing). It reaches the microphone a little
     // after we play it and the canceller does not always find it - in mixer
     // mode the search does not cover an acoustic hop at all - so when the part
     // comes in, the level on the analysis bus can step up by more than this
     // looks for. That is us, not the room filling with a band.
-    ownFast += (ownPeakLast - ownFast) * (ownPeakLast > ownFast ? attack : release);
+    ownFast += (partPeakLast - ownFast) * (partPeakLast > ownFast ? attack : release);
     if (ownFast > std::max (ownRef, 1.0e-5f) * kLevelStepUp)
         ownStepSamples = static_cast<int> (sampleRate * kOwnStepBlameSec);
     else
@@ -1478,6 +1526,32 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     return false;
 }
 
+bool VirtualPercussionEngine::resumedAfterSourceSilence (int numSamples, float sourcePeak,
+                                                           FollowSource source) noexcept
+{
+    // Actual direct-source silence is a boundary; missing drums alone are not.
+    if (source == FollowSource::speaker
+        || ! cfg.tempoFollow.load (std::memory_order_relaxed)
+        || cfg.inputGain.load (std::memory_order_relaxed) <= 1.0e-6f
+        || lastBpm.load (std::memory_order_relaxed) <= 40.0f)
+    {
+        sourceSilenceSamples = 0;
+        return false;
+    }
+    const auto silenceRequired = static_cast<int64_t> (sampleRate * kNewSongStopSec);
+    if (sourcePeak < 1.0e-4f)
+    {
+        sourceSilenceSamples = std::min (silenceRequired,
+                                         sourceSilenceSamples + std::max (0, numSamples));
+        return false;
+    }
+    // shortcut: a full silent break within one song also reacquires; audio alone
+    // cannot identify a track boundary. Preserve music-bearing rests instead.
+    const bool resumed = sourceSilenceSamples >= silenceRequired;
+    sourceSilenceSamples = 0;
+    return resumed;
+}
+
 void VirtualPercussionEngine::maybeDetectBarReentry (int numSamples, float rawPeak) noexcept
 {
     // The epoch watcher needs ~4 s of quiet (levelRef decaying 24 dB) before
@@ -1519,7 +1593,79 @@ void VirtualPercussionEngine::maybeDetectBarReentry (int numSamples, float rawPe
     musicGapArmed = false;
 }
 
-void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master) noexcept
+void VirtualPercussionEngine::updateDriftGuard (const BeatTracker::Output& tr, int numSamples) noexcept
+{
+    const double blockSec = static_cast<double> (numSamples) / sampleRate;
+    const bool disabled = ! cfg.driftGuard.load (std::memory_order_relaxed)
+                          || ! cfg.tempoFollow.load (std::memory_order_relaxed);
+    const bool red = followBarJudged (tr.followBar) && tempoOut (tr.state, tr.shortFitResidual);
+    const bool badEntry = ! lastAudible.load (std::memory_order_relaxed)
+                          && ! tr.tempoOwned
+                          && ! tr.harmonicTempoSource
+                          && cfg.tempoOctaveAuto.load (std::memory_order_relaxed)
+                          && ! cfg.startImmediately.load (std::memory_order_relaxed);
+    const auto update = [&] (bool& held, double& outSec, double& inSec, bool output)
+    {
+        if (disabled || (! tr.percussionShouldPlay && ! output))
+        {
+            held = false;
+            outSec = inSec = 0.0;
+        }
+        else if (! tr.percussionShouldPlay)
+        {
+            // Waiting again does not revive a rejected output entry.
+            outSec = inSec = 0.0;
+        }
+        else if (red)
+        {
+            outSec += blockSec;
+            inSec = 0.0;
+            if (outSec >= kGuardEnterSec || (output && badEntry))
+                held = true;
+        }
+        else
+        {
+            outSec = 0.0;
+            inSec += blockSec;
+            if (held && inSec >= kGuardLeaveSec && tr.clock.wrappedBar)
+                held = false;
+        }
+    };
+    // Muting must not change the counterfactual own-onset witness and its epochs.
+    update (controlGuarded, controlGuardOutSec, controlGuardInSec, false);
+    update (driftGuarded, guardOutSec, guardInSec, true);
+    // From silence there is no tail to fade, and no first note should leak out.
+    if (driftGuarded && badEntry && emittedPeakLast == 0.0f)
+        guardGain.setCurrentAndTargetValue (0.0f);
+}
+
+void VirtualPercussionEngine::applyDriftGuardGain (int numSamples, bool guarded, bool audible, bool controlAudible) noexcept
+{
+    if (guarded)
+        guardGain.setTargetValue (0.0f);
+    else if (audible)
+        guardGain.setTargetValue (1.0f);
+    if (controlGuarded)
+        controlGuardGain.setTargetValue (0.0f);
+    else if (controlAudible)
+        controlGuardGain.setTargetValue (1.0f);
+    // Output muting and the nominal witness have independent envelopes.
+    if (! guardGain.isSmoothing() && guardGain.getCurrentValue() == 1.0f
+        && ! controlGuardGain.isSmoothing() && controlGuardGain.getCurrentValue() == 1.0f)
+        return;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float gain = guardGain.getNextValue();
+        outL[static_cast<size_t> (i)] *= gain;
+        outR[static_cast<size_t> (i)] *= gain;
+        const float controlGain = controlGuardGain.getNextValue();
+        controlL[static_cast<size_t> (i)] *= controlGain;
+        controlR[static_cast<size_t> (i)] *= controlGain;
+    }
+}
+
+void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master,
+                                                  const float* controlLeft, const float* controlRight) noexcept
 {
     // The part as the speaker emits it, not as it was rendered.
     //
@@ -1534,12 +1680,27 @@ void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master) no
     // the analysis on purpose - that is the whole feature, a kit for the
     // tracker to lock to when there is no drummer - so a canceller that
     // subtracted it again would be undoing the one thing it is for.
-    float own = 0.0f;
+    // Raising MASTER introduces a new return. Rebase the onset envelope to
+    // its previous emitted level so the existing veto can follow that rise.
+    if (master > previousMaster && ownFast > kMakeupFloor)
+    {
+        const float previousLevel = previousMaster / master;
+        ownFast *= previousLevel;
+        ownRef *= previousLevel;
+        ownStepSamples = static_cast<int> (sampleRate * kOwnStepBlameSec);
+    }
+    previousMaster = master;
+    float own = 0.0f, emittedPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
     {
+        emittedPeak = std::max ({ emittedPeak, std::abs (master * outL[static_cast<size_t> (i)]),
+                                  std::abs (master * outR[static_cast<size_t> (i)]) });
         float y = master * 0.5f * (outL[static_cast<size_t> (i)]
                                    + outR[static_cast<size_t> (i)]);
-        own = std::max (own, std::abs (y));
+        // The onset witness is pre-master; the echo reference below stays emitted audio.
+        const float l = controlLeft != nullptr ? controlLeft[i] : outL[static_cast<size_t> (i)];
+        const float r = controlRight != nullptr ? controlRight[i] : outR[static_cast<size_t> (i)];
+        own = std::max (own, std::abs (0.5f * (l + r)));
         if (! outRing.empty())
         {
             outRing[static_cast<size_t> (ringWrite)] = y;
@@ -1549,7 +1710,8 @@ void VirtualPercussionEngine::pushOutputToRing (int numSamples, float master) no
     // For the level watcher next block: it runs before the part is rendered, so
     // the newest own-level it can have is the previous one - which is the right
     // one anyway, because that is the part that has had time to come back round.
-    ownPeakLast = own;
+    partPeakLast = own;
+    emittedPeakLast = emittedPeak;
 }
 
 void VirtualPercussionEngine::process (const float* const* inputs, int numInputs,
@@ -1846,6 +2008,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             inputRestartPending.store (true, std::memory_order_relaxed);
         }
     }
+    if (resumedAfterSourceSilence (numSamples, sourcePeak, source))
+        inputRestartPending.store (true, std::memory_order_relaxed);
     bool dropQueuedInput = false;
     if (inputRestartPending.exchange (false, std::memory_order_relaxed))
     {
@@ -1932,6 +2096,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // a chord change but a conga's ring is close enough to one to be worth not
     // handing to a chroma.
     {
+        harmony.setReferenceAveraging (source != FollowSource::speaker
+                                       && ! lastBarTrusted.load (std::memory_order_relaxed));
         HarmonicChange::Change ch[HarmonicChange::kMaxChanges];
         const int got = harmony.process (mono.data(), numSamples, ch,
                                          HarmonicChange::kMaxChanges);
@@ -1946,9 +2112,8 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // tempo the restart just dropped.
     if (dropQueuedInput)
         preserveCombOnEpoch = false;
-    // A loaded file never goes quiet into a *different* source: the next song
-    // is another file and restarts explicitly (notifyInputRestart). A cold
-    // epoch mid-song - a near-silent break, then the band back - threw away
+    // A loaded file can contain a whole set: a return after sustained source
+    // silence above is an explicit restart too. Other cold epochs mid-song - a near-silent break, then the band back - threw away
     // the comb and the model under a playing part, and the fresh acquisition
     // wandered for ~10 s (LET ME LOVE YOU 99 -> 60 and VITA 96 -> 62 on the
     // iPad; 197 -> 79 at 48 kHz on the desktop). Once the part has played on a
@@ -2083,30 +2248,9 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // the analysis hears or decides. The red is the light the player sees
     // (vp::tempoOut on a judged state), so the screen never says one thing
     // while the part does another. docs/TODO.md item 118.
-    {
-        const double blockSec = static_cast<double> (numSamples) / sampleRate;
-        if (! tr.percussionShouldPlay || ! cfg.driftGuard.load (std::memory_order_relaxed)
-            || ! cfg.tempoFollow.load (std::memory_order_relaxed))
-        {
-            driftGuarded = false;
-            guardOutSec = guardInSec = 0.0;
-        }
-        else if (followBarJudged (tr.followBar) && tempoOut (tr.state, tr.shortFitResidual))
-        {
-            guardOutSec += blockSec;
-            guardInSec = 0.0;
-            if (guardOutSec >= kGuardEnterSec)
-                driftGuarded = true;
-        }
-        else
-        {
-            guardOutSec = 0.0;
-            guardInSec += blockSec;
-            if (driftGuarded && guardInSec >= kGuardLeaveSec && tr.clock.wrappedBar)
-                driftGuarded = false;
-        }
-    }
-    const bool partAudible = tr.percussionShouldPlay && ! standingDown && ! driftGuarded;
+    updateDriftGuard (tr, numSamples);
+    const bool controlPartAudible = tr.percussionShouldPlay && ! standingDown && ! controlGuarded;
+    const bool partAudible = controlPartAudible && ! driftGuarded;
 
 #if defined(VP_ENABLE_RECORDED_LOOPS) && VP_ENABLE_RECORDED_LOOPS
     // The recorded percussionist. With the flag off - which is the default -
@@ -2116,7 +2260,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     HybridPercussionRenderer::Input hin;
     hin.tick = tr.clock;
     hin.regime = tr.regime;
-    hin.audible = partAudible;
+    hin.audible = controlPartAudible;
     hin.bpm = tr.clock.tempoBpm > 40.0f ? tr.clock.tempoBpm
                                         : (tr.bpm > 40.0f ? tr.bpm : 120.0f);
     hin.style = chosen;
@@ -2130,11 +2274,16 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     hin.shakerSound = cfg.shakerSound.load (std::memory_order_relaxed);
     hin.congaSound = cfg.congaSound.load (std::memory_order_relaxed);
     hin.sectionChanged = sectionJustChanged;
-    hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin);
+    hybrid.render (percussion, outL.data(), outR.data(), numSamples, hin,
+                   controlL.data(), controlR.data());
 #else
     percussion.render (outL.data(), outR.data(), numSamples, tr.clock,
-                       partAudible);
+                       controlPartAudible, controlL.data(), controlR.data());
 #endif
+
+    // Fade the whole percussion bus, including tails, before output AND leak
+    // reference. Clock, analysis and monitor click retain their own timing.
+    applyDriftGuardGain (numSamples, driftGuarded, partAudible, controlPartAudible);
 
     const bool monitorClick = clickEnabled.load (std::memory_order_relaxed);
     const float master = cfg.masterVolume.load (std::memory_order_relaxed);
@@ -2162,7 +2311,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
         latencyProbe.process (rawIn.data(), outputs[0],
                               numOutputs > 1 ? outputs[1] : nullptr, numSamples);
 
-    pushOutputToRing (numSamples, master);
+    pushOutputToRing (numSamples, master, controlL.data(), controlR.data());
 
     lastBpm.store (tr.bpm, std::memory_order_relaxed);
     // After the BPM: a page that sees this generation sees its tempo.

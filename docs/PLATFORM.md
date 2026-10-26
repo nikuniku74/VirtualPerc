@@ -231,4 +231,32 @@ internal track is not playing, the app closes the audio device and stops the AI
 worker; it restores both on resume. An armed performance keeps running, but the
 hidden interface is not repainted at 15 Hz.
 
-Mode is `AVAudioSessionModeMeasurement` - no AGC, no noise suppression, no echo canceller between the room and the tracker. The settings page can put it back to `Default` (**INGRESSO / ELAB.**) for a route that misbehaves without iOS's processing.
+Microphone mode is `AVAudioSessionModeMeasurement` - no AGC, no noise suppression, no echo canceller between the room and the tracker. The settings page can put microphone input back to `Default` (**INGRESSO / ELAB.**). Output-only BRANO uses `Default`; changing the microphone preference must not reconfigure its session.
+
+
+### Device evidence, TODO163 (2026-10-26)
+
+The generic diagnostic bundle and the existing personal FULL bundle were both
+running. Their different session policies caused repeated category changes,
+audio/UI stutters and AirPods route churn (AirPods connected only to iPad).
+Terminate the temporary generic process before testing/updating FULL; preserve
+FULL's data. With only one active app, no new XRUN or player underrun occurs
+during the full Everytime playback. The FULL trial's initial XRUN28 remains
+28 throughout165 active samples; no AI gap, callback around0.04ms/256 frames.
+The listener confirms123BPM and a clean percussion entrance.
+
+JUCE's existing no-op CategoryChange notification is now discarded before its
+callback lock/error path. Genuine route changes retain their recovery path.
+This and the output-only mode policy did not fix competing app instances by
+themselves; do not describe them as the cause of the measured XRUN reduction.
+Final production builds omit the temporary command-line playback/logging hook.
+
+### Device evidence, TODO164 (2026-10-26)
+
+Only FULL remains installed; generic diagnostic Documents/Library backed up
+before removing that duplicate. Canzone playback195s with output guard:
+XRUN1→1, zero player underruns/AI gaps, callback~0.04ms/256. Listener hears
+a cleaner entrance, with residual intro phase inaccuracy (DSP, not routing).
+Clean Release build, signature and install pass with temporary startup hook
+removed. Final normal launch is refused because the device is locked; do not
+claim a subsequent clean-package physical playback.

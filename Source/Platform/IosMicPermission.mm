@@ -95,8 +95,10 @@ void prepareAudioSession (const AudioSessionRequest& request)
 
     // Measurement is iOS with its hands off the signal: no AGC, no noise
     // suppression, no echo canceller between the room and the tracker.
-    NSString* const wantMode = request.inputProcessing ? AVAudioSessionModeDefault
-                                                       : AVAudioSessionModeMeasurement;
+    // BRANO has no input to process: keep Playback in Default mode instead
+    // of asking the live output session for microphone measurement settings.
+    NSString* const wantMode = ! request.needsInput || request.inputProcessing
+                                  ? AVAudioSessionModeDefault : AVAudioSessionModeMeasurement;
     if (! [s.mode isEqualToString: wantMode])
     {
         [s setMode: wantMode error: &err];

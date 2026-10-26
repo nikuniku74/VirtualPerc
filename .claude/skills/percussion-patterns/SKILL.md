@@ -140,9 +140,11 @@ Three rules:
    the bar told you where you were in it, so it read as a machine.
 3. **`setSubdivision` thins, never adds.** `quarter` keeps steps 0/4/8/12,
    `eighth` keeps even steps, `sixteenth` keeps all steps, and `autoDetect`
-   means eighths. The same predicate gates shaker, written congas, fills and
-   conga ghosts. The no-conga-on-step-0 guard still wins. Recorded WAV loop
-   stems do not pass through this event filter.
+   means eighths. This thins shaker/cembalo; congas keep their authored
+   sixteenth figure, fills and ghosts on every Misure setting. Their swing
+   also uses that native sixteenth grid (TODO158 fixes a wrong dependency on
+   Misure). The no-conga-on-step-0 guard still wins. Recorded WAV loop stems
+   do not pass through this event filter.
 4. **`setShakerNatural` is the one exception, and only for the shaker (and
    cembalo, which is the same part).** Off by default: 1/4 / 1/8 / 1/16 stay
    exact grids. On, it lets through authored `shaker[16]` values the
@@ -317,11 +319,10 @@ reference's own bar disagree by more than the number being chased. The engine st
 because the warp is written in terms of it, and `setSwing` still commits on the
 next quarter like the style does - one beat can never contain two timing maps.
 
-The geometry is asserted, not argued about (`swing-grid` in `VPTests`): straight,
-every sixteenth is exactly where it is written; swung, all sixteen land on
-**0, 1/3, 2/3, 5/6** of the beat - the two eighths on the triplet and each one's
-own subdivision riding the same stretch. `delayBeats` never goes negative at any
-amount.
+The geometry is asserted (`swing-grid` in `VPTests`): a sixteenth part
+lands on **0, 1/3, 1/2, 5/6** at full swing. An eighth part warps the
+whole quarter. Congas always use their authored sixteenth grid, independent
+of Misure; shaker/cembalo use the selected grid. `delayBeats` stays nonnegative.
 
 The recorded bank has no swung takes: past `LoopBank::swingTolerance` (0.18) it
 refuses, so SWING on always falls back to the stroke engine. That is a handover,
@@ -364,8 +365,10 @@ half of this: any fader can play quieter; only a player plays **less**.
 - Below the floor the engine **stops**, at a bar line, and comes back when the
   band does (`BandDynamics::wantsSilence`; the UI reads IN ASCOLTO).
 - The drift guard is the other silence (`docs/TODO.md` item 118): the tempo
-  light red for 3 s without a break stops the part at once; it comes back on
-  the first bar line after 1 s out of red. Output only, like the stand-down;
+  light red for 3 s without a break stops new hits and fades the complete
+  percussion bus (tails included) in 40 ms; it comes back with a 40 ms fade on
+  the first bar line after 1 s out of red. The faded signal is also the echo
+  reference. Clock and analysis keep running. Output only, like the stand-down;
   off in FISSO and with PAUSA SE FUORI off. The UI reads FUORI TEMPO - IN PAUSA.
 
 Two structural facts about the input, from `BandDynamics.h`, worth knowing
@@ -436,13 +439,17 @@ were playing.
   regression is `VPTests --percussion`; on the current bank the relative
   difference between consecutive medium hits is 0.000470 for shaker and
   0.000171 for open conga (both were exactly zero before).
-- **Attack compensation.** A shaker is not a click: measured on the bundled
-  library its energy needs 10-13 ms to get where a slap gets in 2. So attacks
-  are measured per sample (`measureBankAttacks`), the tracker runs the clock
-  ahead by `attackLeadSamples()` (the slowest in the bank), and every stroke is
-  then **held back** by `bankAttackLead - s.attack` so they all land together.
-  Never hard-code these numbers: they are a property of the recordings.
-  **Triangle does not vote for that slowest.** The first synthesised open
+- **Attack compensation (TODO162).** The clock keeps the nominal articulation
+  reference (`bankAttackLead`, bounded25ms); it does not move when per-take
+  calibration changes. The prepared samples carry an audible attack measured
+  through the existing trim/limiter at the centre of their dynamic layer.
+  Voices wait `max(0, bankHeardTarget - s.attack)`. The target covers the slowest
+  prepared layer/take, bounded by the existing25ms lead plus6ms common hold.
+  On this bank: lead17.854ms, target26.583ms,2.729ms extra heard margin. All this
+  reads percussion assets in prepare(), never future input music. A separate
+  nominal control bus keeps epochs/AGC independent of audible calibration;
+  the echo reference remains the actual emitted waveform after MASTER.
+  **Triangle votes for neither the lead nor the audible target.** The first synthesised open
   peaked 15-25 ms in (`kMaxAttackLeadSec = 0.025`), which raised
   `attackLeadMs()` from the shaker's 10-13 ms toward the ceiling and put
   the whole kit slightly *in anticipo* of the band. Triangle still gets a
@@ -518,7 +525,7 @@ not CC0, fine on his own device). `scripts/prepare_loop_congas.py` cuts it:
   under the open tone at medium velocity; the derived medium layer is 1.3 dB.
 - `kDrumTune` is 1.0 (natural pitch). The synthesis fallback keeps its own
   `kSynthDrumTune` (2^(5/12)).
-- `kCongaLevel` 1.778 (+5 dB) on the congas' knob: A-weighted over the loudest
+- Historical (2026-09-28): `kCongaLevel` 1.778 (+5 dB) on the congas' knob: A-weighted over the loudest
   150 ms at velocity 0.9 the congas were ~-24 dBA against -21 cembalo and
   -18.5 clap; now ~-19. A soft clip (tanh above 0.80) at the end of
   `render` rounds peaks instead of clipping them; it also covers stacked
@@ -532,8 +539,8 @@ not CC0, fine on his own device). `scripts/prepare_loop_congas.py` cuts it:
   alike. Now all four within 0.1 dB on average (+-1.4 dB between styles, the
   patterns differ). All four together reach the soft clip on 0.39% of samples.
   `VPRender --raw` skips the peak normalisation so voices can be compared.
-- Measured: attack spread identical to HEAD (25.9-28.6 ms; the 2.7 ms
-  pre-existing FAIL is the synthesized clap), drum-strike 2.0-3.0 ms,
+- Historical measurement: attack spread identical to that HEAD (25.9-28.6 ms;
+  attribution to clap was not established), drum-strike 2.0-3.0 ms,
   `VPTests --percussion` 17/0, `--leak` MIXER rows and seam unchanged. The iPad
   speaker path is worse (no-leak rows, and the canceller-on/off seam through
   the room): the new congas pass the modelled speaker's 260 Hz high-pass where
@@ -549,6 +556,137 @@ not CC0, fine on his own device). `scripts/prepare_loop_congas.py` cuts it:
 - Default figure is DANCE (`EngineSettings::grooveStyle`), with a one-time
   preference migration (`grooveDanceDefault`) so an old saved MARCHA does not
   keep it.
+
+### Conga balance and routing (2026-10-25, TODO158)
+
+`kCongaLevel` is now **3.274**, +6 dB from 1.641, at the listener's request.
+It follows `KitSound::congas`, like the other sound trims; the slot contributes
+only its fader. Previously reassigning sounds applied the conga trim to the
+wrong family. Three exact waveform tests cover conga, shaker and triangle
+on all four equal-level slots. Six styles, eight raw bars each: congas
+**+5.21 dB RMS** after existing soft limiting, other default voices **0.00 dB**.
+This is an electrical level measurement, not a perceptual balance judgement.
+At full volume up to 0.227% of conga samples reach |x|>.999; the existing
+0.80 soft clip stays in place. The listener confirmed “A tempo e congas più presenti” on the physical iPad
+microphone/speaker trial, with music from the Mac at 20–30 cm. This covers
+that listening setup, not every PA or a new loudness calibration.
+
+The TODO158 attack check measured **3.04 ms** against the unchanged2 ms bound,
+between shakerUp and triangleClosed, not clap. TODO160 strengthens this check
+to all three round-robin takes and measures the40 ms attack window from each
+voice's own start (the same window as production calibration), excluding its
+variable hold. The80% fraction and2 ms acceptance bound stay unchanged. This
+is still an explicit red; do not claim the broader RR spread is a newly
+introduced production regression.
+
+### TODO160 — calibration experiments rejected (2026-10-25)
+
+Per-layer/per-take calibration through the existing trim and limiter at the
+centre of each velocity band, with `max(0, lead + commonHold - attack)`, reached
+1.15 ms across all48 stroke/RR pairs at velocity0.9. Its17.854 ms clock lead,
+gains and patterns were unchanged. The earlier variant raising the clock
+lead to24.229 ms was already rejected on the325-run bank. The stable-lead
+variant also fails the real-song gate: the changed own-output witness shifts
+an input epoch by one callback; re-priming make-up from that block then alters
+the network's input. Isolated no-calibration controls restore exact primary
+MIXER/BRANO traces. Consequently **all production calibration changes were
+removed**, not retained because the isolated attack test was green.
+
+A global continuous-epoch/safe-headroom make-up-retention candidate was also
+rejected: it only partly recovers the lost MIXER correct share and does not
+remove the BRANO common-correct phase regression. Fix this analysis/output
+coupling before changing attack timing again. No per-song offset or special
+BPM rule is an acceptable workaround. The stronger triangle test injects an
+artificially late beater and directly proves that it cannot move the kit lead.
+The existing independent raw drum-strike check remains.
+
+Two later isolated TODO160 candidates also preserve both make-up envelope and
+gain across a safe-headroom continuous epoch, or only a rhythm-arrival epoch.
+They pass26/0 attack checks and restore the BRANO phase gate but still lower
+the MIXER regression witness97.1483→96.7681% /96.5779% correct respectively.
+Both were rejected before any whole-bank claim; main sources never included
+them. Artefacts:continuous*/rhythm-continuity* in vp-complete-20261025. Gain
+retention alone does not remove output-to-epoch decision coupling.
+
+`vp-complete-20261025/listen/` contains **rejected-candidate** audition files.
+The listener replied “Non posso ascoltare adesso”; no new physical-iPad trial
+or approval was obtained. Production sounds remain the previously verified
+TODO158 bank and conga gain.
+
+### TODO161 — fast-input-envelope priming rejected (2026-10-25)
+
+Another isolated candidate combined the stable-lead layer/RR calibration with
+continuous-source epoch priming from max(current block peak, levelFast times
+inputTrim). Percussion checks26/0, but the held-out MIXER witness loses correct
+tempo97.1483→0%; BRANO keeps95.2471% tempo but common-correct p90 increases
+28.266→30.269 ms and bar100→96.7742%. Microphone passes. Reject immediately,
+restore all Source/Tests byte-for-byte to the initial optimized TODO160
+snapshot. Neither a fast input envelope nor a single callback peak is a
+substitute for preserving the network's validated operating level. No new
+listening approval, full-suite success or whole-bank result is claimed for
+this rejected candidate. Artifacts: vp-downbeat-attacks-20261025.
+
+A still smaller raw-only per-take/layer calibration (no trim/limiter in the
+measurement, clock lead unchanged, common hold available for late takes)
+reduces48-case spread17.98→2.79 ms but repeats the MIXER97.1483→96.5779%
+regression and BRANO common-correct phase regression. Also rejected; the
+post-limiter measurement is not required to trigger the output/epoch coupling.
+
+### TODO162 — separate control timing from heard attacks (verified; listening pending)
+
+A per-articulation nominal control bus now uses the same shared voice renderer
+and sample bank as the calibrated audible bus, with independent voice/reverb
+state. Actual output, after MASTER, remains the echo waveform. Guard fading
+scales both buses. Control is pre-MASTER and unaffected by per-take timing.
+HybridPercussionRenderer must carry and blend this bus too: the current CMake
+build enables VP_ENABLE_RECORDED_LOOPS, although older comments claimed off.
+The control contains actual recorded-loop share plus nominal single-stroke
+share. No second copy of the sample bank; all allocation is in prepare().
+
+Stable17.854ms lead,6ms common hold and48-case1.15ms attack spread. Frozen
+controlbus2 bank325:275 exact,2 MIXER and48 microphone numeric differences,
+zero rejected gates, zero lost/gained correct beats or extra jumps/surges/skips.
+Maximum common-correct phase delta0.01684ms MIXER /0.11828ms microphone.
+Focused percussion27/0 includes exact nominal-control equality with changed
+heard audio; loops59/0 includes actual loop share and zero callback allocation.
+The later full-wake TODO162 closure extends soft/medium headroom:48-case
+spread12.625→0ms at velocity1/6,13.521→0ms at0.5,17.979→0.77ms at0.9;
+percussion29/0, with original2ms/80%/40ms bounds. Six additional edge probes
+include0.08..0.67, maximum1.92ms. At full velocity1.0 the stricter diagnostic
+still reads5ms (before17.979): do not claim universal2ms calibration at every
+gain. Representative layer centres/gain1 are the calibration domain.
+
+Final projection bank325:264 exact,61 numeric differences (4 MIXER,3 BRANO,
+54 microphone), zero rejected gates, zero correct tempo beats lost, zero
+previously correct downbeats lost and one gained. Common-correct phase delta
+0ms direct /max0.00783ms microphone. The causal prediction projection also
+fixes two no-return/128-frame microphone canceller failures (51/0 focused).
+Host CPU cost is recorded explicitly in TODO162; no allocation in2000 hybrid
+callbacks. Signed iPad build and clean install pass; the user cannot unlock
+it now, so the physical sound/thermal check and musical listening remain.
+
+### TODO163 — gain-specific attacks, measured (2026-10-26)
+
+Tests were explicitly authorized. The53 focused checks pass; the9-velocity,
+3-fader,16-articulation,3-RR matrix measures0ms spread, including velocity1.0
+(former5ms). The attack-only325 bank has323 exact/2 changed, zero gates lost.
+Layer-centre calibration alone cannot cover fortissimo: the limiter changes
+the relative80% attack point with gain. The new trigger path uses the cached
+raw attack if the hit's40ms asset window stays below the limiter knee;
+otherwise it measures that same immutable percussion asset through soften at
+the current velocity/slot/level gain. Two bounded passes, no scratch vector,
+allocation, lock, input analysis or I/O. This is kit-asset work, not a read
+ahead of the input music. Later fader moves and stacked voices sharing the
+limiter are not predicted: the isolation matrix is not proof of mixed-output
+alignment. Humanized stereo and musical listening remain in the final checks.
+The audible target also covers each non-triangle raw attack within the same
+25ms+6ms cap; nominal control timing and clock lead remain separate. There is
+no per-title/BPM correction and no change to gains or patterns.
+
+Checks retain the unchanged80%/40ms/2ms bounds. The nominal-control fixture
+explicitly forces rawAttack/controlAttack and bypasses the clipped branch in
+the reference engine. Measure CPU, including callback peaks at clipped-hit
+starts, before accepting this exact gain-dependent computation.
 
 ## 12. Editing checklist
 
@@ -619,7 +757,7 @@ refuses `step >= 4 * beatsPerBar` anyway.
 ## 13. Related
 
 - `Source/Loops/` + `docs/RECORDED_LOOPS.md` - the recorded-loop percussionist,
-  behind `VP_ENABLE_RECORDED_LOOPS` (off by default). The clock is never the
+  behind `VP_ENABLE_RECORDED_LOOPS` (ON in the current CMake build; without a bank the single-stroke fallback runs). The clock is never the
   loop's: the loop is pulled onto the grid, corrected by rate, never by a jump.
   Loop stems are not thinned by `setSubdivision`; only synthesized
   `GrooveEngine` events are.
@@ -627,3 +765,11 @@ refuses `step >= 4 * beatsPerBar` anyway.
 - `docs/AUDIO_ENGINE.md` - the signal path around all of this.
 - For anything about *when* a stroke happens rather than *what* it is, use the
   `realtime-tempo` skill.
+
+
+Latest TODO164 full default suite797/0;325 paired probes lose no musical
+gates. TODO163 gain-specific calibration closes the old fortissimo5ms residual
+(53/0, isolated attack spread0ms). Actual output guard now prevents already-red
+first notes; nominal control rendering/fade remain independent.52 audible
+pairs remove38 red openings to0. Physical listener confirms cleaner entrance,
+but Canzone intro phase remains imperfect; do not call it fully aligned.

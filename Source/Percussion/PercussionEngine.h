@@ -15,6 +15,7 @@ namespace vp
 
 class PercussionEngine
 {
+    friend struct PercussionAttackProbe;
 public:
     void prepare (double sampleRate) noexcept;
     void reset() noexcept;
@@ -59,10 +60,10 @@ public:
     void setShakerNatural (bool on) noexcept { groove.setShakerNatural (on); }
 
     /** How far ahead of the beat the clock must place a pulse for the stroke to
-        be *heard* on it: the slowest attack in the bank. The tracker adds this
+        be *heard* on it: the slowest articulation reference in the bank. The tracker adds this
         to the lead it already runs to cover the analysis and the output path.
-        Every stroke is then held back by the difference between this and its
-        own attack, so they all land together. */
+        Each take uses this lead plus the common hold to compensate its own
+        measured attack, without moving the clock when alternate takes vary. */
     int  attackLeadSamples() const noexcept { return bankAttackLead; }
     float attackLeadMs() const noexcept
     {
@@ -109,7 +110,8 @@ public:
     void clearVoices() noexcept;
     void silence() noexcept;
 
-    int  render (float* left, float* right, int numSamples, const ClockTick& tick, bool audible) noexcept;
+    int  render (float* left, float* right, int numSamples, const ClockTick& tick, bool audible,
+                 float* controlLeft = nullptr, float* controlRight = nullptr) noexcept;
 
     /** Start one stroke directly, bypassing the groove. Diagnostic only: it is
         how the timing probe measures an articulation's own attack, which is
@@ -174,7 +176,11 @@ private:
             recording, not of the articulation - a different library would have
             different numbers, and hard-coding these would silently stop being
             true the day the assets change. */
-        int attack = 0;
+        int attack = 0; // Layer-centre diagnostic and prepared headroom reference.
+        int rawAttack = 0;
+        float attackPeak = 0.0f;
+        // Nominal articulation timing keeps input-epoch control independent of take alignment.
+        int controlAttack = 0;
     };
 
     struct Voice
@@ -202,10 +208,13 @@ private:
     void   measureBankAttacks() noexcept;
     void   layerFromRecording (Sample& dest, const std::vector<float>& src,
                                Stroke stroke, float force, std::uint32_t seed, bool ownTake = false) noexcept;
-    Voice& allocateVoice() noexcept;
+    Voice& allocateVoice (Voice* pool, std::uint32_t& clock, int* steals = nullptr) noexcept;
+    int renderVoices (Voice* pool, float* left, float* right, int numSamples,
+                      juce::Reverb& effect, int& releasing) noexcept;
     void   trigger (Stroke stroke, float velocity, int sampleOffset,
                     KitSound part = KitSound::count, float level = 1.0f) noexcept;
-    void   releaseStroke (Stroke stroke) noexcept;
+    float  volumeFor (KitSound part) const noexcept;
+    void   releaseStroke (Stroke stroke, Voice* pool) noexcept;
     void   discardPendingVoices() noexcept;
     void   applyPendingGrooveControls() noexcept;
     void   synthesizeShaker (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
@@ -213,7 +222,7 @@ private:
     void   synthesizeTriangle (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeDrum (Sample& s, Stroke stroke, int layer, std::uint32_t seed) noexcept;
     void   synthesizeClap (Sample& s, int layer, std::uint32_t seed) noexcept;
-    void   chokeTriangles() noexcept;
+    void   chokeTriangles (Voice* pool) noexcept;
     void   applyReverbParams() noexcept;
     const  Sample& pick (Stroke stroke, float velocity, float& gain) noexcept;
 
@@ -221,9 +230,12 @@ private:
     bool   recorded[kStrokes] {};   // which strokes came from a recording
     int    rrCursor[kStrokes] {};
     Voice  voices[kVoices] {};
+    // The control bus shares samples and mixing code, not the audible attack offsets.
+    Voice  controlVoices[kVoices] {};
+    std::uint32_t controlClock = 0;
     GrooveEngine groove;
     DeterministicRng rng { 0x51A4E1u };
-    juce::Reverb reverb;
+    juce::Reverb reverb, controlReverb;
     double sampleRate = 48000.0;
     float humanization = 0.35f;
     float shakerVolume = 1.0f;
@@ -247,6 +259,7 @@ private:
     float grooveBpm = 120.0f;
     int groovePulses = 4;
     int bankAttackLead = 0;
+    int bankHeardTarget = 0;
     bool enabled = true;
     bool useRecordedSamples = true;
     int totalHits = 0;

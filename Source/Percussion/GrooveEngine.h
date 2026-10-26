@@ -198,7 +198,7 @@ public:
 
 private:
     float humanVelocity (float base) noexcept;
-    float humanDelay (int step) noexcept;
+    float humanDelay (int step, Subdivision grid) noexcept;
     /** Level applied to every stroke that survives, 0.4 at the floor to 1. */
     float dynamicGain() const noexcept;
     /** Whether a stroke written at this velocity is still in the part. */

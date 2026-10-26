@@ -4,6 +4,20 @@ Moved verbatim from SKILL.md section 3 on 2026-10-07. Chronological log: newest 
 
 ## 3. Phase: the part that is easy to get wrong
 
+**TODO163 (2026-10-26), measured.** Separate fitted `phasePeriodSec`
+projection was rejected: Everytime p90 worsened44/48ms. No production field or
+projection change remains. A trust-scaled phase nudge was also rejected
+(BRANO p90+2ms); keep the ordinary clock controller.
+
+`tryAlignFrom` treats a clear vote for the current one as an answer on direct
+sources, with the existing playing margin once sounding. This stops harmony
+from overruling a decided network merely because no rotation is required.
+Uncertain network and speaker retain their fallback. The all-source variant
+lost correct room downbeats (GARDEN3300) and was removed. Direct-only combined
+325:321 exact/4 changed, no old correct downbeats lost; new44min MIXER right
+one77.433628→79.056047%. Everytime's correct pulse level is a separate START
+lifecycle fix, not proof of a correct automatic downbeat.
+
 **Kept (2026-10-09), half-bar moves need 8 beats of persistence (docs/TODO.md item 121).**
 With the part playing, a half-bar rotation needed only the network's votes to
 clear the playing margin, and the short memory (0.95) let a passage where the 3
@@ -261,3 +275,90 @@ against a damaged old fit. Its metadata is fifteen intervals; the existing
 `transitionIntervals >=7` policy covers both proof lengths. Phase still comes
 from the latest eight-point fitted line and uses the same continuous clock.
 No new phase controller or re-entry rule was introduced.
+
+### Missing downbeat publications retained (2026-10-25, TODO157)
+
+A publication contains only the latest beat's downbeat confidence. When its
+serial advances by N, decay the network histogram and observed-evidence count
+by 0.95^N, then add one observed vote only. Break the eight-consecutive-beat
+half-bar proof when N>1. Never reconstruct or duplicate missing opinions.
+N=1 retains the original arithmetic; manual bar lock and all margins remain.
+
+Isolated causal A/B: 325 pairs,323 byte-identical; the two remaining traces
+change no decision metric, common-correct phase/bar, audible coverage, jumps,
+surges or skipped sixteenths. Combined with the missing-fit proof reset:
+325/325 byte-identical. New test covers elapsed-beat decay, one observed vote,
+streak interruption and a manual-lock/unlocked control. No improved one score
+is claimed on this corpus; this corrects the missing-publication edge case.
+
+
+### TODO160 — harmonic detector experiments rejected (2026-10-25)
+
+All three global candidates are discarded; production HarmonicChange is
+restored byte-for-byte to the pre-TODO160 source. Per-frequency median before
+folding (rather than the original folded-chroma median) gave6/0 in the focused
+suite: full-mix one19%→34%, drum-free detector100%→90%, actual drum-free engine
+count still83%. Nevertheless the325-run combined bank found14 rejected
+witnesses; the matching no-harmony ablation isolates additional bar losses
+from this detector. Max pooling octaves instead of summing then gave2/4 in the
+focused suite (32% full-mix,75% drum-free, engine bar0%); rejected immediately.
+
+A smaller candidate required a full-window span before confirming a change:
+three overlapping hops span only two intervals, not three independent
+observations. Five hops (`kWindow/kHop+1`) gave58% full-mix one,100% drum-free
+and83% engine count, snare-only changes4→2, six focused checks green. However
+the65-case regression/held-out cohort still exposes bar losses on real tracks;
+this candidate is rejected too. A green synthetic detector is not evidence
+that the application's one improved. Original full-mix expectation (>33%)
+remains an explicit pre-existing red; its19% result is not hidden by changing
+the gate, disabling the test or claiming the entire22-red objective solved.
+Artefacts: harmony-first.log, harmony-max.log, harmony-window.log,
+all2-assessment.json, core-assessment.json, window-assessment.json under
+`build-host/vp-complete-20261025/`. The all2 production-profile suite was758/0
+but its real-song regressions still vetoed it. Tests alone are insufficient.
+
+
+### TODO161 — further harmonic candidates rejected (2026-10-25)
+
+Artifacts in build-host/vp-downbeat-attacks-20261025. Refractory counted on all
+hops (instead of usable observations) damages sparse one100→25%; candidate
+chroma coherence against the same enter gate gives50% sparse; subtracting
+common chroma floor after the original tonality gate gives18% full-mix one;
+root-summed energy across octaves15%. All rejected on the causal standalone
+probe. The original gates and the production detector are restored.
+
+Median of unit directions per hop, while retaining raw-median tonality/energy
+classification, gives44% full-mix one (14/6/1/11, baseline7/13/5/12),100% sparse,
+4 snare events and6/0 integration checks, actual sparse engine one83%. Still
+rejected:21 real-song causal probes expose four bar regressions, including
+MIXER80.8511→74.4681% and50.8621→50% on the common-correct cohort; the other17
+traces are byte-identical, all tempo/jump/surge/skip counts unchanged. A
+scale-independent median does not by itself prove a more accurate musical
+bar. No whole325 claim is made for a candidate already disproven locally.
+
+
+### TODO162 — source isolation and acquisition reference (2026-10-26)
+
+HarmonicChange now resets in the common explicit analysis lifecycle:
+prepare/reset/new file/source. Two new tests warm tonal memory, then prove
+both reset and queued input restart clear it. Automatic epochs and ordinary
+BPM changes retain it. The older statement that no epoch ever clears it must
+be read with this explicit-source exception.
+
+During acquisition on direct feeds, the reference of a confirmed chord is the
+mean of its three confirming observations. Once lastBarTrusted is true, use
+the previous last-window reference; speaker keeps that conservative profile.
+No event threshold, dating, vote margin or musical deadline changes. Synthetic
+full mix7/13/5/12→10/6/3/5 (19→42% one), sparse100% and actual sparse engine83%
+unchanged; snare-only4→3. Focused suite6/0. A mean used continuously loses two
+old correct downbeats on a whole set and is rejected. Clearing harmonic votes
+on every new grid or resetting the detector at automatic cold epochs also
+regresses real material; neither is kept.
+
+With the independent attack control bus and final echo projection, all325
+paired probes pass. Direct phase is unchanged on the common-correct cohort;
+bar-by-bar comparison proves zero old correct downbeats lost and one newly
+correct at24.0824s on held-out BRANO (97.541→98.361% on that file). This is a
+small real gain, not evidence that every song's one or acquisition became
+perfect. See TODO162 for the separate attack/harmony/projection ablations,
+CPU cost, full-wake tests and the pending iPad listening.

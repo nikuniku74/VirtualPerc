@@ -167,7 +167,78 @@ Whole sets, 40 additional files and a new 44-minute recording are included in
 `references/verification.md` / TODO155; 301 paired probes, no file loses correct
 tempo share and no per-file skipped-sixteenth increase. Item156 adds24fresh pairs
 (325total), confirms322identical/3improved, and checks long-set lost-correct
-sections as well as aggregates; see verification.md. Hardware listening remains.
+sections as well as aggregates; see verification.md. Hardware listening remains for those earlier timing candidates. TODO158 adds
+a 40ms output fade and conga balance/routing fixes:325 paired traces,312
+identical,13 tiny numerical differences within the regression gates; no
+acquisition speedup claimed. A physical iPad microphone/speaker trial confirms
+real ONNX operation and the listener hears timing and more present congas.
+TODO159 separates the pre-master own-onset witness from the post-master echo
+reference: a constant MASTER position must not change source epochs. Later
+MASTER increases rebase that witness to preserve the existing return veto.
+See room-and-epochs.md; room refit candidates were rejected for real coverage
+loss despite synthetic improvements. No new room-acquisition speedup claimed.
+
+TODO160 keeps three narrower corrections: manual range-edge **quality** may
+be valid while its out-of-range period remains rejected; a confirmed acoustic
+refit is protected only before the decoder has ever sounded; the echo search
+correlates coarse envelope cells rather than absolute carrier samples.
+The325 paired bank has280 exact traces, including **all229 MIXER/BRANO**;
+45 room traces have tiny differences with no regression-gate failure. All96
+room results match the echo-only ablation. No real-song acquisition speedup
+is claimed. Harmonic and articulation-calibration candidates were rejected
+despite green synthetic tests: those two limits remain open. See TODO160 and
+the matching references for before/after measurements. Final default suite:
+756/2 of758; the two FAIL names are unchanged. Hoisting the invariant input
+cells removes repeat work with325/325 outputs identical to the functional
+version and17,408 bit-identical scalar checks. Host timings are not an iPad
+thermal/audio validation.
+
+TODO162 (2026-10-26) closes the two original remaining FAIL names: default
+full-wake suite764/0 (756/2 before, six new assertions). Audible attacks are
+calibrated per layer/RR while a shared nominal control bus keeps epochs/AGC
+independent. Soft/medium48-case spread12.625/13.521→0ms; hard0.9 is0.77ms.
+The clock lead stays17.854ms; prepared-asset target adds2.729ms heard margin,
+with no future input. Harmonic memory resets on explicit new source/reset;
+direct-feed acquisition averages the confirming chroma observations while a
+trusted count and speaker keep the conservative reference. Synthetic full-mix
+one19→42%, sparse100% unchanged. Final325:264 exact,61 numeric differences,
+zero regression gates or extra clock events; no old correct tempo/downbeats
+lost, one held-out BRANO downbeat gained. Direct common-correct phase unchanged,
+maximum microphone delta0.00783ms. Host CPU medians cost0.65–0.95 percentage
+points of a core; callback maxima remain below1.452ms of5.333ms. Signed iPad
+build/install pass; physical listening/thermal verification is pending because
+the user cannot unlock it now. Full velocity1.0 retains a5ms articulation
+spread: do not claim the2ms bound at every gain. See TODO162 and references.
+
+TODO163 (2026-10-26): gain-aware clipped-hit attack calibration measures0ms
+spread on9 velocities ×3 faders ×16 articulations ×3 RR, including the former
+5ms fortissimo residual (53/0). A clear aligned network bar vote blocks harmony
+fallback on direct sources only; speaker retains baseline. The combined
+pre-START325 bank has321 exact/4 changed, no gates lost, and improves the one
+on a new44min recording77.433628→79.056047%. Its default suite is789/0.
+Separate fitted phase-period projection, trust-scaled nudge and an all-source
+bar veto were measured and rejected. START after PLAY and an explicit source
+replacement now preserve the existing pending AUTO pulse-level check.24 paired
+warm/player-lifecycle probes lose no formerly correct beat/downbeat; Everytime
+BRANO0→99.10% correct tempo, MIXER unchanged and common p90 improves4.31ms.
+The physical iPad reads about123BPM and the listener confirms correct speed
+and a clean entrance. Two concurrent app variants caused the audio-session
+churn; leave only FULL active. Final325/suite/CPU closure is tracked in TODO163
+and verification.md; do not substitute earlier variant totals.
+
+TODO164 latest: full797/0,325 paired probes zero regression gates,52 actual
+output pairs remove38 red openings to0. Keep nominal rendering and its guard
+fade independent of actual early-entry veto. Physical iPad playback has no
+new XRUN, user hears cleaner entry but imperfect intro timing. Correct BPM
+is not correct phase: tonal intro grid remains displaced~0.2s vs teacher.
+A phase-only prototype has no effect and is removed. No model/phase fix is
+claimed. See verification.md for costs, rejected variants and device limits.
+
+Unverified source changes165/166 (user requested no tests): existing detected
+rest holds the counted rate; direct sources returning after3s actual silence
+reopen acquisition even within one file. Music-bearing rests retain their
+clock; fully silent internal breaks also reacquire. No new measurements,
+build or installation;797/0 applies only to164. See clock/room references.
 
 ## 5. Things we refuse to do
 

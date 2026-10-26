@@ -42,12 +42,10 @@ namespace
     constexpr float kDrumTune = 1.0f;
     constexpr float kSynthDrumTune = 1.33484f; // 2^(5/12), the fallback only
 
-    // The congas' level at a full knob. Measured A-weighted over the loudest
-    // 150 ms at velocity 0.9, the loop congas sat near -24 dBA against -21
-    // for the cembalo and -18.5 for the clap, and under a band they share the
-    // bass and guitars' octave: the percussionist had to keep the knob at the
-    // top to hear them at all (2026-09-28). +5 dB puts them beside the clap.
-    constexpr float kCongaLevel = 1.641f;
+    // Live balance requested 2026-10-25 (TODO158): +6 dB over 1.641.
+    // Six styles, eight raw bars: rendered congas +5.21 dB RMS after soft
+    // limiting; the other default voices are unchanged. Trim follows sound.
+    constexpr float kCongaLevel = 3.274f;
     // The other voices at a full knob. The first alignment (2026-10-05) used
     // the loudest 50 ms of each stroke; that favours the shaker and the
     // cembalo, which play every sixteenth, and the percussionist still had to
@@ -55,10 +53,10 @@ namespace
     // (2026-10-17). Measured on the groove instead: K-weighted loudness of
     // each voice alone over 16 bars (marcha/rock/dance/pop/samba/funk at 120,
     // VPRender --raw), shaker -16.2, cembalo -16.2, congas -17.8, clap -20.1
-    // dB at the previous constants. All four now land on -18.5, a little
+    // dB at the previous constants. Before the TODO158 conga boost, all four
+    // landed on -18.5, a little
     // under the old average so the clap does not sit in the soft clip.
-    // These follow the *sound*, not the knob it is assigned to; the congas'
-    // level is the one set on their knob, above.
+    // All trims follow the sound; the assigned knob contributes its fader.
     constexpr float kShakerLevel  = 0.966f;   // -2.3 dB
     constexpr float kCembaloLevel = 1.023f;   // -2.3 dB
     constexpr float kClapLevel    = 2.018f;   // +1.6 dB
@@ -67,6 +65,27 @@ namespace
     // peaks are rounded rather than clipped; only the first milliseconds of a
     // loud stroke reach it.
     constexpr float kSoftClipKnee = 0.80f;
+
+    float soften (float x) noexcept
+    {
+        const float a = std::fabs (x);
+        if (a <= kSoftClipKnee)
+            return x;
+        const float room = 1.0f - kSoftClipKnee;
+        return std::copysign (kSoftClipKnee + room * std::tanh ((a - kSoftClipKnee) / room), x);
+    }
+
+    float soundLevel (Stroke stroke) noexcept
+    {
+        switch (kitSoundForStroke (stroke))
+        {
+            case KitSound::shaker:  return kShakerLevel;
+            case KitSound::cembalo: return kCembaloLevel;
+            case KitSound::clap:    return kClapLevel;
+            case KitSound::congas:  return kCongaLevel;
+            default:               return 1.0f;
+        }
+    }
 
     // Seconds of raised-cosine fade welded onto the end of every synthesised
     // sample. Each one is an exponential decay cut off at a fixed length, and
@@ -306,6 +325,7 @@ void PercussionEngine::applyReverbParams() noexcept
     p.width    = 0.82f;
     p.freezeMode = 0.0f;
     reverb.setParameters (p);
+    controlReverb.setParameters (p);
 }
 
 void PercussionEngine::setHumanization (float amount) noexcept
@@ -967,7 +987,8 @@ namespace
         The fraction is high on purpose: measured across the bundled library it
         puts a slap at 2.8 ms and a shaker at 10-13 ms, which is the difference
         a listener actually hears between them. */
-    int measureAttack (const std::vector<float>& x, double sampleRate) noexcept
+    int measureAttack (const std::vector<float>& x, double sampleRate,
+                       float gain = 1.0f, bool limited = false) noexcept
     {
         const int window = std::min (static_cast<int> (x.size()),
                                      static_cast<int> (sampleRate * 0.040));
@@ -976,21 +997,31 @@ namespace
 
         const float atk = 1.0f - std::exp (-1.0f / static_cast<float> (sampleRate * 0.0005));
         float e = 0.0f, peak = 0.0f;
-        std::vector<float> env (static_cast<size_t> (window), 0.0f);
+        // Two bounded passes avoid scratch allocation when a clipped hit needs
+        // its gain-specific attack. Only immutable kit assets are inspected.
+        const auto magnitude = [&] (int i) noexcept
+        {
+            const float value = x[static_cast<size_t> (i)];
+            return std::fabs (limited ? soften (value * gain) : value);
+        };
         for (int i = 0; i < window; ++i)
         {
-            const float v = std::fabs (x[static_cast<size_t> (i)]);
+            const float v = magnitude (i);
             e += (v - e) * (v > e ? 0.5f : atk);
-            env[static_cast<size_t> (i)] = e;
             peak = std::max (peak, e);
         }
         if (peak < 1.0e-6f)
             return 0;
 
         const float target = peak * 0.80f;
+        e = 0.0f;
         for (int i = 0; i < window; ++i)
-            if (env[static_cast<size_t> (i)] >= target)
+        {
+            const float v = magnitude (i);
+            e += (v - e) * (v > e ? 0.5f : atk);
+            if (e >= target)
                 return i;
+        }
         return 0;
     }
 }
@@ -998,7 +1029,7 @@ namespace
 float PercussionEngine::attackMsFor (Stroke s) const noexcept
 {
     const int idx = std::clamp (static_cast<int> (s), 0, kStrokes - 1);
-    return static_cast<float> (bank[idx][0][0].attack)
+    return static_cast<float> (bank[idx][kLayers - 1][0].attack)
            / static_cast<float> (sampleRate) * 1000.0f;
 }
 
@@ -1170,57 +1201,58 @@ void PercussionEngine::buildBank() noexcept
 
 void PercussionEngine::measureBankAttacks() noexcept
 {
-    int slowest = 0;
+    int slowest = 0, slowestTake = 0;
     for (int st = 0; st < kStrokes; ++st)
     {
-        // Averaged over the articulation's takes, not taken per take.
-        //
-        // The prepared alternate takes share one transient placement but differ
-        // in the body of the sound. Keep one timing value for the articulation
-        // so changing round-robin slot cannot change where a written stroke
-        // lands; per-take compensation would also conceal a badly aligned asset
-        // instead of letting the attack regression catch it.
-        double sum = 0.0;
-        int counted = 0;
-        // Averaged over the hard layer's takes only. The soft/medium layers are
-        // either a quieter recording or a filtered one, and folding them into
-        // the mean pulls the compensation off the stroke the clock actually
-        // places - a slap that then lands three milliseconds before a shaker
-        // written on the same pulse.
-        const int layer = kLayers - 1;
+        const Stroke kind = static_cast<Stroke> (st);
+        int sum = 0, counted = 0;
         for (int rr = 0; rr < kRoundRobin; ++rr)
         {
-            const int a = measureAttack (bank[st][layer][rr].left, sampleRate);
-            if (a > 0)
+            const int attack = measureAttack (bank[st][kLayers - 1][rr].left, sampleRate);
+            if (attack > 0)
             {
-                sum += a;
+                sum += attack;
                 ++counted;
             }
         }
-        const int mean = counted > 0 ? static_cast<int> (sum / counted) : 0;
-        for (int ly = 0; ly < kLayers; ++ly)
+        // Keep the clock's articulation reference stable across alternate takes.
+        if (! isTriangleStroke (kind) && counted > 0)
+            slowest = std::max (slowest, sum / counted);
+        for (int layer = 0; layer < kLayers; ++layer)
             for (int rr = 0; rr < kRoundRobin; ++rr)
-                bank[st][ly][rr].attack = mean;
-        // Triangle is held back against this lead like every other stroke,
-        // but it does not vote. Its synthesised ring used to peak 15-25 ms
-        // in (kMaxAttackLeadSec), which raised the clock by that much and
-        // put the whole kit slightly in anticipo. Shaker 10-13 ms stays
-        // the slowest the tracker is told about.
-        const Stroke kind = static_cast<Stroke> (st);
-        if (! isTriangleStroke (kind))
-            slowest = std::max (slowest, mean);
+            {
+                auto& sample = bank[st][layer][rr];
+                // Linear gains preserve attack time; cache that common path.
+                sample.rawAttack = measureAttack (sample.left, sampleRate);
+                sample.attackPeak = 0.0f;
+                const int window = std::min (static_cast<int> (sample.left.size()),
+                                              static_cast<int> (sampleRate * 0.040));
+                for (int i = 0; i < window; ++i)
+                    sample.attackPeak = std::max (sample.attackPeak,
+                                                  std::fabs (sample.left[static_cast<size_t> (i)]));
+                const float layerCentre = (static_cast<float> (layer) + 0.5f) / kLayers;
+                sample.attack = measureAttack (sample.left, sampleRate,
+                                               soundLevel (kind) * layerCentre, true);
+                if (! isTriangleStroke (kind))
+                    slowestTake = std::max ({ slowestTake, sample.attack, sample.rawAttack });
+                sample.controlAttack = counted > 0 ? sum / counted : 0;
+            }
     }
 
     // Bounded. A compensation of tens of milliseconds would be the clock
     // running ahead of the music by more than the effect it is correcting, and
     // a damaged asset must not be able to drag the whole part early.
     bankAttackLead = std::min (slowest, static_cast<int> (sampleRate * kMaxAttackLeadSec));
+    const int commonHold = static_cast<int> (sampleRate * kHeardEarlyHoldSec);
+    bankHeardTarget = std::max (bankAttackLead + commonHold,
+        std::min (slowestTake, static_cast<int> (sampleRate * kMaxAttackLeadSec) + commonHold));
 }
 
 void PercussionEngine::prepare (double sr) noexcept
 {
     sampleRate = sr > 1.0 ? sr : 48000.0;
     reverb.setSampleRate (sampleRate);
+    controlReverb.setSampleRate (sampleRate);
     applyReverbParams();
     buildBank();
     groove.prepare (0x9E3779B9u);
@@ -1250,6 +1282,7 @@ void PercussionEngine::reset() noexcept
     applyPendingGrooveControls();
     std::fill (rrCursor, rrCursor + kStrokes, 0);
     reverb.reset();
+    controlReverb.reset();
 }
 
 int PercussionEngine::recordedStrokeCount() const noexcept
@@ -1265,6 +1298,8 @@ void PercussionEngine::clearVoices() noexcept
 {
     for (auto& v : voices)
         v = {};
+    for (auto& v : controlVoices)
+        v = {};
     lastActive = 0;
 }
 
@@ -1272,6 +1307,7 @@ void PercussionEngine::silence() noexcept
 {
     clearVoices();
     reverb.reset();
+    controlReverb.reset();
     samplesSinceHit = 1000000;
     hasSeenPulse = false;
     for (int k = 0; k < kKnobs; ++k)
@@ -1285,42 +1321,52 @@ void PercussionEngine::setGroove (float bpm, int pulsesPerBeat) noexcept
     groovePulses = pulsesPerBeat < 1 ? 4 : pulsesPerBeat;
 }
 
-void PercussionEngine::releaseStroke (Stroke stroke) noexcept
+void PercussionEngine::releaseStroke (Stroke stroke, Voice* pool) noexcept
 {
     const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
-    for (auto& v : voices)
+    for (int i = 0; i < kVoices; ++i)
+    {
+        auto& v = pool[i];
         if (v.active && v.stroke == stroke && v.fadeStep <= 0.0f && v.pos >= 0)
             v.fadeStep = step;
+    }
 }
 
-void PercussionEngine::chokeTriangles() noexcept
+void PercussionEngine::chokeTriangles (Voice* pool) noexcept
 {
     // A stopped triangle is the hand staying on the steel. The ringing
     // open has to go with it, not wait out its own envelope - otherwise
     // every damped hit is an open with a click on top.
     const float step = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
-    for (auto& v : voices)
+    for (int i = 0; i < kVoices; ++i)
+    {
+        auto& v = pool[i];
         if (v.active
             && isTriangleStroke (v.stroke)
             && v.fadeStep <= 0.0f && v.pos >= 0)
             v.fadeStep = step;
+    }
 }
 
 void PercussionEngine::discardPendingVoices() noexcept
 {
-    for (auto& v : voices)
-        if (v.active && v.pos < 0)
-            v = {};
+    for (auto* pool : { voices, controlVoices })
+        for (int i = 0; i < kVoices; ++i)
+        {
+            auto& v = pool[i];
+            if (v.active && v.pos < 0)
+                v = {};
+        }
 }
 
-PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
+PercussionEngine::Voice& PercussionEngine::allocateVoice (Voice* pool, std::uint32_t& clock, int* steals) noexcept
 {
     // A free slot if there is one, otherwise the oldest voice - the one
     // furthest into its decay, so it is the least missed.
     int slot = -1;
     for (int i = 0; i < kVoices; ++i)
     {
-        if (! voices[i].active)
+        if (! pool[i].active)
         {
             slot = i;
             break;
@@ -1330,13 +1376,14 @@ PercussionEngine::Voice& PercussionEngine::allocateVoice() noexcept
     {
         slot = 0;
         for (int i = 1; i < kVoices; ++i)
-            if (voices[i].age < voices[slot].age)
+            if (pool[i].age < pool[slot].age)
                 slot = i;
-        ++hardStealCount;
+        if (steals != nullptr)
+            ++*steals;
     }
-    voices[slot] = {};
-    voices[slot].age = ++voiceClock;
-    return voices[slot];
+    pool[slot] = {};
+    pool[slot].age = ++clock;
+    return pool[slot];
 }
 
 const PercussionEngine::Sample& PercussionEngine::pick (Stroke stroke, float velocity, float& gain) noexcept
@@ -1421,6 +1468,17 @@ void PercussionEngine::noteStroke (KitSound part, Stroke stroke, int step) noexc
     strokesShown[knob].fetch_add (1u, std::memory_order_relaxed);
 }
 
+float PercussionEngine::volumeFor (KitSound part) const noexcept
+{
+    switch (part)
+    {
+        case KitSound::shaker:  return shakerVolume;
+        case KitSound::cembalo: return cembaloVolume;
+        case KitSound::clap:    return clapVolume;
+        default:               return congaVolume;
+    }
+}
+
 void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
                                 KitSound part, float level) noexcept
 {
@@ -1431,9 +1489,15 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
     // instrument's table to emit; remapping it again onto another knob's
     // family would turn congas into open/heel ticks of the shaker grid.
     if (isTriangleStroke (stroke))
-        chokeTriangles();
+    {
+        chokeTriangles (voices);
+        chokeTriangles (controlVoices);
+    }
     else
-        releaseStroke (stroke);
+    {
+        releaseStroke (stroke, voices);
+        releaseStroke (stroke, controlVoices);
+    }
 
     float gain = 1.0f;
     const Sample& s = pick (stroke, velocity, gain);
@@ -1443,14 +1507,20 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
     // A stroke sits where the drum sits; the tiny random spread on top is the
     // hand not landing in exactly the same place twice.
     const float spread = 0.04f * rng.nextSigned() * humanization;
-    // Every stroke is held back by the difference between the slowest attack in
-    // the bank and its own, so a slap and a shaker started for the same beat are
-    // *heard* together instead of eleven milliseconds apart. The clock supplies
-    // the matching lead, so the pair lands on the beat rather than after it.
+    // Delay relative to the prepared kit target aligns the heard attacks;
+    // the nominal clock lead and its common heard margin stay independent.
     const int heardHold = static_cast<int> (sampleRate * kHeardEarlyHoldSec);
-    const int hold = std::max (0, bankAttackLead - s.attack) + heardHold;
+    // The common hold is part of the available delay, including for a take
+    // whose attack is later than the articulation reference. Clamp only once.
+    // Limiting changes the envelope's relative attack at fortissimo. Use the
+    // current gain, not the layer centre; never inspect future input music.
+    const float heardGain = gain * level * volumeFor (part) * soundLevel (stroke);
+    const int attack = heardGain * s.attackPeak > kSoftClipKnee
+                           ? measureAttack (s.left, sampleRate, heardGain, true)
+                           : s.rawAttack;
+    const int hold = std::max (0, bankHeardTarget - attack);
 
-    auto& v = allocateVoice();
+    auto& v = allocateVoice (voices, voiceClock, &hardStealCount);
     v.stroke = stroke;
     v.volumeFrom = part;
     v.sample = &s;
@@ -1459,17 +1529,29 @@ void PercussionEngine::trigger (Stroke stroke, float velocity, int sampleOffset,
     v.gainL = gain * level * (1.0f - spread);
     v.gainR = gain * level * (1.0f + spread);
     v.active = true;
+    auto& control = allocateVoice (controlVoices, controlClock);
+    const auto age = control.age;
+    control = v;
+    control.age = age;
+    const int controlHold = std::max (0, bankAttackLead - s.controlAttack) + heardHold;
+    control.pos = -(sampleOffset + controlHold);
     ++totalHits;
 }
 
 int PercussionEngine::render (float* left, float* right, int numSamples,
-                              const ClockTick& tick, bool audible) noexcept
+                              const ClockTick& tick, bool audible,
+                              float* controlLeft, float* controlRight) noexcept
 {
     if (left == nullptr || right == nullptr)
         return 0;
 
     std::fill (left, left + numSamples, 0.0f);
     std::fill (right, right + numSamples, 0.0f);
+    if (controlLeft != nullptr && controlRight != nullptr)
+    {
+        std::fill (controlLeft, controlLeft + numSamples, 0.0f);
+        std::fill (controlRight, controlRight + numSamples, 0.0f);
+    }
 
     // A snap changes where future grid positions are. Voices with a negative
     // position have not sounded yet: they were scheduled by the old grid and
@@ -1599,6 +1681,25 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         }
     }
 
+    int releasing = 0;
+    const int active = renderVoices (voices, left, right, numSamples, reverb, releasing);
+    if (controlLeft != nullptr && controlRight != nullptr)
+    {
+        int unused = 0;
+        renderVoices (controlVoices, controlLeft, controlRight, numSamples, controlReverb, unused);
+    }
+
+    samplesSinceHit += numSamples;
+    if (samplesSinceHit > 10000000)
+        samplesSinceHit = 10000000;
+    lastActive = active;
+    lastReleasing = releasing;
+    return active;
+}
+
+int PercussionEngine::renderVoices (Voice* pool, float* left, float* right, int numSamples,
+                                     juce::Reverb& effect, int& releasing) noexcept
+{
     // Steal at the moment the new stroke is heard, not when it was queued.
     // A swung 16th is scheduled on the previous pulse and starts after the
     // next one has already fired; releasing then deleted it before it sounded.
@@ -1606,7 +1707,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
         const float steal = 1.0f / std::max (1.0f, static_cast<float> (sampleRate * kStealFadeSec));
         for (int i = 0; i < kVoices; ++i)
         {
-            auto& v = voices[i];
+            auto& v = pool[i];
             if (! v.active || v.sample == nullptr)
                 continue;
             int startAt = 0;
@@ -1619,7 +1720,7 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
             {
                 if (i == j)
                     continue;
-                auto& o = voices[j];
+                auto& o = pool[j];
                 const bool triangleFamily =
                     isTriangleStroke (v.stroke) && isTriangleStroke (o.stroke);
                 if (! o.active || o.fadeStep > 0.0f)
@@ -1635,32 +1736,17 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     }
 
     int active = 0;
-    int releasing = 0;
-    for (auto& v : voices)
+    releasing = 0;
+    for (int voice = 0; voice < kVoices; ++voice)
     {
+        auto& v = pool[voice];
         if (! v.active || v.sample == nullptr)
             continue;
         ++active;
         if (v.fadeStep > 0.0f)
             ++releasing;
         // Volume follows the FEEL knob (`part`), not the instrument id.
-        float g = congaVolume;
-        switch (v.volumeFrom)
-        {
-            case KitSound::shaker:   g = shakerVolume;  break;
-            case KitSound::cembalo:  g = cembaloVolume; break;
-            case KitSound::clap:     g = clapVolume;    break;
-            case KitSound::congas:   g = congaVolume * kCongaLevel; break;
-            case KitSound::triangle:
-            case KitSound::count:    break;
-        }
-        switch (kitSoundForStroke (v.stroke))
-        {
-            case KitSound::shaker:  g *= kShakerLevel;  break;
-            case KitSound::cembalo: g *= kCembaloLevel; break;
-            case KitSound::clap:    g *= kClapLevel;    break;
-            default:                break;
-        }
+        const float g = volumeFor (v.volumeFrom) * soundLevel (v.stroke);
         const auto& bL = v.sample->left;
         const auto& bR = v.sample->right;
         const int nBuf = static_cast<int> (std::min (bL.size(), bR.size()));
@@ -1697,27 +1783,14 @@ int PercussionEngine::render (float* left, float* right, int numSamples,
     }
 
     if (reverbAmount > 0.001f)
-        reverb.processStereo (left, right, numSamples);
+        effect.processStereo (left, right, numSamples);
 
-    auto soften = [] (float x) noexcept
-    {
-        const float a = std::fabs (x);
-        if (a <= kSoftClipKnee)
-            return x;
-        const float room = 1.0f - kSoftClipKnee;
-        return std::copysign (kSoftClipKnee + room * std::tanh ((a - kSoftClipKnee) / room), x);
-    };
     for (int n = 0; n < numSamples; ++n)
     {
         left[n] = soften (left[n]);
         right[n] = soften (right[n]);
     }
 
-    samplesSinceHit += numSamples;
-    if (samplesSinceHit > 10000000)
-        samplesSinceHit = 10000000;
-    lastActive = active;
-    lastReleasing = releasing;
     return active;
 }
 

@@ -27,6 +27,7 @@ namespace vp
 */
 class BeatDecoder
 {
+    friend struct BeatDecoderTimingProbe;
 public:
     void prepare (double framesPerSecond);
     void reset() noexcept;
@@ -174,7 +175,7 @@ public:
         `checkGridPhase` does not slide the origin while sounding. A
         file-feed kick after a hat-class lastBeat may steal that half
         (FEEL hats-then-Q); mute when lowBand is 0. */
-    void setSounding (bool on) noexcept { sounding = on; }
+    void setSounding (bool on) noexcept { sounding = on; hasSounded = hasSounded || on; }
 
     /** The listener pressed "L'1 è QUI". The one is the nearest beat
         already on the grid, not this sample: moving the anchor onto the
@@ -505,6 +506,8 @@ private:
     bool  useAnchor = false;
     bool  lineFeed = false;
     bool  sounding = false;
+    bool  hasSounded = false;
+    bool  manualLevel = false;
     float anchorBpm = 0.0f;
     /** How clear the state space is about the level right now, 0..1, from its
         own margin over the rival metrical levels. Zero when it is not clear

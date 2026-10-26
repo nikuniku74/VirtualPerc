@@ -316,14 +316,9 @@ namespace
     /** And how long both halves have to agree before it is acted on. */
     constexpr double kStraddleHoldSec = 0.40;
 
-    /** How long the phase anchor takes to walk from the long fit's to the
-        short fit's, and back. Half a second: long enough to have no edge,
-        short enough to be there while the event is still inside the long
-        window. */
-    constexpr double kAnchorBlendSec = 0.50;
-
-    /** `updateTempo` runs once per analysis frame, and a frame is 20 ms. */
-    constexpr double kFramesPerSecond = 50.0;
+    // Twenty-five accepted-fit updates, not 0.5 s: the frame-timed candidate
+    // added a beat beyond 25 ms without a general gain (TODO157).
+    constexpr double kAnchorBlendBeats = 25.0;
 
     // Beats a regime must last before it may be left, so the machine cannot
     // oscillate between two verdicts on adjacent beats.
@@ -653,6 +648,8 @@ void BeatDecoder::reset() noexcept
     combAgreedBpm = 0.0f;
     refusedHatAfterHoleSec = -1.0;
     lastDownbeatSec = -1.0;
+    hasSounded = false;
+    manualLevel = false;
     gridAnchorSec = -1.0;
     foldPhaseBeats = 0;
     bpm = 120.0f;
@@ -739,6 +736,7 @@ void BeatDecoder::reset() noexcept
 
 void BeatDecoder::setUserOctave (int octaves, bool manual) noexcept
 {
+    manualLevel = manual;
     const int request = std::clamp (octaves, -2, 2);
     // A level is either decoded or, in the cases below, only published (see
     // `outputShift`). Going between two published levels, or to
@@ -1401,7 +1399,13 @@ bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual,
         return false;
 
     const double slope = sxy / sxx;
-    if (slope < 60.0 / kMaxBpm - 1.0e-9 || slope > 60.0 / kMinBpm + 1.0e-9)
+    // A chosen edge level can have a clean line just outside the BPM range
+    // through frame quantisation. Measure its quality without adopting its rate.
+    const double lower = 60.0 / kMaxBpm, upper = 60.0 / kMinBpm;
+    double tolerance = 1.0e-9;
+    if (manualLevel && std::abs (60.0 / bpm - std::clamp (slope, lower, upper)) <= 1.0 / fps)
+        tolerance = 1.0 / (fps * (idx[keep - 1] - idx[0]));
+    if (slope < lower - tolerance || slope > upper + tolerance)
         return false;
 
     double sumSq = 0.0;
@@ -1417,8 +1421,10 @@ bool BeatDecoder::fitPeriodBefore (int maxBeats, float& period, float& residual,
     // of a least-squares line, but the phase is wanted *now*, and carrying the
     // centre forward means extrapolating over half the window with whatever
     // error the period has - eleven beats of it for the long fit.
-    period = static_cast<float> (slope);
     residual = static_cast<float> (std::sqrt (sumSq / static_cast<double> (keep)) / slope);
+    if (slope < lower - 1.0e-9 || slope > upper + 1.0e-9)
+        return false; // quality is valid; this rate still cannot drive the clock
+    period = static_cast<float> (slope);
     anchorOut = meanT + slope * (idx[keep - 1] - meanIdx);
     return true;
 }
@@ -3765,7 +3771,7 @@ void BeatDecoder::updateTempo() noexcept
     }
 
     float longPeriod = 0.0f, longResidual = 0.0f, longCoverage = 0.0f;
-    float shortPeriod = 0.0f, shortResidual = 0.0f, shortCoverage = 0.0f;
+    float shortPeriod = 0.0f, shortResidual = 1.0f, shortCoverage = 0.0f;
     double longAnchor = -1.0, shortAnchor = -1.0;
     float longIndexGap = 1.0f, shortIndexGap = 1.0f;
     const double rulerGuess = pulseIndexGuess();
@@ -3845,9 +3851,9 @@ void BeatDecoder::updateTempo() noexcept
     // make: `BeatTracker` stops and rejoins above a third of a beat. Taken
     // as a switch it cost grid jerk on two of the five live extracts
     // (2.40% -> 2.73% and 2.65% -> 3.39% rms) - the lurch this exists to
-    // remove, reintroduced by the removal. A weight that walks across in
-    // about half a second is the same correction with no edge in it.
-    const double step = 1.0 / std::max (1.0, kAnchorBlendSec * kFramesPerSecond);
+    // remove, reintroduced by the removal. Advancing the weight across
+    // accepted fits avoids that edge; keep the measured rate (TODO157).
+    const double step = 1.0 / kAnchorBlendBeats;
     anchorBlend = std::clamp (anchorBlend + (longWindowStraddles ? step : -step),
                               0.0, 1.0);
     if (tempoRegime == TempoRegime::fixed && haveLong)
@@ -3861,7 +3867,7 @@ void BeatDecoder::updateTempo() noexcept
 
     longFitBpm = haveLong ? 60.0f / longPeriod : 0.0f;
     shortFitBpm = haveShort ? 60.0f / shortPeriod : 0.0f;
-    shortFitResidual = haveShort ? shortResidual : 1.0f;
+    shortFitResidual = shortResidual;
     if (haveShort)
     {
         if (prevShortFitBpm > kMinBpm)
@@ -3956,6 +3962,8 @@ void BeatDecoder::updateTempo() noexcept
         else
             fixedWalkRun = 0;
     }
+    else
+        fixedWalkRun = 0; // Missing fits cannot join two separate motion proofs.
 
     checkGridPhase (60.0f / std::max (kMinBpm, bpm));
 
@@ -5089,8 +5097,9 @@ void BeatDecoder::updateTempo() noexcept
             // undoes the reading that named the lead. The four-beat "doors"
             // that also set it were removed on 2026-10-06 (docs/TODO.md
             // item 94): on real music they added rate surges and no phase.
-            const float wanted = lineFeed
-                                 && (transitionRefitBeats > 0 || ioiClockLead)
+            // A temporary dropout is not a first acoustic acquisition.
+            const float wanted = (transitionRefitBeats > 0 && (lineFeed || ! hasSounded))
+                                 || (lineFeed && ioiClockLead)
                                      ? target
                                      : pullTowardsComb (target, combReady, combBpm);
             // And only while the gap is actually one a stale number would leave.

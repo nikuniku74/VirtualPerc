@@ -1196,6 +1196,12 @@ int main (int argc, char** argv)
         return gFailed == 0 ? 0 : 1;
     }
 
+    if (argc > 1 && std::string (argv[1]) == "--publication")
+    {
+        vpRunPublicationTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
+    }
     if (argc > 1 && std::string (argv[1]) == "--ai")
     {
         vpRunAiBeatTests (gPassed, gFailed);
@@ -1283,6 +1289,24 @@ int main (int argc, char** argv)
         vpRunAudioInputTests (gPassed, gFailed);
         std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
         return gFailed ? 1 : 0;
+    }
+    if (argc > 1 && std::string (argv[1]) == "--metric-choice")
+    {
+        vpRunMetricChoiceTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
+    if (argc > 1 && std::string (argv[1]) == "--strong-eighths")
+    {
+        vpRunStrongEighthTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed ? 1 : 0;
+    }
+    if (argc > 1 && std::string (argv[1]) == "--guard-fade")
+    {
+        vpRunDriftGuardFadeTests (gPassed, gFailed);
+        std::printf ("\n%d passed, %d failed\n", gPassed, gFailed);
+        return gFailed == 0 ? 0 : 1;
     }
     if (argc > 1 && std::string (argv[1]) == "--state-timing")
     {
@@ -2416,7 +2440,7 @@ int main (int argc, char** argv)
             double songPhase = -0.04;
             double t = 0.0, nextRefresh = 0.0;
             float held = 0.0f;
-            int seed = 1;
+            uint32_t seed = 1;
             double sqAcc = 0.0;
             int n = 0;
             float worst = 0.0f;
@@ -2428,7 +2452,7 @@ int main (int argc, char** argv)
                 const float songFrac = static_cast<float> (songPhase - std::floor (songPhase));
                 if (t >= nextRefresh)
                 {
-                    seed = seed * 1103515245 + 12345;
+                    seed = seed * 1103515245u + 12345u;
                     held = 0.03f * (static_cast<float> ((seed >> 16) & 0x7fff) / 16383.5f - 1.0f);
                     nextRefresh += 1.0 / 6.0;
                 }
@@ -2689,6 +2713,7 @@ int main (int argc, char** argv)
         }
     }
 
+    vpRunDriftGuardFadeTests (gPassed, gFailed);
     vpRunAiBeatTests (gPassed, gFailed);
     vpRunMakeupTests (gPassed, gFailed);
     vpRunLoopTests (gPassed, gFailed);

@@ -1538,6 +1538,8 @@ void MainComponent::rebuildAudioDevice (const char* why)
 
 void MainComponent::applyInputProcessing()
 {
+    if (internalTrackSelected())
+        return; // The microphone preference must not reconfigure BRANO's output-only session.
     // Measurement mode on iOS: no AGC, no noise suppression, no echo canceller
     // between the room and the tracker. prepareAudioSession has already put the
     // session there; this is what carries the same answer to the open device
@@ -2966,14 +2968,15 @@ void MainComponent::timerCallback()
     }
     // The first time the part comes in after START is when the app shows it
     // has understood the band: the ring, the number landing, a Taptic tap.
-    if (burstArmed && snap.percussionAudible && ! wasAudible)
+    const bool heardPart = snap.percussionAudible && ! snap.driftGuarded && ! snap.standingDown;
+    if (burstArmed && heardPart && ! wasAudible)
     {
         burstArmed = false;
         lockBurst = 1.0f;
         lastBurstMs = juce::Time::getMillisecondCounterHiRes();
         vp::haptic (vp::Haptic::success);
     }
-    wasAudible = snap.percussionAudible;
+    wasAudible = heardPart;
     if (restartLogPending
         && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
     {

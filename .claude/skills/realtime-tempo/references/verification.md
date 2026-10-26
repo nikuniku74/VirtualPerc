@@ -1209,3 +1209,315 @@ The120->106 small-change18.34sec is unchanged; candidateA's10.40sec is rejected.
 - **Ascolto preparato:** [MIXER prima](../../../../build-host/vp-slow-changes-20261023/listening/MIXER_set_prima.wav) / [dopo](../../../../build-host/vp-slow-changes-20261023/listening/MIXER_set_dopo.wav), [BRANO prima](../../../../build-host/vp-slow-changes-20261023/listening/BRANO_prima.wav) / [dopo](../../../../build-host/vp-slow-changes-20261023/listening/BRANO_dopo.wav). Clic ricostruiti dalla fase del clock sullo stesso audio/volume; non è un render del timbro delle percussioni e non è stato ascoltato fisicamente qui.
 
 - **Test e build finali:** `--tempo-step` 40/0 (6 nuove asserzioni), `--state-timing` 14/0, `--bar` 15/0, `--phase-lock` 20/0, `--tempo-slow` 13/0, `--new-input` 27/0, `--transport` 8/0, `--audio-input` 11/0, `--harmonic-entry` PASS. **Suite completa 717 superati / 27 falliti:** nomi e molteplicità coincidono esattamente con i 27 preesistenti; nessun fallimento aggiunto. La probe CLI `--tempo-step` è separata dal conteggio della suite predefinita, quindi le sue sei nuove asserzioni non aumentano il 717. Mac e iOS Release senza firma compilati; dopo l'ultima build due tracce modificate intere e il prefisso di un lungo invariato sono riprodotti identici. Log `full-c.log`, `repeat.json` e impronte di 116 audio/riferimenti salvati in `build-host/vp-slow-changes-20261023/`. I difetti preesistenti restano aperti.
+
+
+### TODO157 completed (2026-10-25)
+
+Parallel and conservative entry candidates and frame-timed phase blending
+were rejected on held-out/per-file regressions. Retained only missing-fit
+motion-streak reset and missing-publication downbeat decay/streak reset.
+325 causal pairs per retained ablation, 325 final pairs byte-identical to
+7cf0307; three independent repeats identical. Full suite 719/27, exact
+baseline 27-failure Counter (no additional failures); targeted gates pass and VPAlign steps/ramps
+identical. See TODO157 and build-host/vp-entry-motion-bar-20261023. No faster
+entry or net musical improvement is claimed; physical iPad listening remains.
+
+
+### 2026-10-25 — TODO158, output fade and conga balance
+
+325 paired causal probes with the real model:312 raw-identical,13 changed,
+zero rejected witnesses. Correct share/coverage unchanged on every file,
+zero lost correct beats, no increased skipped sixteenths; phase/bar also
+scored on common correct beats with the existing 1ms phase tolerance.
+Four final-binary controls match the measured build exactly.
+40ms bus fade:6/0 over two sample rates/three block sizes, echo reference
+checks included. Conga swing on its native 16-grid:two existing failures
+fixed; sound gain follows family on all four slots (three exact waveforms).
+Six styles/eight raw bars:+5.21dB congas after soft limiting, others0.00dB.
+The small-step stationary16-peak candidate was rejected:325 probes, a
+long-set gain hides a sustained lost correct section. Details and ledger
+in TODO158; no faster tempo recovery is claimed.
+Physical iPad Air13 M3,48k/256, real ONNX CPU:25.812ms roundtrip,236 one-second
+snapshots, callback median0.453/p95 2.517/max sampled3.313ms, backlog<=512,
+no xrun/gap/restart in the observed run. Not per-callback maxima. Listener
+confirmed timing and louder congas after moving iPad20–30cm from Mac.
+First inaudible Mac playback excluded. No controlled acoustic before/after
+is claimed. Temporary diagnostics removed from source.
+
+Full suite TODO158:733/22 vs719/27, nine new assertions, eleven old failures
+resolved, six additional neural START SUBITO coupling failures now exposed.
+Old gain1.641 vs final3.274 under the same A2 fixture:29/6, all ten
+phase/analysis summaries identical over30 runs; not a conga-gain regression.
+Unresolved:7 metrical,1 room small-step late stability,1 bank attack,1
+full-mix harmony,12 epoch/output coupling assertions on two tempo witnesses.
+See TODO158 for exact limits; do not call the full suite green.
+
+
+### TODO159 — final MASTER/epoch isolation (2026-10-25)
+
+Frozen before-source/VPTests/VPTrack in `build-host/vp-red-20261025/`.
+Final source (`master-rebase.cpp`): pre-master own-onset witness, post-master
+echo reference, existing onset envelope rebased when MASTER later rises.
+Both the initial constant-MASTER fix and the final late-rise-safe version
+were each compared on all325 causal real-model probes against TODO158:
+**325/325 byte-identical**, zero rejected witnesses. Covers MIXER/BRANO,
+96 room cases, long sets, additional and fresh material. Four final-binary
+controls also match. Thus no metric, lost-correct section or transient count
+changes in this corpus; no claim of faster song/tempo recovery on it.
+A1 scripted25/0 and A2 neural35/0 close12 old coupling assertions at138/156.
+The standalone strong-eighth fixture now calls the real worker's sounding
+lifecycle:92.00246 BPM,100% correct valid playback; unchanged95% tolerance.
+New constant-MASTER/private echo-ring test covers0/0.2/1. Late-rise fixture
+exposes a pre-existing room false epoch4.488s (same before/after); MIXER8.303s
+is after the actual band at8s. Do not call that room case fixed.
+
+Rejected: own-veto removal (six real regressions in123 completed witnesses),
+unconditional confirmed-room comb quarantine (two rejected of96), and a
+clean-fit quarantine (one rejected of96). Decoder restored byte-identically
+to before159. The synthetic late red is76->82 room, correcting TODO158's
+128->120 attribution. No title-specific exceptions.
+Mac and signed iPad builds succeeded, no new physical listening trial.
+Separate gates:bar15/0,phase-lock20/0,tempo-slow13/0,new-input27/0,
+transport8/0,tempo-step40/0,strong-eighths2/0; state/harmonic-entry also pass.
+
+Final default-profile suite: **748/10 of758**, baseline733/22 of755.
+Thirteen original failures closed (12 engine coupling +1 corrected sounding
+fixture); two new passes and one newly exposed pre-existing room failure.
+FAIL-name multiset diff verified in `final-verification.json`; no formerly
+passing assertion turns red. Normal A1/A2 at138/156 both have0.000ms pair
+delta/spread,3/3 matched net pairs, identical epoch counts and chain blocks.
+Return sweep18/18 hears the band within3s, zero false epochs before it.
+
+Do not globally set VP_OFFLINE_PACING on VPTests: the diagnostic whole-suite
+run744/14 includes two direct-worker fixtures without releaseFed, the real
+worker-wake test, and one mismatched-tempo canceller pair (0.69ms). All four
+pass with default pacing. VPTrack is designed for that flag; the whole suite
+has production-polling/wall-time contracts as well. No test threshold was
+relaxed to hide these profile differences.
+
+### TODO160 — conservative closure, real-bank rejection gates (2026-10-25)
+
+Baseline TODO159:748/10 of758. Kept production deltas: manual edge-fit quality
+without adopting an invalid period; first-ever-unsounded acoustic refit latch;
+coarse-cell envelope echo correlation. Focused:metric-choice2/0,slow-kit/manual
+50 and AUTO10010/0,tempo-step40/0,late MASTER2/0,echo51/0. The original50-kit
+bounds (30hits,20s,zero gaps,absolute/early–late8ms) were not relaxed.
+
+Final bank325/325:280 byte-identical including **all229 MIXER/BRANO**;45 room
+traces differ minutely, no regression rejection. All96 room traces equal the
+isolated echo-only ablation (51 exact/45 changed). Correct tempo,coverage,
+first-four entry,common-correct phase/bar,lost-correct sections,skipped16ths,
+phase jumps and rate surges checked per file; no increase/loss at those gates.
+Six before/after kit renders from the final binary are byte-identical. No new
+physical-iPad listening: user cannot listen now. The conga boost already heard
+and approved in TODO158 stays intact.
+
+Rejected even though the combined synthetic suite passed758/0: harmonic
+pre-fold/window-hold experiments and articulation/layer/RR calibration. The
+325 bank exposed14 regressions. Stable-lead calibration still changed an
+own-output epoch and make-up re-priming; removing calibration restores exact
+primary traces. Broad edge-period clamping also rejected for three previously
+correct beats lost in a long set despite a large aggregate gain elsewhere.
+Production PercussionEngine.cpp and HarmonicChange.h equal their before copies.
+Two real limits remain explicit: full-mix harmonic one detection and48-case
+attack spread. Expanded attack test keeps the2ms/80% bounds;17.98ms spread is
+pre-existing across all takes, not a new rendering change.
+
+Initial final-suite attempt ran during compiles/bank and exposed two intermittent
+bar-reentry assertions.12 isolated repetitions of each old/new binary pass15/0.
+The scripted fixture now drains already-delivered audio every eight callbacks,
+not just at section boundaries; same two-bar expectation, no future input and
+no engine change. That initial attempt was interrupted as obsolete; its log is
+retained. The full functional default-profile suite with this fixture is756/2 of758.
+After hoisting invariant input-envelope cells, the final usual-root-build suite
+is again **756/2**. The full325 bank repeats bit-identically to the functional
+version, including all229 primary traces exact to before. Final rejection set
+is empty and jumps/surges/skipped16ths never increase.20/22 original assertions
+are fixed or realigned; all three newly added assertions pass. The two FAIL
+names are unchanged; final-verification.json checks the exact multiset.
+
+Final root-build CPU batch (12 interleaved trials; within-batch medians):
+MIXER3.8→3.6% core,mean104.8→98.0us,p99452.2→452.1us; speaker4.8→4.8%,
+mean160.8→160.5us,p99721.6→673.7us. Worst speaker sample across trials rises
+1.004→1.695ms; do not claim every extreme improves. No callback crosses the
+5.333ms host budget. These are host timings, not physical-iPad/thermal proof.
+Mac and signed iPad compile from the frozen optimized source; no new install
+or listening. optimized-source and its manifest preserve final code. See
+optimized-*.json,full-optimized.log,cpu-optimized-final*.json and final-verification.json.
+Artefacts:build-host/vp-complete-20261025/{quality-metrics,quality-assessment,
+final-ablation,render-quality-controls,quality-binaries,final-source-manifest}.json;
+logs and immutable before/final binaries live in the same directory.
+
+### TODO162 — full-wake verification, 2026-10-26
+
+Power logs under vp-final-two-20261025 prove Idle Sleep and maintenance
+DarkWake during the long suites. Queued-worker assertions expired in those
+runs (including a 2048-sample remainder in the scripted bar fixture). Keep
+those logs as interrupted/invalid host runs; do not report their totals as
+passing. `scripts/run-tests.sh` now uses macOS caffeinate -i -u for the suite
+lifetime, with default worker pacing and all original deadlines unchanged.
+Twelve full-wake bar repeats give15/0 each; the final full-suite and CPU ledger
+are recorded with the TODO162 closure below.
+
+The publication-observation fixture is now independently runnable with
+`VPTests --publication`. Its bounded slot reader retries a racing copy before
+feeding another hop and confirms the generation on both sides. Automatic bar
+re-entry is locked out in both sides of this specific lifecycle comparison:
+that separate feature legitimately invalidates old publications, which is not
+a frame-publication failure. Bar re-entry still has its own unchanged tests.
+Original isolated repeats9/10 pass, one with two failed assertions; isolated
+corrected repeats10/10 give17/0. No production publication code changed here.
+
+
+TODO162 final ledger: **764 pass,0 fail**, default pacing in full wake;
+full-fullwake.log and verify-fullwake.log exit0. Baseline756/2 of758 plus six
+new assertions, both old FAIL names fixed. No Source/Tests file changed during
+this final run. Twelve bar repeats15/0 and ten publication repeats17/0.
+325 final probes:264 exact,61 changed, zero rejected gates or extra jumps/
+surges/skips. Zero lost correct tempo beats or old correct downbeats; one
+held-out BRANO downbeat gained. All direct common-correct phase values equal;
+maximum speaker dispersion/p90 delta0.00783ms. Ablations hold-target268exact /
+acquire-profile266exact also pass325each. CPU full-wake medians at256/48kHz:
+MIXER mean0.1080→0.1557ms,p990.5316→0.6719ms,core3.90→4.85%; speaker mean
+0.1879→0.2196ms,p990.8301→0.7360ms,core5.45→6.10%. No over-budget callback
+in16runs; final maxima1.010/1.451ms against5.333ms. Device clean build signed
+and installed, but locked; user cannot unlock now. No new device/audio/thermal
+success claimed. Extra full-velocity diagnostic5ms remains outside the light/
+medium scope; keep this limit in the report rather than changing its2ms gate.
+Final manifests and final-verification.json live in vp-final-two-20261025.
+
+### EVERYTIME listener precision check (2026-10-26, measurement only)
+
+Six fresh causal replays of the unchanged TODO162 production source, frozen
+VPTrack-final: MIXER -12dB, BRANO, simulated speaker/room, each44.1/48kHz.
+All six pulse files reproduce the final325 baseline byte for byte; the source
+manifest also matches. Artefacts: build-host/vp-everytime-20261026,
+current-metrics.json and sections.json. No corrective variant was applied.
+
+Direct paths retain99.11% correct tempo on337 scored teacher beats per run,
+but this does not prove precision: phase scatter MIXER9.89/9.78ms,
+BRANO12.16/13.66ms; phase p90 MIXER29.95/30.98ms, BRANO44.17/85.45ms.
+Teacher downbeats fall on clock quarter3 for84/84 MIXER downbeats at both
+rates,84/84 BRANO48k,70/84 BRANO44k (remaining14 on quarter4); none on1.
+This is a bar-count error against the teacher, not a tempo-octave error.
+The independent kick/snare-onset diagnostic confirms local departures,
+particularly MIXER139–152s (about29–44ms local deviation, threshold25ms),
+BRANO44k30–33s and147–149s, BRANO48k103.5–105.5s. Its nearest-sixteenth
+metric can hide quarter/half-beat slips: retain the teacher-phase measures too.
+Absolute clock/teacher offsets include deliberate articulation lead; they are
+not measured audible-output latency and must not become a song-specific trim.
+
+Simulated room48k has no correct-tempo scored cohort (43.67% octave,
+56.33% other wrong tempo); room44k is99.11% correct. This reproduces an
+existing acquisition weakness, not a new device measurement or regression.
+The fortissimo5ms articulation limit is separate and remains unresolved by
+this check. The listener has not specified source/timestamp yet; no new
+physical iPad listening or correction is claimed.
+
+### TODO163 — measured candidates and final closure (2026-10-26)
+
+The user authorized tests. Immutable baseline: `vp-final-two-20261025`;
+all current-task binaries, source snapshots,325 traces per variant,24 delayed
+START comparisons, iPad logs and assessments: `vp-pending-20261026`.
+
+Attack-only325:323 exact/2 changed, zero gates. Direct-only bar+attack325:
+321 exact/4 changed, zero gates, no old correct tempo/downbeats lost, no extra
+clock events. New44min MIXER one77.433628→79.056047%. Full pre-START suite789/0.
+Attack matrix9 velocities ×3 faders ×16 articulations ×3 RR, unchanged2ms
+bound: all spreads0ms,53/0; previous velocity1.0 spread5ms.
+
+Rejected ablations: phase-period projection (Everytime p90+44/48ms),
+trust-scaled phase nudge (BRANO+2ms), all-source bar veto (lost room downbeats).
+The broad START/new-grid entry wait has325 results,289 exact/36 changed,
+33 rejected witnesses, including MIXER VIVERE85→0%; do not reintroduce it.
+The explicit-file-only full wait also loses formerly correct new-intro beats.
+
+The retained START rule waits only on the already-defined AUTO half-level
+question of a currently valid hypothesis; explicit replacements keep that
+same level check when their first new grid arrives. No new musical threshold.
+Two12-case lifecycle matrices use original44.1k material resampled through
+JUCE Lagrange to48k, START at3/7s, both MIXER/BRANO; the second matrix calls
+notifyInputRestart before PLAY as real loading does. No old correct beat or
+downbeat lost, no common-correct phase regression over1ms. Everytime BRANO
+0→99.101796% correct tempo; MIXER99.109792% unchanged, common p90
+34.535→30.223ms. A fresh live excerpt gains5 correct MIXER beats; intro unchanged.
+A coverage reduction that removes only the previously wrong initial notes
+in these delayed-START tests is the requested withheld entrance, not a
+new clock dropout. The ordinary325 gate still checks coverage unchanged.
+
+Physical iPad: the two simultaneously running app bundles caused session
+churn and hundreds of XRUN. Stop the generic diagnostic bundle before FULL.
+With one app, the single full-song trial has no newly accumulated XRUN/player
+underrun/AI gap. FULL's initial XRUN28 stays28 through165 active samples.
+The listener confirms correct speed (~123BPM) and clean entry. The stricter
+heard variant and the accepted narrower one produce bit-identical Everytime
+traces in all four resampled/delayed modes. No automatic-one perfection claim:
+that song's automatic teacher downbeat remains unresolved. Final suite, CPU
+and accepted325 assessment follow in the closing ledger.
+
+Accepted level-proof bank:325 complete,321 exact/4 changed, zero regression
+gates; no formerly correct tempo beat/downbeat lost, no extra clock event.
+All24 delayed/load lifecycle comparisons also pass those common-cohort checks.
+The broader file-proof variant's325 ordinary traces also pass, but its explicit
+load intro fails and it stays rejected. Judge the actual lifecycle, not just
+an immediate-START probe.
+
+CPU32 paired runs,256/64 frames, MIXER/speaker: at256 callback median means
+109.90→115.35µs /102.15→163.35µs; total CPU medians3.50→3.65% /2.90→4.60% of
+one host core. All observed final256 callbacks fit5.333ms (max4.7525ms);
+iPad FULL measured~0.04ms, no new playback XRUN.64 speaker stress has isolated
+maxima1.9364→1.9591ms above its1.333ms budget in both; do not claim64-buffer
+thermal/realtime qualification. Loaded concurrent-run measurements are kept
+separately. CPU cost is measurable; musical regression gates are all green.
+
+The new first-grid consumer fixture originally used a real scripted model and
+an uncontrolled decoder level; its full-run FAIL is retained. It now publishes
+specified60BPM hypotheses into the same bounded slot with no worker, and checks
+both silence before the unchanged4s proof and eventual quantized entry. START
+also checks current valid/absent hypotheses and explicit owners. No timeout,
+confidence, musical bound or production gate was relaxed to fix the fixture.
+The complete default suite runs from VPTests-verified; do not quote an
+interrupted discarded-candidate total as final.
+
+FULL clean Release build, signature check, installation and launch succeed.
+Generic diagnostic app data (Documents+Library) backed up, duplicate uninstalled;
+final app inventory only `.app.full`. No temporary auto-play instrumentation.
+
+
+### TODO164 — output guard verified; intro phase still imperfect (2026-10-26)
+
+Accepted Envelope artifacts: `build-host/vp-entry-20261026`; full default
+suite797/0,325 paired probes against TODO162:174 exact/151 changed, zero
+regression gates, no lost correct tempo/downbeats or extra clock events.
+40 held-out audible lifecycle pairs retain identical analysis/clock traces
+(excluding guard column21). With12 reported-song pairs,52 actual-output
+pairs remove38 red openings (24+14) to0. All12 reported-song first20s peaks
+are exactly0. Count openings using signed integer differences, not bool diff.
+
+Keep nominal control rendering AND its original3s guard/fade independent of
+the actual early-entry veto. Muting that reference changes own-onset/epoch
+history: the first two variants lost correct-tempo share on three files and
+were discarded. Actual tails retain40ms fades; initial silence stays exact0.
+Six new state checks and six fade checks pass, including explicit owners,
+brief waiting, STOP/reset, established-part grace and quantized recovery.
+
+32 paired CPU runs: at256 frames total host-core medians3.40→3.50% and
+4.20→4.35%, callback means99.2→103.3us and144.05→149.25us (MIXER/speaker).
+Final maxima1.434/1.045ms fit5.333ms.64-frame stress exceeds its budget in
+both versions; one final mic wall-time maximum is71.3445ms, retained without
+attributing an unproven cause. No universal64-frame qualification is claimed.
+
+Physical FULL Canzone playback195s: XRUN1→1, no player underruns or AI gaps,
+callback typically~0.04ms/256. User: cleaner entrance, not perfectly in time.
+Clean Release build/signature/install pass; temporary startup hook removed.
+Final normal launch is refused by iPadOS because the screen locked; this is
+not a successful final launch or a repeat physical test of the clean package.
+
+Residual: the tonal intro's quarter grid25–40s is displaced~0.2s against the
+offline teacher, despite correct BPM. Raw clock includes17.85ms kit lead;
+this is not a direct heard-onset error estimate. Decoder and activation fold
+agree on that displaced grid; harmonic phase is unavailable there. A causal
+phase-only prototype before first audible entry changes none of16875 trace
+rows and is removed. Production phase algorithm/model remain unchanged.
+No per-song offset, relaxed regression gate or future-input analysis accepted.
+See final-verification.json, phase-investigation.json and rejected logs.

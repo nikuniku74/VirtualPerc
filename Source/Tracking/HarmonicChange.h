@@ -89,6 +89,8 @@ public:
         reset();
     }
 
+    void setReferenceAveraging (bool direct) noexcept { averageReference = direct; }
+
     void reset() noexcept
     {
         std::fill (ring.begin(), ring.end(), 0.0f);
@@ -216,7 +218,12 @@ public:
             if (moved > enterNow)
             {
                 if (heldHops == 0)
+                {
                     changeStartedAt = absPos;
+                    std::fill (candidateSum, candidateSum + 12, 0.0f);
+                }
+                for (int c = 0; c < 12; ++c)
+                    candidateSum[c] += chroma[c];
                 ++heldHops;
                 peakHeld = std::max (peakHeld, moved);
                 if (heldHops >= kHoldHops)
@@ -242,7 +249,11 @@ public:
                     // Adopt it. The reference is what the harmony *is* now, so
                     // holding the old chord would keep reporting the same
                     // change for as long as the new one lasted.
-                    std::copy (chroma, chroma + 12, reference);
+                    if (averageReference)
+                        for (int c = 0; c < 12; ++c)
+                            reference[c] = candidateSum[c] / static_cast<float> (heldHops);
+                    else
+                        std::copy (chroma, chroma + 12, reference);
                     refractory = kRefractoryHops;
                     heldHops = 0;
                     peakHeld = 0.0f;
@@ -474,6 +485,8 @@ private:
     std::vector<int>   binChroma;
     float chroma[12] {};
     float reference[12] {};
+    float candidateSum[12] {};
+    bool averageReference = true;
     int write = 0, filled = 0, accN = 0, sinceHop = 0, refractory = 0, heldHops = 0;
     float acc = 0.0f, lastChange = 0.0f, peakHeld = 0.0f;
     float typicalMove = 0.0f;

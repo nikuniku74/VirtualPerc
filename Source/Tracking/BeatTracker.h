@@ -298,6 +298,8 @@ public:
                                     && (currentState == TrackingState::following
                                         || currentState == TrackingState::lowConfidence
                                         || currentState == TrackingState::recovering);
+        if (dropQueued)
+            newFileEntryPending = true;
         if (dropQueued || staleIntroLock)
         {
             // The hypothesis still in the slot describes the file that just
@@ -391,6 +393,7 @@ public:
         float         barPhase = 0.0f;
         bool          percussionShouldPlay = false;
         bool          tapLocked = false;
+        bool          tempoOwned = false;
         FollowBar     followBar = FollowBar::ready;
         int           beatsElapsed = 0;
         bool          aiOnnx = false;
@@ -545,6 +548,7 @@ public:
 private:
     void updateState (float confidence, bool hadBeat, bool loudEnough, bool periodic, int numSamples) noexcept;
     bool holdEntryForLevel (int numSamples) noexcept;
+    void recordDownbeatVote (int at, float strength, int elapsedBeats) noexcept;
     void alignBarFromVotes (bool comingIn) noexcept;
     /** One source's opinion about the bar, acted on or not. Returns true when
         it moved the count, so the caller can stop asking. */
@@ -649,6 +653,7 @@ private:
     bool startImmediately = false;
     bool hadPlayed = false;
     bool needsResync = false;
+    bool newFileEntryPending = false; // An explicit replacement keeps the pending pulse-level proof.
     int nudgeSamples = 0;
     int nudgeSide = 0;
     bool resyncGridArmed = false;

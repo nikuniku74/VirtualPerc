@@ -163,7 +163,8 @@ LoopRole HybridPercussionRenderer::roleForBar() const noexcept
 }
 
 int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL, float* outR,
-                                      int numSamples, const Input& in) noexcept
+                                      int numSamples, const Input& in,
+                                      float* controlLeft, float* controlRight) noexcept
 {
     if (outL == nullptr || numSamples <= 0)
         return 0;
@@ -321,7 +322,7 @@ int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL,
     const bool strokesAudible = in.audible && (mode == Mode::strokes || blend < 1.0f
                                                || accentGain > 0.0f);
     lastStrokes = percussion.render (strokeL.data(), strokeR.data(), numSamples,
-                                     in.tick, strokesAudible);
+                                     in.tick, strokesAudible, controlLeft, controlRight);
 
     // The recording is sounding: now the strokes may go. See the handover above.
     if (mode == Mode::recorded && blend < 1.0f && blendStep <= 0.0f
@@ -352,6 +353,13 @@ int HybridPercussionRenderer::render (PercussionEngine& percussion, float* outL,
                   + strokeL[static_cast<size_t> (i)] * strokeMix;
         outR[i] = (loopNeeded ? loopR[static_cast<size_t> (i)] * gLoop : 0.0f)
                   + strokeR[static_cast<size_t> (i)] * strokeMix;
+        if (controlLeft != nullptr && controlRight != nullptr)
+        {
+            controlLeft[i] = (loopNeeded ? loopL[static_cast<size_t> (i)] * gLoop : 0.0f)
+                             + controlLeft[i] * strokeMix;
+            controlRight[i] = (loopNeeded ? loopR[static_cast<size_t> (i)] * gLoop : 0.0f)
+                              + controlRight[i] * strokeMix;
+        }
     }
 
     if (mode == Mode::strokes && blend <= 0.0f)

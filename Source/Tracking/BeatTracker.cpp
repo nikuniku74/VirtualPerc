@@ -314,6 +314,7 @@ void BeatTracker::reset() noexcept
     halfLevel = {};
     sounding = false;
     needsResync = false;
+    newFileEntryPending = false;
     resyncGridArmed = false;
     waitForSongBeat = false;
     armed = false;
@@ -390,7 +391,14 @@ void BeatTracker::start() noexcept
     quantizeWaitSamples = 0;
     if (currentState == TrackingState::idle || currentState == TrackingState::stopped)
         currentState = TrackingState::listening;
-    if (heldBpm > 50.0f)
+    // A fresh file must earn entry. For a warm live input, do not promote
+    // a currently valid provisional AUTO level before its level check.
+    BeatHypothesis current;
+    const bool pendingLevel = ! lockedOnce && octaveAuto
+        && neural.tryLoad (current) && current.valid
+        && ((autoOctave < 1 && heldBpm * 2.0f <= kOctaveTooFast) || halfLevel.doubled);
+    if (heldBpm > 50.0f && ((! newFileEntryPending && ! pendingLevel)
+                          || tapEstablished || ! tempoFollow || startImmediately))
     {
         currentState = TrackingState::following;
         follower.setTargetTempo (heldBpm, 0.90f);
@@ -1000,6 +1008,21 @@ bool BeatTracker::barIsTrustedNow() noexcept
     return barTrustEstablished;
 }
 
+void BeatTracker::recordDownbeatVote (int at, float strength, int elapsedBeats) noexcept
+{
+    if (elapsedBeats <= 0)
+        return;
+    // A skipped publication carries no downbeat opinion, but time still passed.
+    const float decay = elapsedBeats == 1 ? kVoteDecay
+                        : std::pow (kVoteDecay, static_cast<float> (elapsedBeats));
+    for (float& v : downbeatVotes)
+        v *= decay;
+    voteBeats = voteBeats * decay + 1.0f;
+    downbeatVotes[at] += std::clamp (strength, 0.0f, 1.0f);
+    if (elapsedBeats != 1)
+        halfBarStreak = 0;
+}
+
 void BeatTracker::alignBarFromVotes (bool comingIn) noexcept
 {
     // The listener has placed the one. Nothing here moves it - not a plurality,
@@ -1094,7 +1117,7 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // a network that is loud about everything must not look better supported
     // than one that is quiet about everything, and the shares above already
     // carry how loud it was.
-    if (best == 0 || beatsOfEvidence < (comingIn
+    if (beatsOfEvidence < (comingIn
             ? (barReentrySamples > 0 ? kBeatsToTrustReentry : kBeatsToTrustTheBar)
             : kBeatsToMoveTheBar))
         return false;
@@ -1108,6 +1131,11 @@ bool BeatTracker::tryAlignFrom (const float* votes, float beatsOfEvidence,
     // rather than a share of a total.
     if (bestVotes < runnerUp + kBarWinMargin + extraMargin)
         return false;
+    // A clear vote for the current one is an answer too: do not let the
+    // harmony fallback overrule the network merely because no rotation is due.
+    if (best == 0)
+        return ! speakerFollow
+               && (comingIn || bestVotes >= runnerUp + kBarWinMarginPlaying + extraMargin);
     // A pause under a bar that was already the one. Half a bar is the
     // 1-vs-3 the hole was built for; one quarter is the battere and the
     // levare trading places. The playing margin is what a clear relocation
@@ -1523,7 +1551,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     follower.setFixedDirectFeed (
         fixedNow && fixedGridSamples > static_cast<int> (sampleRate * 8.0)
         && ! tempoOwned && tempoFollow && ! harmonicSourceActive && periodic && ! tapHold);
-    follower.setBeatGapHold (haveHyp && hyp.valid && hyp.beatGap);
+    follower.setBeatGapHold (! tempoOwned && haveHyp && hyp.valid && hyp.beatGap);
     if (tempoOwned || ! tempoFollow || ! haveHyp || ! hyp.valid)
         follower.cancelPhaseRecovery();
     else if (!harmonicSourceActive && hadBeat
@@ -1723,10 +1751,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         // The whole tally decays as it goes. Without that, the first bars of a
         // track keep their say forever and a section change can never be heard;
         // with it the vote is always about the recent past.
-        for (float& v : downbeatVotes)
-            v *= kVoteDecay;
-        voteBeats = voteBeats * kVoteDecay + 1.0f;
-        downbeatVotes[at] += std::clamp (hyp.beatDownbeat, 0.0f, 1.0f);
+        recordDownbeatVote (at, hyp.beatDownbeat, newBeats);
 
         // While playing, the bar is corrected from the whole histogram - never
         // from the single beat that just arrived.
@@ -1846,8 +1871,12 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         resyncGridArmed = false;
         follower.setTargetTempo (nnBpm, std::max (nnConf, 0.75f));
         heldBpm = nnBpm;
-        currentState = TrackingState::following;
-        lockedOnce = true;
+        // A fresh grid must still clear the source's pending pulse-level check.
+        if (! newFileEntryPending || ! holdEntryForLevel (0))
+        {
+            currentState = TrackingState::following;
+            lockedOnce = true;
+        }
         waitForSongBeat = true;
         needsResync = false;
     }
@@ -2216,7 +2245,10 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         currentState = TrackingState::following;
 
     if (currentState == TrackingState::following)
+    {
         lockedOnce = true;
+        newFileEntryPending = false;
+    }
 
     out.state = currentState;
     out.subdivision = effectiveSubdivision;
@@ -2396,6 +2428,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     if (sounding)
         hadPlayed = true;
     out.tapLocked = tapHold;
+    out.tempoOwned = tempoOwned;
     out.aiOnnx = neural.usingOnnx();
     out.hypValid = haveHyp && hyp.valid;
     out.harmonicTempoSource = harmonicSourceActive;

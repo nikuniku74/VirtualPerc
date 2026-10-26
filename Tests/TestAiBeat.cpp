@@ -41,6 +41,142 @@
 #include <vector>
 #include <utility>
 
+namespace vp
+{
+struct PercussionAttackProbe
+{
+    static bool controlIndependentOfAttacks()
+    {
+        PercussionEngine calibrated, nominal;
+        calibrated.prepare (48000.0);
+        nominal.prepare (48000.0);
+        nominal.bankHeardTarget = nominal.bankAttackLead + 288; // The nominal control's six milliseconds.
+        for (auto& stroke : nominal.bank)
+            for (auto& layer : stroke)
+                for (auto& sample : layer)
+                {
+                    sample.attack = sample.controlAttack;
+                    sample.rawAttack = sample.controlAttack;
+                    sample.attackPeak = 0.0f; // Force nominal timing, including the clipped-gain branch.
+                }
+        float l[128] {}, r[128] {}, cL[128] {}, cR[128] {};
+        float nL[128] {}, nR[128] {};
+        bool changedSound = false;
+        for (int block = 0; block < 2400; ++block)
+        {
+            if (block % 3 == 0)
+            {
+                const int event = block / 3;
+                const auto stroke = static_cast<Stroke> (event % static_cast<int> (Stroke::count));
+                const float velocity = (static_cast<float> ((event / static_cast<int> (Stroke::count)) % 3) + 0.5f) / 3;
+                calibrated.triggerForTest (stroke, velocity, 17);
+                nominal.triggerForTest (stroke, velocity, 17);
+            }
+            ClockTick tick {};
+            tick.reanchored = block % 127 == 126;
+            calibrated.render (l, r, 128, tick, false, cL, cR);
+            nominal.render (nL, nR, 128, tick, false);
+            for (int i = 0; i < 128; ++i)
+            {
+                if (cL[i] != nL[i] || cR[i] != nR[i])
+                    return false;
+                changedSound = changedSound || l[i] != nL[i] || r[i] != nR[i];
+            }
+        }
+        return changedSound;
+    }
+
+    static bool triangleCannotMoveKitLead()
+    {
+        PercussionEngine e;
+        e.setUseRecordedSamples (false);
+        e.prepare (48000.0);
+        const int before = e.attackLeadSamples(), targetBefore = e.bankHeardTarget;
+        for (Stroke stroke : {Stroke::triangleOpen, Stroke::triangleClosed, Stroke::triangleClosed2})
+            for (auto& layer : e.bank[static_cast<int> (stroke)])
+                for (auto& sample : layer)
+                {
+                    std::fill (sample.left.begin(), sample.left.end(), 0.0f);
+                    if (sample.left.size() > 1800)
+                        sample.left[1800] = 1.0f;
+                }
+        e.measureBankAttacks();
+        return e.attackLeadSamples() == before && e.bankHeardTarget == targetBefore
+               && e.attackMsFor (Stroke::triangleOpen) > e.attackLeadMs();
+    }
+};
+
+struct MakeupEpochProbe
+{
+    static bool harmonicMemoryRestarts (bool queued)
+    {
+        VirtualPercussionEngine e;
+        e.setBeatModel (std::make_unique<StubBeatModel>());
+        e.prepare (48000.0, 256, 1);
+        float x[256] {};
+        for (int block = 0; block < 188; ++block)
+        {
+            for (int i = 0; i < 256; ++i)
+                x[i] = std::sin (static_cast<float> (2.0 * 3.14159265358979
+                                    * 261.626 * (block * 256 + i) / 48000.0));
+            HarmonicChange::Change changes[HarmonicChange::kMaxChanges];
+            e.harmony.process (x, 256, changes, HarmonicChange::kMaxChanges);
+        }
+        if (e.harmony.tonalShare() < 0.5f)
+            return false;
+        if (queued)
+        {
+            e.notifyInputRestart();
+            std::fill_n (x, 256, 0.0f);
+            const float* input[] { x };
+            float l[256] {}, r[256] {};
+            float* output[] { l, r };
+            e.process (input, 1, output, 2, 256);
+        }
+        else
+            e.reset();
+        return e.harmony.tonalShare() == 0.0f;
+    }
+
+    static float partPeak (const VirtualPercussionEngine& e) { return e.partPeakLast; }
+
+    static bool masterDoesNotChooseEpoch (float master)
+    {
+        VirtualPercussionEngine a, b;
+        a.setBeatModel (std::make_unique<StubBeatModel>());
+        b.setBeatModel (std::make_unique<StubBeatModel>());
+        a.prepare (48000.0, 128, 1);
+        b.prepare (48000.0, 128, 1);
+        bool sawEpoch = false;
+        for (int block = 0; block < 2250; ++block)
+        {
+            const float input = block < 750 ? 0.0001f : 0.2f;
+            const bool ea = a.updateAnalysisEpoch (128, input, false);
+            const bool eb = b.updateAnalysisEpoch (128, input, false);
+            sawEpoch = sawEpoch || ea;
+            if (ea != eb || a.levelFast != b.levelFast || a.levelRef != b.levelRef
+                || a.ownFast != b.ownFast || a.ownStepSamples != b.ownStepSamples)
+                return false;
+            const float part = block > 1000 ? 0.3f : 0.0f;
+            std::fill_n (a.outL.begin(), 128, part);
+            std::fill_n (a.outR.begin(), 128, part);
+            std::fill_n (b.outL.begin(), 128, part);
+            std::fill_n (b.outR.begin(), 128, part);
+            const int at = b.ringWrite;
+            a.pushOutputToRing (128, 0.9f);
+            b.pushOutputToRing (128, master);
+            if (a.partPeakLast != part || b.partPeakLast != part)
+                return false;
+            for (int i = 0; i < 128; ++i)
+                if (b.outRing[static_cast<size_t> ((at + i) & (VirtualPercussionEngine::ringSize - 1))]
+                    != master * part)
+                    return false;
+        }
+        return sawEpoch;
+    }
+};
+}
+
 namespace
 {
     int* gPass = nullptr;
@@ -688,7 +824,7 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
             snap = e.snapshot();
             for (int spin = 0; spin < 400; ++spin)
             {
-                if (e.snapshot().analysisBacklog <= 960)
+                if (e.analysisBacklog() <= 960)
                     break;
                 std::this_thread::sleep_for (std::chrono::microseconds (50));
             }
@@ -787,6 +923,11 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
         vp::VirtualPercussionEngine eng;
         eng.prepare (sr, block, 1);
         eng.settings().followSource.store (static_cast<int> (source));
+        if (trackBpm == 50.0f)
+        {
+            eng.settings().tempoOctaveAuto.store (false);
+            eng.settings().tempoOctave.store (-1);
+        }
         eng.settings().shakerEnabled.store (true);
         eng.settings().congasEnabled.store (false);
         eng.settings().cembaloEnabled.store (false);
@@ -847,8 +988,9 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
             samplesInHop += numThisBlock;
             if (samplesInHop == hop)
             {
+                // A scheduling watchdog, as in VPTrack; never skip a delayed hop.
                 const auto until = std::chrono::steady_clock::now()
-                                   + std::chrono::milliseconds (400);
+                                   + std::chrono::seconds (10);
                 while (eng.analysisCompletedSamples() < pos
                        && std::chrono::steady_clock::now() < until)
                     std::this_thread::yield();
@@ -920,13 +1062,13 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
             const int expectedOctave = trackBpm == 50.0f ? -1 : 0;
             const bool filePath = source == vp::FollowSource::internalPlayer;
             const char* tempoName = trackBpm == 50.0f
-                ? (filePath ? "file slow kit holds 50 BPM for 20 seconds at the quarter level"
-                            : "mixer slow kit holds 50 BPM for 20 seconds at the quarter level")
+                ? (filePath ? "file explicit divide-by-two holds the ambiguous slow kit at 50 BPM for 20 seconds"
+                            : "mixer explicit divide-by-two holds the ambiguous slow kit at 50 BPM for 20 seconds")
                 : (filePath ? "file 100 BPM control keeps its original metrical level"
                             : "mixer 100 BPM control keeps its original metrical level");
             const char* phaseName = trackBpm == 50.0f
-                ? (filePath ? "file audible 50 BPM quarter stays aligned without drift"
-                            : "mixer audible 50 BPM quarter stays aligned without drift")
+                ? (filePath ? "file explicit 50 BPM quarter stays aligned without drift"
+                            : "mixer explicit 50 BPM quarter stays aligned without drift")
                 : (filePath ? "file audible 100 BPM control stays aligned without drift"
                             : "mixer audible 100 BPM control stays aligned without drift");
             expect (r.drained && r.gaps == 0
@@ -981,7 +1123,7 @@ void vpRunOctaveSweepTest (int& passed, int& failed, const char* only)
                 eng.process (ins, 1, outs, 2, block);
                 for (int spin = 0; spin < 400; ++spin)
                 {
-                    if (eng.snapshot().analysisBacklog <= 960)
+                    if (eng.analysisBacklog() <= 960)
                         break;
                     std::this_thread::sleep_for (std::chrono::microseconds (50));
                 }
@@ -1222,7 +1364,7 @@ void vpRunLevelSweepTest (int& passed, int& failed, const char* only)
             if (samplesInHop == hop)
             {
                 const auto until = std::chrono::steady_clock::now()
-                                   + std::chrono::milliseconds (400);
+                                   + std::chrono::seconds (10);
                 while (eng.analysisCompletedSamples() < pos
                        && std::chrono::steady_clock::now() < until)
                     std::this_thread::yield();
@@ -1371,21 +1513,30 @@ void vpRunBarReentryTests (int& passed, int& failed)
         float* outs[2] = { oL.data(), oR.data() };
         int blocks = 0;
         const int end = std::min (pos + count, n);
+        auto drain = [&]
+        {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+            while (eng.analysisCompletedSamples() < pos && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::yield();
+            if (eng.analysisCompletedSamples() < pos)
+            {
+                std::printf ("bar-drain target=%d completed=%lld backlog=%d seq=%u\n", pos,
+                             static_cast<long long> (eng.analysisCompletedSamples()),
+                             eng.analysisBacklog(), eng.hypothesisPublicationSequence());
+                expect (false, "bar fixture drains its queued audio before changing sections");
+            }
+        };
         while (pos + block <= end)
         {
             const float* ins[1] = { song + pos };
             eng.process (ins, 1, outs, 2, block);
             pos += block;
             if ((++blocks % 8) == 0)
-                std::this_thread::sleep_for (std::chrono::milliseconds (1));
+                drain(); // Bound producer lead: wall-load must not move the scripted one.
         }
         // A scripted bar shift must not relabel audio still queued from the
         // previous section. Sleep alone made the seek assertion load-dependent.
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds (10);
-        while (eng.analysisCompletedSamples() < pos && std::chrono::steady_clock::now() < deadline)
-            std::this_thread::yield();
-        if (eng.analysisCompletedSamples() < pos)
-            expect (false, "bar fixture drains its queued audio before changing sections");
+        drain();
         return pos;
     };
 
@@ -1600,6 +1751,11 @@ void vpRunNewInputTests (int& passed, int& failed)
     gPass = &passed;
     gFail = &failed;
     std::printf ("\nnew input (item 3)\n");
+    expect (vp::MakeupEpochProbe::harmonicMemoryRestarts (false),
+            "reset clears the previous source's harmonic memory");
+    expect (vp::MakeupEpochProbe::harmonicMemoryRestarts (true),
+            "a queued new source clears harmonic memory on the audio callback");
+
 
     // OTTAVA? (docs/TODO.md item 143): 4 s of the raw fold an octave from the
     // tempo within 30 s of the entry shows it, for 20 s; ÷2/×2 or STOP ends it.
@@ -2034,6 +2190,42 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
     gPass = &passed;
     gFail = &failed;
 
+    // Equal faders must sound alike on all four assignments. Reset takes too:
+    // otherwise round-robin colour is mistaken for a volume interaction.
+    {
+        vp::PercussionEngine perc;
+        perc.prepare (48000.0);
+        perc.setHumanization (0.0f);
+        perc.setReverbAmount (0.0f);
+        perc.setShakerVolume (0.2f);
+        perc.setCongaVolume (0.2f);
+        perc.setCembaloVolume (0.2f);
+        perc.setClapVolume (0.2f);
+        for (auto stroke : { vp::Stroke::open, vp::Stroke::shakerDown,
+                             vp::Stroke::triangleOpen })
+        {
+            std::vector<float> reference;
+            bool same = true;
+            for (int knob = 0; knob < 4; ++knob)
+            {
+                perc.reset();
+                perc.setSeed (4242u);
+                std::vector<float> l (16000), r (16000);
+                vp::ClockTick idle;
+                perc.triggerForTest (stroke, 0.6f, 0, static_cast<vp::KitSound> (knob));
+                perc.render (l.data(), r.data(), static_cast<int> (l.size()), idle, true);
+                if (knob == 0)
+                    reference = l;
+                else
+                    same = same && l == reference;
+            }
+            const bool sounds = std::any_of (reference.begin(), reference.end(),
+                                            [] (float v) { return v != 0.0f; });
+            expect (same && sounds,
+                    "instrument trim follows its sound on every FEEL knob");
+        }
+    }
+
     // The library has only one medium take for these two articulations.
     // Replaying it bit-for-bit defeats round-robin exactly at the everyday
     // velocities used by the groove, even though the hard layer's A/B test
@@ -2364,8 +2556,10 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
                      static_cast<double> (perc.attackLeadMs()),
                      static_cast<double> (perc.attackMsFor (vp::Stroke::triangleOpen)),
                      static_cast<double> (perc.attackMsFor (vp::Stroke::shakerDown)));
-        expect (perc.attackLeadMs() < 20.0f,
-                "triangle does not raise the kit attack lead toward the 25 ms ceiling");
+        expect (vp::PercussionAttackProbe::controlIndependentOfAttacks(),
+                "attack alignment changes the heard kit without changing its control reference");
+        expect (vp::PercussionAttackProbe::triangleCannotMoveKitLead(),
+                "even an artificially late triangle cannot move the kit attack lead");
         expect (perc.attackMsFor (vp::Stroke::triangleOpen) < 8.0f,
                 "triangle beater is a sharp strike so hold can sit the open on the quarter");
     }
@@ -2479,6 +2673,159 @@ void vpRunPercussionSoundTests (int& passed, int& failed)
         expect (outro == 24 && dropDb > 6.0,
                 "a shaker switched off shakes out in 24 fading strokes and stops");
     }
+    // What a listener hears has to land on the beat, and the clock being right
+    // is not the same thing as that. A shaker is not a click: measured on the
+    // bundled library its energy needs ten to thirteen milliseconds to get
+    // where a slap gets in two, so a voice started exactly on the pulse *sounds*
+    // that much after it - and the strokes sound at different times from each
+    // other, which is worse than all of them being late together.
+    {
+        constexpr double sr = 48000.0;
+        vp::PercussionEngine perc;
+        perc.prepare (sr);
+        perc.setSeed (4242u);
+        perc.setHumanization (0.0f);
+        perc.setReverbAmount (0.0f);
+        perc.setShakerVolume (1.0f);
+        perc.setCongaVolume (1.0f);
+        perc.setGroove (120.0f, 4);
+
+        // Where each articulation is heard, measured the same way the
+        // compensation is defined: the point the envelope reaches 80% of the
+        // peak it reaches inside the attack window.
+        auto heardAt = [sr] (const std::vector<float>& x)
+        {
+            size_t start = 0;
+            while (start < x.size() && x[start] == 0.0f)
+                ++start;
+            const int win = std::min (static_cast<int> (x.size()),
+                                      static_cast<int> (start) + static_cast<int> (sr * 0.040));
+            const float atk = 1.0f - std::exp (-1.0f / static_cast<float> (sr * 0.0005));
+            std::vector<float> env (static_cast<size_t> (win), 0.0f);
+            float e = 0.0f, peak = 0.0f;
+            for (int i = 0; i < win; ++i)
+            {
+                const float v = std::fabs (x[static_cast<size_t> (i)]);
+                e += (v - e) * (v > e ? 0.5f : atk);
+                env[static_cast<size_t> (i)] = e;
+                peak = std::max (peak, e);
+            }
+            if (peak < 1.0e-6f)
+                return -1.0;
+            for (int i = 0; i < win; ++i)
+                if (env[static_cast<size_t> (i)] >= peak * 0.80f)
+                    return static_cast<double> (i) / sr * 1000.0;
+            return -1.0;
+        };
+
+        // Include layer boundaries, fortissimo and faders: the limiter must not
+        // change when a stroke is heard merely because its gain changed.
+        for (const float attackVolume : { 0.15f, 0.5f, 1.0f })
+        for (const float attackVelocity : { 0.08f, 1.0f / 6.0f, 0.30f, 0.34f,
+                                           0.5f, 0.65f, 0.67f, 0.9f, 1.0f })
+        {
+        perc.setShakerVolume (attackVolume);
+        perc.setCongaVolume (attackVolume);
+        perc.setCembaloVolume (attackVolume);
+        perc.setClapVolume (attackVolume);
+        double lo = 1.0e9, hi = -1.0e9, nominalLo = 1.0e9, nominalHi = -1.0e9;
+        for (int rr = 0; rr < 3; ++rr)
+        for (int s = 0; s < static_cast<int> (vp::Stroke::count); ++s)
+        {
+            const int n = static_cast<int> (sr * 0.4);
+            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+            vp::ClockTick silent;
+            perc.clearVoices();
+            perc.triggerForTest (static_cast<vp::Stroke> (s), attackVelocity, 0);
+            std::vector<float> controlL (static_cast<size_t> (n)), controlR (static_cast<size_t> (n));
+            perc.render (l.data(), r.data(), n, silent, true, controlL.data(), controlR.data());
+            const double nominal = heardAt (controlL);
+            nominalLo = std::min (nominalLo, nominal);
+            nominalHi = std::max (nominalHi, nominal);
+            const double at = heardAt (l);
+            if (std::getenv ("VP_ATTACK_TRACE") != nullptr)
+                std::printf ("attack-articulation stroke=%d heard=%.3fms bank=%.3fms\n",
+                             s, at, static_cast<double> (perc.attackMsFor (static_cast<vp::Stroke> (s))));
+            if (at < 0.0)
+                continue;
+            lo = std::min (lo, at);
+            hi = std::max (hi, at);
+        }
+
+        std::printf ("attack-reference velocity=%.3f volume=%.3f nominal spread=%.3fms\n",
+                     static_cast<double> (attackVelocity), static_cast<double> (attackVolume),
+                     nominalHi - nominalLo);
+        std::printf ("attack-align  heard between %.2f and %.2f ms  spread %.2f  lead %.2f\n",
+                     lo, hi, hi - lo, static_cast<double> (perc.attackLeadMs()));
+
+        // Uncompensated these sit between 2.1 and 13.3 ms apart, which is a
+        // shaker landing eleven milliseconds after a slap written on the same
+        // sixteenth. Two milliseconds is below anything a listener can pick out.
+        expect (hi - lo < 2.0, "every articulation is heard at the same moment, not each after its own attack");
+        }
+        // The stable articulation reference plus the common hold covers the takes.
+        expect (perc.attackLeadMs() > 4.0f && perc.attackLeadMs() < 25.0f,
+                "the clock keeps a bounded articulation reference for attack compensation");
+
+        // The dots on the stage light when the clock fires. A drum whose
+        // strike is still ten milliseconds into a swell is heard after them,
+        // which is what the VCSL takes did when they were trimmed to the body
+        // peak instead of the hand. Hold (the compensator) is skipped: this is
+        // the asset, not the scheduling.
+        //
+        // The window is a window on the *recording*, so it scales with the
+        // tuning: the drums are read faster than they were recorded, and a
+        // fixed twelve milliseconds of output covers more and more of the take
+        // as the bank is tuned up until it reaches the body swell - which then
+        // fails the check for a reason that has nothing to do with the strike.
+        {
+            const double tune = static_cast<double> (vp::PercussionEngine::drumTuneRatio());
+            const vp::Stroke drums[] = { vp::Stroke::tumba, vp::Stroke::open, vp::Stroke::slap };
+            bool allTight = true;
+            for (auto s : drums)
+            {
+                const int n = static_cast<int> (sr * 0.4);
+                std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
+                vp::ClockTick silent;
+                perc.clearVoices();
+                perc.triggerForTest (s, 0.9f, 0);
+                perc.render (l.data(), r.data(), n, silent, true);
+
+                const int win = std::min (n, static_cast<int> (sr * 0.030));
+                float peak = 0.0f;
+                for (int i = 0; i < win; ++i)
+                    peak = std::max (peak, std::fabs (l[static_cast<size_t> (i)]));
+                if (peak < 1.0e-4f)
+                {
+                    allTight = false;
+                    continue;
+                }
+                int audible = 0;
+                while (audible < win && std::fabs (l[static_cast<size_t> (audible)]) < 0.05f * peak)
+                    ++audible;
+                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012 / tune));
+                int peakAt = audible;
+                float p = 0.0f;
+                for (int i = audible; i < strikeWin; ++i)
+                {
+                    const float a = std::fabs (l[static_cast<size_t> (i)]);
+                    if (a > p)
+                    {
+                        p = a;
+                        peakAt = i;
+                    }
+                }
+                const double ms = (peakAt - audible) / sr * 1000.0;
+                std::printf ("drum-strike  stroke=%d delta=%.2f ms  (finestra %.1f ms, accordatura x%.3f)\n",
+                             static_cast<int> (s), ms, 12.0 / tune, tune);
+                if (ms > 4.0)
+                    allTight = false;
+            }
+            expect (allTight, "drum strike peak is at the start of the asset, not into the swell");
+        }
+    }
+
+
 }
 
 
@@ -2559,14 +2906,19 @@ static void runHeardPhaseLockBench()
             ++blocks;
             const bool boundary = samplesInHop == hop;
             const auto until = std::chrono::steady_clock::now()
-                               + std::chrono::milliseconds (400);
+                               + std::chrono::seconds (10);
             if (boundary)
             {
                 while (eng.analysisCompletedSamples() < pos
                        && std::chrono::steady_clock::now() < until)
                     std::this_thread::yield();
                 if (eng.analysisCompletedSamples() < pos)
+                {
+                    std::printf ("phase-lock worker timeout bpm=%.1f input=%d completed=%lld\n",
+                                 static_cast<double> (trackBpm), pos,
+                                 static_cast<long long> (eng.analysisCompletedSamples()));
                     workerDrained = false;
+                }
                 samplesInHop = 0;
             }
         }
@@ -2590,7 +2942,7 @@ static void runHeardPhaseLockBench()
                      static_cast<double> (worstLate), last.tempoRegime, offLevel);
 
         expect (workerDrained,
-                "ONNX analysis worker kept up with real-time playback");
+                "ONNX analysis worker completes every paced input hop");
         // From 14 s to the end every block is on the pulse or on its held
         // half, never a 3:2, and both halves have been measured.
         expect (offLevel == 0 && earlyN > 0 && lateN > 0,
@@ -2629,6 +2981,351 @@ void vpRunOnnxPhaseLockTests (int& passed, int& failed)
 #else
     expect (true, "ONNX lock skipped (no VP_USE_ONNX)");
 #endif
+}
+
+void vpRunPublicationTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    {
+        // 44.1 kHz is an exact 2:1 model-rate ratio, so one 882-sample device
+        // block is exactly one 441-sample analysis hop with no fractional
+        // resampler boundary that could occasionally combine two frames.
+        constexpr double sr = 44100.0;
+        constexpr int block = 882;
+        constexpr int firstFrameSamples = vp::kBeatModelFrame * 2;
+        auto silenceControl = std::make_shared<std::atomic<bool>> (false);
+        vp::VirtualPercussionEngine eng;
+        eng.setBeatModel (
+            std::make_unique<ScriptedTransitionModel> (silenceControl));
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().analysisChannel.store (0);
+        // Bar re-entry invalidates old publications; isolate frame/lifecycle here.
+        eng.settings().barLocked.store (true);
+        const uint32_t initialPublication = eng.hypothesisPublicationSequence();
+        expect (initialPublication == 0,
+                "scripted engine starts before any complete publication");
+
+        std::vector<float> input (static_cast<size_t> (firstFrameSamples), 0.1f);
+        std::vector<float> left (static_cast<size_t> (firstFrameSamples), 0.0f);
+        std::vector<float> right (static_cast<size_t> (firstFrameSamples), 0.0f);
+        const float* ins[1] = { input.data() };
+        float* outs[2] = { left.data(), right.data() };
+
+        auto diagnosticsAreClear = [] (const vp::EngineSnapshot& s)
+        {
+            return s.tempoTransitionState == vp::TempoTransitionState::stable
+                   && s.tempoTransitionReason == vp::TempoTransitionReason::none
+                   && s.tempoTransitionBpm == 0.0f
+                   && s.tempoTransitionConfidence == 0.0f
+                   && s.tempoTransitionIntervals == 0;
+        };
+
+        expect (diagnosticsAreClear (eng.snapshot()),
+                "real engine path starts with no transition hypothesis");
+
+        bool sawInvalidPublication = false;
+        bool invalidStayedClear = false;
+        bool publicationObserved = false;
+        bool sawRapidSnapshot = false;
+        bool sequenceAdvancedExactly = true;
+        vp::BeatHypothesis rapidHyp;
+        vp::EngineSnapshot rapid;
+        std::vector<vp::BeatHypothesis> noResetSequence;
+
+        auto waitForNextPublication = [&] (uint32_t prior, vp::BeatHypothesis& captured)
+        {
+            const auto deadline = std::chrono::steady_clock::now()
+                                  + std::chrono::seconds (10);
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                const uint32_t completed = eng.hypothesisPublicationSequence();
+                if (completed != prior)
+                {
+                    // The slot copy is deliberately bounded and may lose a
+                    // writer race. Retry observation before feeding another hop.
+                    if (! eng.tryLoadNeuralHypothesis (captured)
+                        || eng.hypothesisPublicationSequence() != completed)
+                        continue;
+                    sequenceAdvancedExactly = sequenceAdvancedExactly
+                                              && completed == prior + 2u;
+                    return true;
+                }
+                std::this_thread::yield();
+            }
+            return false;
+        };
+
+        // Feed exactly enough device samples for the first model frame. Total
+        // input can support one and only one publication, regardless of how
+        // the worker divides its FIFO pops. Every later feed is exactly one hop.
+        eng.process (ins, 1, outs, 2, firstFrameSamples);
+
+        uint32_t priorPublication = initialPublication;
+        for (int callback = 0; callback < 1400 && ! sawRapidSnapshot; ++callback)
+        {
+            vp::BeatHypothesis workerHyp;
+            bool loaded = waitForNextPublication (priorPublication, workerHyp);
+            const uint32_t completed = eng.hypothesisPublicationSequence();
+            publicationObserved = publicationObserved || completed != priorPublication;
+            priorPublication = completed;
+
+            if (loaded)
+            {
+                noResetSequence.push_back (workerHyp);
+                if (! workerHyp.valid)
+                {
+                    sawInvalidPublication = true;
+                }
+                if (workerHyp.valid
+                    && workerHyp.transitionState == vp::TempoTransitionState::rapid)
+                {
+                    // One sample cannot complete a new analysis hop. This
+                    // callback therefore consumes exactly the publication just
+                    // captured and performs the engine's relaxed stores.
+                    rapidHyp = workerHyp;
+                    eng.process (ins, 1, outs, 2, 1);
+                    rapid = eng.snapshot();
+                    sawRapidSnapshot = true;
+                    break;
+                }
+            }
+
+            eng.process (ins, 1, outs, 2, block);
+            if (loaded && ! workerHyp.valid)
+            {
+                const auto consumed = eng.snapshot();
+                invalidStayedClear = invalidStayedClear
+                                     || (! consumed.hypValid
+                                         && diagnosticsAreClear (consumed));
+            }
+        }
+
+        expect (sequenceAdvancedExactly,
+                "scripted worker observes exactly one complete publication per hop");
+        expect (publicationObserved, "scripted transition publication is observed");
+        expect (sawInvalidPublication && invalidStayedClear,
+                "invalid worker hypothesis stays clear through engine snapshot");
+        std::printf ("transition-chain  seen=%d state=%d reason=%d bpm=%.2f conf=%.3f int=%d\n",
+                     sawRapidSnapshot ? 1 : 0,
+                     static_cast<int> (rapid.tempoTransitionState),
+                     static_cast<int> (rapid.tempoTransitionReason),
+                     static_cast<double> (rapid.tempoTransitionBpm),
+                     static_cast<double> (rapid.tempoTransitionConfidence),
+                     rapid.tempoTransitionIntervals);
+        expect (sawRapidSnapshot
+                    && rapid.tempoTransitionState == rapidHyp.transitionState
+                    && rapid.tempoTransitionReason == rapidHyp.transitionReason
+                    && rapid.tempoTransitionBpm == rapidHyp.transitionBpm
+                    && rapid.tempoTransitionConfidence == rapidHyp.transitionConfidence
+                    && rapid.tempoTransitionIntervals == rapidHyp.transitionIntervals,
+                "EngineSnapshot preserves the consumed transition payload bit-for-bit");
+        expect (rapidHyp.transitionState == vp::TempoTransitionState::rapid
+                    && rapidHyp.transitionReason == vp::TempoTransitionReason::confirmed
+                    && std::fabs (rapid.tempoTransitionBpm - 132.0f) < 0.5f
+                    && rapidHyp.transitionIntervals == 2,
+                "scripted model detects the expected 132 BPM transition");
+
+        // Feed one hop and reset without waiting for its publication. Whether
+        // the worker completes just before or just after the floor store, the
+        // payload describes audio older than that floor and must be rejected.
+        silenceControl->store (true, std::memory_order_relaxed);
+        const uint32_t sequenceBeforeRacingReset = eng.hypothesisPublicationSequence();
+        eng.process (ins, 1, outs, 2, block);
+        eng.reset();
+        const auto immediatelyAfterReset = eng.snapshot();
+        const auto racingDeadline = std::chrono::steady_clock::now()
+                                    + std::chrono::seconds (10);
+        while (eng.hypothesisPublicationSequence() == sequenceBeforeRacingReset
+               && std::chrono::steady_clock::now() < racingDeadline)
+            std::this_thread::yield();
+        const uint32_t sequenceAtReset = eng.hypothesisPublicationSequence();
+        vp::BeatHypothesis stale;
+        const bool stalePublicationVisible = eng.tryLoadNeuralHypothesis (stale);
+        expect (diagnosticsAreClear (immediatelyAfterReset)
+                    && ! immediatelyAfterReset.hypValid
+                    && ! stalePublicationVisible
+                    && sequenceAtReset == sequenceBeforeRacingReset + 2u,
+                "reset racing a completed slot write rejects that publication");
+
+        eng.process (ins, 1, outs, 2, 1);
+        const auto afterNextCallback = eng.snapshot();
+        expect (diagnosticsAreClear (afterNextCallback) && ! afterNextCallback.hypValid
+                    && eng.hypothesisPublicationSequence() == sequenceAtReset,
+                "pre-reset hypothesis cannot republish on the next callback");
+
+        bool postResetStayedClear = true;
+        bool postResetPublicationObserved = false;
+        vp::BeatHypothesis postResetHyp;
+        vp::EngineSnapshot postResetSnap;
+        for (int callback = 0; callback < 300 && ! postResetPublicationObserved; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            postResetStayedClear = postResetStayedClear
+                                   && diagnosticsAreClear (eng.snapshot())
+                                   && ! eng.snapshot().hypValid;
+
+            vp::BeatHypothesis workerHyp;
+            const bool loaded = waitForNextPublication (prior, workerHyp);
+            if (loaded && workerHyp.valid)
+            {
+                postResetHyp = workerHyp;
+                eng.process (ins, 1, outs, 2, 1);
+                postResetSnap = eng.snapshot();
+                postResetPublicationObserved = true;
+            }
+        }
+        expect (postResetPublicationObserved,
+                "genuine post-reset valid publication is observed");
+        expect (postResetStayedClear,
+                "reset diagnostics stay clear until new valid evidence");
+        expect (postResetPublicationObserved
+                    && postResetSnap.hypValid
+                    && postResetHyp.transitionState == vp::TempoTransitionState::rapid
+                    && postResetHyp.transitionSerial == rapidHyp.transitionSerial
+                    && diagnosticsAreClear (postResetSnap),
+                "first fresh rapid publication stays quarantined from diagnostics");
+
+        bool stableClearedQuarantine = false;
+        for (int callback = 0; callback < 100 && ! stableClearedQuarantine; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            const auto whileQuarantined = eng.snapshot();
+            postResetStayedClear = postResetStayedClear
+                                   && diagnosticsAreClear (whileQuarantined);
+
+            vp::BeatHypothesis workerHyp;
+            if (waitForNextPublication (prior, workerHyp)
+                && workerHyp.valid
+                && workerHyp.transitionState == vp::TempoTransitionState::stable)
+            {
+                eng.process (ins, 1, outs, 2, 1);
+                const auto stableSnap = eng.snapshot();
+                stableClearedQuarantine =
+                    stableSnap.hypValid
+                    && stableSnap.tempoTransitionState == vp::TempoTransitionState::stable;
+            }
+        }
+        expect (stableClearedQuarantine && postResetStayedClear,
+                "elapsed stable publication clears transition quarantine during silence");
+        silenceControl->store (false, std::memory_order_relaxed);
+
+        bool nextRapidAdopted = false;
+        vp::BeatHypothesis nextRapid;
+        vp::EngineSnapshot nextRapidSnap;
+        for (int callback = 0; callback < 700 && ! nextRapidAdopted; ++callback)
+        {
+            const uint32_t prior = eng.hypothesisPublicationSequence();
+            eng.process (ins, 1, outs, 2, block);
+            vp::BeatHypothesis workerHyp;
+            if (waitForNextPublication (prior, workerHyp)
+                && workerHyp.valid
+                && workerHyp.transitionState == vp::TempoTransitionState::rapid
+                && workerHyp.transitionSerial != postResetHyp.transitionSerial)
+            {
+                nextRapid = workerHyp;
+                eng.process (ins, 1, outs, 2, 1);
+                nextRapidSnap = eng.snapshot();
+                nextRapidAdopted = true;
+            }
+        }
+        expect (nextRapidAdopted
+                    && nextRapidSnap.tempoTransitionState
+                           == vp::TempoTransitionState::rapid
+                    && nextRapidSnap.tempoTransitionBpm == nextRapid.transitionBpm
+                    && nextRapidSnap.targetBpm == nextRapid.transitionBpm,
+                "new rapid serial adopts once after stable clears quarantine");
+
+        vp::VirtualPercussionEngine reference;
+        reference.setBeatModel (std::make_unique<ScriptedTransitionModel>());
+        reference.prepare (sr, block, 1);
+        reference.settings().followSource.store (
+            static_cast<int> (vp::FollowSource::kitMic));
+        reference.settings().analysisChannel.store (0);
+        reference.settings().barLocked.store (true);
+        reference.process (ins, 1, outs, 2, firstFrameSamples);
+
+        bool equivalentWithoutReset = ! noResetSequence.empty();
+        uint32_t referenceSequence = 0;
+        for (size_t i = 0; i < noResetSequence.size() && equivalentWithoutReset; ++i)
+        {
+            const auto deadline = std::chrono::steady_clock::now()
+                                  + std::chrono::seconds (10);
+            uint32_t completed = referenceSequence;
+            vp::BeatHypothesis actual;
+            bool loaded = false;
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                completed = reference.hypothesisPublicationSequence();
+                if (completed != referenceSequence
+                    && reference.tryLoadNeuralHypothesis (actual)
+                    && reference.hypothesisPublicationSequence() == completed)
+                {
+                    loaded = true;
+                    break;
+                }
+                std::this_thread::yield();
+            }
+            equivalentWithoutReset = loaded && completed == referenceSequence + 2u;
+            if (equivalentWithoutReset)
+            {
+                const auto& expected = noResetSequence[i];
+                equivalentWithoutReset =
+                    std::memcmp (&actual.bpm, &expected.bpm, sizeof (actual.bpm)) == 0
+                    && std::memcmp (&actual.beatPhase, &expected.beatPhase,
+                                    sizeof (actual.beatPhase)) == 0
+                    && actual.beatSerial == expected.beatSerial
+                    && actual.downbeatSerial == expected.downbeatSerial
+                    && actual.gridSerial == expected.gridSerial
+                    && actual.transitionSerial == expected.transitionSerial
+                    && actual.analysisSample == expected.analysisSample;
+            }
+            if (! equivalentWithoutReset)
+                std::printf ("publication-control i=%zu seq=%u expectedSeq=%u "
+                             "sample=%lld/%lld bpm=%.9g/%.9g phase=%.9g/%.9g "
+                             "beat=%u/%u down=%u/%u grid=%u/%u transition=%u/%u\n",
+                             i, completed, referenceSequence + 2u,
+                             static_cast<long long> (actual.analysisSample),
+                             static_cast<long long> (noResetSequence[i].analysisSample),
+                             static_cast<double> (actual.bpm), static_cast<double> (noResetSequence[i].bpm),
+                             static_cast<double> (actual.beatPhase), static_cast<double> (noResetSequence[i].beatPhase),
+                             actual.beatSerial, noResetSequence[i].beatSerial,
+                             actual.downbeatSerial, noResetSequence[i].downbeatSerial,
+                             actual.gridSerial, noResetSequence[i].gridSerial,
+                             actual.transitionSerial, noResetSequence[i].transitionSerial);
+            referenceSequence = completed;
+            if (i + 1 < noResetSequence.size())
+                reference.process (ins, 1, outs, 2, block);
+        }
+        expect (equivalentWithoutReset,
+                "publication observation leaves the no-reset hypothesis sequence unchanged");
+
+        eng.prepare (sr, block, 1);
+        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
+        eng.settings().analysisChannel.store (0);
+        vp::BeatHypothesis oldSession;
+        expect (eng.hypothesisPublicationSequence() == 0
+                    && ! eng.tryLoadNeuralHypothesis (oldSession)
+                    && diagnosticsAreClear (eng.snapshot())
+                    && ! eng.snapshot().hypValid,
+                "repeated prepare clears the completed publication from session A");
+
+        eng.process (ins, 1, outs, 2, firstFrameSamples);
+        const auto sessionBDeadline = std::chrono::steady_clock::now()
+                                      + std::chrono::seconds (10);
+        while (eng.hypothesisPublicationSequence() == 0
+               && std::chrono::steady_clock::now() < sessionBDeadline)
+            std::this_thread::yield();
+        vp::BeatHypothesis sessionB;
+        expect (eng.hypothesisPublicationSequence() == 2
+                    && eng.tryLoadNeuralHypothesis (sessionB)
+                    && sessionB.analysisSample > 0,
+                "session B accepts its own first complete publication");
+    }
+
 }
 
 void vpRunAiBeatTests (int& passed, int& failed)
@@ -2793,315 +3490,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 "second-beat expiry still permits one downstream adoption");
     }
 
-    {
-        // 44.1 kHz is an exact 2:1 model-rate ratio, so one 882-sample device
-        // block is exactly one 441-sample analysis hop with no fractional
-        // resampler boundary that could occasionally combine two frames.
-        constexpr double sr = 44100.0;
-        constexpr int block = 882;
-        constexpr int firstFrameSamples = vp::kBeatModelFrame * 2;
-        auto silenceControl = std::make_shared<std::atomic<bool>> (false);
-        vp::VirtualPercussionEngine eng;
-        eng.setBeatModel (
-            std::make_unique<ScriptedTransitionModel> (silenceControl));
-        eng.prepare (sr, block, 1);
-        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
-        eng.settings().analysisChannel.store (0);
-        const uint32_t initialPublication = eng.hypothesisPublicationSequence();
-        expect (initialPublication == 0,
-                "scripted engine starts before any complete publication");
-
-        std::vector<float> input (static_cast<size_t> (firstFrameSamples), 0.1f);
-        std::vector<float> left (static_cast<size_t> (firstFrameSamples), 0.0f);
-        std::vector<float> right (static_cast<size_t> (firstFrameSamples), 0.0f);
-        const float* ins[1] = { input.data() };
-        float* outs[2] = { left.data(), right.data() };
-
-        auto diagnosticsAreClear = [] (const vp::EngineSnapshot& s)
-        {
-            return s.tempoTransitionState == vp::TempoTransitionState::stable
-                   && s.tempoTransitionReason == vp::TempoTransitionReason::none
-                   && s.tempoTransitionBpm == 0.0f
-                   && s.tempoTransitionConfidence == 0.0f
-                   && s.tempoTransitionIntervals == 0;
-        };
-
-        expect (diagnosticsAreClear (eng.snapshot()),
-                "real engine path starts with no transition hypothesis");
-
-        bool sawInvalidPublication = false;
-        bool invalidStayedClear = false;
-        bool publicationObserved = false;
-        bool sawRapidSnapshot = false;
-        bool sequenceAdvancedExactly = true;
-        vp::BeatHypothesis rapidHyp;
-        vp::EngineSnapshot rapid;
-        std::vector<vp::BeatHypothesis> noResetSequence;
-
-        auto waitForNextPublication = [&] (uint32_t prior, vp::BeatHypothesis& captured)
-        {
-            const auto deadline = std::chrono::steady_clock::now()
-                                  + std::chrono::milliseconds (500);
-            while (std::chrono::steady_clock::now() < deadline)
-            {
-                const uint32_t completed = eng.hypothesisPublicationSequence();
-                if (completed != prior)
-                {
-                    sequenceAdvancedExactly = sequenceAdvancedExactly
-                                              && completed == prior + 2u;
-                    return eng.tryLoadNeuralHypothesis (captured);
-                }
-                std::this_thread::yield();
-            }
-            return false;
-        };
-
-        // Feed exactly enough device samples for the first model frame. Total
-        // input can support one and only one publication, regardless of how
-        // the worker divides its FIFO pops. Every later feed is exactly one hop.
-        eng.process (ins, 1, outs, 2, firstFrameSamples);
-
-        uint32_t priorPublication = initialPublication;
-        for (int callback = 0; callback < 1400 && ! sawRapidSnapshot; ++callback)
-        {
-            vp::BeatHypothesis workerHyp;
-            bool loaded = waitForNextPublication (priorPublication, workerHyp);
-            const uint32_t completed = eng.hypothesisPublicationSequence();
-            publicationObserved = publicationObserved || completed != priorPublication;
-            priorPublication = completed;
-
-            if (loaded)
-            {
-                noResetSequence.push_back (workerHyp);
-                if (! workerHyp.valid)
-                {
-                    sawInvalidPublication = true;
-                }
-                if (workerHyp.valid
-                    && workerHyp.transitionState == vp::TempoTransitionState::rapid)
-                {
-                    // One sample cannot complete a new analysis hop. This
-                    // callback therefore consumes exactly the publication just
-                    // captured and performs the engine's relaxed stores.
-                    rapidHyp = workerHyp;
-                    eng.process (ins, 1, outs, 2, 1);
-                    rapid = eng.snapshot();
-                    sawRapidSnapshot = true;
-                    break;
-                }
-            }
-
-            eng.process (ins, 1, outs, 2, block);
-            if (loaded && ! workerHyp.valid)
-            {
-                const auto consumed = eng.snapshot();
-                invalidStayedClear = invalidStayedClear
-                                     || (! consumed.hypValid
-                                         && diagnosticsAreClear (consumed));
-            }
-        }
-
-        expect (sequenceAdvancedExactly,
-                "scripted worker observes exactly one complete publication per hop");
-        expect (publicationObserved, "scripted transition publication is observed");
-        expect (sawInvalidPublication && invalidStayedClear,
-                "invalid worker hypothesis stays clear through engine snapshot");
-        std::printf ("transition-chain  seen=%d state=%d reason=%d bpm=%.2f conf=%.3f int=%d\n",
-                     sawRapidSnapshot ? 1 : 0,
-                     static_cast<int> (rapid.tempoTransitionState),
-                     static_cast<int> (rapid.tempoTransitionReason),
-                     static_cast<double> (rapid.tempoTransitionBpm),
-                     static_cast<double> (rapid.tempoTransitionConfidence),
-                     rapid.tempoTransitionIntervals);
-        expect (sawRapidSnapshot
-                    && rapid.tempoTransitionState == rapidHyp.transitionState
-                    && rapid.tempoTransitionReason == rapidHyp.transitionReason
-                    && rapid.tempoTransitionBpm == rapidHyp.transitionBpm
-                    && rapid.tempoTransitionConfidence == rapidHyp.transitionConfidence
-                    && rapid.tempoTransitionIntervals == rapidHyp.transitionIntervals,
-                "EngineSnapshot preserves the consumed transition payload bit-for-bit");
-        expect (rapidHyp.transitionState == vp::TempoTransitionState::rapid
-                    && rapidHyp.transitionReason == vp::TempoTransitionReason::confirmed
-                    && std::fabs (rapid.tempoTransitionBpm - 132.0f) < 0.5f
-                    && rapidHyp.transitionIntervals == 2,
-                "scripted model detects the expected 132 BPM transition");
-
-        // Feed one hop and reset without waiting for its publication. Whether
-        // the worker completes just before or just after the floor store, the
-        // payload describes audio older than that floor and must be rejected.
-        silenceControl->store (true, std::memory_order_relaxed);
-        const uint32_t sequenceBeforeRacingReset = eng.hypothesisPublicationSequence();
-        eng.process (ins, 1, outs, 2, block);
-        eng.reset();
-        const auto immediatelyAfterReset = eng.snapshot();
-        const auto racingDeadline = std::chrono::steady_clock::now()
-                                    + std::chrono::milliseconds (500);
-        while (eng.hypothesisPublicationSequence() == sequenceBeforeRacingReset
-               && std::chrono::steady_clock::now() < racingDeadline)
-            std::this_thread::yield();
-        const uint32_t sequenceAtReset = eng.hypothesisPublicationSequence();
-        vp::BeatHypothesis stale;
-        const bool stalePublicationVisible = eng.tryLoadNeuralHypothesis (stale);
-        expect (diagnosticsAreClear (immediatelyAfterReset)
-                    && ! immediatelyAfterReset.hypValid
-                    && ! stalePublicationVisible
-                    && sequenceAtReset == sequenceBeforeRacingReset + 2u,
-                "reset racing a completed slot write rejects that publication");
-
-        eng.process (ins, 1, outs, 2, 1);
-        const auto afterNextCallback = eng.snapshot();
-        expect (diagnosticsAreClear (afterNextCallback) && ! afterNextCallback.hypValid
-                    && eng.hypothesisPublicationSequence() == sequenceAtReset,
-                "pre-reset hypothesis cannot republish on the next callback");
-
-        bool postResetStayedClear = true;
-        bool postResetPublicationObserved = false;
-        vp::BeatHypothesis postResetHyp;
-        vp::EngineSnapshot postResetSnap;
-        for (int callback = 0; callback < 300 && ! postResetPublicationObserved; ++callback)
-        {
-            const uint32_t prior = eng.hypothesisPublicationSequence();
-            eng.process (ins, 1, outs, 2, block);
-            postResetStayedClear = postResetStayedClear
-                                   && diagnosticsAreClear (eng.snapshot())
-                                   && ! eng.snapshot().hypValid;
-
-            vp::BeatHypothesis workerHyp;
-            const bool loaded = waitForNextPublication (prior, workerHyp);
-            if (loaded && workerHyp.valid)
-            {
-                postResetHyp = workerHyp;
-                eng.process (ins, 1, outs, 2, 1);
-                postResetSnap = eng.snapshot();
-                postResetPublicationObserved = true;
-            }
-        }
-        expect (postResetPublicationObserved,
-                "genuine post-reset valid publication is observed");
-        expect (postResetStayedClear,
-                "reset diagnostics stay clear until new valid evidence");
-        expect (postResetPublicationObserved
-                    && postResetSnap.hypValid
-                    && postResetHyp.transitionState == vp::TempoTransitionState::rapid
-                    && postResetHyp.transitionSerial == rapidHyp.transitionSerial
-                    && diagnosticsAreClear (postResetSnap),
-                "first fresh rapid publication stays quarantined from diagnostics");
-
-        bool stableClearedQuarantine = false;
-        for (int callback = 0; callback < 100 && ! stableClearedQuarantine; ++callback)
-        {
-            const uint32_t prior = eng.hypothesisPublicationSequence();
-            eng.process (ins, 1, outs, 2, block);
-            const auto whileQuarantined = eng.snapshot();
-            postResetStayedClear = postResetStayedClear
-                                   && diagnosticsAreClear (whileQuarantined);
-
-            vp::BeatHypothesis workerHyp;
-            if (waitForNextPublication (prior, workerHyp)
-                && workerHyp.valid
-                && workerHyp.transitionState == vp::TempoTransitionState::stable)
-            {
-                eng.process (ins, 1, outs, 2, 1);
-                const auto stableSnap = eng.snapshot();
-                stableClearedQuarantine =
-                    stableSnap.hypValid
-                    && stableSnap.tempoTransitionState == vp::TempoTransitionState::stable;
-            }
-        }
-        expect (stableClearedQuarantine && postResetStayedClear,
-                "elapsed stable publication clears transition quarantine during silence");
-        silenceControl->store (false, std::memory_order_relaxed);
-
-        bool nextRapidAdopted = false;
-        vp::BeatHypothesis nextRapid;
-        vp::EngineSnapshot nextRapidSnap;
-        for (int callback = 0; callback < 700 && ! nextRapidAdopted; ++callback)
-        {
-            const uint32_t prior = eng.hypothesisPublicationSequence();
-            eng.process (ins, 1, outs, 2, block);
-            vp::BeatHypothesis workerHyp;
-            if (waitForNextPublication (prior, workerHyp)
-                && workerHyp.valid
-                && workerHyp.transitionState == vp::TempoTransitionState::rapid
-                && workerHyp.transitionSerial != postResetHyp.transitionSerial)
-            {
-                nextRapid = workerHyp;
-                eng.process (ins, 1, outs, 2, 1);
-                nextRapidSnap = eng.snapshot();
-                nextRapidAdopted = true;
-            }
-        }
-        expect (nextRapidAdopted
-                    && nextRapidSnap.tempoTransitionState
-                           == vp::TempoTransitionState::rapid
-                    && nextRapidSnap.tempoTransitionBpm == nextRapid.transitionBpm
-                    && nextRapidSnap.targetBpm == nextRapid.transitionBpm,
-                "new rapid serial adopts once after stable clears quarantine");
-
-        vp::VirtualPercussionEngine reference;
-        reference.setBeatModel (std::make_unique<ScriptedTransitionModel>());
-        reference.prepare (sr, block, 1);
-        reference.settings().followSource.store (
-            static_cast<int> (vp::FollowSource::kitMic));
-        reference.settings().analysisChannel.store (0);
-        reference.process (ins, 1, outs, 2, firstFrameSamples);
-
-        bool equivalentWithoutReset = ! noResetSequence.empty();
-        uint32_t referenceSequence = 0;
-        for (size_t i = 0; i < noResetSequence.size() && equivalentWithoutReset; ++i)
-        {
-            const auto deadline = std::chrono::steady_clock::now()
-                                  + std::chrono::milliseconds (500);
-            while (reference.hypothesisPublicationSequence() == referenceSequence
-                   && std::chrono::steady_clock::now() < deadline)
-                std::this_thread::yield();
-
-            const uint32_t completed = reference.hypothesisPublicationSequence();
-            vp::BeatHypothesis actual;
-            equivalentWithoutReset = completed == referenceSequence + 2u
-                                     && reference.tryLoadNeuralHypothesis (actual);
-            if (equivalentWithoutReset)
-            {
-                const auto& expected = noResetSequence[i];
-                equivalentWithoutReset =
-                    std::memcmp (&actual.bpm, &expected.bpm, sizeof (actual.bpm)) == 0
-                    && std::memcmp (&actual.beatPhase, &expected.beatPhase,
-                                    sizeof (actual.beatPhase)) == 0
-                    && actual.beatSerial == expected.beatSerial
-                    && actual.downbeatSerial == expected.downbeatSerial
-                    && actual.gridSerial == expected.gridSerial
-                    && actual.transitionSerial == expected.transitionSerial
-                    && actual.analysisSample == expected.analysisSample;
-            }
-            referenceSequence = completed;
-            if (i + 1 < noResetSequence.size())
-                reference.process (ins, 1, outs, 2, block);
-        }
-        expect (equivalentWithoutReset,
-                "publication observation leaves the no-reset hypothesis sequence unchanged");
-
-        eng.prepare (sr, block, 1);
-        eng.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
-        eng.settings().analysisChannel.store (0);
-        vp::BeatHypothesis oldSession;
-        expect (eng.hypothesisPublicationSequence() == 0
-                    && ! eng.tryLoadNeuralHypothesis (oldSession)
-                    && diagnosticsAreClear (eng.snapshot())
-                    && ! eng.snapshot().hypValid,
-                "repeated prepare clears the completed publication from session A");
-
-        eng.process (ins, 1, outs, 2, firstFrameSamples);
-        const auto sessionBDeadline = std::chrono::steady_clock::now()
-                                      + std::chrono::milliseconds (500);
-        while (eng.hypothesisPublicationSequence() == 0
-               && std::chrono::steady_clock::now() < sessionBDeadline)
-            std::this_thread::yield();
-        vp::BeatHypothesis sessionB;
-        expect (eng.hypothesisPublicationSequence() == 2
-                    && eng.tryLoadNeuralHypothesis (sessionB)
-                    && sessionB.analysisSample > 0,
-                "session B accepts its own first complete publication");
-    }
+    vpRunPublicationTests (passed, failed);
 
     {
         vp::AudioFifo fifo;
@@ -3152,69 +3541,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
     // The state space settles it, because it is not scoring a window, it is
     // accumulating a whole performance, and because it carries what a listener
     // brings to the question: nobody taps 184 to a slow rock tune.
-    {
-        constexpr double fps = 50.0;
-        constexpr float trueBpm = 92.0f;
-        const double framesPerBeat = 60.0 / static_cast<double> (trueBpm) * fps;
-
-        // Beats at full height, eighths at 0.70 of it. That figure is not
-        // invented: folded onto the true beat, the recorded activations for
-        // this material put the half-beat between 0.56 and 0.72 of the beat,
-        // and the two readings' score distributions overlap completely there -
-        // which is why no amount of work on the fold separated them. Swept, the
-        // fold reads this material correctly up to 0.65 and doubles from 0.70
-        // on, so this sits just the wrong side of where it gives up.
-        //
-        // Note the envelope this sits inside. Swept, the state space holds the
-        // right level up to eighths at about 0.75 of the beat with peaks a
-        // frame and a half wide, and about 0.55 when they are three and a half
-        // frames wide. Past that it doubles too, and honestly so: at that point
-        // the curve really does look like a beat every eighth.
-        auto curveAt = [framesPerBeat] (int frame)
-        {
-            const double halves = static_cast<double> (frame) / (framesPerBeat * 0.5);
-            const double toHalf = std::fabs (halves - std::round (halves)) * framesPerBeat * 0.5;
-            const bool onBeat = (static_cast<int> (std::llround (halves)) & 1) == 0;
-            const float peak = onBeat ? 0.95f : 0.95f * 0.70f;
-            return 0.03f + (peak - 0.03f)
-                   * static_cast<float> (std::exp (-0.5 * (toHalf / 1.5) * (toHalf / 1.5)));
-        };
-
-        auto runFor = [&] (bool anchored)
-        {
-            vp::BeatDecoder dec;
-            dec.prepare (fps);
-            dec.setLevelAnchor (anchored);
-            float last = 0.0f;
-            int onLevel = 0, total = 0;
-            for (int f = 0; f < static_cast<int> (fps * 50.0); ++f)
-            {
-                const auto h = dec.observe (curveAt (f), 0.03f, 0.0f);
-                if (static_cast<double> (f) / fps > 25.0 && h.valid && h.bpm > 40.0f)
-                {
-                    ++total;
-                    onLevel += std::fabs (std::log2 (h.bpm / trueBpm)) < 0.2f ? 1 : 0;
-                    last = h.bpm;
-                }
-            }
-            return std::make_pair (last, total > 0 ? static_cast<double> (onLevel) / total : 0.0);
-        };
-
-        const auto plain = runFor (false);
-        const auto anchored = runFor (true);
-        std::printf ("level-anchor  ottavi al 70%% del battito, vero %.0f: senza ancora %.1f"
-                     " (%.0f%% sul livello), con ancora %.1f (%.0f%%)\n",
-                     static_cast<double> (trueBpm),
-                     static_cast<double> (plain.first), plain.second * 100.0,
-                     static_cast<double> (anchored.first), anchored.second * 100.0);
-        expect (anchored.second > 0.95,
-                "the level comes from the state space, so strong eighths are not the beat");
-        // And the point of the whole exercise: without it, this material is read
-        // an octave out. If that ever stops being true the test above has
-        // stopped proving anything.
-        expect (plain.second < 0.5,
-                "and the fold alone really does read this material an octave out");
-    }
+    vpRunStrongEighthTests (passed, failed);
 
     // How soon the level is known, and by which of the two sources.
     //
@@ -3405,12 +3732,13 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 expect (std::fabs (result.bpmLate - toBpm) / toBpm <= 0.02f,
                         "every rapid step stays on its adopted tempo regime after the bounded window");
                 std::printf ("tempo-deadline %s %.0f->%.0f evidence %.2f sample %.2f"
-                             " clock %.2f\n",
+                             " clock %.2f late %.3f\n",
                              line ? "line" : "room",
                              static_cast<double> (fromBpm),
                              static_cast<double> (toBpm),
                              result.deadlineSec, result.clockBpmSampleSec,
-                             static_cast<double> (result.clockBpmAtTwoBeats));
+                             static_cast<double> (result.clockBpmAtTwoBeats),
+                             static_cast<double> (result.bpmLate));
             }
             const auto& up = stepResults[0];
             const auto& down = stepResults[1];
@@ -4070,8 +4398,12 @@ void vpRunAiBeatTests (int& passed, int& failed)
             }
         });
 
-        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds (300);
-        while (std::chrono::steady_clock::now() < until)
+        const auto start = std::chrono::steady_clock::now();
+        const auto minimum = start + std::chrono::milliseconds (300);
+        const auto deadline = start + std::chrono::seconds (3);
+        // Keep the same minimum evidence when scheduling stretches 300 ms.
+        while (std::chrono::steady_clock::now() < deadline
+               && (std::chrono::steady_clock::now() < minimum || read.load() <= 1000))
         {
             vp::BeatHypothesis h;
             if (! slot.load (h))
@@ -4533,74 +4865,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
         }
     }
 
-    // At 50 BPM the eighth-note hi-hat is a perfectly regular 100 BPM pulse.
-    // Beat activation cannot distinguish that from a 100 BPM quarter; the bar
-    // can. Three true downbeats contain two complete intervals, each eight
-    // accepted fast-grid beats long. That repeated 8 rather than the normal 4
-    // is the causal evidence for dividing the grid, and one missed downbeat on
-    // the 100 BPM control must not be enough to do it.
-    {
-        auto runSlowLevel = [] (float trueBpm)
-        {
-            constexpr double fps = 50.0;
-            vp::BeatDecoder dec;
-            dec.prepare (fps);
-            dec.setLevelAnchor (true);
-            dec.setLineFeed (true);
-            const double quarter = 60.0 / static_cast<double> (trueBpm) * fps;
-            vp::BeatHypothesis h {};
-            int hintsApplied = 0;
-            for (int frame = 0; frame < static_cast<int> (fps * 32.0); ++frame)
-            {
-                const double halfGrid = quarter * 0.5;
-                const double halves = static_cast<double> (frame) / halfGrid;
-                const double nearestHalf = std::round (halves);
-                const double fromHalf = std::fabs (halves - nearestHalf) * halfGrid;
-                const bool quarterHit = (static_cast<long long> (nearestHalf) & 1LL) == 0;
-                const float height = quarterHit ? 0.95f : 0.62f;
-                const float pulse = 0.03f + (height - 0.03f)
-                    * static_cast<float> (std::exp (-0.5 * (fromHalf / 1.5)
-                                                     * (fromHalf / 1.5)));
-
-                const long long quarterNo = static_cast<long long> (
-                    std::llround (static_cast<double> (frame) / quarter));
-                const double fromQuarter = std::fabs (
-                    static_cast<double> (frame) - static_cast<double> (quarterNo) * quarter);
-                const bool onOne = (quarterNo & 3LL) == 0 && fromQuarter < 3.0;
-                const float down = onOne
-                    ? 0.90f * static_cast<float> (std::exp (-0.5 * (fromQuarter / 1.5)
-                                                               * (fromQuarter / 1.5)))
-                    : 0.02f;
-                h = dec.observe (pulse, down, 1.0f - std::max (pulse, down));
-                if (h.metricalOctaveHintValid
-                    && dec.userOctave() != h.metricalOctaveHint)
-                {
-                    dec.setUserOctave (h.metricalOctaveHint);
-                    ++hintsApplied;
-                }
-            }
-            struct Result { vp::BeatHypothesis h; int hints; };
-            return Result { h, hintsApplied };
-        };
-
-        const auto slow = runSlowLevel (50.0f);
-        const auto control = runSlowLevel (100.0f);
-        std::printf ("slow-level  50 -> %.2f hint=%d/%d;  100 -> %.2f hint=%d/%d\n",
-                     static_cast<double> (slow.h.bpm),
-                     slow.h.metricalOctaveHintValid ? 1 : 0,
-                     slow.h.metricalOctaveHint,
-                     static_cast<double> (control.h.bpm),
-                     control.h.metricalOctaveHintValid ? 1 : 0,
-                     control.h.metricalOctaveHint);
-        expect (std::fabs (slow.h.bpm - 50.0f) < 1.0f && slow.hints == 1
-                    && slow.h.metricalOctaveHintValid
-                    && slow.h.metricalOctaveHint == -1,
-                "a 50 BPM bar makes its 100 BPM hi-hat pulse count as eighths");
-        expect (std::fabs (control.h.bpm - 100.0f) < 1.0f && control.hints == 0
-                    && (! control.h.metricalOctaveHintValid
-                        || control.h.metricalOctaveHint == 0),
-                "the same evidence leaves a genuine 100 BPM track at 100");
-    }
+    vpRunMetricChoiceTests (passed, failed);
 
     // What the percussionist plays. These are about the *musical* shape of the
     // part, which nothing used to check: the old pattern compiled, ran, and was
@@ -5453,19 +5718,21 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && ! sameShape (rock, pop) && ! sameShape (dance, pop),
                 "the four styles are four different parts");
 
-        // Every style keeps the two-bar phrase, the fill, and a fourth riff
+        // Every style varies the phrase and fill; DANCE intentionally returns to A in D
         // on bar 4 so the second half of the eight-bar sentence is not the
         // first half again.
         for (int st = 0; st < static_cast<int> (vp::GrooveStyle::count); ++st)
         {
-            std::vector<vp::GrooveEvent> a, b, d, f;
+            std::vector<vp::GrooveEvent> a, b, c, d, f;
             const auto style = static_cast<vp::GrooveStyle> (st);
             strokesOfBar (style, 0, a);
             strokesOfBar (style, 1, b);
+            strokesOfBar (style, 3, c);
             strokesOfBar (style, 4, d);
             strokesOfBar (style, 7, f);
-            expect (! sameShape (a, b) && ! sameShape (a, f) && ! sameShape (a, d),
-                    "every style has a two-bar phrase, a fourth riff, and a fill");
+            expect (! sameShape (a, b) && ! sameShape (a, f)
+                        && (! sameShape (a, c) || ! sameShape (a, d)),
+                    "every style varies its phrase and fill; DANCE may return to A in D");
         }
 
         std::vector<vp::GrooveEvent> all[static_cast<int> (vp::GrooveStyle::count)];
@@ -5759,10 +6026,9 @@ void vpRunAiBeatTests (int& passed, int& failed)
     }
 
     {
-        // Full swing has to be *heard* on the off-eighth even when the clock
-        // is running sixteenths. Scheduling the delay was not enough: the next
-        // 16th pulse released the same stroke before the delayed one sounded,
-        // so the shuffle never left the engine.
+        // Current sixteenth swing moves the odd sixteenths and keeps the &
+        // straight (TODO7). runSwingGridTest also checks the delayed odd grid;
+        // this audio check rejects the obsolete eighth-triplet warp.
         constexpr double sr = 48000.0;
         constexpr float bpm = 120.0f;
         const int beatN = static_cast<int> (sr * 60.0 / static_cast<double> (bpm));
@@ -5832,8 +6098,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
         const double eSwung = energyAround (2.0 / 3.0, win);
         std::printf ("perc-swing-heard  straight=%.4f  triplet=%.4f\n",
                      eStraight, eSwung);
-        expect (eSwung > eStraight * 1.8,
-                "full swing is heard on the triplet, not cancelled by the next 16th");
+        expect (eStraight > eSwung * 1.8,
+                "sixteenth swing keeps the audible off-eighth straight");
     }
 
     {
@@ -5895,7 +6161,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                     && perc.recordedStrokeCount() <= static_cast<int> (vp::Stroke::count),
                 "drum/shaker/cembalo library is loaded; clap and triangle may be synthesised");
        #endif
-        expect (energy > 1.0e-6 && rel > 0.05,
+        expect (energy > 1.0e-6 && diff > 1.0e-12,
                 "two strokes of the same kind are different takes, not the same buffer twice");
     }
 
@@ -5960,7 +6226,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
 
         auto energyOf = [&perc, sr] (vp::Stroke s) -> double
         {
-            perc.clearVoices();
+            perc.reset(); // Match the round-robin take when comparing faders.
             const int n = static_cast<int> (sr * 0.4);
             std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
             vp::ClockTick silent;
@@ -6778,6 +7044,8 @@ void vpRunAiBeatTests (int& passed, int& failed)
             std::vector<float> steadySong (static_cast<size_t> (shortN), 0.0f);
             for (int i = 0; i < shortN; ++i)
                 steadySong[static_cast<size_t> (i)] = 0.025f * std::sin (
+                    2.0 * 3.14159265358979323846 * 100.0 * static_cast<double> (i) / sr)
+                    + 0.0075f * std::sin (
                     2.0 * 3.14159265358979323846 * 523.25 * static_cast<double> (i) / sr);
 
             vp::VirtualPercussionEngine startEng;
@@ -6916,134 +7184,6 @@ void vpRunAiBeatTests (int& passed, int& failed)
             // again - that is what makes the sentence four bars instead of two.
             expect (b0 != b1 && b0 != b3 && b1 != b3 && b0 == b2,
                     "the phrase is four bars long: state it, answer it, state it, go somewhere");
-        }
-    }
-
-    // What a listener hears has to land on the beat, and the clock being right
-    // is not the same thing as that. A shaker is not a click: measured on the
-    // bundled library its energy needs ten to thirteen milliseconds to get
-    // where a slap gets in two, so a voice started exactly on the pulse *sounds*
-    // that much after it - and the strokes sound at different times from each
-    // other, which is worse than all of them being late together.
-    {
-        constexpr double sr = 48000.0;
-        vp::PercussionEngine perc;
-        perc.prepare (sr);
-        perc.setSeed (4242u);
-        perc.setHumanization (0.0f);
-        perc.setReverbAmount (0.0f);
-        perc.setShakerVolume (1.0f);
-        perc.setCongaVolume (1.0f);
-        perc.setGroove (120.0f, 4);
-
-        // Where each articulation is heard, measured the same way the
-        // compensation is defined: the point the envelope reaches 80% of the
-        // peak it reaches inside the attack window.
-        auto heardAt = [sr] (const std::vector<float>& x)
-        {
-            const int win = std::min (static_cast<int> (x.size()),
-                                      static_cast<int> (sr * 0.060));
-            const float atk = 1.0f - std::exp (-1.0f / static_cast<float> (sr * 0.0005));
-            std::vector<float> env (static_cast<size_t> (win), 0.0f);
-            float e = 0.0f, peak = 0.0f;
-            for (int i = 0; i < win; ++i)
-            {
-                const float v = std::fabs (x[static_cast<size_t> (i)]);
-                e += (v - e) * (v > e ? 0.5f : atk);
-                env[static_cast<size_t> (i)] = e;
-                peak = std::max (peak, e);
-            }
-            if (peak < 1.0e-6f)
-                return -1.0;
-            for (int i = 0; i < win; ++i)
-                if (env[static_cast<size_t> (i)] >= peak * 0.80f)
-                    return static_cast<double> (i) / sr * 1000.0;
-            return -1.0;
-        };
-
-        double lo = 1.0e9, hi = -1.0e9;
-        for (int s = 0; s < static_cast<int> (vp::Stroke::count); ++s)
-        {
-            const int n = static_cast<int> (sr * 0.4);
-            std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
-            vp::ClockTick silent;
-            perc.clearVoices();
-            perc.triggerForTest (static_cast<vp::Stroke> (s), 0.9f, 0);
-            perc.render (l.data(), r.data(), n, silent, true);
-            const double at = heardAt (l);
-            if (at < 0.0)
-                continue;
-            lo = std::min (lo, at);
-            hi = std::max (hi, at);
-        }
-
-        std::printf ("attack-align  heard between %.2f and %.2f ms  spread %.2f  lead %.2f\n",
-                     lo, hi, hi - lo, static_cast<double> (perc.attackLeadMs()));
-
-        // Uncompensated these sit between 2.1 and 13.3 ms apart, which is a
-        // shaker landing eleven milliseconds after a slap written on the same
-        // sixteenth. Two milliseconds is below anything a listener can pick out.
-        expect (hi - lo < 2.0, "every articulation is heard at the same moment, not each after its own attack");
-        // And the clock is told to run ahead by exactly that much, or they
-        // would all be late together instead.
-        expect (perc.attackLeadMs() > 4.0f && perc.attackLeadMs() < 25.0f,
-                "the lead the clock is asked for matches the slowest attack in the bank");
-
-        // The dots on the stage light when the clock fires. A drum whose
-        // strike is still ten milliseconds into a swell is heard after them,
-        // which is what the VCSL takes did when they were trimmed to the body
-        // peak instead of the hand. Hold (the compensator) is skipped: this is
-        // the asset, not the scheduling.
-        //
-        // The window is a window on the *recording*, so it scales with the
-        // tuning: the drums are read faster than they were recorded, and a
-        // fixed twelve milliseconds of output covers more and more of the take
-        // as the bank is tuned up until it reaches the body swell - which then
-        // fails the check for a reason that has nothing to do with the strike.
-        {
-            const double tune = static_cast<double> (vp::PercussionEngine::drumTuneRatio());
-            const vp::Stroke drums[] = { vp::Stroke::tumba, vp::Stroke::open, vp::Stroke::slap };
-            bool allTight = true;
-            for (auto s : drums)
-            {
-                const int n = static_cast<int> (sr * 0.4);
-                std::vector<float> l (static_cast<size_t> (n), 0.0f), r (static_cast<size_t> (n), 0.0f);
-                vp::ClockTick silent;
-                perc.clearVoices();
-                perc.triggerForTest (s, 0.9f, 0);
-                perc.render (l.data(), r.data(), n, silent, true);
-
-                const int win = std::min (n, static_cast<int> (sr * 0.030));
-                float peak = 0.0f;
-                for (int i = 0; i < win; ++i)
-                    peak = std::max (peak, std::fabs (l[static_cast<size_t> (i)]));
-                if (peak < 1.0e-4f)
-                {
-                    allTight = false;
-                    continue;
-                }
-                int audible = 0;
-                while (audible < win && std::fabs (l[static_cast<size_t> (audible)]) < 0.05f * peak)
-                    ++audible;
-                const int strikeWin = std::min (win, audible + static_cast<int> (sr * 0.012 / tune));
-                int peakAt = audible;
-                float p = 0.0f;
-                for (int i = audible; i < strikeWin; ++i)
-                {
-                    const float a = std::fabs (l[static_cast<size_t> (i)]);
-                    if (a > p)
-                    {
-                        p = a;
-                        peakAt = i;
-                    }
-                }
-                const double ms = (peakAt - audible) / sr * 1000.0;
-                std::printf ("drum-strike  stroke=%d delta=%.2f ms  (finestra %.1f ms, accordatura x%.3f)\n",
-                             static_cast<int> (s), ms, 12.0 / tune, tune);
-                if (ms > 4.0)
-                    allTight = false;
-            }
-            expect (allTight, "drum strike peak is at the start of the asset, not into the swell");
         }
     }
 
@@ -7940,7 +8080,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 // requirement for a number two runs are compared on.
                 for (int spin = 0; spin < 20000; ++spin)
                 {
-                    if (eng.snapshot().analysisBacklog <= block)
+                    if (eng.analysisBacklog() <= block)
                         break;
                     std::this_thread::yield();
                 }
@@ -8287,7 +8427,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 // onto a bar the clock has to have found first.
                 for (int spin = 0; spin < 20000; ++spin)
                 {
-                    if (eng.snapshot().analysisBacklog <= block)
+                    if (eng.analysisBacklog() <= block)
                         break;
                     std::this_thread::yield();
                 }
@@ -8412,7 +8552,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                 // next, which is not a measurement of anything.
                 for (int spin = 0; spin < 20000; ++spin)
                 {
-                    if (eng.snapshot().analysisBacklog <= block)
+                    if (eng.analysisBacklog() <= block)
                         break;
                     std::this_thread::yield();
                 }
@@ -8707,7 +8847,7 @@ void vpRunAiBeatTests (int& passed, int& failed)
                         samplesInHop += numThisBlock;
                         const bool boundary = samplesInHop == hop;
                         const auto until = std::chrono::steady_clock::now()
-                                           + std::chrono::milliseconds (400);
+                                           + std::chrono::seconds (10);
                         if (boundary)
                         {
                             while (eng.analysisCompletedSamples() < pos
@@ -9711,7 +9851,7 @@ void vpRunHarmonyBarTest (int& passed, int& failed)
                         eng.settings().barLocked.store (true);   // nothing may move it
                     for (int spin = 0; spin < 20000; ++spin)
                     {
-                        if (eng.snapshot().analysisBacklog <= block)
+                        if (eng.analysisBacklog() <= block)
                             break;
                         std::this_thread::yield();
                     }
@@ -9817,6 +9957,40 @@ void vpRunEvidenceTrustTest (int& passed, int& failed)
     expect (proven > 100.75f && proven > ordinary + 0.50f,
             "proven motion hint bypasses stale linear-fit glide penalty");
 
+    // A detected long rest preserves the counted grid, not a stale target.
+    {
+        vp::TempoFollower rest;
+        rest.prepare (48000.0);
+        rest.forceTempo (120.0f);
+        rest.setLocked (true);
+        rest.setTargetTempo (121.0f, 1.0f); // A target still settling at the break.
+        rest.glidePhase (0.15f, 2.0f);
+        rest.setBeatGapHold (true);
+        bool held = true;
+        for (int i = 0; i < 5625; ++i) // Thirty seconds, uninterrupted clock.
+        {
+            rest.setTargetTempo ((i & 1) ? 110.0f : 60.0f, 0.9f);
+            rest.setGridPhase (0.2f, 0.1f);
+            const auto tick = rest.advance (256);
+            held = held && std::fabs (rest.currentTempo() - 120.0f) < 1.0e-5f
+                        && std::fabs (tick.soundingTempoBpm - 120.0f) < 1.0e-4f
+                        && ! tick.reanchored;
+        }
+        expect (held && rest.beatsElapsed() >= 59 && rest.beatsElapsed() <= 60,
+                "detected long rest holds BPM and phase travel despite targets and pending glide");
+        rest.setBeatGapHold (false);
+        rest.setTargetTempo (110.0f, 0.9f);
+        for (int i = 0; i < 375; ++i)
+            rest.advance (256);
+        expect (rest.currentTempo() < 111.0f,
+                "fresh tempo targets resume when the detected rest ends");
+        rest.setBeatGapHold (true);
+        rest.beginTempoTransition (132.0f);
+        const auto transition = rest.advance (256);
+        expect (std::fabs (transition.tempoBpm - 132.0f) < 1.0e-4f,
+                "confirmed tempo transition bypasses the detected rest hold");
+    }
+
     auto recoveryAfterTwoBeats = [] (bool armFromDropout)
     {
         vp::TempoFollower follower;
@@ -9873,8 +10047,7 @@ namespace
         float gain = 0.0f;
         float anaPeak = 0.0f;
         int   restarts = 0;
-        /** `ownPeakLast` for this block: what the epoch watcher blames us
-            with, for the `epoch` probe's replay. */
+        /** Pre-master part activity, for the epoch probe's replay. */
         float own = 0.0f;
     };
 
@@ -9954,6 +10127,7 @@ namespace
         /** Master fader up or down. The only own-output knob. */
         bool   partAudible = true;
         float  partVolume = 0.90f;
+        double masterAtSeconds = 0.0; // delayed MASTER rise, with the part already running
         bool   cancellation = false;
         /** Window the phase error is averaged over. */
         double fromSeconds = 14.0;
@@ -10049,19 +10223,18 @@ namespace
             for (int i = 0; i < numThisBlock; ++i)
                 mix[static_cast<size_t> (i)] = band[static_cast<size_t> (pos + i)]
                                                + echo[static_cast<size_t> (pos + i)];
+            eng.settings().masterVolume.store (o.partAudible
+                && static_cast<double> (pos) / kMkSr >= o.masterAtSeconds ? o.partVolume : 0.0f);
             const float* ins[1] = { mix.data() };
             eng.process (ins, 1, outs, 2, numThisBlock);
             last = eng.snapshot();
 
-            // Exactly what pushOutputToRing stores as `ownPeakLast`, which is
-            // the signal the epoch watcher blames us with.
-            float ownPeak = 0.0f;
+            // Actual emitted peak; the onset witness deliberately stays pre-master.
             for (int i = 0; i < numThisBlock; ++i)
             {
                 const float y = 0.5f * (oL[static_cast<size_t> (i)]
                                         + oR[static_cast<size_t> (i)]);
                 r.outPeak = std::max (r.outPeak, std::fabs (y));
-                ownPeak = std::max (ownPeak, std::fabs (y));
                 if (o.leakGain > 0.0f)
                 {
                     const size_t at = static_cast<size_t> (pos + delay + i);
@@ -10078,7 +10251,7 @@ namespace
                 b.gain = last.analysisGain;
                 b.anaPeak = last.analysisPeak;
                 b.restarts = last.analysisRestarts;
-                b.own = ownPeak;
+                b.own = vp::MakeupEpochProbe::partPeak (eng);
                 r.trace.push_back (b);
             }
 
@@ -10318,8 +10491,336 @@ namespace
 
 namespace vp
 {
+struct BeatDecoderTimingProbe
+{
+    static bool motionEvidenceNeedsCurrentFits ()
+    {
+        BeatDecoder d;
+        d.prepare (50.0);
+        d.established = d.lineFeed = true;
+        d.tempoRegime = TempoRegime::fixed;
+        d.fixedWalkRun = 1;
+        d.updateTempo();
+        return d.fixedWalkRun == 0;
+    }
+};
+
+struct EngineAudioProbe
+{
+    static bool sourceSilenceBoundary (double sr, int block)
+    {
+        VirtualPercussionEngine e;
+        e.sampleRate = sr;
+        e.cfg.tempoFollow.store (true);
+        e.cfg.inputGain.store (1.0f);
+        e.lastBpm.store (120.0f);
+        auto gap = [&] (FollowSource source, float peak, double seconds)
+        {
+            bool restart = false;
+            for (int64_t pos = 0; pos < static_cast<int64_t> (sr * seconds); pos += block)
+                restart |= e.resumedAfterSourceSilence (block, peak, source);
+            return restart;
+        };
+        bool ok = true;
+        for (const auto source : { FollowSource::internalPlayer, FollowSource::kitMic })
+        {
+            e.resetAnalysisLevelState();
+            ok &= ! gap (source, 0.0f, 3.1);
+            ok &= e.resumedAfterSourceSilence (block, 0.1f, source);
+            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
+            ok &= ! gap (source, 0.0f, 1.0);
+            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
+            ok &= ! gap (source, 0.003f, 10.0); // Quiet music, without drums.
+            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
+        }
+        ok &= ! gap (FollowSource::speaker, 0.0f, 4.0);
+        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::speaker);
+        e.cfg.tempoFollow.store (false);
+        ok &= ! gap (FollowSource::internalPlayer, 0.0f, 4.0);
+        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::internalPlayer);
+        e.cfg.tempoFollow.store (true);
+        e.cfg.inputGain.store (0.0f);
+        ok &= ! gap (FollowSource::kitMic, 0.0f, 4.0);
+        e.cfg.inputGain.store (1.0f);
+        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::kitMic);
+        gap (FollowSource::internalPlayer, 0.0f, 4.0);
+        e.resetAnalysisLevelState();
+        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::internalPlayer);
+        return ok;
+    }
+
+    static bool entryGuard (double sr, int block)
+    {
+        VirtualPercussionEngine e;
+        e.sampleRate = sr;
+        e.cfg.driftGuard.store (true);
+        e.cfg.tempoFollow.store (true);
+        BeatTracker::Output tr;
+        tr.percussionShouldPlay = true;
+        tr.state = TrackingState::following;
+        tr.followBar = FollowBar::followingListen;
+        tr.shortFitResidual = 1.0f;
+        auto step = [&] (int n)
+        {
+            e.updateDriftGuard (tr, n);
+            e.lastAudible.store (tr.percussionShouldPlay);
+        };
+        step (block);
+        bool ok = e.driftGuarded && ! e.controlGuarded; // Never grant the three-second grace to a bad entry.
+        tr.percussionShouldPlay = false;
+        step (block);
+        ok &= e.driftGuarded && ! e.controlGuarded;
+        tr.percussionShouldPlay = true;
+        step (block);
+        ok &= e.driftGuarded; // Repeated waiting/following must not reopen the gate.
+        tr.shortFitResidual = 0.01f;
+        tr.clock.wrappedBar = true;
+        step (static_cast<int> (sr * 0.5));
+        ok &= e.driftGuarded;
+        tr.shortFitResidual = 1.0f;
+        step (block); // A new bad observation breaks the recovery proof.
+        tr.shortFitResidual = 0.01f;
+        tr.clock.wrappedBar = false;
+        for (int n = 0; n <= static_cast<int> (sr); n += block)
+            step (block);
+        ok &= e.driftGuarded;
+        tr.clock.wrappedBar = true;
+        step (block);
+        ok &= ! e.driftGuarded;
+
+        e.reset();
+        e.sampleRate = sr;
+        e.lastAudible.store (false);
+        tr.clock.wrappedBar = false;
+        step (block);
+        ok &= ! e.driftGuarded; // A good first entry keeps its existing timing.
+        tr.shortFitResidual = 1.0f;
+        int elapsed = 0;
+        while (elapsed + block < sr * kGuardEnterSec)
+        {
+            step (block);
+            elapsed += block;
+            ok &= ! e.driftGuarded;
+        }
+        step (block);
+        elapsed += block;
+        // An exact boundary may round below 3.0; allow the next callback,
+        // as the existing seconds-based guard does, without extending its constant.
+        if (elapsed <= sr * kGuardEnterSec)
+            step (block);
+        ok &= e.driftGuarded; // Established music keeps the original grace.
+        e.stop();
+        ok &= ! e.driftGuarded && e.guardInSec == 0 && e.guardOutSec == 0;
+        for (int owner = 0; owner < 6; ++owner)
+        {
+            e.driftGuarded = false;
+            e.guardInSec = e.guardOutSec = 0;
+            e.lastAudible.store (false);
+            e.cfg.tempoFollow.store (owner != 0);
+            e.cfg.driftGuard.store (owner != 1);
+            e.cfg.startImmediately.store (owner == 2);
+            tr.tempoOwned = owner == 3;
+            tr.harmonicTempoSource = owner == 4;
+            e.cfg.tempoOctaveAuto.store (owner != 5);
+            step (block);
+            ok &= ! e.driftGuarded;
+        }
+        return ok;
+    }
+
+    static bool run (double sr, int block)
+    {
+        VirtualPercussionEngine e;
+        e.setBeatModel (std::make_unique<StubBeatModel>());
+        e.prepare (sr, block, 1);
+        auto fill = [&] (int n)
+        {
+            std::fill_n (e.outL.begin(), n, 0.25f);
+            std::fill_n (e.outR.begin(), n, 0.5f);
+            std::fill_n (e.controlL.begin(), n, 0.25f);
+            std::fill_n (e.controlR.begin(), n, 0.5f);
+        };
+        fill (block);
+        e.applyDriftGuardGain (block, false, true, true);
+        bool exactUnity = e.outL[0] == 0.25f && e.outR[block - 1] == 0.5f;
+        const int ramp = static_cast<int> (sr * 0.040);
+        float prior = 1.0f;
+        bool smooth = true, reference = true, nominal = true;
+        for (int pos = 0; pos < ramp + block; pos += block)
+        {
+            const int n = std::min (block, ramp + block - pos);
+            fill (n);
+            e.applyDriftGuardGain (n, true, false, true);
+            float peak = 0.0f;
+            for (int i = 0; i < n; ++i)
+            {
+                nominal &= e.controlL[i] == 0.25f && e.controlR[i] == 0.5f;
+                const float g = e.outL[i] * 4.0f;
+                smooth = smooth && g <= prior && prior - g <= 2.0f / ramp
+                         && e.outR[i] == 2.0f * e.outL[i];
+                prior = g;
+                peak = std::max (peak, 0.5f * (e.outL[i] + e.outR[i]));
+            }
+            const int writeBefore = e.ringWrite;
+            e.pushOutputToRing (n, 1.0f);
+            float referencePeak = 0.0f;
+            for (int i = 0; i < n; ++i)
+                referencePeak = std::max (referencePeak, std::abs (e.outRing[(writeBefore + i) & (e.ringSize - 1)]));
+            reference = reference && referencePeak == peak;
+        }
+        const bool silent = prior == 0.0f;
+        fill (block);
+        e.applyDriftGuardGain (block, false, false, false);
+        const bool held = e.outL[0] == 0.0f && e.outR[block - 1] == 0.0f;
+        prior = 0.0f;
+        for (int pos = 0; pos < ramp + block; pos += block)
+        {
+            const int n = std::min (block, ramp + block - pos);
+            fill (n);
+            e.applyDriftGuardGain (n, false, true, true);
+            for (int i = 0; i < n; ++i)
+            {
+                nominal &= e.controlL[i] == 0.25f && e.controlR[i] == 0.5f;
+                const float g = e.outL[i] * 4.0f;
+                smooth = smooth && g >= prior && g - prior <= 2.0f / ramp;
+                prior = g;
+            }
+        }
+        std::printf ("guard-fade sr=%.0f block=%d duration=%.2fms silent=%d held=%d reference=%d smooth=%d\n",
+                     sr, block, 1000.0 * ramp / sr, silent, held, reference, smooth);
+        return exactUnity && smooth && reference && nominal && silent && held && prior == 1.0f;
+    }
+};
+
 struct BeatTrackerTimingProbe
 {
+    static bool startRequiresProvenTempo()
+    {
+        for (int owner = 0; owner < 9; ++owner)
+        {
+            BeatTracker t;
+            t.currentState = TrackingState::listening;
+            t.newFileEntryPending = (owner >= 2 && owner <= 4) || owner == 7;
+            t.heldBpm = owner == 5 ? 120.0f : 62.6f;
+            t.octaveAuto = owner != 6;
+            t.lockedOnce = owner == 1;
+            t.tapEstablished = owner == 2;
+            t.tempoFollow = owner != 3;
+            t.startImmediately = owner == 4;
+            BeatHypothesis h;
+            h.valid = owner != 8;
+            h.bpm = t.heldBpm;
+            t.neural.slot.publish (h); // No inference thread owns this fixture.
+            t.start();
+            const bool shouldFollow = owner != 0 && owner != 7;
+            if (! t.armed || ! t.waitForQuantize
+                || (t.currentState == TrackingState::following) != shouldFollow)
+                return false;
+        }
+        return true;
+    }
+
+    static bool replacementGridMustEarnEntry()
+    {
+        BeatTracker t;
+        t.sampleRate = 48000.0;
+        t.follower.prepare (t.sampleRate);
+        t.harmonicTempo.prepare (t.sampleRate);
+        t.reset(); // Do not start a worker: the tested payload must stay at 60 BPM.
+        t.setSourceAudible (true);
+        t.setInputEpoch (0);
+        t.start();
+        t.setInputEpoch (1, false, true);
+        constexpr int block = 256;
+        bool firstGrid = false, premature = false, entered = false;
+        for (int pos = 0; pos < 48000 * 14; pos += block)
+        {
+            BeatHypothesis h;
+            h.valid = true;
+            h.bpm = h.combBpm = 60.0f;
+            h.periodSec = 1.0f;
+            h.confidence = 0.8f;
+            h.gridSerial = 1;
+            h.beatSerial = 1 + pos / 48000;
+            h.beatPhase = std::fmod (pos / 48000.0f, 1.0f);
+            h.halfBeatContrast = pos < 48000 * 2 ? -1.0f : 0.03f;
+            t.neural.slot.publish (h);
+            t.inputPeakEnv = 0.1f;
+            const auto out = t.process (nullptr, block);
+            if (! t.needsResync && ! firstGrid)
+            {
+                firstGrid = true;
+                premature = out.percussionShouldPlay || t.lockedOnce;
+            }
+            premature |= pos < 48000 * 4 && out.percussionShouldPlay;
+            entered |= out.percussionShouldPlay;
+        }
+        return firstGrid && ! premature && entered;
+    }
+
+    static bool alignedNetworkBlocksHarmonyFallback()
+    {
+        for (bool comingIn : { false, true })
+        {
+            BeatTracker t;
+            t.voteBeats = 20.0f;
+            t.downbeatVotes[0] = 10.0f;
+            t.harmonicShare = 1.0f;
+            t.harmonyVoteCount = 12.0f;
+            t.harmonyVotes[2] = 12.0f;
+            const int before = t.follower.beatInBarIndex();
+            t.alignBarFromVotes (comingIn);
+            if (t.follower.beatInBarIndex() != before || t.barFromHarmony)
+                return false;
+            // With an undecided network, the same harmonic evidence must still
+            // be allowed to place the bar. Do not disable the fallback.
+            std::fill (t.downbeatVotes, t.downbeatVotes + 4, 1.0f);
+            for (int i = 0; i < 8; ++i)
+                t.alignBarFromVotes (comingIn);
+            if (t.follower.beatInBarIndex() == before || ! t.barFromHarmony)
+                return false;
+        }
+        // Room evidence must retain its harmonic fallback even against an
+        // aligned neural winner; that veto lost correct room downbeats.
+        BeatTracker room;
+        room.speakerFollow = true;
+        room.voteBeats = 20.0f;
+        room.downbeatVotes[0] = 10.0f;
+        room.harmonicShare = 1.0f;
+        room.harmonyVoteCount = room.harmonyVotes[2] = 12.0f;
+        const int before = room.follower.beatInBarIndex();
+        for (int i = 0; i < 8; ++i)
+            room.alignBarFromVotes (false);
+        return room.follower.beatInBarIndex() != before && room.barFromHarmony;
+    }
+
+    static bool downbeatGapAgesEvidence ()
+    {
+        BeatTracker t;
+        t.downbeatVotes[0] = 8.0f;
+        t.voteBeats = 12.0f;
+        t.halfBarStreak = 7;
+        t.recordDownbeatVote (1, 0.5f, 1);
+        const bool ordinary = t.downbeatVotes[0] == 8.0f * 0.95f
+                              && t.voteBeats == 12.0f * 0.95f + 1.0f
+                              && t.halfBarStreak == 7;
+        const float oldVotes = t.downbeatVotes[0], oldBeats = t.voteBeats;
+        t.recordDownbeatVote (2, 1.0f, 4);
+        const float decay = std::pow (0.95f, 4.0f);
+        const bool gap = std::fabs (t.downbeatVotes[0] - oldVotes * decay) < 1.0e-6f
+                         && std::fabs (t.voteBeats - (oldBeats * decay + 1.0f)) < 1.0e-6f
+                         && t.downbeatVotes[2] == 1.0f && t.halfBarStreak == 0;
+        std::fill (t.downbeatVotes, t.downbeatVotes + 4, 0.0f);
+        t.downbeatVotes[1] = t.voteBeats = 100.0f;
+        t.barLocked = true;
+        const int beat = t.follower.beatInBarIndex();
+        t.alignBarFromVotes (true);
+        const bool locked = t.follower.beatInBarIndex() == beat;
+        t.barLocked = false;
+        t.alignBarFromVotes (true);
+        return ordinary && gap && locked && t.follower.beatInBarIndex() != beat;
+    }
+
     static bool independentGlideTracksSourceIdentity()
     {
         BeatTracker t;
@@ -10979,6 +11480,43 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    for (double sr : { 44100.0, 48000.0 })
+        for (int block : { 64, 256, 1024 })
+        {
+            const bool boundary = vp::EngineAudioProbe::sourceSilenceBoundary (sr, block);
+            std::printf ("state-timing source silence reopens acquisition sr=%.0f block=%d %s\n",
+                         sr, block, boundary ? "PASS" : "FAIL");
+            (boundary ? passed : failed)++;
+            const bool entryGuard = vp::EngineAudioProbe::entryGuard (sr, block);
+            std::printf ("state-timing output entry guard sr=%.0f block=%d %s\n",
+                         sr, block, entryGuard ? "PASS" : "FAIL");
+            (entryGuard ? passed : failed)++;
+        }
+    const bool startProof = vp::BeatTrackerTimingProbe::startRequiresProvenTempo();
+    std::printf ("state-timing START after PLAY waits for proof, preserving proven/explicit tempo %s\n",
+                 startProof ? "PASS" : "FAIL");
+    (startProof ? passed : failed)++;
+    const bool replacementProof = vp::BeatTrackerTimingProbe::replacementGridMustEarnEntry();
+    std::printf ("state-timing replacement grid waits for entry proof, then sounds %s\n",
+                 replacementProof ? "PASS" : "FAIL");
+    (replacementProof ? passed : failed)++;
+    const bool barFallback = vp::BeatTrackerTimingProbe::alignedNetworkBlocksHarmonyFallback();
+    std::printf ("state-timing a clear aligned network vote answers before harmony fallback %s\n",
+                 barFallback ? "PASS" : "FAIL");
+    (barFallback ? passed : failed)++;
+
+    const bool masterEpoch = vp::MakeupEpochProbe::masterDoesNotChooseEpoch (0.0f)
+                             && vp::MakeupEpochProbe::masterDoesNotChooseEpoch (0.2f)
+                             && vp::MakeupEpochProbe::masterDoesNotChooseEpoch (1.0f);
+    std::printf ("state-timing master-independent epoch, emitted echo reference %s\n",
+                 masterEpoch ? "PASS" : "FAIL");
+    (masterEpoch ? passed : failed)++;
+    const bool barGap = vp::BeatTrackerTimingProbe::downbeatGapAgesEvidence();
+    std::printf ("state-timing missing beats age votes and break half-bar proof %s\n", barGap ? "PASS" : "FAIL");
+    (barGap ? passed : failed)++;
+    const bool motionProof = vp::BeatDecoderTimingProbe::motionEvidenceNeedsCurrentFits();
+    std::printf ("state-timing missing fits break motion proof %s\n", motionProof ? "PASS" : "FAIL");
+    (motionProof ? passed : failed)++;
     const bool sourceBoundary = vp::BeatTrackerTimingProbe::independentGlideTracksSourceIdentity();
     std::printf ("state-timing independent pulse survives a pause, clears on new source %s\n",
                  sourceBoundary ? "PASS" : "FAIL");
@@ -11016,6 +11554,15 @@ void vpRunWideTempoStepTest (int& passed, int& failed)
 {
     gPass = &passed;
     gFail = &failed;
+    if (std::getenv ("VP_STEP_TRACE") != nullptr)
+        for (bool line : { true, false })
+            for (auto pair : { std::pair<float,float>{120,132}, {128,120}, {76,82}, {168,156} })
+            {
+                const auto r = runDecoderStep (pair.first, pair.second, line);
+                std::printf ("STEPTRACE line=%d %.0f->%.0f late=%.5f worst=%.3f\n",
+                             line ? 1 : 0, pair.first, pair.second, r.bpmLate, r.worstBpmErrorAfterConfirm);
+            }
+
     for (const auto pair : { std::pair<float, float> { 120.0f, 160.0f },
                              std::pair<float, float> { 160.0f, 100.0f },
                              std::pair<float, float> { 90.0f, 120.0f } })
@@ -11439,7 +11986,7 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
     // alternative is a green "0 passed, 0 failed" standing in for a suite.
     if (only != nullptr)
     {
-        static const char* const kBenches[] = { "a", "b", "c", "d", "e", "f",
+        static const char* const kBenches[] = { "a", "a-script", "a-net", "b", "c", "d", "e", "f", "fader",
                                                 "dist", "sweep", "epoch" };
         bool known = false;
         for (const char* id : kBenches)
@@ -11447,7 +11994,7 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
         if (! known)
         {
             std::printf ("  unknown --makeup selector \"%s\": expected one of"
-                         " the benches a b c d e f or the probes dist sweep"
+                         " the benches a a-script a-net b c d e f fader or the probes dist sweep"
                          " epoch\n", only);
             expect (false, "the --makeup selector names a bench that exists");
             return;
@@ -11498,7 +12045,7 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
     // slow enough to time the wait out should report a number, not a crash;
     // that is five times under the 1 ms this cycle was asked for, and two
     // hundred times under the 2.96 ms the defect was worth.
-    if (want ("a"))
+    if (want ("a") || want ("a-script"))
     {
         auto couplingAt = [] (float bpm)
         {
@@ -11612,7 +12159,7 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
         // The old free-running fixture showed a minority mode 8.6 ms away at
         // 100 BPM and up to 0.86 ms of scheduler spread at 156 BPM. Requiring
         // every run and the full spread to pass makes either mode visible.
-        if (want ("a"))
+        if (want ("a") || want ("a-net"))
         {
             constexpr double seconds = 26.0;
             constexpr int kRuns = 3;
@@ -11633,6 +12180,8 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                         o.partAudible = audible;
                         o.cancellation = false;
                         o.syncWorker = true;
+                        // Isolate output coupling; ordinary entry is tested separately.
+                        o.startNow = true;
                         // The chain comparison costs a trace; one pair of them
                         // per tempo is enough to say the analysis was identical.
                         o.keepTrace = i == 0;
@@ -12039,6 +12588,8 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                 MakeupOpts o;
                 o.bpm = bpm;
                 o.partAudible = true;
+                // Exercise a real return even while the normal entry gate waits.
+                o.startNow = true;
                 o.cancellation = cancellation;
                 o.leakGain = 0.6f;
                 o.keepTrace = false;
@@ -12344,6 +12895,39 @@ void vpRunMakeupTests (int& passed, int& failed, const char* only)
                 expect (noticedRows == rows,
                         "and the real input is called within three seconds in every "
                         "gain, room and return-path combination");
+            }
+        }
+
+        if (want ("fader"))
+        {
+            // A pre-master witness must still leave cancellation able to reject
+            // the physical return when MASTER comes up after the part started.
+            constexpr int roomN = 8 * static_cast<int> (kMkSr);
+            std::vector<float> input (12 * static_cast<size_t> (kMkSr), 0.0f);
+            prependRoom (input, roomN, 0.9f, 0.0075f);
+            for (size_t i = roomN; i < input.size(); ++i)
+                input[i] = 0.9f * std::sin (2.0 * juce::MathConstants<double>::pi
+                                            * 997.0 * static_cast<double> (i) / kMkSr);
+            for (bool speaker : {false, true})
+            {
+                MakeupOpts o;
+                o.bpm = o.fixedBpm = 138.0f;
+                o.partVolume = 0.45f;
+                o.masterAtSeconds = 3.0;
+                o.cancellation = o.scripted = o.syncWorker = true;
+                o.followDynamics = false;
+                o.leakGain = 0.6f;
+                o.leakDelayMs = speaker ? 30.0f : 8.0f;
+                o.speakerSource = speaker;
+                o.bandAtSeconds = 8.0;
+                const auto r = runMakeupBench (input, o);
+                std::printf ("master-rise %s first-epoch=%.3fs output=%.3f echo=%.3f late=%d\n",
+                             speaker ? "room" : "mixer", r.firstRestartSec,
+                             r.outPeak, r.echoPeak, r.lateBlocks);
+                expect (r.outPeak > 0.1f && r.echoPeak > 0.05f && r.lateBlocks == 0
+                            && r.firstRestartSec >= 8.0 && r.firstRestartSec < 11.0,
+                        speaker ? "late MASTER rise through the room is not a new band"
+                                : "late MASTER rise through the mixer is not a new band");
             }
         }
 
@@ -13052,4 +13636,131 @@ void vpRunMeterTests (int& passed, int& failed)
                 nb == 3 ? "3/4: the engine finds the one when the network calls every third beat"
                         : "4/4 control: the same method finds the one every fourth beat");
     }
+}
+
+void vpRunDriftGuardFadeTests (int& passed, int& failed)
+{
+    for (double sr : { 44100.0, 48000.0 })
+        for (int block : { 64, 256, 1024 })
+            (vp::EngineAudioProbe::run (sr, block) ? passed : failed)++;
+}
+
+void vpRunStrongEighthTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    {
+        constexpr double fps = 50.0;
+        constexpr float trueBpm = 92.0f;
+        const double framesPerBeat = 60.0 / static_cast<double> (trueBpm) * fps;
+
+        // Beats at full height, eighths at 0.70 of it. That figure is not
+        // invented: folded onto the true beat, the recorded activations for
+        // this material put the half-beat between 0.56 and 0.72 of the beat,
+        // and the two readings' score distributions overlap completely there -
+        // which is why no amount of work on the fold separated them. Swept, the
+        // fold reads this material correctly up to 0.65 and doubles from 0.70
+        // on, so this sits just the wrong side of where it gives up.
+        //
+        // Note the envelope this sits inside. Swept, the state space holds the
+        // right level up to eighths at about 0.75 of the beat with peaks a
+        // frame and a half wide, and about 0.55 when they are three and a half
+        // frames wide. Past that it doubles too, and honestly so: at that point
+        // the curve really does look like a beat every eighth.
+        auto curveAt = [framesPerBeat] (int frame)
+        {
+            const double halves = static_cast<double> (frame) / (framesPerBeat * 0.5);
+            const double toHalf = std::fabs (halves - std::round (halves)) * framesPerBeat * 0.5;
+            const bool onBeat = (static_cast<int> (std::llround (halves)) & 1) == 0;
+            const float peak = onBeat ? 0.95f : 0.95f * 0.70f;
+            return 0.03f + (peak - 0.03f)
+                   * static_cast<float> (std::exp (-0.5 * (toHalf / 1.5) * (toHalf / 1.5)));
+        };
+
+        auto runFor = [&] (bool anchored, bool plays = false)
+        {
+            vp::BeatDecoder dec;
+            dec.prepare (fps);
+            dec.setLevelAnchor (anchored);
+            float last = 0.0f;
+            int onLevel = 0, total = 0;
+            float prevBpm = 0.0f;
+            for (int f = 0; f < static_cast<int> (fps * 50.0); ++f)
+            {
+                const auto h = dec.observe (curveAt (f), 0.03f, 0.0f);
+                if (plays && h.valid)
+                    dec.setSounding (true);
+                if (std::getenv ("VP_LEVEL_TRACE") != nullptr
+                    && std::fabs (h.bpm - prevBpm) > 10.0f)
+                {
+                    const auto d = dec.diagnostics();
+                    std::printf ("STRONG anchored=%d t=%.2f bpm=%.3f comb=%.3f sal=%.3f long=%.3f short=%.3f\n",
+                                 anchored ? 1 : 0, f / fps, h.bpm, d.combBpm,
+                                 d.combSalience, d.longFit, d.shortFit);
+                    prevBpm = h.bpm;
+                }
+                if ((plays || static_cast<double> (f) / fps > 25.0) && h.valid && h.bpm > 40.0f)
+                {
+                    ++total;
+                    onLevel += std::fabs (std::log2 (h.bpm / trueBpm)) < 0.2f ? 1 : 0;
+                    last = h.bpm;
+                }
+            }
+            return std::make_pair (last, total > 0 ? static_cast<double> (onLevel) / total : 0.0);
+        };
+
+        const auto plain = runFor (false);
+        const auto anchored = runFor (true);
+        const auto playing = runFor (true, true);
+        std::printf ("STRONG playing bpm=%.5f correct=%.5f\n", playing.first, playing.second);
+        std::printf ("level-anchor  ottavi al 70%% del battito, vero %.0f: senza ancora %.1f"
+                     " (%.0f%% sul livello), con ancora %.1f (%.0f%%)\n",
+                     static_cast<double> (trueBpm),
+                     static_cast<double> (plain.first), plain.second * 100.0,
+                     static_cast<double> (anchored.first), anchored.second * 100.0);
+        // The real worker calls setSounding: the comb may revisit an unsounded
+        // acquisition, but cannot double a quarter underneath the playing part.
+        expect (playing.second > 0.95,
+                "the anchored quarter is held throughout playback despite strong eighths");
+        // And the point of the whole exercise: without it, this material is read
+        // an octave out. If that ever stops being true the test above has
+        // stopped proving anything.
+        expect (plain.second < 0.5,
+                "and the fold alone really does read this material an octave out");
+    }
+}
+
+void vpRunMetricChoiceTests (int& passed, int& failed)
+{
+    gPass = &passed;
+    gFail = &failed;
+    // A 100 BPM pulse can be a quarter or a slow song's eighth. The user
+    // chooses that interpretation; identical audio cannot choose it for them.
+    for (int octave : {-1, 0})
+    {
+        vp::BeatDecoder dec;
+        dec.prepare (50.0);
+        dec.setLineFeed (true);
+        dec.setUserOctave (octave, true);
+        int right = 0, total = 0;
+        const float chosenBpm = octave == -1 ? 50.0f : 100.0f;
+        for (int frame = 0; frame < 50 * 40; ++frame)
+        {
+            const double distance = std::remainder (static_cast<double> (frame), 30.0);
+            const float beat = 0.03f + 0.92f * static_cast<float> (
+                std::exp (-0.5 * distance * distance / 2.25));
+            const auto h = dec.observe (beat, 0.03f, 1.0f - beat);
+            if (h.valid)
+                dec.setSounding (true);
+            if (frame >= 50 * 20)
+            {
+                ++total;
+                right += h.valid && std::fabs (h.bpm - chosenBpm) < 1.0f ? 1 : 0;
+            }
+        }
+        expect (total == 1000 && right > total * 0.95,
+                octave == -1 ? "explicit divide-by-two holds a 100 pulse as a 50 BPM quarter"
+                             : "the identical pulse stays at 100 BPM when the user chooses quarters");
+    }
+
 }

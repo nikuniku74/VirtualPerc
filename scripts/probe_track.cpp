@@ -21,14 +21,35 @@
 #include "probe_song_render.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
+
+namespace vp
+{
+struct BeatTrackerTimingProbe
+{
+    static std::array<double, 4> harmonicWitness (const BeatTracker& tracker)
+    {
+        return { tracker.harmonicTempo.bpm(), tracker.harmonicTempo.beatPosition (0),
+                 tracker.harmonicTempo.coherence(), tracker.harmonicTempo.phaseValid() ? 1.0 : 0.0 };
+    }
+};
+struct EngineAudioProbe
+{
+    static std::array<double, 4> harmonicWitness (const VirtualPercussionEngine& engine)
+    {
+        return BeatTrackerTimingProbe::harmonicWitness (engine.tracker);
+    }
+};
+}
 
 
 int main (int argc, char** argv)
@@ -38,6 +59,10 @@ int main (int argc, char** argv)
     bool trace = false, speaker = false, loadedFile = false;
     std::string pulses, follow;
     bool startNow = false;
+    double playerRate = 0.0; // Reproduce the file-to-device Lagrange stage.
+    std::string audibilityPath, phaseWitnessPath;
+    bool loadAtStart = false; // The actual file-open lifecycle, before PLAY/START.
+    double armAt = 0.0; // Feed live audio before START, as BRANO does after PLAY.
     // A second file loaded while START stays armed, as CARICA does mid-set.
     // --stop-gap G emulates the listener's workaround: STOP --stop-after X
     // seconds after the load (default at the load) and START again G seconds
@@ -80,6 +105,11 @@ int main (int argc, char** argv)
         else if (a == "--until")      until = std::atof (next());
         else if (a == "--speaker")    speaker = true;
         else if (a == "--player")     loadedFile = true;
+        else if (a == "--player-rate") playerRate = std::atof (next());
+        else if (a == "--phase-witness") phaseWitnessPath = next();
+        else if (a == "--audibility") audibilityPath = next();
+        else if (a == "--load-at-start") loadAtStart = true;
+        else if (a == "--arm-at")      armAt = std::atof (next());
         else if (a == "--start-now")  startNow = true;   // START SUBITO
         // Where the clock actually *is*, block by block, so the strokes can be
         // scored against the drummer instead of against the published BPM.
@@ -111,7 +141,8 @@ int main (int argc, char** argv)
         else
         {
             std::printf ("uso: VPTrack --wav brano.wav [--bpm 87] [--gain dB]\n"
-                         "            [--trace] [--step 2] [--until 90] [--speaker|--player]\n\n"
+                         "            [--trace] [--step 2] [--until 90] [--speaker|--player]\n"
+                         "            [--arm-at seconds] [--player-rate Hz] [--load-at-start] [--audibility path] [--phase-witness path]\n\n"
                          "  --bpm     il tempo vero, se lo sai: stampa quando ci arriva\n"
                          "            e quanto ci resta. Senza, riporta solo la traccia.\n"
                          "  --gain    dB sul segnale prima dell'analisi, come il knob MIC\n"
@@ -120,11 +151,39 @@ int main (int argc, char** argv)
         }
     }
     if (path.empty()) { std::printf ("serve --wav\n"); return 1; }
+    if (! std::isfinite (armAt) || armAt < 0.0
+        || ! std::isfinite (playerRate) || playerRate < 0.0
+        || (playerRate > 0.0 && (playerRate < 8000.0 || playerRate > 192000.0)))
+    {
+        std::printf ("--arm-at must be nonnegative; --player-rate must be 0 or 8000..192000 Hz\n");
+        return 1;
+    }
 
     vp::WavAudio wav;
     std::string why;
     if (! vp::loadWavFile (path, wav, why)) { std::printf ("wav: %s\n", why.c_str()); return 1; }
 
+    if (playerRate > 8000.0 && playerRate != wav.sampleRate)
+    {
+        const double ratio = wav.sampleRate / playerRate;
+        const double count = std::ceil (wav.frames / ratio);
+        if (count > std::numeric_limits<int>::max() - 16)
+        {
+            std::printf ("resampled file is too large for this probe\n");
+            return 1;
+        }
+        const int frames = static_cast<int> (count);
+        for (auto* channel : { &wav.left, &wav.right })
+        {
+            auto source = *channel;
+            source.resize (source.size() + static_cast<size_t> (std::ceil (ratio)) + 16, 0.0f);
+            channel->resize (static_cast<size_t> (frames));
+            juce::LagrangeInterpolator interpolator;
+            interpolator.process (ratio, source.data(), channel->data(), frames);
+        }
+        wav.frames = frames;
+        wav.sampleRate = playerRate;
+    }
     const double sr = wav.sampleRate;
     const float g = static_cast<float> (std::pow (10.0, gainDb / 20.0));
     std::vector<float> mono;
@@ -173,7 +232,11 @@ int main (int argc, char** argv)
     eng.settings().congasEnabled.store (false);
     eng.settings().cembaloEnabled.store (false);
     eng.settings().clapEnabled.store (false);
-    eng.start();
+    if (loadAtStart)
+        eng.notifyInputRestart();
+    bool initiallyStarted = armAt <= 0.0;
+    if (initiallyStarted)
+        eng.start();
 
     std::vector<float> oL (block, 0.0f), oR (block, 0.0f);
     std::vector<float> partOut (selfLeak > 0.0 ? static_cast<size_t> (n + block) : 0u, 0.0f);
@@ -200,6 +263,22 @@ int main (int argc, char** argv)
                      "restart  gAnalisi  picco  dopoG  lowS  set  cov  1?  curva rate resC gain ev"
                      "  clock target trim phase trust recover fast interval votes dir transition\n");
 
+    std::FILE* phaseWitnessFile = phaseWitnessPath.empty() ? nullptr : std::fopen (phaseWitnessPath.c_str(), "w");
+    if (! phaseWitnessPath.empty() && phaseWitnessFile == nullptr)
+    {
+        std::fprintf (stderr, "Cannot open phase witness output\n");
+        return 1;
+    }
+    if (phaseWitnessFile != nullptr)
+        std::fprintf (phaseWitnessFile, "# t clockBpm clockPhase harmonicBpm harmonicPosition coherence valid guard\n");
+    std::FILE* audibilityFile = audibilityPath.empty() ? nullptr : std::fopen (audibilityPath.c_str(), "w");
+    if (! audibilityPath.empty() && audibilityFile == nullptr)
+    {
+        std::fprintf (stderr, "Cannot open audibility output\n");
+        return 1;
+    }
+    if (audibilityFile != nullptr)
+        std::fprintf (audibilityFile, "# t wants guard stand outputPeak state conf fit bpm clock trust\n");
     std::FILE* pulseFile = pulses.empty() ? nullptr : std::fopen (pulses.c_str(), "w");
     std::FILE* outFile = outPath.empty() ? nullptr : std::fopen (outPath.c_str(), "wb");
     std::FILE* shareFile = shareOut.empty() ? nullptr : std::fopen (shareOut.c_str(), "w");
@@ -217,6 +296,11 @@ int main (int argc, char** argv)
 
     while (pos + block <= n && pos + readOffset + block <= n && pos / sr < until)
     {
+        if (! initiallyStarted && pos / sr >= armAt)
+        {
+            eng.start();
+            initiallyStarted = true;
+        }
         if (switchAt >= 0 && ! switched && pos >= switchAt)
         {
             switched = true;
@@ -326,6 +410,22 @@ int main (int argc, char** argv)
             else rightSince = -1.0;
         }
 
+        if (phaseWitnessFile != nullptr)
+        {
+            const auto witness = vp::EngineAudioProbe::harmonicWitness (eng);
+            std::fprintf (phaseWitnessFile, "%.4f %.4f %.6f %.4f %.6f %.6f %.0f %d\n",
+                          t, s.clockBpm, s.beatPhase, witness[0], witness[1], witness[2], witness[3], s.driftGuarded);
+        }
+        if (audibilityFile != nullptr)
+        {
+            float outputPeak = 0.0f;
+            for (int i = 0; i < take; ++i)
+                outputPeak = std::max ({ outputPeak, std::fabs (oL[i]), std::fabs (oR[i]) });
+            std::fprintf (audibilityFile, "%.4f %d %d %d %.7f %d %.4f %.5f %.3f %.3f %d\n", t,
+                          s.percussionAudible, s.driftGuarded, s.standingDown, outputPeak,
+                          static_cast<int> (s.state), s.confidence, s.shortFitResidual,
+                          s.bpm, s.clockBpm, static_cast<int> (trust));
+        }
         if (pulseFile != nullptr)
             std::fprintf (pulseFile, "%.4f %.5f %.5f %.3f %.3f %d %+.5f %d %.3f %.3f %.3f %+.3f %d %u %d %.3f %.3f %.4f %.3f %.4f %d %d %d %+.3f %+.3f %d %d %d\n", t,
                           (double) s.beatPhase, (double) s.barPhase, (double) s.bpm,
@@ -414,12 +514,18 @@ int main (int argc, char** argv)
     std::printf ("bpm finale %.2f  restart %d\n", (double) s.bpm, s.analysisRestarts);
     std::printf ("riallineamenti in silenzio %u, ultimo %+.3f battiti\n",
                  s.silentSnapCount, (double) s.silentSnapBeats);
-    if (pulseFile != nullptr)
-        std::fclose (pulseFile);
-    if (outFile != nullptr)
-        std::fclose (outFile);
-    if (shareFile != nullptr)
-        std::fclose (shareFile);
+    bool writeFailed = false;
+    for (auto* file : { phaseWitnessFile, audibilityFile, pulseFile, outFile, shareFile })
+        if (file != nullptr)
+        {
+            writeFailed |= std::ferror (file) != 0;
+            writeFailed |= std::fclose (file) != 0;
+        }
+    if (writeFailed)
+    {
+        std::fprintf (stderr, "Probe output write failed; result is incomplete\n");
+        return 1;
+    }
     std::printf ("octave-doubt %.2f\n", octaveDoubtAt);
     return 0;
 }

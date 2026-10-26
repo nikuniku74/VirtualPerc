@@ -921,7 +921,7 @@ namespace
     }
 }
 
-float GrooveEngine::humanDelay (int step) noexcept
+float GrooveEngine::humanDelay (int step, Subdivision grid) noexcept
 {
     // Swing is a warp, not a late off-eighth - and what it warps is *the grid
     // being played*, which is the part this got wrong.
@@ -948,7 +948,7 @@ float GrooveEngine::humanDelay (int step) noexcept
         const float d = swing * kFullSwingBeats;
         const float u = 0.25f * static_cast<float> (s);
         float t;
-        if (subdivisionGrid == Subdivision::sixteenth)
+        if (grid == Subdivision::sixteenth)
         {
             const float half = u < 0.5f ? 0.0f : 0.5f;
             t = half + 0.5f * swungWithinSpan ((u - half) * 2.0f, d);
@@ -1078,7 +1078,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
                 // sound like a click track with noise on it.
                 out[n].stroke = (step % 4) == 0 ? Stroke::shakerDown : Stroke::shakerUp;
                 out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
-                out[n].delayBeats = humanDelay (step);
+                out[n].delayBeats = humanDelay (step, subdivisionGrid);
                 out[n].part = sl.id;
                 ++n;
             }
@@ -1089,7 +1089,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
                 // the only difference is the sample. Independently switched.
                 out[n].stroke = (step % 4) == 0 ? Stroke::cembaloDown : Stroke::cembaloUp;
                 out[n].velocity = humanVelocity (shakerV * accent * dynamicGain());
-                out[n].delayBeats = humanDelay (step);
+                out[n].delayBeats = humanDelay (step, subdivisionGrid);
                 out[n].part = sl.id;
                 ++n;
             }
@@ -1111,7 +1111,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
                     continue;
                 out[n].stroke = Stroke::clap;
                 out[n].velocity = humanVelocity (kClapVelocity * accent * dynamicGain());
-                out[n].delayBeats = humanDelay (step);
+                out[n].delayBeats = humanDelay (step, subdivisionGrid);
                 out[n].part = sl.id;
                 ++n;
             }
@@ -1175,7 +1175,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
             native[nativeN].stroke = bar[i].stroke;
             native[nativeN].velocity = humanVelocity (
                 bar[i].velocity * accent * dynamicGain());
-            native[nativeN].delayBeats = humanDelay (step);
+            native[nativeN].delayBeats = humanDelay (step, Subdivision::sixteenth);
             ++nativeN;
         }
 
@@ -1195,7 +1195,7 @@ int GrooveEngine::eventsAt (int barIndex, int step, GrooveEvent* out, int maxOut
                     rng.nextFloat() < 0.5f ? Stroke::toe : Stroke::heel;
                 native[nativeN].velocity =
                     humanVelocity (0.16f * accent * dynamicGain());
-                native[nativeN].delayBeats = humanDelay (step);
+                native[nativeN].delayBeats = humanDelay (step, Subdivision::sixteenth);
                 ++nativeN;
             }
         }
