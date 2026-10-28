@@ -154,7 +154,7 @@ juce_add_gui_app (VirtualPercussionist
     # The dark logo on the dark ground, centred, while iOS loads the app. The
     # in-app landing (MainComponent::SplashOverlay) opens on the same picture,
     # so the hand-over is seamless. The image itself is a bundle resource below.
-    LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/BrandLaunchScreen.storyboard"
+    LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/BrandLaunchScreenV2.storyboard"
     # CFBundleVersion: an integer that goes up with every upload to App Store
     # Connect (the marketing version above is independent of this build number).
     # Override: cmake -DVP_BUILD_NUMBER=7
@@ -440,9 +440,9 @@ target_compile_definitions (VirtualPercussionist PRIVATE
     "JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES=44100.0,48000.0,88200.0,96000.0"
 )
 
-# The same source logo is embedded for the in-app landing and copied into an
-# asset catalog for iOS's launch storyboard. New storyboard/image names avoid
-# reusing iOS's cached old launch screen (2026-10-28, item 123).
+# The same source logo is embedded for the in-app landing and copied into the
+# launch asset catalog. A loose PNG with the same name also covers the first
+# launch before iOS has cached that storyboard (2026-10-28, item 123).
 set (VP_LAUNCH_LOGO "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchLogo.png")
 juce_add_binary_data (VpBrandData
     HEADER_NAME VpBrandData.h
@@ -457,8 +457,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     file (WRITE "${VP_LAUNCH_IMAGESET}/Contents.json"
         "{\"images\":[{\"filename\":\"BrandLaunchLogo.png\",\"idiom\":\"universal\"}],\"info\":{\"author\":\"xcode\",\"version\":1}}\n")
     set (VP_LAUNCH_CATALOG "${CMAKE_CURRENT_BINARY_DIR}/BrandLaunchAssets.xcassets")
-    target_sources (VirtualPercussionist PRIVATE "${VP_LAUNCH_CATALOG}")
+    set (VP_LAUNCH_LOOSE "${CMAKE_CURRENT_BINARY_DIR}/BrandLaunchLogo.png")
+    configure_file ("${VP_LAUNCH_LOGO}" "${VP_LAUNCH_LOOSE}" COPYONLY)
+    target_sources (VirtualPercussionist PRIVATE "${VP_LAUNCH_CATALOG}" "${VP_LAUNCH_LOOSE}")
     set_source_files_properties ("${VP_LAUNCH_CATALOG}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    set_source_files_properties ("${VP_LAUNCH_LOOSE}" PROPERTIES
+        HEADER_FILE_ONLY TRUE
         MACOSX_PACKAGE_LOCATION "Resources")
 endif()
 

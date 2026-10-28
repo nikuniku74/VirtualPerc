@@ -507,7 +507,7 @@ void MainComponent::SoundMenuOverlay::resized()
 
 namespace
 {
-    // Assets/Brand/BrandLaunchScreen.storyboard: the same ground, the same share of
+    // Assets/Brand/BrandLaunchScreenV2.storyboard: the same ground, the same share of
     // the short side, both centred on the whole screen rather than the safe
     // area, so the first frame here is iOS's launch picture.
     const juce::Colour kSplashGround { 0xff0c0a0e };

@@ -234,9 +234,10 @@ account a pagamento dura un anno.
 
 Se all'avvio appare per un istante il vecchio logo nel riquadro scuro, prova
 prima una nuova installazione in-place con ⌘R della FULL compilata pulita.
-Il 28/10 il progetto ha ricevuto `BrandLaunchScreen` e `BrandLaunchLogo` nel
-catalogo risorse: la build locale pulita li contiene e non include più il vecchio
-storyboard. Se l'iPad conserva comunque la schermata precedente, Apple TN3118
+Il 28/10 il progetto ha ricevuto `BrandLaunchScreenV2` e `BrandLaunchLogo` nel
+catalogo risorse e come PNG diretto: la build locale pulita li contiene e non
+include più il vecchio storyboard. Il titolare conferma il logo nuovo già al
+primo avvio dopo ⌘R della FULL. Se un altro iPad conserva la schermata precedente, Apple TN3118
 richiede di rimuovere l'app e reinstallarla; prima salva gli eventuali file e
 le impostazioni locali della FULL, che la rimozione cancella.
 

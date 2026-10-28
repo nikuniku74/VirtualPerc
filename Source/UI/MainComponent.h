@@ -292,7 +292,7 @@ private:
     SettingsOverlay settingsOverlay { *this };
 
     /** The landing: the launch screen's own picture (Assets/Brand, the dark
-        glass logo at 62% of the short side on #0C0A0E, as BrandLaunchScreen.storyboard
+        glass logo at 62% of the short side on #0C0A0E, as BrandLaunchScreenV2.storyboard
         draws it), held a moment, then grown a little and faded onto the
         console. A tap skips it. Above every other child until it is gone. */
     struct SplashOverlay final : juce::Component, private juce::Timer
