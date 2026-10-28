@@ -1567,7 +1567,7 @@ void MainComponent::refreshSourceButton()
     const bool speaker = source == vp::FollowSource::speaker;
     const bool internal = source == vp::FollowSource::internalPlayer;
     sourceButton.setButtonText (internal ? vpui::L ("TRACK", "BRANO")
-                                         : juce::String (speaker ? "IPAD" : "MIXER"));
+                                         : juce::String (speaker ? "MIC" : "MIXER"));
     paintChoice (sourceButton, speaker || internal);
     refreshInternalTrackButtons();
 

@@ -461,7 +461,7 @@ private:
         and type an exact one (50-200, the app's range). 2026-10-23. */
     juce::TextButton bpmEntryButton;
     juce::TextButton themeButton { "DARK" };
-    juce::TextButton sourceButton { "SPEAKER" };
+    juce::TextButton sourceButton { "MIC" };
     juce::TextButton trackLoadButton { vpui::L ("LOAD", "CARICA") };
     juce::TextButton trackPlayButton { "PLAY" };
     juce::TextButton settingsButton { "SETUP" };

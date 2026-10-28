@@ -205,7 +205,7 @@ garanzia di assenza di ogni interruzione.
 
 Non passa da TestFlight né da App Store: la installi tu da Xcode.
 
-**D1. Configura** (cartella separata; stesso `TEAMID`):
+**D1. Configura** (cartella separata; usa il team che ha firmato la FULL già installata sul dispositivo):
 
 ```bash
 cmake -S . -B build-ios-full -G Xcode \
@@ -218,13 +218,21 @@ cmake -S . -B build-ios-full -G Xcode \
 
 (Comparirà un avviso: «VP_UNLOCKED=ON: this build has no paywall». È voluto.)
 
+L'iPad usa `build-ios-full` con il team `28H5MJ7244`. L'iPhone che ha già la
+FULL firmata dal team `C2APL6E5HJ` usa `build-ios-full-iphone` con quel team:
+stesso bundle ID, cartella Xcode distinta. iOS rifiuta un aggiornamento con lo
+stesso bundle ID firmato da un team diverso; non rimuovere l'app per aggirarlo,
+perché perderesti i suoi dati locali.
+
 **D2. Installa.**
-1. `open build-ios-full/VirtualPercussionist.xcodeproj`
+1. Per l'iPad: `open build-ios-full/VirtualPercussionist.xcodeproj`. Per l'iPhone
+   già firmato `C2APL6E5HJ`: `open build-ios-full-iphone/VirtualPercussionist.xcodeproj`.
 2. Collega l'iPhone o l'iPad, sbloccalo, «Autorizza questo computer».
 3. Scheme **VirtualPercussionist**, destinazione il tuo dispositivo.
 4. *Product → Scheme → Edit Scheme → Run → Build Configuration → **Release*** (la
    più veloce, quella da palco).
-5. Team = ritmodigitale (se Xcode lo chiede), **Run**.
+5. Se Xcode chiede il team, scegli quello indicato in D1 per quel dispositivo,
+   poi **Run**.
 6. Sul dispositivo, alla prima volta: *Impostazioni → Generali → VPN e gestione
    dispositivo* → fidati dello sviluppatore, se compare.
 
@@ -241,7 +249,7 @@ primo avvio dopo ⌘R della FULL. Se un altro iPad conserva la schermata precede
 richiede di rimuovere l'app e reinstallarla; prima salva gli eventuali file e
 le impostazioni locali della FULL, che la rimozione cancella.
 
-**D3. Regole.** Non archiviare mai `build-ios-full`. Per la versione dello
+**D3. Regole.** Non archiviare mai una build FULL. Per la versione dello
 store si usa **solo** `build-ios-store`, configurato con
 `./scripts/configure-appstore.sh NUMERO`. Se vuoi la versione dello store gratis sul
 tuo telefono, usa TestFlight (acquisti di prova) o, dopo la pubblicazione, un
