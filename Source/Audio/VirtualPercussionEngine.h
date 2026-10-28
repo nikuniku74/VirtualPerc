@@ -238,7 +238,6 @@ private:
         across the same boundary, and `prepare()`/`reset()` plus
         `notifyInputRestart()` each set it themselves. */
     void resetAnalysisLevelState() noexcept;
-    bool resumedAfterSourceSilence (int numSamples, float sourcePeak, FollowSource source) noexcept;
     /** The public mirrors of three of those scalars - the epoch count, the
         make-up gain and the analysis peak - which the audio callback is the only
         writer of. Cleared at the same two lifecycle boundaries and for the same
@@ -328,6 +327,7 @@ private:
     std::atomic<int>   lastVoices { 0 };
     std::atomic<double> lastSr { 0.0 };
     std::atomic<bool>  lastAiOnnx { false };
+    std::atomic<bool>  lastAiModelFailed { false };
     std::atomic<bool>  lastHypValid { false };
     std::atomic<float> lastNeuralBpm { 0.0f };
     std::atomic<float> lastPBeat { 0.0f };
@@ -542,7 +542,6 @@ private:
     /** Pending UI command, final armed state, and whether STOP occurred since
         the previous callback. During playback, process() owns these mutations. */
     std::atomic<unsigned int> pendingTransport { 0 };
-    int64_t sourceSilenceSamples = 0;
     int   musicGapSamples = 0;
     bool  musicGapArmed = false;
     std::atomic<bool> lastBarTrusted { false };

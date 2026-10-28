@@ -110,3 +110,11 @@ Optional `_med` / `_soft` takes follow the other stems. `triangle_closed_b`
 is its own articulation (`Stroke::triangleClosed2`), not a round-robin of
 #1. Until those files exist, `PercussionEngine::synthesizeTriangle` is the
 fallback.
+
+
+## Publisher confirmation — 2026-10-26
+
+The publisher explicitly confirms rights to distribute the JUCE-based app and
+the included SampleFocus conga, shaker and effect sounds. Supporting documents
+will be identified by the publisher; they have not yet been examined here.
+This records that confirmation, not a new interpretation of the standard terms.

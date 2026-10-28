@@ -21,6 +21,7 @@ void start (std::function<void (const Status&)> onChange)
 {
     Status s;
     s.access = Access::subscribed;
+    s.activePlanId = kLifetimeId; // Explicit development stub, no expiring period.
     if (onChange)
         onChange (s);
 }

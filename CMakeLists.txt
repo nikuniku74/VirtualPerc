@@ -154,9 +154,9 @@ juce_add_gui_app (VirtualPercussionist
     # The dark logo on the dark ground, centred, while iOS loads the app. The
     # in-app landing (MainComponent::SplashOverlay) opens on the same picture,
     # so the hand-over is seamless. The image itself is a bundle resource below.
-    LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchScreen.storyboard"
+    LAUNCH_STORYBOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/BrandLaunchScreen.storyboard"
     # CFBundleVersion: an integer that goes up with every upload to App Store
-    # Connect (the marketing version above stays 0.1.0 until it is a release).
+    # Connect (the marketing version above is independent of this build number).
     # Override: cmake -DVP_BUILD_NUMBER=7
     BUILD_VERSION "${VP_BUILD_NUMBER}"
     # No cryptography of our own: App Store Connect stops asking the export
@@ -357,10 +357,27 @@ option (VP_UNLOCKED "Personal build: no paywall in any configuration (never for 
 if (VP_UNLOCKED)
     message (WARNING "VP_UNLOCKED=ON: this build has no paywall. Do not archive or upload it.")
 endif()
+# An isolated archive profile must fail closed on development-only settings.
+option (VP_APPSTORE_RELEASE "Validate the App Store archive configuration" OFF)
+if (VP_APPSTORE_RELEASE)
+    if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR VP_UNLOCKED OR NOT VP_STOREKIT
+        OR VP_FILE_SHARING OR NOT VP_ORT_IOS OR NOT VP_HAS_BEAT_MODEL_FILE
+        OR NOT VP_BUNDLE_ID STREQUAL "com.virtualpercussionist.app"
+        OR CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+        message (FATAL_ERROR "App Store requires device iOS, StoreKit, real ONNX assets, the store bundle id, VP_UNLOCKED=OFF and VP_FILE_SHARING=OFF")
+    endif()
+    file (SIZE "${VP_BEAT_MODEL}" VP_BEAT_MODEL_SIZE)
+    if (VP_BEAT_MODEL_SIZE LESS 500000)
+        message (FATAL_ERROR "App Store model is missing or incomplete")
+    endif()
+endif()
 target_compile_definitions (VirtualPercussionist PRIVATE
     VP_PAYWALL_ENFORCED=$<IF:$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<BOOL:${VP_PAYWALL_DEBUG}>>,1,0>
     VP_UNLOCKED=$<BOOL:${VP_UNLOCKED}>)
 target_sources (VirtualPercussionist PRIVATE Source/Platform/Subscription.cpp)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND VP_STOREKIT AND NOT VP_UNLOCKED)
+    target_compile_definitions (VirtualPercussionist PRIVATE VP_REQUIRE_ONNX_MODEL=1)
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources (VirtualPercussionist PRIVATE
@@ -423,8 +440,9 @@ target_compile_definitions (VirtualPercussionist PRIVATE
     "JUCE_IOS_AUDIO_EXPLICIT_SAMPLERATES=44100.0,48000.0,88200.0,96000.0"
 )
 
-# The logo: loose in the iOS bundle for the launch storyboard (it can only
-# name a bundle image), embedded for the landing screen drawn by the app.
+# The same source logo is embedded for the in-app landing and copied into an
+# asset catalog for iOS's launch storyboard. New storyboard/image names avoid
+# reusing iOS's cached old launch screen (2026-10-28, item 123).
 set (VP_LAUNCH_LOGO "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Brand/LaunchLogo.png")
 juce_add_binary_data (VpBrandData
     HEADER_NAME VpBrandData.h
@@ -433,9 +451,14 @@ juce_add_binary_data (VpBrandData
 )
 target_link_libraries (VirtualPercussionist PRIVATE VpBrandData)
 if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_sources (VirtualPercussionist PRIVATE "${VP_LAUNCH_LOGO}")
-    set_source_files_properties ("${VP_LAUNCH_LOGO}" PROPERTIES
-        HEADER_FILE_ONLY TRUE
+    set (VP_LAUNCH_IMAGESET "${CMAKE_CURRENT_BINARY_DIR}/BrandLaunchAssets.xcassets/BrandLaunchLogo.imageset")
+    file (MAKE_DIRECTORY "${VP_LAUNCH_IMAGESET}")
+    configure_file ("${VP_LAUNCH_LOGO}" "${VP_LAUNCH_IMAGESET}/BrandLaunchLogo.png" COPYONLY)
+    file (WRITE "${VP_LAUNCH_IMAGESET}/Contents.json"
+        "{\"images\":[{\"filename\":\"BrandLaunchLogo.png\",\"idiom\":\"universal\"}],\"info\":{\"author\":\"xcode\",\"version\":1}}\n")
+    set (VP_LAUNCH_CATALOG "${CMAKE_CURRENT_BINARY_DIR}/BrandLaunchAssets.xcassets")
+    target_sources (VirtualPercussionist PRIVATE "${VP_LAUNCH_CATALOG}")
+    set_source_files_properties ("${VP_LAUNCH_CATALOG}" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources")
 endif()
 
@@ -894,7 +917,7 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         Source/Platform/IosMicPermission.cpp scripts/main_shots.cpp)
     target_include_directories (VPShots PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
     target_compile_definitions (VPShots PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-        VP_HAS_LOOP_BANK=0 VP_PAYWALL_ENFORCED=0 VP_UNLOCKED=0)
+        VP_HAS_LOOP_BANK=0 VP_PAYWALL_ENFORCED=1 VP_UNLOCKED=0)
     target_link_libraries (VPShots PRIVATE VpBrandData
         juce::juce_audio_utils juce::juce_gui_extra juce::juce_dsp
         PUBLIC juce::juce_recommended_config_flags)

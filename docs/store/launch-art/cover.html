@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Percussionist — launch artwork</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;overflow:hidden;background:#0f0e12}
+#poster{position:absolute;inset:0 auto auto 0;overflow:hidden;color:#fff;transform-origin:0 0;background:#09070d;font-family:"Avenir Next",Avenir,system-ui,sans-serif}
+.art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,5,11,.2),transparent 50%,rgba(7,5,11,.08))}
+.brand{position:absolute;top:90px;left:100px;display:flex;gap:28px;align-items:center}
+.brand img{width:126px;height:126px;border-radius:0}
+.name{font-weight:700;font-size:30px;letter-spacing:5px;line-height:1.4}
+h1{position:absolute;left:96px;top:302px;margin:0;font-family:Futura,"Avenir Next",sans-serif;font-size:150px;font-weight:700;line-height:1.01;letter-spacing:-5px;max-width:1150px;white-space:nowrap}
+h1 span{display:block;background:linear-gradient(110deg,#fff 3%,#ffd4f2 28%,#ff35b6 90%);background-clip:text;-webkit-background-clip:text;color:transparent}
+html[lang=en] .phone h1{font-size:140px}
+.sub{position:absolute;top:655px;left:102px;margin:0;color:#ddd5e4;font-size:49px;line-height:1.4;letter-spacing:.2px}
+.device{position:absolute;top:865px;left:225px;width:870px;padding:16px;border:2px solid #766a79;border-radius:78px;background:linear-gradient(135deg,#584951,#09090c 30%,#27222b 80%,#bd8ca4);box-shadow:0 32px 100px #000c,0 0 90px #ff139529;transform:rotate(-5deg)}
+.device img{display:block;width:100%;height:auto;border-radius:60px;border:1px solid #08070a}
+.foot{position:absolute;bottom:48px;left:96px;right:96px;text-align:center;font-size:26px;font-weight:600;letter-spacing:3px;color:#e8dceb}
+.tablet .brand{top:100px;left:140px;gap:36px}.tablet .brand img{width:150px;height:150px}.tablet .name{font-size:38px;letter-spacing:7px}
+.tablet h1{top:350px;left:132px;font-size:192px;max-width:1800px;letter-spacing:-6px}
+.tablet .sub{top:790px;left:140px;font-size:58px;line-height:1.3}
+.tablet .device{top:1065px;left:450px;width:1164px;padding:18px;border-radius:66px;transform:rotate(3deg)}
+.tablet .device img{border-radius:46px}.tablet .foot{bottom:53px;font-size:32px;letter-spacing:4px}
+.mac .brand{top:130px;left:150px}.mac .brand img{width:145px;height:145px}.mac .name{font-size:37px}
+.mac h1{top:440px;left:145px;font-size:175px;max-width:none;width:1460px}
+.mac .shade{background:linear-gradient(90deg,rgba(9,6,13,.78),rgba(9,6,13,.55)47%,transparent 75%)}
+.mac .sub{top:910px;left:155px;font-size:60px}
+.mac .device{top:160px;left:1690px;width:1010px;padding:16px;border-radius:58px;transform:rotate(3deg)}
+.mac .device img{border-radius:40px}.mac .foot{bottom:130px;right:auto;left:155px;font-size:29px;text-align:left}
+.og .brand{top:47px;left:64px;gap:20px}.og .brand img{width:70px;height:70px;border-radius:15px}.og .name{font-size:18px;letter-spacing:3px}
+.og .shade{background:linear-gradient(90deg,rgba(9,6,13,.75),rgba(9,6,13,.3),transparent)}
+.og h1{top:177px;left:60px;font-size:79px;max-width:670px;letter-spacing:-3px}
+.og .sub{top:406px;left:65px;font-size:27px}.og .device{display:none}.og .foot{bottom:51px;left:65px;text-align:left;font-size:17px;letter-spacing:2px}
+.og .lockup{position:absolute;right:32px;top:87px;width:450px;}
+</style>
+<div id="poster">
+ <img class="art" src="rhythm-orbit-v1.png" alt="">
+ <div class="shade"></div>
+ <div class="brand"><img src="mark-transparent-master.png" alt=""><div class="name">VIRTUAL<br>PERCUSSIONIST</div></div>
+ <h1></h1><p class="sub"></p>
+ <div class="device"><img id="screen" alt="Virtual Percussionist app"></div>
+ <div class="foot"></div>
+</div>
+<script>
+const q=new URLSearchParams(location.search),variant=q.get('device')||'phone69',language=q.get('lang')||'it';
+const sizes={phone63:[1206,2622],phone69:[1320,2868],tablet:[2064,2752],mac:[2880,1800],og:[1200,630]};
+if(!sizes[variant]||!['it','en'].includes(language))throw Error('Unknown artwork variant');
+const [w,h]=sizes[variant],kind=variant.startsWith('phone')?'phone':variant;
+const base=kind==='phone'?1320:w,scale=w/base,poster=document.querySelector('#poster');
+document.documentElement.lang=language;document.body.style.width=w+'px';document.body.style.height=h+'px';
+poster.style.width=base+'px';poster.style.height=(h/scale)+'px';poster.style.transform='scale('+scale+')';poster.className=kind;
+ const it=language==='it';
+ document.querySelector('h1').innerHTML=it?'IL GROOVE<span>SEGUE TE.</span>':'YOUR BAND.<span>YOUR GROOVE.</span>';
+ document.querySelector('.sub').innerHTML=it?'Percussioni che seguono<br>il tuo tempo, in tempo reale.':'Percussion that follows<br>your tempo. In real time.';
+ document.querySelector('.foot').textContent=it?'SHAKER · CONGAS · CLAP · TAMBURELLO':'SHAKER · CONGAS · CLAP · TAMBOURINE';
+ const device=(kind==='tablet'||kind==='mac')?'ipad-13in':variant==='phone63'?'iphone-6.3in':'iphone-6.9in';
+ document.querySelector('#screen').src='../native-screenshots/'+language+'/'+device+'/1-console.png?v=store3';
+ if(kind==='og'){document.querySelector('h1').innerHTML='IL TUO GROOVE.<span>YOUR GROOVE.</span>';document.querySelector('.sub').innerHTML='Percussioni in tempo reale.<br>Real-time percussion.';document.querySelector('.foot').textContent='VIRTUALPERCUSSIONIST.IT';const image=document.createElement('img');image.className='lockup';image.src='logo-1024.png';poster.append(image);}
+Promise.all(Array.from(document.images).filter(i=>i.getAttribute('src')).map(i=>i.decode().catch(()=>{throw Error('Missing image '+i.src)}))).then(()=>document.fonts.ready).then(()=>document.documentElement.dataset.ready='true');
+</script>
+</html>

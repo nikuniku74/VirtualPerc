@@ -466,8 +466,7 @@ void TempoFollower::setTargetTempo (float bpm, float confidence) noexcept
     // accepting it here would undo beginTempoTransition in the very next call.
     // The guard lasts one adopted beat, after which the ordinary glide is
     // exactly the path it was before.
-    // During a detected rest, even a spurious octave target must leave the rate alone.
-    if (tempoTransitionActive() || (locked && beatGapHold))
+    if (tempoTransitionActive())
         return;
 
     if (bpm > 40.0f && bpm < 220.0f)
@@ -940,16 +939,11 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     const float tau = std::max (glide, poor * kPoorEvidenceTauSec);
     const float a = 1.0f - std::exp (-static_cast<float> (numSamples)
                                      / (tau * static_cast<float> (sampleRate)));
-    // The existing rest flag stopped phase steer, but an old/new target could
-    // still pull the BPM throughout the break. Keep the counted rate too.
-    const bool holdRestRate = locked && beatGapHold && ! rapidTransition;
-    if (! holdRestRate)
-    {
-        tempo += err * a;
-        // Settle so a round target remains a round public tempo.
-        if (std::fabs (effectiveTarget - tempo) < 0.02f)
-            tempo = effectiveTarget;
-    }
+    tempo += err * a;
+    // Settle rather than approach forever, so `currentTempo` still reads as the
+    // round number the rest of the engine compares against.
+    if (std::fabs (effectiveTarget - tempo) < 0.02f)
+        tempo = effectiveTarget;
 
     if (tempo < 40.0f) tempo = 40.0f;
     if (tempo > 220.0f) tempo = 220.0f;
@@ -1365,7 +1359,7 @@ ClockTick TempoFollower::advanceSegment (int numSamples) noexcept
     const double beatsNominal = (static_cast<double> (effTempo) / 60.0)
                                 * (static_cast<double> (numSamples) / sampleRate);
     double beats = beatsNominal;
-    if (glideRemaining != 0.0 && ! holdRestRate)
+    if (glideRemaining != 0.0)
     {
         // A glide is phase moved by rate, inside the same advance: the pulses
         // below are cut from prevPhase..prevPhase+beats, so none is repeated

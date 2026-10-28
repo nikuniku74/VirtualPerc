@@ -1,0 +1,92 @@
+[
+  {
+    "device": "phone63",
+    "language": "it",
+    "width": 1206,
+    "height": 2622,
+    "file": "screenshots/it/iphone-6.3in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "IL GROOVE\nSEGUE TE."
+  },
+  {
+    "device": "phone63",
+    "language": "en",
+    "width": 1206,
+    "height": 2622,
+    "file": "screenshots/en/iphone-6.3in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "YOUR BAND.\nYOUR GROOVE."
+  },
+  {
+    "device": "phone69",
+    "language": "it",
+    "width": 1320,
+    "height": 2868,
+    "file": "screenshots/it/iphone-6.9in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "IL GROOVE\nSEGUE TE."
+  },
+  {
+    "device": "phone69",
+    "language": "en",
+    "width": 1320,
+    "height": 2868,
+    "file": "screenshots/en/iphone-6.9in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "YOUR BAND.\nYOUR GROOVE."
+  },
+  {
+    "device": "tablet",
+    "language": "it",
+    "width": 2064,
+    "height": 2752,
+    "file": "screenshots/it/ipad-13in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "IL GROOVE\nSEGUE TE."
+  },
+  {
+    "device": "tablet",
+    "language": "en",
+    "width": 2064,
+    "height": 2752,
+    "file": "screenshots/en/ipad-13in/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "YOUR BAND.\nYOUR GROOVE."
+  },
+  {
+    "device": "mac",
+    "language": "it",
+    "width": 2880,
+    "height": 1800,
+    "file": "screenshots/it/mac-designed-for-ipad/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "IL GROOVE\nSEGUE TE."
+  },
+  {
+    "device": "mac",
+    "language": "en",
+    "width": 2880,
+    "height": 1800,
+    "file": "screenshots/en/mac-designed-for-ipad/0-launch-cover.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "YOUR BAND.\nYOUR GROOVE."
+  },
+  {
+    "device": "og",
+    "language": "it+en",
+    "width": 1200,
+    "height": 630,
+    "file": "launch-art/og-1200x630.png",
+    "clipped": false,
+    "missing": 0,
+    "title": "IL TUO GROOVE.\nYOUR GROOVE."
+  }
+]

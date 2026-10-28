@@ -331,6 +331,8 @@ namespace
         everywhere else. */
     juce::Colour shownColour (const vp::EngineSnapshot& s, vp::TempoTrust t)
     {
+        if (s.aiModelFailed && s.tempoFollow && ! s.percussionAudible)
+            return stateLost();
         switch (t)
         {
             case vp::TempoTrust::sure:  return stateLocked();
@@ -352,6 +354,8 @@ namespace
         // way back, so a gap never reads as the app having broken.
         if (! s.tempoFollow)
             return vpui::L ("FIXED TEMPO", "TEMPO FISSO");
+        if (s.aiModelFailed && ! s.percussionAudible)
+            return vpui::L ("AI ERROR", "ERRORE AI");
         if (s.driftGuarded)
             return t == T::out ? vpui::L ("OUT OF TEMPO - PAUSED", "FUORI TEMPO - IN PAUSA")
                                : vpui::L ("REJOINING THE BEAT", "RIENTRA ALLA BATTUTA");
@@ -711,7 +715,10 @@ namespace
         const auto nameFont = fontUi (nameH);
         g.setFont (nameFont);
         g.setColour ((nameOnFill ? onFill : text()).withMultipliedAlpha ((off ? 0.55f : 1.0f) * alpha));
-        g.drawText (ellipsis (name, nameFont, area.getWidth() - 8.0f),
+        auto label = ellipsis (name, nameFont, area.getWidth() - 8.0f);
+        if (name == "TAMBOURINE" && label != name)
+            label = "TAMB.";
+        g.drawText (label,
                     area.withHeight (nameH * 1.6f).translated (0.0f, 6.0f).toNearestInt(),
                     juce::Justification::centredTop, false);
 
@@ -798,12 +805,8 @@ namespace
             "percussion plays from START at that tempo, the light always green. Beside TAP, "
             "in place of ÷2 and ×2, the tempo appears: touch it and type an exact one (50 to 200 "
             "BPM). On the iPad the - and + keys move it by 1 BPM.\n"
-            "**START NOW**: on, after START the percussion comes in as soon as the app has found the "
-            "tempo. Off, it waits until it is sure a band is playing and the tempo is right, so it "
-            "does not play into an empty room or come in on an intro at the wrong tempo. If the "
-            "music is already playing when you press START, it comes in at once anyway.\n"
-            "**PAUSE IF OFF**: if the app loses the tempo (red light for 3 seconds) the percussion "
-            "stops, and comes back by itself when the tempo is right again. Not in FIXED.\n\n"
+            "**START NOW**: plays immediately at the last known or default tempo, then follows the detected tempo. With it off, the part waits for a stable lock, even when music is already playing.\n"
+            "**PAUSE IF OFF**: holds back an already unreliable first entry. Once playing, it fades out after 3 seconds in red and fades back in on a bar after recovery. Not in FIXED.\n\n"
             "## CLOCK\n"
             "The sample rate. **AUTO** uses the interface's and does not change it: almost always the "
             "right choice. **44.1 / 48 / 88.2 / 96** ask the interface for that rate; changing it "
@@ -836,10 +839,8 @@ namespace
             "**ENERGY**: how much the part fills in with light strokes and small ornaments. Low is "
             "cleaner, high is livelier.\n"
             "**REVERB**: how much room around the percussion.\n\n"
-            "## PERCUSSION / TESTS\n"
+            "## APPEARANCE / AUDIO\n"
             "**DARK / LIGHT**: dark or light theme.\n"
-            "**CLICK TEST**: sends a 120 BPM click into the analysis, to try the app without a band. "
-            "Press again to stop it.\n"
             "**LATENCY**: measures the delay of your rig. With the output coming back to the input, "
             "press it: the app sends a short sound, measures how long it takes to come back "
             "(RT ... ms) and uses that number to play in time. Press again to clear the measurement.",
@@ -857,13 +858,8 @@ namespace
             "suonano da START a quel tempo, con la spia sempre verde. Accanto a TAP, al posto "
             "di ÷2 e ×2, compare il tempo: toccalo e scrivi quello esatto (da 50 a 200 BPM). "
             "Sull'iPad i tasti - e + lo spostano di 1 BPM.\n"
-            "**START SUBITO**: acceso, dopo START le percussioni partono appena l'app ha trovato "
-            "il tempo. Spento, aspettano di essere sicure che una band stia suonando e che il "
-            "tempo sia giusto: così non suonano in una stanza vuota e non entrano su un'intro con "
-            "il tempo sbagliato. Se la musica suona già quando premi START, entrano comunque "
-            "subito.\n"
-            "**PAUSA SE FUORI**: se l'app perde il tempo (spia rossa per 3 secondi) le percussioni "
-            "si fermano, e rientrano da sole quando il tempo torna giusto. Non vale in FISSO.\n\n"
+            "**START SUBITO**: suona immediatamente all'ultimo tempo noto o a quello iniziale, poi segue il tempo rilevato. Spento, la parte aspetta un aggancio stabile, anche se la musica sta già suonando.\n"
+            "**PAUSA SE FUORI**: trattiene un primo ingresso già inaffidabile. Durante la riproduzione, dopo 3 secondi in rosso sfuma l'uscita e rientra su una battuta dopo il recupero. Non vale in FISSO.\n\n"
             "## CLOCK\n"
             "La frequenza di campionamento. **AUTO** usa quella dell'interfaccia e non la cambia: "
             "è quasi sempre la scelta giusta. **44.1 / 48 / 88.2 / 96** la chiedono "
@@ -897,10 +893,8 @@ namespace
             "**ENERGIA**: quanto la parte si arricchisce di colpi leggeri e piccoli abbellimenti. "
             "Bassa è più pulita, alta più viva.\n"
             "**REVERB**: quanto ambiente intorno alle percussioni.\n\n"
-            "## PERCUSSIONI / PROVE\n"
+            "## ASPETTO / AUDIO\n"
             "**DARK / LIGHT**: tema scuro o chiaro.\n"
-            "**CLICK TEST**: manda all'analisi un clic a 120 BPM, per provare l'app senza band. "
-            "Ripremi per spegnerlo.\n"
             "**LATENZA**: misura il ritardo del tuo impianto. Con l'uscita che torna "
             "nell'ingresso, premila: l'app manda un breve suono, misura quanto ci mette a tornare "
             "(RT ... ms) e usa quel numero per suonare a tempo. Ripremi per cancellare la misura.");

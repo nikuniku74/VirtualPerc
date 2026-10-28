@@ -20,7 +20,7 @@ namespace vp::store
 enum class Access
 {
     checking,      // nothing answered yet (launch, or StoreKit still reading)
-    locked,        // no active subscription: START is behind the paywall
+    locked,        // no active access: the console is behind the paywall
     trial,         // inside the free introductory period
     subscribed     // paying
 };
@@ -59,6 +59,10 @@ struct Status
         return access == Access::trial || access == Access::subscribed;
     }
     bool ownsLifetime() const noexcept { return access == Access::subscribed && activePlanId == kLifetimeId; }
+    bool entitledAt (double nowSeconds) const noexcept
+    {
+        return entitled() && (ownsLifetime() || expiresAt > nowSeconds);
+    }
 };
 
 enum class PurchaseResult { success, pending, cancelled, failed };

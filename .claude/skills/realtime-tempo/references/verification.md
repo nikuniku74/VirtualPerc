@@ -1521,3 +1521,137 @@ phase-only prototype before first audible entry changes none of16875 trace
 rows and is removed. Production phase algorithm/model remain unchanged.
 No per-song offset, relaxed regression gate or future-input analysis accepted.
 See final-verification.json, phase-investigation.json and rejected logs.
+
+### TODO168 — production cleanup and explicit AI startup failure (2026-10-26)
+
+User approves removing CLICK TEST/hidden debug UI and automatic test-model
+fallback on the Store build. NeuralBeatTracker::prepareModel(bool requireOnnx)
+keeps host/test fallback but the iOS StoreKit non-FULL target defines
+VP_REQUIRE_ONNX_MODEL=1. An absent/failed/non-ONNX startup model leaves no
+model, publishes an atomic failure and cannot enable automatic or harmonic
+following/START NOW; TAP/FIXED remain listener-owned. The worker keeps draining
+causal input without fabricated observations. No ONNX work reaches audio.
+Failure mirrors are reset at prepare/reset; normal-stage error/popup is IT/EN.
+Deterministic friend fixture covers strict rejection, success/recovery, legacy
+fallback and auto-vs-manual output. UI preview assertions cover localized
+labels. Removed logs, hidden DBG, dead counters, GUI click injection; external
+regression tools remain excluded from the app bundle. Source/model timing
+logic otherwise unchanged from165/166; their tests were previously deferred.
+Evidence directory build-host/vp-release-20261026. Tests not yet run at this
+entry:797/0 belongs to164, not the current release candidate.
+
+Access follow-up, approved by the user: StoreKit startup now refreshes cached
+signed entitlements before fetching product prices, then refreshes again.
+MainComponent publishes a single lock-free int64 audio deadline (-1 locked,
+0 lifetime/dev, positive Unix milliseconds). Positive deadlines are checked
+against a plain system-clock read in the callback, independent of suspended
+UI timers; the existing silent return consumes pending FX requests. No model,
+file I/O, locks or allocation was added to audio. VPShots now compiles with
+the enforced policy and adds --access: no UI timer, actual callback output,
+short expiry, pending-hit discard, renewal/lifetime/missing-expiry checks.
+The UI still refreshes StoreKit and the paywall on foreground expiry.
+Tests/build results follow; do not infer a real StoreKit transaction test.
+
+
+### TODO168 — final stable release validation, after withdrawing165/166 (2026-10-26)
+
+The user explicitly excludes both rejected rules. Default full-wake suite:
+**798 passed,0 failed** (the rejected combined candidate's804/0 is historical).
+Evidence5/0, enforced real-callback access8/0 with UI timer stopped, paywall26/0.
+Frozen Source hashes and all three host binaries checked before/after runs.
+**325/325 pulse traces byte-identical to164**, zero rejected witnesses:
+116MIXER,113BRANO,96 speaker/room iPad simulations. This includes80 new-song,
+24 fresh,8 unseen excerpt,2 unseen full-recording and3 whole-set jobs, as well
+as112 familiar-song and96 room jobs. No file-title production exceptions;
+no relaxed gates, future input or changed model. The separate three no-change controls also match exactly.
+The bank records325 actual current probes, not only reused score metadata;
+a symlink is substituted only after fresh output hashes equal the immutable
+reference. No acquisition/phase improvement is claimed for this cleanup.
+
+Host engine CPU:32 alternating runs (256/64 frames, mic/speaker,4 repeats),
+then16 extra256-frame runs because wall-time maxima crossed the buffer budget.
+Keep both batches. Repeat256 mic median callback72.00→72.10us, core2.7→2.7%;
+speaker133.40→137.15us, core4.0→4.1%, p99489.65→492.25us. The initial batch
+has smaller current speaker mean110.20 vs130.05us, so no consistent regression
+is inferred from the few-us repeat difference. Budget256/48k=5333.33us.
+**Do not claim every callback fits:** initial current maxima12380.2/12382.9us;
+repeat mic baseline13643.6 and current8222.5us, repeat speaker1089.4/923.0us.
+Host scheduling interference is plausible (outliers also occur in baseline),
+but thread CPU was not separately instrumented, so it is not proved. These
+wall-time tails are retained rather than discarded as noise.64-frame stress
+also crosses its1333us budget in both versions; it is not a qualified setting.
+This measures the engine on the Mac, not the whole iPad UI, thermal behaviour,
+background deadline-clock overhead or an iPad callback deadline guarantee.
+
+Signed iPad1.0.0(3) build passes; strict codesign verification passes, real
+1614067-byte model found embedded in executable, true-alpha launch logo matches
+source, iPhone/iPad families, no file sharing or test executables in bundle.
+On2026-10-27 the final build was installed and launched on iPad Air13M3.
+Device-reported1.0.0(3), process3195 still running at the follow-up; FULL was
+terminated, leaving only the Store variant running. The user confirms the logo without a black tile, animated dots and the
+purchase page without a close button: final visual check complete. The earlier
+Store build's locked purchase page was confirmed by the user; do not relabel
+that as final-build hardware verification. No real purchase/App Store upload.
+
+New branding:40 Store RGB images IT/EN, including8 covers;10 native splash
+frames keep the animated four dots and show no black logo tile. Website
+pushesf2c1fa2/ae9a855 and Pages-managed CNAME commits are public. HTTPS approved
+for apex/www, enforced, four pages200 and five public image hashes equal
+source.28.59GiB obsolete unreferenced traces removed; no new broken symlinks.
+Evidence:build-host/vp-release-20261026/{test-full-stable.log,
+stable-assessment.json,cpu-summary-stable.json,bundle-stable.json,
+site-public-https-check.json,cleanup-result.json}. Source remains frozen;
+only documentation changes after testing. Known user-accepted limits remain:
+Canzone intro phase and occasional STOP after a silent between-song change.
+
+### 2026-10-28 — Guard continuity, no candidate kept
+
+The user plays live-band recordings through BRANO and reports that STOP between
+songs can make BPM reacquire quickly; no recent title/time was available for a
+device reproduction. On the existing325 pulse traces, a sampled-trace
+simulation of quarter re-entry after1s green recovers59 correct BRANO beats but
+admits138 wrong; requiring FOLLOWING, high confidence, near phase and comb
+agreement still admits70 wrong for48 correct. Neither is a safe release rule.
+
+A real-model code candidate let the decoder drop its `sounding` defense while
+the output guard already muted the part. On Everytime BRANO44, good audible
+beats150→143, bad audible33→33, guard17.2→17.7s. On the held-out44min BRANO
+recording, good audible2569→2607, bad audible1058→1012, guard128.0→125.7s,
+but interruptions14→18. Restricting the candidate to VIVO restores Everytime
+exactly; on the long recording good audible2569→2581, bad audible1058→1018,
+guard128.0→140.9s and interruptions14→16; correct tempo87.70→87.56%.
+Both code variants were removed. This is two causal replay pairs plus a
+trace-based simulation, not the full325 candidate bank or iPad listening.
+TODO169 records the decision. The broad automatic silence restart of TODO166
+remains rejected; STOP is the explicit between-song recovery command.
+Compressed candidate traces and the summary are in
+`build-host/vp-guard-20261028/`; restored Everytime output matches the stable
+baseline byte for byte. Restored VPTests: `--transport`8/0, `--evidence`5/0.
+
+### 2026-10-28 — BRANO entry and clicked-tempo baseline
+
+The stable56 BRANO `.pul` traces, checked at the first `suona=1` row with
+`protetto=0`, have42/56 first-four teacher beats at the correct rate (within4%)
+and phase (within80ms of their later same-song offset). Of the14 failures,
+13 already have the wrong rate/level and one is phase-only. This sampled trace
+does not include the whole audible early-entry veto; it is a diagnostic, not
+a release comparison. Several wrong double readings also have a matching comb
+at entry: VIVERE44 131.3/131.9 vs teacher65.3BPM, UN ORA SOLA44
+154.2/153.5 vs teacher75.7, GARDEN1500 145.3/146.0 vs teacher72.9.
+Waiting for the existing comb to agree cannot distinguish those from a song
+whose true counted tempo is the higher value. Existing phase/entry candidates
+did not clear the real
+song regression gates, so no production timing parameter changed. The existing
+new-source path passes `VPTests --new-input`29/0, including four successive
+tempo acquisitions without STOP.
+
+`VPTests --phase-lock` now measures the actual snapshot BPM used by the UI over
+the settled last13s of each38s real-ONNX click run. At78/100/120/138/156BPM,
+the displayed-value spans are0.012/0.011/0.058/0.115/0.068BPM; final values
+are77.98/99.99/120.00/138.02/155.98BPM. The separate jittered decoder
+fixture has0.171BPM span at112BPM and100% FISSO hold after25s, but it is
+synthetic. The expanded real-ONNX phase-lock test passes25/0, including five
+display-span assertions (<0.25BPM); the build and scoped diff check pass.
+No user-provided click-recorded band take or physical iPad listening
+was available, so these tests do not certify that all click-recorded music
+shows a fixed decimal digit.

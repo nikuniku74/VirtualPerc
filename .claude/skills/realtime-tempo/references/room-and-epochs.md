@@ -596,7 +596,15 @@ The source-reset harmony fix is explicit lifecycle only, not automatic epochs.
 Physical iPad verification remains unavailable because the user cannot unlock
 it now; compilation/installation are not an acoustic or thermal test.
 
-### TODO166 — real silence inside one long file (unverified, 2026-10-26)
+### TODO166 — real silence inside one long file (withdrawn, 2026-10-26)
+
+After removing165,323/325 traces are exact but the two changed whole MIXER
+sets (LIVE_110119 and SONG00) fail coverage/downbeat/event gates despite
+larger correct-tempo share. An analysis-only epoch return keeps one rejected
+whole-set witness. The user approves excluding166; detector/counter/caller
+and six dedicated assertions are removed. Previous silence handling remains;
+STOP can still be needed in some song changes. Do not reinstate this broad
+three-second reset from aggregate gains alone. Historical implementation:
 
 Loaded input is not necessarily one song. Before preserving comb/model on a
 level return, direct MIXER/BRANO now detect3s below1e-4 pre-makeup source peak

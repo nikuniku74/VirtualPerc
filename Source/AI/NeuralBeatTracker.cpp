@@ -62,6 +62,7 @@ bool NeuralBeatTracker::start (double deviceSampleRate)
     resampled.assign (4096, 0.0f);
 
     stopFlag.store (false, std::memory_order_relaxed);
+    modelFailedFlag.store (false, std::memory_order_relaxed);
     armed.store (true, std::memory_order_release);
     // Building the network reads the weights and hands them to the runtime to
     // compile, which takes long enough that Xcode flags it: `start` is reached
@@ -128,6 +129,43 @@ bool NeuralBeatTracker::tryLoad (BeatHypothesis& out) const noexcept
     return true;
 }
 
+void NeuralBeatTracker::prepareModel (bool requireOnnx)
+{
+    onnxFlag.store (false, std::memory_order_relaxed);
+    coreMlFlag.store (false, std::memory_order_relaxed);
+    if (! model)
+    {
+        auto onnx = std::make_unique<OnnxBeatModel>();
+        if (loadDefaultBeatModel (*onnx))
+        {
+            coreMlFlag.store (onnx->usesCoreMl(), std::memory_order_relaxed);
+            model = std::move (onnx);
+        }
+        else if (! requireOnnx)
+            model = std::make_unique<StubBeatModel>();
+    }
+    if (model && requireOnnx && ! model->usesOnnx())
+        model.reset();
+    if (model && ! model->prepare (LogSpectFeatures::kDim))
+    {
+        model.reset();
+        if (! requireOnnx)
+        {
+            model = std::make_unique<StubBeatModel>();
+            if (! model->prepare (LogSpectFeatures::kDim))
+                model.reset();
+        }
+    }
+    if (model)
+    {
+        model->reset();
+        onnxFlag.store (model->usesOnnx(), std::memory_order_relaxed);
+    }
+    else
+        coreMlFlag.store (false, std::memory_order_relaxed);
+    modelFailedFlag.store (! model, std::memory_order_relaxed);
+}
+
 void NeuralBeatTracker::workerLoop()
 {
     float frame[LogSpectFeatures::kDim];
@@ -143,36 +181,12 @@ void NeuralBeatTracker::workerLoop()
     pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
    #endif
 
-    // Built here rather than in `start` so that opening the audio device never
-    // blocks the thread drawing the UI. Until this returns the loop below runs
-    // with no model and publishes no hypothesis, which is the state it is in
-    // anyway until the first hop of audio has arrived. Audio fed meanwhile is
-    // waiting in the FIFO, which holds eleven seconds.
-    if (! model)
-    {
-        auto onnx = std::make_unique<OnnxBeatModel>();
-        if (loadDefaultBeatModel (*onnx))
-        {
-            coreMlFlag.store (onnx->usesCoreMl(), std::memory_order_relaxed);
-            model = std::move (onnx);
-        }
-        else
-            model = std::make_unique<StubBeatModel>();
-    }
-    if (! model->prepare (LogSpectFeatures::kDim))
-    {
-        // A network that will not build is not a reason to stop listening: on
-        // the stub the tap and the clock still work, and the UI already says
-        // which of the two is running.
-        model = std::make_unique<StubBeatModel>();
-        if (! model->prepare (LogSpectFeatures::kDim))
-            model.reset();
-    }
-    if (model != nullptr)
-    {
-        model->reset();
-        onnxFlag.store (model->usesOnnx(), std::memory_order_relaxed);
-    }
+    // Store builds must not mistake the bench's energy stub for a loaded AI.
+   #if defined (VP_REQUIRE_ONNX_MODEL) && VP_REQUIRE_ONNX_MODEL
+    prepareModel (true);
+   #else
+    prepareModel (false);
+   #endif
 
     using Clock = std::chrono::steady_clock;
     auto loadWindowStart = Clock::now();

@@ -5,26 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0f0e12">
-<title>Guide - Virtual Percussionist</title>
-<meta name="description" content="How to use Virtual Percussionist: every setting, MIXER for live, tempo, input, levels, clock and buffer.">
+<title data-en="Settings guide — Virtual Percussionist" data-it="Guida alle impostazioni — Virtual Percussionist">Settings guide — Virtual Percussionist</title>
+<meta name="description" data-en="Inputs, tempo, lock, levels and controls. How to use MIXER, IPAD and TRACK, in real time." data-it="Ingressi, tempo, aggancio, livelli e controlli. Come usare MIXER, IPAD e BRANO, in tempo reale." content="Inputs, tempo, lock, levels and controls. How to use MIXER, IPAD and TRACK, in real time.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Guide - Virtual Percussionist">
-<meta property="og:description" content="How to use Virtual Percussionist: every setting, MIXER for live, tempo, input, levels, clock and buffer.">
-<meta property="og:image" content="https://virtualpercussionist.it/assets/og.png">
+<meta property="og:title" content="Settings guide — Virtual Percussionist">
+<meta property="og:description" content="Inputs, tempo, lock, levels and controls. How to use MIXER, IPAD and TRACK, in real time.">
+<meta property="og:image" content="https://virtualpercussionist.it/assets/og.png?v=brand3">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" type="image/png" href="../favicon.png">
-<link rel="apple-touch-icon" href="../apple-touch-icon.png">
-<link rel="stylesheet" href="../style.css">
-<script src="../lang.js"></script>
+<link rel="icon" type="image/png" href="../favicon.png?v=brand2">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png?v=brand2">
+<link rel="stylesheet" href="../style.css?v=faq1">
+<script src="../lang.js?v=brand3"></script>
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="../"><img src="../assets/mark.png" width="32" height="32" alt=""><span>VIRTUAL PERCUSSIONIST</span></a>
+  <a class="brand" href="../"><img src="../assets/mark.png?v=brand2" width="32" height="32" alt=""><span>VIRTUAL PERCUSSIONIST</span></a>
   <nav>
+    <a href="../faq/"><span class="en">FAQ / Limits</span><span class="it">FAQ / Limiti</span></a>
     <a href="../guide/"><span class="en">Guide</span><span class="it">Guida</span></a>
     <a href="../support/"><span class="en">Support</span><span class="it">Assistenza</span></a>
     <a href="../privacy/">Privacy</a>
-    <a class="store-link" href="https://apps.apple.com/app/id6823639065">App Store</a>
+    <span class="store-link"><span class="en">Coming soon</span><span class="it">In arrivo</span></span>
     <span class="lang"><a href="#" data-lang="en">EN</a><a href="#" data-lang="it">IT</a></span>
   </nav>
 </header>
@@ -32,17 +33,21 @@
 <article>
 <div class="en">
   <h1>Guide to the settings</h1>
-  <p>The same guide as the <strong>?</strong> at the top of the settings page in the app.</p>
+  <p>A guide to the app’s controls. Tap <strong>?</strong> in Settings for help while playing.</p>
   <div class="card">
     <strong>For live use, choose MIXER. It is the most precise mode.</strong> The app has to receive the band's signal and send the percussion out at the same time: connect an audio interface or a mixer that gives it an input and an output together.
   </div>
+  <h2>Access</h2>
+  <p>An active trial, subscription or lifetime purchase is required to use the app. Without access, the purchase page stays open. Restore purchases there if you already own access.</p>
   <h2>At the top</h2>
   <p><strong>?</strong> opens the guide. <strong>PRO</strong> opens the full version: purchase, restore, terms and privacy. <strong>X</strong> closes the settings.</p>
   <h2>Tempo</h2>
   <p><strong>FOLLOW</strong>: the app listens to the band and follows its tempo, also when it slows down or speeds up. The normal choice.</p>
   <p><strong>FIXED</strong>: the tempo stops where it is and the app listens to nothing: the percussion plays from START at that tempo, the light always green. Beside TAP, in place of &divide;2 and &times;2, the tempo appears: touch it and type an exact one (50 to 200 BPM). On the iPad the &minus; and + keys move it by 1 BPM.</p>
-  <p><strong>START NOW</strong>: on, after START the percussion comes in as soon as the app has found the tempo. Off, it waits until it is sure a band is playing and the tempo is right, so it does not play into an empty room or come in on an intro at the wrong tempo. If the music is already playing when you press START, it comes in at once anyway.</p>
-  <p><strong>PAUSE IF OFF</strong>: if the app loses the tempo (red light for 3 seconds) the percussion stops, and comes back by itself when the tempo is right again. Not in FIXED.</p>
+  <p><strong>START NOW</strong>: plays immediately at the last known or default tempo, then follows the detected tempo. With it off, the part waits for a stable lock, even when music is already playing.</p>
+  <p><strong>PAUSE IF OFF</strong>: holds back an already unreliable first entry. Once playing, it fades out after 3 seconds in red and fades back in on a bar after recovery. Not in FIXED.</p>
+  <h2>Long recordings and silence</h2>
+  <p>In TRACK or a continuous MIXER feed, if a new song after silence stays at the previous tempo, tap <strong>STOP</strong> and then <strong>START</strong>. Sparse intros can need more time; use TAP or FIXED if you want to set the tempo yourself. All analysis is in real time, without reading future audio.</p>
   <h2>Clock</h2>
   <p>The sample rate. <strong>AUTO</strong> uses the interface's and does not change it: almost always the right choice. <strong>44.1 / 48 / 88.2 / 96</strong> ask the interface for that rate; changing it while playing restarts the audio.</p>
   <h2>Buffer</h2>
@@ -59,25 +64,28 @@
   <h2>Feel</h2>
   <p><strong>ENERGY</strong>: how much the part fills in with light strokes and small ornaments. Low is cleaner, high is livelier.</p>
   <p><strong>REVERB</strong>: how much room around the percussion.</p>
-  <h2>Percussion / tests</h2>
+  <h2>Appearance / audio</h2>
   <p><strong>DARK / LIGHT</strong>: dark or light theme.</p>
-  <p><strong>CLICK TEST</strong>: sends a 120 BPM click into the analysis, to try the app without a band. Press again to stop it.</p>
   <p><strong>LATENCY</strong>: measures the delay of your rig. With the output coming back to the input, press it: the app sends a short sound, measures how long it takes to come back (RT &hellip; ms) and uses that number to play in time. Press again to clear the measurement.</p>
   <p>More questions? See <a href="../support/">Support</a>.</p>
 </div>
 <div class="it">
   <h1>Guida alle impostazioni</h1>
-  <p>La stessa guida del <strong>?</strong> in alto nella pagina impostazioni dell'app.</p>
+  <p>La guida ai controlli dell’app. Tocca <strong>?</strong> nelle Impostazioni per consultare l’aiuto mentre suoni.</p>
   <div class="card">
     <strong>Per il live scegli MIXER. &Egrave; la modalit&agrave; pi&ugrave; precisa.</strong> L'app deve ricevere il segnale della band e mandare fuori le percussioni nello stesso momento: collega un'interfaccia audio o un mixer che le dia un ingresso e un'uscita insieme.
   </div>
+  <h2>Accesso</h2>
+  <p>Per usare l’app serve una prova attiva, un abbonamento o un acquisto lifetime. Senza accesso la pagina di acquisto resta aperta. Se hai già acquistato, usa Ripristina acquisti in quella pagina.</p>
   <h2>In alto</h2>
   <p><strong>?</strong> apre la guida. <strong>PRO</strong> apre la versione completa: acquisto, ripristino, termini e privacy. <strong>X</strong> chiude le impostazioni.</p>
   <h2>Tempo</h2>
   <p><strong>SEGUI</strong>: l'app ascolta la band e ne segue il tempo, anche quando rallenta o accelera. &Egrave; la scelta normale.</p>
   <p><strong>FISSO</strong>: il tempo si ferma dov'&egrave; e l'app non ascolta pi&ugrave; niente: le percussioni suonano da START a quel tempo, con la spia sempre verde. Accanto a TAP, al posto di &divide;2 e &times;2, compare il tempo: toccalo e scrivi quello esatto (da 50 a 200 BPM). Sull'iPad i tasti &minus; e + lo spostano di 1 BPM.</p>
-  <p><strong>START SUBITO</strong>: acceso, dopo START le percussioni partono appena l'app ha trovato il tempo. Spento, aspettano di essere sicure che una band stia suonando e che il tempo sia giusto: cos&igrave; non suonano in una stanza vuota e non entrano su un'intro con il tempo sbagliato. Se la musica suona gi&agrave; quando premi START, entrano comunque subito.</p>
-  <p><strong>PAUSA SE FUORI</strong>: se l'app perde il tempo (spia rossa per 3 secondi) le percussioni si fermano, e rientrano da sole quando il tempo torna giusto. Non vale in FISSO.</p>
+  <p><strong>START SUBITO</strong>: suona immediatamente all'ultimo tempo noto o a quello iniziale, poi segue il tempo rilevato. Spento, la parte aspetta un aggancio stabile, anche se la musica sta già suonando.</p>
+  <p><strong>PAUSA SE FUORI</strong>: trattiene un primo ingresso già inaffidabile. Durante la riproduzione, dopo 3 secondi in rosso sfuma l'uscita e rientra su una battuta dopo il recupero. Non vale in FISSO.</p>
+  <h2>Registrazioni lunghe e silenzio</h2>
+  <p>In BRANO o con una mandata MIXER continua, se dopo un silenzio il nuovo brano resta al tempo precedente, premi <strong>STOP</strong> e poi <strong>START</strong>. Un’intro poco ritmica può richiedere più tempo; usa TAP o FISSO se vuoi impostarlo tu. Tutta l’analisi avviene in tempo reale, senza lettura anticipata dell’audio.</p>
   <h2>Clock</h2>
   <p>La frequenza di campionamento. <strong>AUTO</strong> usa quella dell'interfaccia e non la cambia: &egrave; quasi sempre la scelta giusta. <strong>44.1 / 48 / 88.2 / 96</strong> la chiedono all'interfaccia; cambiarla mentre suona fa ripartire l'audio.</p>
   <h2>Buffer</h2>
@@ -94,9 +102,8 @@
   <h2>Feel</h2>
   <p><strong>ENERGIA</strong>: quanto la parte si arricchisce di colpi leggeri e piccoli abbellimenti. Bassa &egrave; pi&ugrave; pulita, alta pi&ugrave; viva.</p>
   <p><strong>REVERB</strong>: quanto ambiente intorno alle percussioni.</p>
-  <h2>Percussioni / prove</h2>
+  <h2>Aspetto / audio</h2>
   <p><strong>DARK / LIGHT</strong>: tema scuro o chiaro.</p>
-  <p><strong>CLICK TEST</strong>: manda all'analisi un clic a 120 BPM, per provare l'app senza band. Ripremi per spegnerlo.</p>
   <p><strong>LATENZA</strong>: misura il ritardo del tuo impianto. Con l'uscita che torna nell'ingresso, premila: l'app manda un breve suono, misura quanto ci mette a tornare (RT &hellip; ms) e usa quel numero per suonare a tempo. Ripremi per cancellare la misura.</p>
   <p>Altre domande? Vedi <a href="../support/">Assistenza</a>.</p>
 </div>
@@ -104,7 +111,7 @@
 </main>
 <footer>
   <div>&copy; 2026 {{LEGAL_NAME}} &middot; <a href="mailto:{{EMAIL}}">{{EMAIL}}</a></div>
-  <div><a href="https://apps.apple.com/app/id6823639065">App Store</a><a href="../guide/">Guide / Guida</a><a href="../support/">Support</a><a href="../privacy/">Privacy</a></div>
+  <div><span class="store-link"><span class="en">Coming soon</span><span class="it">In arrivo</span></span><a href="../faq/"><span class="en">FAQ &amp; limits</span><span class="it">FAQ e limiti</span></a><a href="../guide/">Guide / Guida</a><a href="../support/">Support</a><a href="../privacy/">Privacy</a></div>
 </footer>
 </body>
 </html>

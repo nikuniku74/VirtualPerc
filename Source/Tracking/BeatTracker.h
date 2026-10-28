@@ -397,6 +397,7 @@ public:
         FollowBar     followBar = FollowBar::ready;
         int           beatsElapsed = 0;
         bool          aiOnnx = false;
+        bool          aiModelFailed = false;
         bool          hypValid = false;
         bool          harmonicTempoSource = false;
         float         neuralBpm = 0.0f;

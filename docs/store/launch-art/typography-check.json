@@ -1,0 +1,57 @@
+[
+  {
+    "variant": "phone69",
+    "heading": {
+      "client": 1137,
+      "scroll": 1137
+    },
+    "secondLine": {
+      "client": 1137,
+      "scroll": 1137
+    }
+  },
+  {
+    "variant": "phone63",
+    "heading": {
+      "client": 1137,
+      "scroll": 1137
+    },
+    "secondLine": {
+      "client": 1137,
+      "scroll": 1137
+    }
+  },
+  {
+    "variant": "tablet",
+    "heading": {
+      "client": 1569,
+      "scroll": 1569
+    },
+    "secondLine": {
+      "client": 1569,
+      "scroll": 1569
+    }
+  },
+  {
+    "variant": "mac",
+    "heading": {
+      "client": 1460,
+      "scroll": 1460
+    },
+    "secondLine": {
+      "client": 1460,
+      "scroll": 1460
+    }
+  },
+  {
+    "variant": "og",
+    "heading": {
+      "client": 639,
+      "scroll": 639
+    },
+    "secondLine": {
+      "client": 639,
+      "scroll": 639
+    }
+  }
+]

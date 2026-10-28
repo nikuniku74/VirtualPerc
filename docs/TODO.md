@@ -5526,6 +5526,7 @@ Domanda dell'utente: senza cuffia, guardare lo schermo e sapere se START è sicu
 - [x] **Levare, meccanismo:** nei primi ~5 s la rete segna il levare quanto o più del battere (THE REASON 0.36 contro 0.30, SALLY 0.22/0.19, VITA 0.48/0.57), la griglia si ancora lì; da ~5–10 s la rete dice netto il battere (0.84–0.90 contro 0.00–0.15) ma il cancello sulla griglia rifiuta i battiti veri e la piega (`checkGridPhase`, 12 s, spenta sotto la parte) gira solo a ~17 s. THE REASON: griglia a −0.42 battiti da 4 a 16 s, parte entrata a 6.8 s.
 - [x] Piega su finestra corta (`VP_FOLD_PHASE_SEC` 3/4/6 s, interruttore tolto): VITA 6 → 0 colpi sul levare, THE REASON e SALLY invariati (entrano prima che la rete sia chiara); banco 4 s: primi colpi storti 26 → 23 BRANO, 15 → 14 MIXER, ma **livello giusto BRANO 81.7 → 78.4%** (la stessa piega decide anche altro). Respinta.
 - [x] **Rilevatore del levare dopo l'entrata** (simulato fuori dall'app, uscite della rete + griglia del banco; ultimi 3 s, levare > 2× battere e > soglia per 3 controlli): soglia 0.30 prende 3/3 levare veri (THE REASON ×2 dopo 2.5 s, SALLY dopo 7 s) con 0 falsi allarmi, ma a 0.25 falsi allarmi (ASPETTANDO MIXER ×2, VIVERE 44k, UNA CANZONE 44k) e a 0.40 nessuna presa: la soglia sta su un bordo, casi veri 2 brani. Non portato nell'app: spostare la metà sotto la parte su un falso allarme è peggio del difetto; il rimedio resta «L'1 è QUI» a metà battito (voce 90).
+- [x] **Ricontrollo BRANO 28/10** (56 tracce stable del banco reale, dal primo `suona=1` con `protetto=0`, primi quattro battiti del maestro: tempo entro 4%, fase entro 80 ms dal proprio offset stabile): 42/56 ingressi corretti; dei 14 restanti, 13 hanno già tempo/livello errato e 1 solo fase errata. Il `.pul` campiona il consenso e la guardia, non l'intero output udibile: questa è una diagnosi, non una percentuale di ascolto. `--new-input` 29/0 conferma il reset esplicito tra file, senza dimostrare una correzione generale dell'ottava. In alcuni ingressi a tempo doppio il pettine concorda già con il valore errato (VIVERE 131/132 contro 65, UN ORA SOLA 154/154 contro 76, GARDEN 145/146 contro 73): prolungare la sola attesa del pettine non li distingue dai veri brani veloci. Nessuna soglia globale cambiata: i candidati di questa voce e della 164 hanno già prodotto regressioni o non hanno spostato la fase.
 
 ### 118. Protezione: la parte tace quando il rosso dura 🟡 (2026-10-09, misurato e confrontato con la simulazione — da provare dal vivo)
 
@@ -5598,11 +5599,12 @@ Richiesta dell'utente: un'animazione spettacolare fra un pallino e l'altro invec
 ### 123. Logo all'avvio: schermata di lancio iOS e ingresso nell'app 🟡 (2026-10-09, visto su Mac — da vedere sull'iPad)
 
 Richiesta dell'utente: il logo (versione scura di `~/Desktop/Logo Virtual Percussionist.pdf`) come splash e come landing. Estratto con `sips` dalla metà scura (sfondo misurato **#0F0E12**), ritagliato quadrato con margine, 1024 px: `Assets/Brand/LaunchLogo.png`.
-- [x] **Splash di sistema (iOS):** `Assets/Brand/LaunchScreen.storyboard` (`LAUNCH_STORYBOARD_FILE` in `juce_add_gui_app`; prima JUCE ne generava uno nero vuoto): sfondo #0F0E12, logo centrato largo il 62% del lato corto (vincoli: ≤ 62% di larghezza e altezza, quadrato). `ibtool` lo compila senza errori né avvisi; nel progetto Xcode rigenerato storyboard e PNG sono in «Copy Bundle Resources» e `UILaunchStoryboardName` = `LaunchScreen`.
+- [x] **Splash di sistema (iOS):** `Assets/Brand/BrandLaunchScreen.storyboard` (`LAUNCH_STORYBOARD_FILE` in `juce_add_gui_app`; prima JUCE ne generava uno nero vuoto): sfondo #0C0A0E, logo centrato largo il 62% del lato corto (vincoli: ≤ 62% di larghezza e altezza, quadrato). L'immagine ora entra come `BrandLaunchLogo` nel catalogo risorse compilato; `UILaunchStoryboardName` = `BrandLaunchScreen`.
 - [x] **Landing nell'app:** `MainComponent::SplashOverlay` (in `MainComponentWidgets.cpp`, logo incorporato in `VpBrandData`): parte identica allo storyboard (stesso sfondo, stessa proporzione, centrato sull'intero schermo come lo storyboard), resta ferma 1.1 s, poi in 0.55 s il logo cresce dell'8% e tutto sfuma sulla console; un tocco anticipa la sfumatura. Sopra ogni altro figlio (`resized` la riporta in cima), poi si nasconde e libera l'immagine. Visto sull'app Mac: compare, sfuma al tocco, sparisce.
 - [x] **Animata** (richiesta dell'utente): parte dal fotogramma dello storyboard; il vetro entra in 0.45 s sul disco (riflesso sulla metà alta, bordo acceso in alto a sinistra, buco escluso), una lama di luce lo attraversa a 0.35–1.15 s e di nuovo più tenue a 1.35–1.85 s; una luce fucsia corre lungo l'arco delle tacche (da in basso a sinistra, sopra, a in basso a destra) ogni 1.3 s; sotto il logo i 4 pallini con la pallina che rimbalza a 125 BPM come sulla console. A 1.9 s (o al tocco) **crescita veloce**: il logo passa a ×2.8 in 0.38 s con accelerazione e sfuma con il fondo sulla console. Disco misurato sul PNG (centro 0.510/0.552, raggio 0.268 del lato). Vista sull'app Mac (fotogrammi con la durata allungata da una variabile di prova, tolta).
 - [x] **Sull'iPad non si animava** (segnalato dall'utente): il tempo partiva alla costruzione, e all'avvio iOS tiene occupato il thread dell'interfaccia (permesso del microfono, dispositivo audio, rete); al primo fotogramma i 2.3 s erano già passati. Ora l'animazione ha un orologio suo (`animMs`), che avanza solo con la splash a schermo e al più 50 ms per fotogramma: un blocco la ferma invece di saltarla. Rivista sul Mac.
 - [ ] Sull'iPad e sull'iPhone: il passaggio dallo storyboard alla landing non deve far vedere uno stacco (stessa posizione e misura del logo), anche ruotato.
+- [ ] **28/10, vecchio logo al primo fotogramma della FULL:** screenshot iPad 10:55 mostra il vecchio disco rosa nel riquadro scuro, poi la nuova landing. Il bundle FULL locale conteneva già `LaunchLogo.png` identico alla sorgente nuova (SHA-256 `df3f3873…`), `UILaunchStoryboardName=LaunchScreen` e il vecchio nome `LaunchLogo` nel nib: iOS mostrava la schermata di lancio precedente prima del codice JUCE. Apple TN3118 descrive la cache della schermata di lancio. Il nuovo storyboard ha nome diverso e cerca l'immagine nuova in un asset catalog (non nel PNG sciolto), mantenendo la sorgente unica per la landing. **Verifica host:** Xcode Release `clean build` riuscito per FULL e Store; in entrambi i bundle resta solo `BrandLaunchScreen.storyboardc`, `UILaunchStoryboardName=BrandLaunchScreen` e `Assets.car` contiene `BrandLaunchLogo`. La build incrementale FULL lasciava entrambi i vecchi file nel bundle; la clean li ha eliminati. La Store locale è ancora numerata 3: non caricarla, perché la 3 è già stata inviata ad Apple. Resta la prova sul dispositivo: reinstallare in-place la FULL con ⌘R; se iOS conserva ancora la vecchia schermata, seguire TN3118: backup dei dati FULL, rimuovere l'app e reinstallarla.
 
 ### 124. App Store: prova di 7 giorni e abbonamento 🟡 (2026-10-15, compila Mac e iOS Release — nessun acquisto provato)
 
@@ -6840,7 +6842,14 @@ No per-song offset, relaxed regression gate or future-input analysis accepted.
 See final-verification.json, phase-investigation.json and rejected logs.
 
 
-### 165. Tenuta del tempo nelle pause senza batteria — implementata, non verificata (2026-10-26)
+### 165. Tenuta del tempo nelle pause senza batteria — tentativo ritirato (2026-10-26)
+
+**Esito successivo:** il banco finale combinato ha127 gate respinti su325;
+togliere solo questa modifica ripristina12/12 tracce diagnostiche identiche,
+mentre togliere solo166 non ne ripristina nessuna. Su approvazione dell'utente
+il congelamento aggiuntivo è stato rimosso, insieme alle sue tre asserzioni.
+Resta la protezione precedente della fase nelle pause, senza nuovi blocchi
+dei target o del glide. Nuova suite/banco completo in corso; segue lo storico.
 
 Richiesta utente: mantenere il tempo attraverso pause lunghe durante il brano;
 non eseguire test. Nessuna compilazione, suite, misura o prova iPad avviata.
@@ -6863,7 +6872,16 @@ se la band cambia davvero tempo senza evidenza sufficiente, il clock conserva
 quello precedente. Eventuali regressioni non ancora misurate. L'iPad installato
 resta alla versione164, questa modifica è soltanto nei sorgenti.
 
-### 166. Tracce lunghe: nuovo aggancio dopo silenzio reale — non verificato (2026-10-26)
+### 166. Tracce lunghe: nuovo aggancio dopo silenzio reale — tentativo ritirato (2026-10-26)
+
+**Esito successivo:** con165 disattivato, il banco325 conserva323 tracce
+identiche, ma LIVE_110119 e SONG00 (MIXER) perdono battiti/downbeat già corretti
+pur aumentando la quota complessiva di tempo giusto. Anche il tentativo di
+riaprire soltanto l'analisi conserva una regressione su LIVE_110119. L'utente
+approva l'esclusione di166 dalla release: rimossi rilevatore e sei fixture
+specifiche, ripristinato il comportamento precedente nei silenzi lunghi.
+In alcuni cambi potrebbe ancora servire STOP, limite accettato dall'utente.
+Segue lo storico del tentativo; non è il comportamento distribuito.
 
 Segnalazione: una traccia contiene più brani separati da silenzio; il motore
 resta sul BPM precedente finché l'utente preme STOP. La policy dei file
@@ -6890,6 +6908,187 @@ Aggiunto fixture di stato a44.1/48k e64/256/1024frame: restart unico al ritorno,
 pausa breve/musica quieta conservate, speaker/FISSO/INPUT zero esclusi e reset.
 NON eseguito, come richiesto. Nessuna compilazione, misura o installazione:
 797/0 e325 restano risultati del checkpoint164, non di165/166.
+
+### 167. Accesso obbligatorio senza prova/acquisto valido — sorgenti, non verificato (2026-10-26)
+
+Richiesta: impedire accesso alla console e icone d'ingresso senza trial attivo
+o pagamento valido. Due aperture reali nella policy precedente: croce sempre
+visibile sul paywall e grazia illimitata per un brano già in riproduzione dopo
+scadenza/revoca. I quattro effetti dai fader non chiamavano requireAccess.
+
+Correzioni: pagina modale sempre davanti in assenza di diritto, compreso
+checking iniziale; nessuna croce senza accesso, chiusura respinta anche dal
+callback e da MainComponent. Menu/settings/zoom/editor vengono chiusi quando
+si blocca. START/PLAY restano protetti; i trigger degli effetti richiedono ora
+accesso. Il callback audio legge un solo bool atomico: senza diritto azzera
+l'uscita e consuma i trigger effetti pendenti senza riprodurli. Niente StoreKit,
+clock di sistema, allocazioni o lock nel callback.
+
+`Status::entitledAt(now)` richiede prova/abbonamento e scadenza futura, oppure
+lifetime valido. Periodi privi di scadenza falliscono chiusi. A scadenza il
+timer UI15Hz revoca il permesso audio, richiede STOP, ferma BRANO e riapre
+l'offerta; richiede anche rilettura StoreKit per eventuale rinnovo verificato.
+Revoche/nuovi diritti arrivano ancora dai soli risultati StoreKit verificati.
+La vecchia grazia fino a STOP è rimossa per la richiesta esplicita attuale.
+Ripristino, codici, acquisto e link legali restano disponibili nel paywall.
+
+Aggiunte asserzioni al tool VPPaywall per checking, chiusura assente su locked,
+trial scaduto/periodo senza scadenza, trial valido e lifetime. Non eseguite;
+nessuna compilazione, cattura UI, prova StoreKit o installazione effettuata
+per rispettare il rinvio dei test. Controllo statico diff/percorsi soltanto.
+Le anteprime precedenti non certificano questa nuova policy.
+
+Eccezioni di sviluppo conservate: FULL `VP_UNLOCKED=ON` resta volutamente
+sbloccata (build-ios-full); la configurazione ordinaria build-ios ha OFF e
+VP_PAYWALL_DEBUG=ON. Host/probe usano lo stub di sviluppo, che ora dichiara
+esplicitamente lifetime senza scadenza. Non distribuire FULL come versione
+Store. I limiti già documentati su orologio offline/client modificato non
+sono risolti da queste sole protezioni UI; nessuna garanzia anti-manomissione.
+
+### 168. Preparazione produzione e accesso in background — verifica finale (2026-10-26)
+
+Rimossi log temporanei, pannello DBG e CLICK TEST; calibrazione LATENZA
+conservata. Etichetta compatta TAMB. dove TAMBOURINE veniva troncato.
+Build Store separata e vincolata: accesso obbligatorio, file sharing spento,
+modello ONNX reale obbligatorio; nessun ripiego Stub se il modello fallisce.
+Errore AI esplicito IT/EN, TAP/FISSO disponibili. Fixture host legacy conservate.
+
+Su approvazione dell'utente, StoreKit verifica prima i diritti firmati già
+disponibili e carica poi prezzi/prodotti. L'audio riceve una sola scadenza atomica:
+negativa = bloccato, zero = lifetime/sviluppo, positiva = scadenza Unix in ms.
+Ogni callback a durata limitata legge l'orologio, senza attendere il timer UI;
+alla scadenza silenzia l'uscita e consuma gli effetti pendenti. Nessun accesso
+StoreKit, allocazione, lock o operazione su file nel callback. Non è una nuova
+garanzia anti-manomissione dell'orologio offline. Test reale del callback
+`VPShots --access`, con timer UI fermato, aggiunto alla verifica finale.
+
+Grafiche IT/EN definitive:40 PNG RGB, comprese8 copertine per iPhone6,3/6,9,
+iPad13 e Mac Designed for iPad. Interfacce renderizzate dai componenti JUCE;
+non catture iOS/macOS. Nuovo marchio vetro/cromo fucsia: logo RGBA realmente
+trasparente, icona Apple RGB coordinata, splash con i quattro pallini animati.
+Rimosso il riquadro nero anche dal logo sul sito. Origini ed esportazioni in
+`docs/store/launch-art/`. Sito pubblicato (`f2c1fa2`, `ae9a855`) e HTTPS verificato
+su tutte e quattro le pagine, www reindirizzato al dominio canonico.
+
+Decisioni utente: diritti JUCE/SampleFocus confermati dal titolare, documenti
+da indicare; non esaminati qui. Il limite di fase dell'intro Canzone prima era
+bloccante, poi l'utente ha chiesto di tralasciarlo: resta noto. Nessun invio
+App Store o acquisto reale effettuato.
+
+Storico dei candidati scartati: suite804/0 non certificava165/166. Il primo
+banco325 respingeva127 casi (48MIXER/46BRANO/33IPAD); senza165 restavano due
+set MIXER con battiti/downbeat corretti persi. Anche il riavvio166 alleggerito
+lasciava una regressione. L'utente approva di escludere entrambe le regole:
+nessuna soglia musicale rilassata, nessuna eccezione per titolo. In alcuni
+cambi di brano dopo silenzio può ancora essere necessario STOP.
+
+Versione stabile dopo le rimozioni: **suite completa798/0**, pacing normale;
+`VPTests --evidence`5/0, callback reale con timer UI fermato8/0, paywall26/0.
+**325 confronti su325 identici byte per byte al checkpoint164**:116MIXER,
+113BRANO,96 simulazioni iPad; inclusi materiale nuovo e set lunghi. Zero gate
+respinti, nessun battito/downbeat corretto perso, nessun evento clock aggiunto.
+Il primo banco804/0 resta soltanto storico. Modello e input analizzati sempre
+causalmente, senza audio futuro. Binaries e sorgenti congelati prima dei test.
+
+Build iPad1.0.0(3) e firma verificate: modello reale1614067 byte incorporato,
+logo trasparente identico all'originale, famiglie iPhone/iPad, nessun file sharing.
+La precedente build Store era stata installata e il titolare confermava pagina
+acquisti senza chiusura; il27/10 l’ultima build3 è stata installata e avviata sull’iPad Air13M3.
+Versione1.0.0(3) e processo ancora attivo confermati da devicectl, FULL chiusa
+per evitare due sessioni audio. Il titolare conferma logo senza quadrato nero, pallini animati e pagina
+acquisti senza pulsante di chiusura: controllo visivo finale completato. CPU finale:32 misure alternate più16 ripetizioni a256 campioni. Nella ripetizione,
+mediana callback mic72,00→72,10us (core2,7→2,7%), speaker133,40→137,15us
+(core4,0→4,1%); p99 speaker489,65→492,25us su budget5333us. Nessun aumento
+sistematico: il primo lotto vedeva speaker130,05→110,20us. Picchi wall-time
+conservati: fino12,38ms dopo nel primo lotto, poi13,64ms prima/8,22ms dopo
+su mic. Non certificano tutti i callback entro budget né la tenuta termica
+iPad; interferenza dello scheduler plausibile ma non dimostrata. Stress64
+oltre budget in entrambe le versioni: non qualificato. Dettagli in
+`cpu-summary-stable.json` e nella verifica canonica.
+
+Pulizia: eliminati2579 vecchi tracciati regolari non referenziati, recuperati
+28,59GiB; nessun nuovo collegamento rotto. Conservati audio originali, modelli,
+baseline164, sorgenti/test e prove necessarie. Evidenze in
+`build-host/vp-release-20261026/` (`*-stable.log`, `stable-assessment.json`,
+`bundle-stable.json`, `screenshot-manifest-final.json`, `cleanup-result.json`).
+
+Allineamento grafico/testi successivo:40 composizioni Store IT/EN, incluse32
+schermate successive alla copertina, costruite da32 originali JUCE nuovi.
+Titoli/margini verificati in ogni formato; nessuna promessa «dal primo battito».
+Descrizione completa identica nella scheda e nel testo lungo,2915car IT/2736EN.
+Guida/assistenza descrivono attesa dell'aggancio e STOP/START dopo silenzio;
+privacy rimuove il riferimento ai log diagnostici eliminati. Titoli e descrizioni
+web cambiano lingua correttamente;24 controlli responsive/lingua passano.
+Sito pubblicato con77d2bff/27e77e8, immagine social bilingue. Unica modifica
+allo strumento VPShots: fixture ELAB./PROC. OFF per illustrare la scelta
+consigliata. Source/ e motore invariati, controllo accesso breve ripetuto;
+nessuna nuova suite audio lunga necessaria per queste composizioni.
+
+### 169. BRANO: FULL riallineata, continuità migliorata all’ascolto (2026-10-27)
+
+Il titolare segnala arresti troppo frequenti con display giallo/rosso e musica
+continua; conferma BRANO e app FULL, MIXER non ancora provato. Prima di cambiare
+il controllo è emerso un disallineamento: la verifica finale precedente aveva
+installato Store1.0.0(3), mentre FULL era ancora1.0.0(1), compilata il26/10 alle
+18:05, prima degli ultimi aggiornamenti Engine/LaunchLogo. Il suo logo nel
+bundle era ancora RGB opaco. La sola installazione Store non aggiorna FULL:
+bundle ID distinti. Questo non dimostra che ogni interruzione dipenda da FULL.
+
+Riallineata FULL1.0.0(2) agli stessi Source/ e asset correnti della Store;
+verificati hash immutati rispetto al core798/0 e325/325 del checkpoint stabile,
+firma, modello reale incorporato e logo trasparente. Installata sull’iPad;
+chiuse solo le istanze delle nostre app per evitare due sessioni audio. Il primo avvio
+è stato rifiutato per schermo bloccato; dopo lo sblocco del titolare FULL2 è
+stata avviata correttamente (launch-full2-retry.json). Richiesto confronto
+d’ascolto sullo stesso BRANO: il titolare risponde «Ora è più continua».
+Serve ascoltare il caso sulla FULL allineata prima di attribuire il sintomo
+alla policy corrente o dichiararlo risolto. Nessuna modifica DSP accettata qui.
+
+Diagnosi sui325 tracciati già esistenti (senza rieseguire la suite lunga):
+il guard trattiene anche battiti con tempo e fase entro25ms dal maestro,
+267BRANO/299MIXER/263IPAD nel campione dopo20s e dopo un primo tratto non protetto.
+È una diagnosi della policy, non una prova che basti alzare la soglia. Simulazioni
+esplorative più permissive (soglia, rientro al quarto, fit mancante, consenso
+tra stime) recuperano alcuni battiti corretti ma aggiungono battiti fuori tempo:
+non applicate. Simulazione approssimata da tracciati campionati, da confermare
+con rendering effettivo prima di qualsiasi adozione. I limiti già noti del
+modello e della fase restano distinti dal comportamento di muting.
+
+Verifica 28/10: il titolare usa BRANO con registrazioni live della band; tra
+due brani STOP fa spesso ritrovare il BPM prima, ma non c'è ancora un nuovo
+episodio con titolo/minuto da riprodurre. STOP toglie al decoder la difesa del
+tempo sotto una parte che suona; non è prova che ogni rosso sia falso. Sul banco
+325, anticipare il rientro al quarto dopo 1 s verde (simulazione dai tracciati)
+recupera 59 battiti giusti BRANO ma ne lascia suonare 138 sbagliati; richiedere
+anche FOLLOWING, confidenza alta, fase vicina e accordo col pettine dà 48/70.
+Entrambe le varianti sono respinte.
+
+Provato e rimosso anche il candidato causale «decoder non suonante mentre la
+guardia ha già zittito l'uscita». Con modello reale, Everytime BRANO44 perde 7
+battiti giusti udibili (150→143), senza ridurre i 33 sbagliati; la guardia
+dura17.2→17.7 s. Sul set nuovo di44 min guadagna38 giusti e toglie46 sbagliati,
+ma gli interventi salgono14→18. Limitandolo ai tratti classificati VIVO,
+Everytime resta identico, mentre sul set gli interventi salgono14→16 e il muto
+128.0→140.9 s (tempo giusto87.70→87.56%). Il candidato non migliora la
+continuità generale richiesta; sorgenti ripristinati, nessuna regola DSP tenuta.
+Questi due replay non sostituiscono il banco completo né l'ascolto iPad. Il
+reset automatico dopo silenzio dell'item166 resta respinto; STOP fra brani è il
+comando esplicito disponibile finché manca un confine musicale affidabile.
+Tracciati dei due candidati e riepilogo: `build-host/vp-guard-20261028/`.
+
+Evidenze: `build-host/vp-guard-20261027/`: binari/sorgenti prima, vecchia FULL
+preservata, `baseline-diagnosis.json`, `feature-diagnosis.json`, simulazioni,
+traccia e uscita effettiva Everytime come testimone del meccanismo (nessuna
+regola per titolo), `full2-validation.json`, log compilazione/installazione e
+avvio bloccato. Il titolare conferma maggiore continuità sulla FULL aggiornata. Non è una
+conferma di zero interruzioni o della risoluzione di tutti i falsi interventi:
+restano i limiti della policy corrente, dichiarati nelle FAQ. Nessuna soglia
+allentata e nessuna nuova modifica DSP adottata.
+
+FAQ pubblica aggiunta il27/10: `https://virtualpercussionist.it/faq/`, IT/EN,
+18 domande per lingua, limiti ancora presenti in evidenza. Il problema BRANO
+resta dichiarato in verifica finché non arriva evidenza d’ascolto e misura;
+nessuna promessa di risoluzione basata sulla sola installazione FULL.
 
 ## Standby
 

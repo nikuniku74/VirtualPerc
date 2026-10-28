@@ -202,7 +202,17 @@ seconds/frame comments are removed. No new PLL, glide or clock restart.
 Final VPAlign ramps/steps pass and are byte-identical to baseline. Final
 325/325 media traces match baseline. This is not a measured acquisition gain.
 
-### TODO165 — detected long-rest rate hold (unverified, 2026-10-26)
+### TODO165 — detected long-rest rate hold (withdrawn, 2026-10-26)
+
+Final combined325 bank rejects127 witnesses. Isolated diagnostics on four
+files × MIXER/BRANO/IPAD: disabling only165 restores12/12 exact traces;
+disabling only166 restores0/12, disabling both restores12/12. User approves
+removing165. Ordinary target adoption and pending glides are restored; the
+pre-existing beat-gap phase-steer guard remains. Three freeze assertions
+are removed because their desired behaviour is the rejected policy. New
+full-suite/bank validation follows in verification.md. Do not reintroduce
+this broad hold because a synthetic thirty-second rest passes. Historical
+implementation below was never accepted after a real-song regression bank.
 
 User explicitly forbids running tests. Existing `beatGapHold` suppressed phase
 steer but not ordinary target glide or a pending explicit phase glide. While

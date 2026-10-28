@@ -221,6 +221,8 @@ void VirtualPercussionEngine::prepare (double sr, int maxBlk, [[maybe_unused]] i
     // A new audio-device session owns a newly cleared hypothesis slot. Mirror
     // that lifecycle boundary in the public diagnostics before any new audio.
     lastHypValid.store (false, std::memory_order_relaxed);
+    lastAiOnnx.store (false, std::memory_order_relaxed);
+    lastAiModelFailed.store (false, std::memory_order_relaxed);
     clearAnalysisLevelMirrors();
     lastTempoTransitionState.store (
         static_cast<int> (TempoTransitionState::stable), std::memory_order_relaxed);
@@ -292,7 +294,6 @@ void VirtualPercussionEngine::resetAnalysisLevelState() noexcept
     // (`prepare()`, `reset()`) set it to zero themselves.
     preserveCombOnEpoch = false;
     barReentryPending.store (false, std::memory_order_relaxed);
-    sourceSilenceSamples = 0;
     musicGapSamples = 0;
     musicGapArmed = false;
     partPeakLast = 0.0f;
@@ -349,6 +350,8 @@ void VirtualPercussionEngine::reset() noexcept
     guardGain.setCurrentAndTargetValue (1.0f);
     controlGuardGain.setCurrentAndTargetValue (1.0f);
     lastHypValid.store (false, std::memory_order_relaxed);
+    lastAiOnnx.store (false, std::memory_order_relaxed);
+    lastAiModelFailed.store (false, std::memory_order_relaxed);
     clearAnalysisLevelMirrors();
     lastTempoTransitionState.store (
         static_cast<int> (TempoTransitionState::stable), std::memory_order_relaxed);
@@ -1526,32 +1529,6 @@ bool VirtualPercussionEngine::updateAnalysisEpoch (int numSamples, float rawPeak
     return false;
 }
 
-bool VirtualPercussionEngine::resumedAfterSourceSilence (int numSamples, float sourcePeak,
-                                                           FollowSource source) noexcept
-{
-    // Actual direct-source silence is a boundary; missing drums alone are not.
-    if (source == FollowSource::speaker
-        || ! cfg.tempoFollow.load (std::memory_order_relaxed)
-        || cfg.inputGain.load (std::memory_order_relaxed) <= 1.0e-6f
-        || lastBpm.load (std::memory_order_relaxed) <= 40.0f)
-    {
-        sourceSilenceSamples = 0;
-        return false;
-    }
-    const auto silenceRequired = static_cast<int64_t> (sampleRate * kNewSongStopSec);
-    if (sourcePeak < 1.0e-4f)
-    {
-        sourceSilenceSamples = std::min (silenceRequired,
-                                         sourceSilenceSamples + std::max (0, numSamples));
-        return false;
-    }
-    // shortcut: a full silent break within one song also reacquires; audio alone
-    // cannot identify a track boundary. Preserve music-bearing rests instead.
-    const bool resumed = sourceSilenceSamples >= silenceRequired;
-    sourceSilenceSamples = 0;
-    return resumed;
-}
-
 void VirtualPercussionEngine::maybeDetectBarReentry (int numSamples, float rawPeak) noexcept
 {
     // The epoch watcher needs ~4 s of quiet (levelRef decaying 24 dB) before
@@ -2008,8 +1985,6 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
             inputRestartPending.store (true, std::memory_order_relaxed);
         }
     }
-    if (resumedAfterSourceSilence (numSamples, sourcePeak, source))
-        inputRestartPending.store (true, std::memory_order_relaxed);
     bool dropQueuedInput = false;
     if (inputRestartPending.exchange (false, std::memory_order_relaxed))
     {
@@ -2112,8 +2087,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     // tempo the restart just dropped.
     if (dropQueuedInput)
         preserveCombOnEpoch = false;
-    // A loaded file can contain a whole set: a return after sustained source
-    // silence above is an explicit restart too. Other cold epochs mid-song - a near-silent break, then the band back - threw away
+    // Other cold epochs mid-song - a near-silent break, then the band back - threw away
     // the comb and the model under a playing part, and the fresh acquisition
     // wandered for ~10 s (LET ME LOVE YOU 99 -> 60 and VITA 96 -> 62 on the
     // iPad; 197 -> 79 at 48 kHz on the desktop). Once the part has played on a
@@ -2376,6 +2350,7 @@ void VirtualPercussionEngine::processBlock (const float* const* inputs, int numI
     lastFollowBar.store (static_cast<int> (tr.followBar), std::memory_order_relaxed);
     lastVoices.store (percussion.activeVoices(), std::memory_order_relaxed);
     lastAiOnnx.store (tr.aiOnnx, std::memory_order_relaxed);
+    lastAiModelFailed.store (tr.aiModelFailed, std::memory_order_relaxed);
     lastHypValid.store (tr.hypValid, std::memory_order_relaxed);
     lastNeuralBpm.store (tr.neuralBpm, std::memory_order_relaxed);
     lastPBeat.store (tr.pBeat, std::memory_order_relaxed);
@@ -2497,6 +2472,7 @@ EngineSnapshot VirtualPercussionEngine::snapshot() const noexcept
     s.sampleRate = lastSr.load (std::memory_order_relaxed);
     s.shakerVoices = lastVoices.load (std::memory_order_relaxed);
     s.aiOnnx = lastAiOnnx.load (std::memory_order_relaxed);
+    s.aiModelFailed = lastAiModelFailed.load (std::memory_order_relaxed);
     s.hypValid = lastHypValid.load (std::memory_order_relaxed);
     s.neuralBpm = lastNeuralBpm.load (std::memory_order_relaxed);
     s.pBeat = lastPBeat.load (std::memory_order_relaxed);

@@ -507,15 +507,12 @@ void MainComponent::SoundMenuOverlay::resized()
 
 namespace
 {
-    // Assets/Brand/LaunchScreen.storyboard: the same ground, the same share of
+    // Assets/Brand/BrandLaunchScreen.storyboard: the same ground, the same share of
     // the short side, both centred on the whole screen rather than the safe
     // area, so the first frame here is iOS's launch picture.
-    const juce::Colour kSplashGround { 0xff0f0e12 };
+    const juce::Colour kSplashGround { 0xff0c0a0e };
     const juce::Colour kSplashFuchsia { 0xffff2ec8 };
     constexpr float kSplashLogoShare = 0.62f;
-    // Where the pink disc sits in LaunchLogo.png, as shares of its side
-    // (measured on the 1024 px image: centre 522/565, radius 274).
-    constexpr float kDiscX = 0.510f, kDiscY = 0.552f, kDiscR = 0.268f;
     constexpr double kSplashHoldMs = 1900.0;   // the animation while the app starts
     constexpr double kSplashGrowMs = 380.0;    // the logo grows past the screen
     constexpr double kSplashBeatMs = 480.0;    // the hop between the dots, 125 BPM
@@ -550,75 +547,15 @@ void MainComponent::SplashOverlay::paint (juce::Graphics& g)
 
     const auto area = getLocalBounds().toFloat();
     const float side0 = juce::jmin (area.getWidth(), area.getHeight()) * kSplashLogoShare;
-    const float side = side0 * scale;
+    const float breath = 1.0f + 0.012f * ramp (t, 0.0, 450.0)
+        * std::sin (static_cast<float> (t / kSplashBeatMs) * juce::MathConstants<float>::twoPi);
+    const float side = side0 * scale * breath;
     const auto logoR = area.withSizeKeepingCentre (side, side);
     g.setOpacity (alpha);
     g.drawImage (logo, logoR, juce::RectanglePlacement::centred);
 
-    const juce::Point<float> disc { logoR.getX() + side * kDiscX, logoR.getY() + side * kDiscY };
-    const float r = side * kDiscR;
-    const float glassIn = ramp (t, 0.0, 450.0) * alpha;
-
-    // A light running along the arc of ticks, from the lower left over the top
-    // to the lower right (the ticks leave the bottom open), every 1.3 s.
-    {
-        const float u = static_cast<float> (std::fmod (t, 1300.0) / 1300.0);
-        const float a = juce::degreesToRadians (125.0f + 290.0f * u);
-        const float ring = r * 1.47f;
-        const juce::Point<float> p { disc.x + ring * std::cos (a), disc.y + ring * std::sin (a) };
-        const float ends = juce::jmin (1.0f, u / 0.12f, (1.0f - u) / 0.12f);
-        juce::ColourGradient glow (kSplashFuchsia.brighter (0.4f).withAlpha (0.70f * glassIn * ends), p.x, p.y,
-                                   kSplashFuchsia.withAlpha (0.0f), p.x, p.y + r * 0.30f, true);
-        g.setGradientFill (glow);
-        g.fillEllipse (p.x - r * 0.30f, p.y - r * 0.30f, r * 0.60f, r * 0.60f);
-    }
-
-    // Glass on the disc: a sheen on its upper half, a lit rim on the upper
-    // left, and a band of light crossing it.
-    {
-        // The disc without its hole: glass over a hole would grey it.
-        juce::Path discPath;
-        discPath.setUsingNonZeroWinding (false);
-        discPath.addEllipse (disc.x - r, disc.y - r, r * 2.0f, r * 2.0f);
-        const float hole = r * 0.22f;
-        discPath.addEllipse (disc.x - hole, disc.y - hole, hole * 2.0f, hole * 2.0f);
-        g.saveState();
-        g.reduceClipRegion (discPath);
-
-        juce::ColourGradient sheen (juce::Colours::white.withAlpha (0.30f * glassIn), disc.x, disc.y - r,
-                                    juce::Colours::white.withAlpha (0.0f), disc.x, disc.y - r * 0.05f, false);
-        g.setGradientFill (sheen);
-        g.fillEllipse (disc.x - r * 0.82f, disc.y - r * 1.02f, r * 1.64f, r * 1.05f);
-
-        // The band: 0.35 r wide, tilted, from the left edge to the right
-        // between 0.35 and 1.15 s, and once more, fainter, before the exit.
-        const auto band = [&] (float u, float strength)
-        {
-            if (u <= 0.0f || u >= 1.0f)
-                return;
-            const float x = disc.x - r * 1.6f + r * 3.2f * u;
-            g.saveState();
-            g.addTransform (juce::AffineTransform::rotation (0.52f, x, disc.y));
-            const float w = r * 0.35f;
-            juce::ColourGradient light (juce::Colours::white.withAlpha (0.0f), x - w, disc.y,
-                                        juce::Colours::white.withAlpha (0.0f), x + w, disc.y, false);
-            light.addColour (0.5, juce::Colours::white.withAlpha (strength * alpha));
-            g.setGradientFill (light);
-            g.fillRect (x - w, disc.y - r * 1.6f, w * 2.0f, r * 3.2f);
-            g.restoreState();
-        };
-        band (ramp (t, 350.0, 1150.0), 0.62f);
-        band (ramp (t, 1350.0, 1850.0), 0.34f);
-        g.restoreState();
-
-        juce::Path rim;
-        rim.addCentredArc (disc.x, disc.y, r * 0.985f, r * 0.985f, 0.0f,
-                           -juce::MathConstants<float>::pi * 0.62f, -juce::MathConstants<float>::pi * 0.08f, true);
-        g.setColour (juce::Colours::white.withAlpha (0.45f * glassIn));
-        g.strokePath (rim, juce::PathStrokeType (juce::jmax (1.0f, r * 0.018f), juce::PathStrokeType::curved,
-                                                 juce::PathStrokeType::rounded));
-    }
-
+    // The new glass emblem carries its own highlights; old disc-shaped masks
+    // would paint over the wordmark. Keep the motion in the pulse and dots.
     // The four quarters under the logo, with the ball hopping across them as
     // it does on the console: the app counting itself in while it starts.
     {

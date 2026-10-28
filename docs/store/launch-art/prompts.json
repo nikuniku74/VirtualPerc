@@ -1,0 +1,13 @@
+[
+  {
+    "asset": "rhythm-orbit-v1.png",
+    "mode": "built-in ImageGen generation",
+    "prompt": "Create an exceptionally polished premium art background for an App Store launch campaign for a professional realtime percussion app. Portrait composition, approximately 2048 x 3072. The image itself contains NO typography, NO logo, NO letters, NO numbers, NO UI, NO devices. Deep almost-black plum (#09070d) with exquisite dimensional fuchsia-magenta light sculpture: a restrained luminous elliptical rhythm orbit made of elegant solid glass/chrome pulse arcs, hot pink #f20aa0, small violet highlights and a few warm coral glints. The sculpture emerges around the lower two thirds, mainly toward the sides, leaving the central vertical area and upper third very dark and uncluttered for a real app screenshot and large white headline to be composed later. Bold dramatic lighting, convincing dimensional reflections, immaculate high-end music-technology advertising, luxurious contrast, richly saturated but controlled, lots of black negative space, crisp edges and fine studio grain. A feeling of groove and rhythmic motion. No generic equalizer bars, no musical note symbols, no stock concert photography, no people, no watermarks. This must feel art-directed and expensive, not like generic AI neon wallpaper."
+  },
+  {
+    "asset": "mark-transparent-master.png",
+    "mode": "built-in ImageGen transparent extraction",
+    "reference": "icon-master-v2.png",
+    "prompt": "Extract ONLY this exact circular hot-pink glass/chrome rhythm emblem as a clean professional transparent logo mark. Preserve its geometry, segmented outer ring, grooves and bright white beat indicator. Remove the entire dark square background outside the emblem and remove the dark central hole so the background can show through. Keep smooth clean antialiased contours; preserve the glass and chrome reflections. Restrained smooth translucent magenta edge glow only; NO mottled clouds, NO jagged noise. Do not add typography, letters, words, shapes or extra effects. This is the icon's emblem isolated without any square tile or background panel. It will be combined with crisp native typography afterwards, so no text at all. Centered square canvas, 6 percent transparent safety margin, genuinely transparent alpha, no checkerboard baked in, no floor."
+  }
+]

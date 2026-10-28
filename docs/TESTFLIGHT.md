@@ -1,14 +1,48 @@
 # Dal repo a TestFlight (account «ritmodigitale») e la tua versione FULL
 
-Scritto il 2026-10-16. **Non ho mai fatto un Archive di questo progetto**: i passi
-della parte B sono la procedura corretta ma il primo giro può rivelare errori di
-firma o di manifest. Dove non so una cosa lo dico.
+Aggiornamento 2026-10-27: Archive ed esportazione App Store riusciti per
+Store 1.0.0 (3), team Ritmo Digitale `C2APL6E5HJ`. L’IPA esportata ha firma di
+distribuzione, accesso protetto, condivisione file spenta e manifest privacy.
+Caricamento ed elaborazione riusciti il 27/10/2026: build 3 visibile in
+TestFlight. Invio alla revisione riuscito il 27/10/2026 alle 13:11 (ora mostrata
+da App Store Connect): stato «In attesa di verifica» per tutti e cinque gli
+elementi, app iOS 1.0 / build 1.0.0 (3), lifetime, gruppo Pro, mensile e annuale.
+ID invio: `91d8556a-9546-4483-a33e-24bb92ea6c33`. Il rilascio pubblico resta
+manuale dopo l’approvazione. Avviso non bloccante già comunicato: manca il dSYM
+dell’app, quindi i crash di questa build potrebbero non avere nomi di funzione leggibili.
+
+Scheda Store aggiornata in italiano e inglese (Regno Unito); selezionata la
+build 3. Caricati 38 screenshot con il nuovo marchio: per ciascuna lingua,
+7 iPhone 6,3", 5 iPhone 6,9" e 7 iPad 13". Prima dell’invio corretta una
+incongruenza dei file: i 40 export con nome `.png` contenevano JPEG; ricodificati
+in PNG reali e sostituiti. La console iPad italiana è stata caricata dal JPEG
+originale con estensione corretta (`1-console-it-ipad.jpg`), senza ricompressione,
+dopo un ulteriore stallo di elaborazione. Verificate le 38 miniature elaborate
+sui server Apple e superata la validazione di invio. Gli altri formati iPhone/iPad
+ereditano le risorse correnti, senza vecchi set specifici. I materiali Mac
+locali non sono screenshot di una versione macOS nativa e non sono stati caricati
+come tali. FULL resta esclusa da App Store e TestFlight.
+
+Creato il prodotto non consumabile `com.virtualpercussionist.app.pro.lifetime`
+(ID Apple `6827497713`), con base Italia 149,99 €, localizzazioni IT/en-GB e
+schermata di verifica elaborata e accettata nell’invio. La precedente bozza con ID prodotto `632353` resta
+inutilizzata. Nessuna transazione reale o sandbox è stata eseguita in questo
+passaggio; lo screenshot è un rendering dell’interfaccia, dichiarato nelle note.
+
+Mensile e annuale: disponibilità nei 175 territori salvata dopo esplicita
+conferma del titolare; annuale con pagamento anticipato dell’intero anno, senza
+attivare la nuova opzione di impegno annuale con rate mensili. Confermate le
+offerte gratuite di una settimana, già presenti dal 16/10 senza data di fine.
+Corretti nome/descrizione inglesi scambiati dei due piani e aggiunte le
+localizzazioni IT/en-GB del gruppo Pro. Dichiarazione sui contenuti di terzi
+allineata alla conferma dei diritti JUCE/SampleFocus fornita dal titolare;
+i documenti di licenza non sono stati esaminati in questo passaggio.
 
 Due build, due cartelle, due identità, che non si mescolano:
 
 | | store / TestFlight | tua versione FULL |
 |---|---|---|
-| cartella | `build-ios` | `build-ios-full` |
+| cartella | `build-ios-store` | `build-ios-full` |
 | bundle ID | `com.virtualpercussionist.app` | `com.virtualpercussionist.app.full` |
 | nome sotto l'icona | Virtual Percussionist | Virtual Percussionist FULL |
 | paywall | sì (StoreKit, prova, piani) | **no** (`VP_UNLOCKED=ON`, il pulsante dice FULL) |
@@ -24,8 +58,9 @@ TestFlight sia la FULL, senza che una sostituisca l'altra.
 **A1. Capisci che account è «ritmodigitale».** Su <https://developer.apple.com/account>
 → *Membership details*: annota **Team ID** (10 caratteri), **tipo** (Individual o
 Organization) e il **nome che comparirà come venditore**. Il progetto oggi è
-firmato dal team `28H5MJ7244` («Stackhouse S.R.L»): se il Team ID di
-ritmodigitale è diverso, va passato al build (B2). Il tuo Apple ID deve essere
+firmato per lo Store dal team `C2APL6E5HJ` («Ritmo Digitale di Stefano Mura»),
+verificato nel portale Apple il 27/10/2026. La firma locale FULL può usare un
+altro team e non determina il venditore dello Store. Il tuo Apple ID deve essere
 *Account Holder* o *Admin* per creare l'app.
 
 **A2. Contratti, banca e fiscalità.** <https://appstoreconnect.apple.com> →
@@ -77,6 +112,12 @@ il canale alfa dalle icone: senza, App Store Connect rifiuta l'icona).
 
 **B2. Configura** (dalla cartella del progetto; sostituisci `TEAMID` con quello
 di A1 e `1` con un numero **che sale a ogni caricamento**):
+
+Per la release corrente usare `./scripts/configure-appstore.sh NUMERO`, che
+isola la configurazione in `build-ios-store`, imposta entrambe le proprietà
+del team Ritmo Digitale e mantiene `VP_APPSTORE_RELEASE=ON`. I comandi manuali
+qui sotto descrivono il flusso generale precedente; non sostituiscono questo
+controllo di release.
 
 ```bash
 cmake -S . -B build-ios -G Xcode \
@@ -155,6 +196,13 @@ in `kPrivacyUrl` (`Source/UI/PaywallOverlay.cpp`), la **licenza JUCE** a posto.
 
 ## Parte D - La tua versione FULL, sui tuoi dispositivi
 
+Aggiornamento27/10/2026: FULL1.0.0(2) riallineata a Source/ e marchio della
+Store1.0.0(3), compilata/firmata e installata. Aggiornare la Store non aggiorna
+FULL, e viceversa: i due bundle sono distinti. Chiudere l’altra variante durante
+le prove audio. Il titolare, riprovando BRANO, conferma «Ora è più continua». Non è una
+garanzia di assenza di ogni interruzione.
+
+
 Non passa da TestFlight né da App Store: la installi tu da Xcode.
 
 **D1. Configura** (cartella separata; stesso `TEAMID`):
@@ -184,8 +232,17 @@ Compare un'icona «Virtual Percussionist FULL» accanto a quella di TestFlight;
 nelle impostazioni dell'app il pulsante dice **FULL**. La build da Xcode su un
 account a pagamento dura un anno.
 
+Se all'avvio appare per un istante il vecchio logo nel riquadro scuro, prova
+prima una nuova installazione in-place con ⌘R della FULL compilata pulita.
+Il 28/10 il progetto ha ricevuto `BrandLaunchScreen` e `BrandLaunchLogo` nel
+catalogo risorse: la build locale pulita li contiene e non include più il vecchio
+storyboard. Se l'iPad conserva comunque la schermata precedente, Apple TN3118
+richiede di rimuovere l'app e reinstallarla; prima salva gli eventuali file e
+le impostazioni locali della FULL, che la rimozione cancella.
+
 **D3. Regole.** Non archiviare mai `build-ios-full`. Per la versione dello
-store si usa **solo** `build-ios`. Se vuoi la versione dello store gratis sul
+store si usa **solo** `build-ios-store`, configurato con
+`./scripts/configure-appstore.sh NUMERO`. Se vuoi la versione dello store gratis sul
 tuo telefono, usa TestFlight (acquisti di prova) o, dopo la pubblicazione, un
 **codice offerta** sul lifetime.
 

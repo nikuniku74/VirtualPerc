@@ -192,7 +192,7 @@ public:
         setOpaque (true);
         close = std::make_unique<PillButton>();
         close->cross = true;
-        close->setTitle ("Close");
+        close->setTitle (vpui::italian() ? "Chiudi" : "Close");
         close->onClick = [this] { setVisible (false); };
         addAndMakeVisible (*close);
 
@@ -202,7 +202,17 @@ public:
         body.setScrollbarsShown (true);
         body.setPopupMenuEnabled (false);
         addAndMakeVisible (body);
-        body.setText (notices(), false);
+        setItalian (vpui::italian());
+    }
+
+    void setItalian (bool it)
+    {
+        italian = it;
+        close->setTitle (it ? "Chiudi" : "Close");
+        body.setText ((it ? juce::String::fromUTF8 ("Virtual Percussionist utilizza i seguenti contributi di terzi.\n\n")
+                         : juce::String ("Virtual Percussionist uses the following third-party work.\n\n"))
+                         + notices(), false);
+        repaint();
     }
 
     void setSafeArea (juce::BorderSize<int> b) { safe = b; resized(); }
@@ -235,14 +245,13 @@ public:
     {
         g.setColour (::text());
         g.setFont (fontUi (17.0f));
-        g.drawText ("Licenses and credits", titleArea, juce::Justification::centredLeft, true);
+        g.drawText (italian ? "Licenze e crediti" : "Licenses and credits", titleArea, juce::Justification::centredLeft, true);
     }
 
 private:
     static juce::String notices()
     {
         return juce::String (juce::CharPointer_UTF8 (
-            "Virtual Percussionist uses the following third-party work.\n\n"
             "JUCE\n(c) Raw Material Software Limited.\n\n"
             "ONNX Runtime\n(c) Microsoft Corporation. MIT License.\n"
             "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and "
@@ -261,11 +270,14 @@ private:
             "Model weights licensed under Creative Commons Attribution 4.0 (CC BY 4.0, "
             "https://creativecommons.org/licenses/by/4.0/). The weights were fine-tuned for this app; "
             "this is a modified version.\n\n"
-            "Percussion samples\nVersilian Community Sample Library (VCSL) and VS Chamber Orchestra 2: Community "
-            "Edition by Versilian Studios LLC, CC0 1.0. Loops by nicpressley, Sycopation and shpira, "
-            "CC0 1.0.\n"));
+            "Percussion and effect samples\nClap and tambourine: Versilian Community Sample Library (VCSL) "
+            "and VS Chamber Orchestra 2: Community Edition by Versilian Studios LLC, CC0 1.0. "
+            "Recorded dance loops by nicpressley, Sycopation and shpira, CC0 1.0.\n"
+            "Congas: Salsa Congas Loop - Dance 3 by Dezz, via SampleFocus. "
+            "Shaker and effects: SampleFocus (https://samplefocus.com). These samples are not CC0.\n"));
     }
 
+    bool italian = false;
     std::unique_ptr<PillButton> close;
     juce::TextEditor body;
     juce::BorderSize<int> safe { 0, 0, 0, 0 };
@@ -310,7 +322,7 @@ PaywallOverlay::PaywallOverlay()
         addChildComponent (c);
     addChildComponent (*licensesPage);   // above everything else
 
-    closeButton->onClick = [this] { if (onClose) onClose(); };
+    closeButton->onClick = [this] { if (statusPage() && ! busy && onClose) onClose(); };
     ctaButton->onClick = [this]
     {
         if (busy)
@@ -458,6 +470,7 @@ void PaywallOverlay::setSafeArea (juce::BorderSize<int> b)
 void PaywallOverlay::setItalian (bool it)
 {
     italian = it;
+    licensesPage->setItalian (it);
     updateNoticeText();
     refreshControls();
     layoutAll();
@@ -481,7 +494,10 @@ void PaywallOverlay::showLicenses()
     licensesPage->toFront (false);
 }
 
-bool PaywallOverlay::statusPage() const noexcept { return personal || status.entitled(); }
+bool PaywallOverlay::statusPage() const noexcept
+{
+    return personal || status.entitledAt (clock());
+}
 bool PaywallOverlay::showsStatusPage() const noexcept { return statusPage(); }
 
 int PaywallOverlay::planCount() const noexcept
@@ -715,7 +731,7 @@ void PaywallOverlay::refreshControls()
     manageLink->setVisible (false);
     // A lifetime owner has no subscription to manage: the page is just the receipt.
     ctaButton->setVisible (! (onStatus && lifetimeInView()));
-    closeButton->setVisible (true);
+    closeButton->setVisible (onStatus);
     ctaButton->repaint();
 }
 
@@ -915,19 +931,19 @@ void PaywallOverlay::paint (juce::Graphics& g)
 
     if (logo.isValid() && ! geo.logo.isEmpty())
     {
-        // An icon tile: rounded, so its own dark ground reads as a shape on
-        // the page in either theme rather than as a square left behind.
+        // The transparent lockup sits directly on either theme, without a tile.
         const auto r = geo.logo.toFloat();
-        const float corner = r.getWidth() * 0.22f;
         paintRadial (g, r.getCentre(), r.getWidth() * 0.9f, fuchsia(), 0.18f);
-        juce::Path tile;
-        tile.addRoundedRectangle (r, corner);
-        g.saveState();
-        g.reduceClipRegion (tile);
         g.drawImage (logo, r, juce::RectanglePlacement::centred);
-        g.restoreState();
-        g.setColour (::text().withAlpha (0.10f));
-        g.drawRoundedRectangle (r.reduced (0.5f), corner, 1.0f);
+        if (! gDarkMode)
+        {
+            // Native brand export places the white wordmark below 70%; keep it legible on LIGHT.
+            g.saveState();
+            g.reduceClipRegion (r.withTrimmedTop (r.getHeight() * 0.70f).toNearestInt());
+            g.setColour (::text());
+            g.drawImage (logo, r, juce::RectanglePlacement::centred, true);
+            g.restoreState();
+        }
     }
     paintDots (g);
 

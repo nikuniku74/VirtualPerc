@@ -71,7 +71,7 @@ private:
         unit is a handle to something that no longer exists, and only making a
         new one brings the sound back - which is what changing the clock by hand
         was doing. */
-    void rebuildAudioDevice (const char* why);
+    void rebuildAudioDevice();
     void powerDownAudioForBackground();
 
     /** What the listener asked the clock to be, and what the device should
@@ -292,7 +292,7 @@ private:
     SettingsOverlay settingsOverlay { *this };
 
     /** The landing: the launch screen's own picture (Assets/Brand, the dark
-        logo at 62% of the short side on #0F0E12, as LaunchScreen.storyboard
+        glass logo at 62% of the short side on #0C0A0E, as BrandLaunchScreen.storyboard
         draws it), held a moment, then grown a little and faded onto the
         console. A tap skips it. Above every other child until it is gone. */
     struct SplashOverlay final : juce::Component, private juce::Timer
@@ -313,13 +313,13 @@ private:
     };
     SplashOverlay splash;
 
-    /** The subscription page (7 days free, then monthly or yearly) and what it
-        gates. Without an active trial or subscription START, and PLAY on a
-        loaded track, open it instead of starting (Release builds; see
-        VP_PAYWALL_ENFORCED in CMakeLists.txt). Platform/Subscription.h. */
+    /** Enforced builds keep the subscription page modal until access is valid;
+        the audio callback checks this deadline even while UI timers are suspended. */
     PaywallOverlay paywall;
     vp::store::Status subscription;
-    bool paywallAutoShown = false;
+    // -1: locked; 0: lifetime/development; positive: verified expiry, Unix ms.
+    std::atomic<juce::int64> entitlementAudioDeadline { -1 };
+    static_assert (std::atomic<juce::int64>::is_always_lock_free);
     bool hasAccess() const noexcept;
     /** True when the audio may start; otherwise shows the paywall and says no. */
     bool requireAccess();
@@ -460,8 +460,6 @@ private:
     /** FIXED: beside TAP, in place of ÷2 and ×2, the tempo itself - touch it
         and type an exact one (50-200, the app's range). 2026-10-23. */
     juce::TextButton bpmEntryButton;
-    juce::TextButton debugButton { "DBG" };
-    juce::TextButton clickButton { "CLICK TEST" };
     juce::TextButton themeButton { "DARK" };
     juce::TextButton sourceButton { "SPEAKER" };
     juce::TextButton trackLoadButton { vpui::L ("LOAD", "CARICA") };
@@ -478,6 +476,7 @@ private:
     void showInputInfo (bool firstRun);
     void showGuide();
     bool inputInfoChecked = false;
+    bool aiModelErrorShown = false;
     juce::TextButton clockAuto { "AUTO" }, clock44 { "44.1k" }, clock48 { "48k" };
     juce::TextButton clock88 { "88.2k" }, clock96 { "96k" };
     juce::TextButton bufAuto { "AUTO" }, buf64 { "64" }, buf128 { "128" };
@@ -676,8 +675,8 @@ private:
     int lastMicStep = -1;
     /** What the last timer tick painted, so the next one repaints only what
         moved (see the end of timerCallback). */
-    std::array<juce::int64, 6> lastPageKey {};
-    std::array<juce::int64, 18> lastStageKey {};
+    std::array<juce::int64, 5> lastPageKey {};
+    std::array<juce::int64, 20> lastStageKey {};
     /** Smoothed copy of the tempo orb. `lead` is −1 behind the clock (drawn
         left) and +1 ahead (drawn right); it eases in both directions so the
         bloom slides instead of jumping. UI timer only — the audio thread
@@ -801,7 +800,6 @@ private:
 
     std::unique_ptr<juce::PropertiesFile> prefs;
 
-    bool debugOpen = false;
     bool darkMode = true;
     /** Off: the app always starts dark and does not follow the system. */
     bool themeFollowsSystem = false;
@@ -818,15 +816,6 @@ private:
     bool audioOpened = false;
     bool micGranted = false;
     std::atomic<bool> userWantsArmed { false };
-    // STOP then START within ten seconds is the listener's own re-sync. What
-    // the clock was doing before it and where it landed after goes to a log in
-    // the Documents folder, so the cases can be studied (docs/TODO.md item 70).
-    vp::EngineSnapshot stopSnap;
-    double stopWallMs = 0.0;
-    double stopTrackSec = -1.0;
-    double restartWallMs = 0.0;
-    bool restartLogPending = false;
-    void writeRestartLog();
     int  inputChannels = 0;
     int  tapFlash = 0;
 
@@ -857,17 +846,9 @@ private:
         page, because a rig that needs it every few seconds is a rig with a
         problem the app can only paper over. */
     std::atomic<uint32_t> audioBlocks { 0 };
-    /** Blocks of digital silence from the track reader mid-song, after a block
-        that had sound: the read-ahead was not ready (a glitch in the song). */
-    std::atomic<uint32_t> trackDropouts { 0 };
-    bool trackLastBlockHadSound = false;
     uint32_t seenAudioBlocks = 0;
     int  stalledTicks = 0;
     int  rebuildCooldownTicks = 0;
-    int  deviceRebuilds = 0;
-    std::atomic<float> diagOutPeak { 0.0f }; // VPDIAG temporaneo
-    /** Why the last one happened, for the diagnostics page. */
-    juce::String lastRebuildWhy;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

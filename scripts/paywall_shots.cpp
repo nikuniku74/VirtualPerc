@@ -96,7 +96,7 @@ namespace
         {
             out->setPosition (0);
             out->truncate();
-            png.writeImageToStream (img, *out);
+            png.writeImageToStream (juce::SoftwareImageType().convert (img).convertedToFormat (juce::Image::RGB), *out);
         }
     }
 }
@@ -110,8 +110,72 @@ int main (int argc, char** argv)
     p.setClock ([] { return kNow; });
     p.setItalian (false);
 
+    // --store <dir>: the paywall pages at the App Store's own sizes
+    // (iPhone 6.9" 1320x2868, iPad 13" 2064x2752), English and Italian.
+    if (argc > 2 && juce::String (argv[1]) == "--store")
+    {
+        const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]);
+        struct Device { const char* name; int w, h; float scale; juce::BorderSize<int> safe; };
+        const Device devices[] = { { "iphone", 440, 956, 3.0f, { 62, 0, 34, 0 } },
+                                   { "iphone63", 402, 874, 3.0f, { 62, 0, 34, 0 } },   // 6.3": 1206x2622
+                                   { "ipad", 1032, 1376, 2.0f, { 24, 0, 20, 0 } } };
+        for (const bool it : { false, true })
+        {
+            p.setItalian (it);
+            gDollars = ! it;
+            for (const auto& d : devices)
+            {
+                const auto sub = dir.getChildFile (juce::String (it ? "it-" : "en-") + d.name);
+                sub.createDirectory();
+                shoot (p, offer (true), sub, "3-paywall", d.w, d.h, d.safe, true, d.scale);
+                shoot (p, inTrial(), sub, "4-trial-status", d.w, d.h, d.safe, true, d.scale);
+                shoot (p, lifetimeOwner(), sub, "5-lifetime-status", d.w, d.h, d.safe, true, d.scale);
+            }
+        }
+        std::printf ("store paywall shots written to %s\n", dir.getFullPathName().toRawUTF8());
+        return 0;
+    }
+
+
     std::printf ("paywall logic\n");
+    auto closeVisible = [&p]
+    {
+        for (auto* child : p.getChildren())
+            if (child->getTitle() == "Close")
+                return child->isVisible();
+        return false;
+    };
+    vp::EngineSnapshot broken;
+    broken.aiModelFailed = true;
+    broken.tempoFollow = true;
+    vpui::languageOverride() = 0;
+    expect (shownLabel (broken, vp::TempoTrust::none) == "AI ERROR"
+                && shownColour (broken, vp::TempoTrust::none) == stateLost(),
+            "AI startup failure is visible on the normal stage");
+    vpui::languageOverride() = 1;
+    expect (shownLabel (broken, vp::TempoTrust::none) == "ERRORE AI",
+            "AI startup failure is localized in Italian");
+    broken.tempoFollow = false;
+    expect (shownLabel (broken, vp::TempoTrust::none) == "TEMPO FISSO",
+            "manual fixed tempo remains available after AI failure");
+    vpui::languageOverride() = -1;
+    vp::store::Status checking;
+    p.setStatus (checking);
+    expect (! closeVisible() && ! checking.entitledAt (kNow),
+            "checking has no console exit or access");
+    auto expired = inTrial();
+    expired.expiresAt = kNow;
+    p.setStatus (expired);
+    expect (! expired.entitledAt (kNow) && ! p.showsStatusPage() && ! closeVisible(),
+            "trial expires at the boundary and cannot close the offer");
+    expired.access = vp::store::Access::subscribed;
+    expect (! expired.entitledAt (kNow), "expired paid period does not grant access");
+    expired.expiresAt = 0.0;
+    expect (! expired.entitledAt (kNow), "missing period expiry fails closed");
+    expect (inTrial().entitledAt (kNow) && lifetimeOwner().entitledAt (kNow),
+            "valid trial and verified lifetime retain access");
     p.setStatus (offer (true));
+    expect (! closeVisible(), "locked offer has no close icon");
     expect (p.ctaText() == "Start 7-day free trial", "eligible: the button says 7-day free trial");
     expect (! p.showsStatusPage(), "locked shows the offer");
     p.setStatus (offer (false));
@@ -125,7 +189,7 @@ int main (int argc, char** argv)
     p.setStatus (lifetimeOwner());
     expect (p.showsStatusPage() && p.lifetimeInView(), "a lifetime owner sees the status page");
     p.setStatus (inTrial());
-    expect (p.showsStatusPage(), "in trial shows the status page");
+    expect (p.showsStatusPage() && closeVisible(), "valid trial can close its account page");
     expect (p.ctaText() == "Manage subscription", "status page button manages");
     p.setItalian (true);
     p.setStatus (offer (true));
@@ -157,31 +221,6 @@ int main (int argc, char** argv)
                 "FULL build: the status page, no purchase or manage button, nothing asks the store");
     }
 
-    // --store <dir>: the paywall pages at the App Store's own sizes
-    // (iPhone 6.9" 1320x2868, iPad 13" 2064x2752), English and Italian.
-    if (argc > 2 && juce::String (argv[1]) == "--store")
-    {
-        const auto dir = juce::File::getCurrentWorkingDirectory().getChildFile (argv[2]);
-        struct Device { const char* name; int w, h; float scale; juce::BorderSize<int> safe; };
-        const Device devices[] = { { "iphone", 440, 956, 3.0f, { 62, 0, 34, 0 } },
-                                   { "iphone63", 402, 874, 3.0f, { 62, 0, 34, 0 } },   // 6.3": 1206x2622
-                                   { "ipad", 1032, 1376, 2.0f, { 24, 0, 20, 0 } } };
-        for (const bool it : { false, true })
-        {
-            p.setItalian (it);
-            gDollars = ! it;
-            for (const auto& d : devices)
-            {
-                const auto sub = dir.getChildFile (juce::String (it ? "it-" : "en-") + d.name);
-                sub.createDirectory();
-                shoot (p, offer (true), sub, "3-paywall", d.w, d.h, d.safe, true, d.scale);
-                shoot (p, inTrial(), sub, "4-trial-status", d.w, d.h, d.safe, true, d.scale);
-                shoot (p, lifetimeOwner(), sub, "5-lifetime-status", d.w, d.h, d.safe, true, d.scale);
-            }
-        }
-        std::printf ("store paywall shots written to %s\n", dir.getFullPathName().toRawUTF8());
-        return 0;
-    }
 
     if (argc > 1)
     {

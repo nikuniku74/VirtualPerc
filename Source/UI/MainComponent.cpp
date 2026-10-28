@@ -19,6 +19,7 @@
 
 MainComponent::MainComponent()
 {
+    entitlementAudioDeadline.store (hasAccess() ? 0 : -1, std::memory_order_release);
     trackFormats.registerBasicFormats();
     trackReadThread.startThread (juce::Thread::Priority::normal);
 
@@ -38,7 +39,7 @@ MainComponent::MainComponent()
         int w = 834, h = 1112;
         if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         {
-            const auto area = display->userArea;
+            const auto area = display->userBounds.toNearestInt();
             w = juce::jmin (w, juce::jmax (600, area.getWidth() - 40));
             h = juce::jmin (h, juce::jmax (520, area.getHeight() - 60));
         }
@@ -152,24 +153,6 @@ MainComponent::MainComponent()
     guardButton.onClick = [this] { applyDriftGuard (! engine.settings().driftGuard.load()); };
     bpmNudgeDown.onClick = [this] { nudgeFixedBpm (-1.0f); };
     bpmNudgeUp.onClick = [this] { nudgeFixedBpm (1.0f); };
-    debugButton.onClick = [this] {
-        debugOpen = ! debugOpen;
-        debugButton.setToggleState (debugOpen, juce::dontSendNotification);
-        // The panel is drawn over the stage, so opening it from the settings
-        // page means leaving the settings page - otherwise the tap looks like
-        // it did nothing.
-        setSettingsOpen (false);
-        repaint();
-    };
-    clickButton.onClick = [this]
-    {
-        static bool click = false;
-        click = ! click;
-        engine.setClickInjectEnabled (click);
-        engine.setClickInjectBpm (120.0f);
-        clickButton.setButtonText (click ? "CLICK  ON" : "CLICK TEST");
-        clickButton.setToggleState (click, juce::dontSendNotification);
-    };
     themeButton.onClick = [this] { applyTheme (! darkMode, true); savePrefs(); };
     // A second of sweep and the rig has told the app what it actually does.
     // Pressing it again clears a measurement, so a figure taken on last week's
@@ -426,7 +409,11 @@ MainComponent::MainComponent()
     refreshHitKnobs();
     auto fireHit = [this] (int i)
     {
-        return [this, i] { hitVoices[i].request.fetch_add (1, std::memory_order_release); };
+        return [this, i]
+        {
+            if (requireAccess())
+                hitVoices[i].request.fetch_add (1, std::memory_order_release);
+        };
     };
     addChildComponent (faderZoom);
     for (auto* k : { &shakerVolSlider, &congaVolSlider, &cembaloVolSlider, &clapVolSlider,
@@ -584,8 +571,6 @@ MainComponent::MainComponent()
     accountButton.setButtonText ("FULL");
     paywall.setPersonalBuild (true);
    #endif
-    setupPageBtn (debugButton, juce::Colour (0xff0a0a0c));
-    setupPageBtn (clickButton, juce::Colour (0xff0a0a0c));
     setupPageBtn (themeButton, ink());
     setupPageBtn (sourceButton, ink());
     setupPageBtn (trackLoadButton, ink());
@@ -598,7 +583,6 @@ MainComponent::MainComponent()
     // PATTERN/LOOP and DBG are off the settings page (user's call, 2026-10-16).
     // The buttons and what they drive stay: nothing reaches them from the UI now.
     loopModeButton.setVisible (false);
-    debugButton.setVisible (false);
     for (auto* b : { &clockAuto, &clock44, &clock48, &clock88, &clock96,
                      &bufAuto, &buf64, &buf128, &buf256, &buf512 })
         setupPageBtn (*b, ink());
@@ -696,8 +680,7 @@ MainComponent::MainComponent()
     startTimerHz (15);
     beatVBlank = juce::VBlankAttachment (this, [this] { updateBeatDots(); });
     // The window already has its size by now; resized() keeps it full-bounds.
-    // The subscription page sits under the splash, so the launch animation
-    // opens onto it when there is no trial or subscription yet.
+    // Enforced access starts closed, including while StoreKit is checking.
     addChildComponent (paywall);
     paywall.setBounds (getLocalBounds());
     paywall.onClose = [this] { showPaywall (false); };
@@ -758,6 +741,9 @@ MainComponent::MainComponent()
 
     addAndMakeVisible (splash);
     splash.setBounds (getLocalBounds());
+    splash.setAlwaysOnTop (true); // The brief count-in also covers the modal purchase page.
+    if (! hasAccess())
+        showPaywall (true);
     splash.toFront (false);
 
     {
@@ -765,7 +751,7 @@ MainComponent::MainComponent()
         vp::setMediaServicesResetHandler ([safeReset]
         {
             if (safeReset != nullptr)
-                safeReset->rebuildAudioDevice ("media services were reset");
+                safeReset->rebuildAudioDevice();
         });
     }
 
@@ -869,8 +855,8 @@ void MainComponent::refreshThemeColours()
 {
     juce::TextButton* buttons[] = {
         &startButton, &stopButton, &followButton, &fixedButton,
-        &bpmNudgeDown, &bpmNudgeUp, &debugButton,
-        &clickButton, &themeButton, &sourceButton, &trackLoadButton,
+        &bpmNudgeDown, &bpmNudgeUp,
+        &themeButton, &sourceButton, &trackLoadButton,
         &trackPlayButton, &kickButton, &analysisButton, &latencyButton,
         &subAuto, &sub4, &sub8,
         &sub16, &naturalButton, &swingButton, &meterButton,
@@ -1050,8 +1036,6 @@ void MainComponent::startPressed()
     vp::haptic (vp::Haptic::medium);
     if (! internalTrackSelected())
         ensureMicrophone();
-    restartWallMs = juce::Time::getMillisecondCounterHiRes();
-    restartLogPending = stopWallMs > 0.0 && restartWallMs - stopWallMs < 10000.0;
     userWantsArmed = true;
     burstArmed = true;
     engine.requestStart();
@@ -1061,55 +1045,9 @@ void MainComponent::startPressed()
 void MainComponent::stopPressed()
 {
     vp::haptic (vp::Haptic::heavy);
-    stopSnap = engine.snapshot();
-    stopWallMs = juce::Time::getMillisecondCounterHiRes();
-    stopTrackSec = internalTrackSelected() ? trackTransport.getCurrentPosition() : -1.0;
-    restartLogPending = false;
     userWantsArmed = false;
     engine.requestStop();
     refreshStartButton();
-}
-
-void MainComponent::writeRestartLog()
-{
-    // ASCII only: juce::String (const char*) asserts on anything else.
-    static const char* const regimes[] = { "CERCO", "FISSO", "VIVO" };
-    auto describe = [] (const vp::EngineSnapshot& s)
-    {
-        const float bpm = juce::jmax (40.0f, s.bpm);
-        return juce::String ("bpm ") + juce::String (s.bpm, 2)
-             + " clock " + juce::String (s.clockBpm, 2)
-             + " rete " + juce::String (s.neuralBpm, 2)
-             + " pettine " + juce::String (s.combBpm, 2)
-             + " " + regimes[juce::jlimit (0, 2, s.tempoRegime)]
-             + " stato " + juce::String (static_cast<int> (s.state))
-             + " erroreFase " + juce::String (s.phaseErrorBeats, 3) + " batt ("
-             + juce::String (s.phaseErrorBeats * 60000.0f / bpm, 0) + " ms)"
-             + " fiducia " + juce::String (s.evidenceTrust, 2)
-             + " battuta " + juce::String (s.barPhase, 3)
-             + (s.barTrusted ? " 1ok" : " 1?")
-             + (s.percussionAudible ? " suona" : " muto");
-    };
-    const bool snapped = snap.silentSnapCount != stopSnap.silentSnapCount;
-    const float bpmBefore = juce::jmax (40.0f, stopSnap.bpm);
-    juce::String line;
-    line << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M:%S")
-         << " | " << (internalTrackSelected() ? trackName : juce::String ("ingresso"))
-         << " @ " << juce::String (stopTrackSec, 1) << " s"
-         << " | pausa " << juce::String ((restartWallMs - stopWallMs) / 1000.0, 1) << " s"
-         << " | PRIMA " << describe (stopSnap)
-         << " | DOPO " << describe (snap)
-         << " | riallineato " << (snapped ? juce::String (snap.silentSnapBeats, 3) + " batt ("
-                                              + juce::String (snap.silentSnapBeats * 60000.0f / bpmBefore, 0)
-                                              + " ms) x" + juce::String (static_cast<int> (
-                                                    snap.silentSnapCount - stopSnap.silentSnapCount))
-                                          : juce::String ("no"))
-         << " | bpm " << juce::String ((snap.bpm / bpmBefore - 1.0f) * 100.0f, 1) << "%"
-         << "\n";
-    juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-        .getChildFile ("VirtualPercussionist-stopstart.log")
-        .appendText (line);
-    juce::Logger::outputDebugString ("VPRESTART " + line);
 }
 
 void MainComponent::tapPressed()
@@ -1491,15 +1429,11 @@ void MainComponent::finishInitialDeviceStart()
     startupHardwareRate = 0.0;
 }
 
-void MainComponent::rebuildAudioDevice (const char* why)
+void MainComponent::rebuildAudioDevice()
 {
     if (! audioOpened)
         return;
 
-    // Kept for the diagnostics page. A rebuild count on its own says the rig had
-    // a problem; the reason says which one, and these three are different rigs.
-    lastRebuildWhy = why != nullptr ? why : "";
-    ++deviceRebuilds;
     stalledTicks = 0;
     // Two seconds before another one is allowed. A rig that genuinely cannot
     // hold a device open would otherwise be rebuilt fifteen times a second,
@@ -2880,6 +2814,22 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     if (n <= 0)
         return;
 
+    // A clock read and one atomic value keep expiry independent of UI/background timers.
+    const auto deadline = entitlementAudioDeadline.load (std::memory_order_acquire);
+    if (deadline < 0 || (deadline > 0 && juce::Time::currentTimeMillis() >= deadline))
+    {
+        buffer->clear (start, n);
+        // Consume pending effect triggers so they cannot fire on a later purchase.
+        for (auto& voice : hitVoices)
+        {
+            voice.playing = voice.request.load (std::memory_order_acquire);
+            voice.pos = hitSamples[voice.playingSample].getNumSamples();
+            voice.sounding.store (false, std::memory_order_relaxed);
+        }
+        audioBlocks.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
     // A host is entitled to grow the IO callback past what prepareToPlay last
     // announced - Split View and a window reset both do it. The old path
     // copied min(n, scratch) and silenced the tail, which is a dropout.
@@ -2901,17 +2851,7 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         {
             trackScratch.clear();
             trackTransport.getNextAudioBlock ({ &trackScratch, 0, chunk });
-            if (trackTransport.isPlaying())
-            {
-                float mag = 0.0f;
-                for (int c = 0; c < trackScratch.getNumChannels(); ++c)
-                    mag = juce::jmax (mag, trackScratch.getMagnitude (c, 0, chunk));
-                const double pos = trackTransport.getCurrentPosition();
-                if (mag == 0.0f && trackLastBlockHadSound && pos > 1.0
-                    && pos < trackTransport.getLengthInSeconds() - 1.0)
-                    trackDropouts.fetch_add (1, std::memory_order_relaxed);
-                trackLastBlockHadSound = mag > 0.0f;
-            }
+
         }
         else
         {
@@ -2945,21 +2885,41 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
         done += chunk;
     }
 
-   #if JUCE_DEBUG && JUCE_IOS // VPDIAG
-    {
-        float pk = 0.0f;
-        for (int c = 0; c < nCh; ++c)
-            pk = juce::jmax (pk, buffer->getMagnitude (c, start, n));
-        if (pk > diagOutPeak.load (std::memory_order_relaxed))
-            diagOutPeak.store (pk, std::memory_order_relaxed);
-    }
-   #endif
     audioBlocks.fetch_add (1, std::memory_order_relaxed);
 }
 
 void MainComponent::timerCallback()
 {
+   #if VP_PAYWALL_ENFORCED
+    // Expiry can occur while foregrounded with no StoreKit transaction update.
+    if (subscription.entitled() && ! hasAccess())
+    {
+        auto expired = subscription;
+        expired.access = vp::store::Access::locked;
+        expired.hadSubscription = true;
+        onSubscriptionStatus (expired);
+        vp::store::reloadProducts(); // A verified renewal may restore access.
+    }
+   #endif
     snap = engine.snapshot();
+    if (! snap.aiModelFailed)
+        aiModelErrorShown = false;
+    if (snap.aiModelFailed && ! aiModelErrorShown && hasAccess()
+        && ! splash.isVisible() && ! paywall.isVisible())
+    {
+        aiModelErrorShown = true;
+        inputInfoChecked = true;
+        inputInfo.setContent (vpui::L ("AI UNAVAILABLE", "AI NON DISPONIBILE"),
+            vpui::L ("The tempo model could not be loaded. Automatic following is unavailable. "
+                     "Use TAP to set the tempo yourself, or choose FIXED in Settings. "
+                     "Restart the app; if the problem persists, contact support.",
+                     "Il modello del tempo non si è caricato. Il riconoscimento automatico non è disponibile. "
+                     "Usa TAP per dare il tempo oppure scegli FISSO nelle impostazioni. "
+                     "Riavvia l’app; se il problema persiste, contatta l’assistenza."));
+        inputInfo.setConfirmText (vpui::L ("OK", "OK"));
+        inputInfo.setBounds (getLocalBounds());
+        inputInfo.open();
+    }
     if (! inputInfoChecked && ! splash.isVisible() && ! paywall.isVisible())
     {
         inputInfoChecked = true;
@@ -2977,80 +2937,6 @@ void MainComponent::timerCallback()
         vp::haptic (vp::Haptic::success);
     }
     wasAudible = heardPart;
-    if (restartLogPending
-        && juce::Time::getMillisecondCounterHiRes() - restartWallMs > 4000.0)
-    {
-        restartLogPending = false;
-        writeRestartLog();
-    }
-    // VPLAG: once every 5 s while the part sounds - is the analysis keeping up
-    // over a long set (docs/TODO.md item 74)? lead = the projection actually
-    // applied, coda = audio still waiting for the worker. Both should stay
-    // flat; if they climb, the device is falling behind.
-    {
-        static uint32_t lastNudges = 0;
-        if (snap.phaseNudgeCount != lastNudges)
-        {
-            lastNudges = snap.phaseNudgeCount;
-            juce::Logger::outputDebugString ("VPNUDGE ricentro n." + juce::String (static_cast<int> (lastNudges))
-                 + "  bpm " + juce::String (snap.bpm, 1));
-        }
-    }
-    {
-        static int lagTicks = 0;
-        static const juce::uint32 lagStartMs = juce::Time::getMillisecondCounter();
-        if (snap.percussionAudible && ++lagTicks >= 75)
-        {
-            lagTicks = 0;
-            const double sr = snap.sampleRate > 0.0 ? snap.sampleRate : 48000.0;
-            const int up = static_cast<int> ((juce::Time::getMillisecondCounter() - lagStartMs) / 1000);
-            const float beatMs = 60000.0f / juce::jmax (40.0f, snap.bpm);
-            auto* lagDevice = deviceManager.getCurrentAudioDevice();
-            juce::Logger::outputDebugString ("VPLAG t " + juce::String (up / 60) + ":"
-                 + juce::String (up % 60).paddedLeft ('0', 2)
-                 + "  lead " + juce::String (snap.leadMs, 0) + " ms"
-                 + "  coda " + juce::String (snap.analysisBacklog * 1000.0 / sr, 0) + " ms"
-                 + "  callback " + juce::String (snap.callbackMs, 2) + " ms"
-                 + "  rete " + juce::String (engine.analysisInferMs(), 2) + " ms"
-                 + (engine.analysisUsesCoreMl() ? " CoreML" : " CPU")
-                 + "  analisi " + juce::String (engine.analysisLoadPercent(), 1) + "%"
-                 + "  buchi " + juce::String (snap.analysisGaps)
-                 + "  restart " + juce::String (snap.analysisRestarts)
-                 + "  bpm " + juce::String (snap.bpm, 1)
-                 + "  clock " + juce::String (snap.clockBpm, 1)
-                 + "  conf " + juce::String (snap.confidence, 2)
-                 + "  fase " + juce::String (snap.phaseErrorBeats * beatMs, 0) + " ms"
-                 + "  ricentri " + juce::String (static_cast<int> (snap.phaseNudgeCount))
-                 + "  uscita " + juce::String (outputLatencyMs, 0) + " ms"
-                 + "  xrun " + juce::String (lagDevice != nullptr ? lagDevice->getXRunCount() : -1)
-                 + "  tagli " + juce::String (engine.hardSteals())
-                 + "  vuoti brano " + juce::String (static_cast<int> (trackDropouts.load (std::memory_order_relaxed))));
-        }
-    }
-   #if JUCE_DEBUG && JUCE_IOS // VPDIAG temporaneo: crack/silenzio al ridimensionamento (TODO item 56)
-    {
-        static int diagTicks = 0;
-        static uint32_t diagBlocks = 0;
-        if (++diagTicks >= 15)
-        {
-            diagTicks = 0;
-            auto* d = deviceManager.getCurrentAudioDevice();
-            const uint32_t b = audioBlocks.load (std::memory_order_relaxed);
-            juce::Logger::outputDebugString ("VPDIAG sess " + juce::String (vp::sessionSampleRate())
-                 + " / " + juce::String (vp::sessionBufferFrames())
-                 + "  dev " + juce::String (d != nullptr ? d->getCurrentSampleRate() : 0.0)
-                 + " / " + juce::String (d != nullptr ? d->getCurrentBufferSizeSamples() : 0)
-                 + "  xrun " + juce::String (d != nullptr ? d->getXRunCount() : -1)
-                 + "  play " + juce::String (d != nullptr && d->isPlaying() ? 1 : 0)
-                 + "  ready " + juce::String (audioReady ? 1 : 0)
-                 + "  blocchi/s " + juce::String ((int) (b - diagBlocks))
-                 + "  outpk " + juce::String (diagOutPeak.exchange (0.0f), 4)
-                 + "  rebuild " + juce::String (deviceRebuilds));
-            diagBlocks = b;
-        }
-    }
-   #endif
-
     // Both directions ease, and at the same rate: the orb is a position,
     // so rushing it one way and lagging the other would read as a bias.
     // At 15 Hz a factor of 0.22 is most of the way across in about a third
@@ -3222,7 +3108,7 @@ void MainComponent::timerCallback()
             // have to switch AUTO to 44100 and back". Bounded, the app does that
             // reopen itself after a second.
             if (++stalledTicks >= 12)
-                rebuildAudioDevice ("device open but never prepared");
+                rebuildAudioDevice();
         }
         else if (haveDevice && ! playing)
         {
@@ -3231,7 +3117,7 @@ void MainComponent::timerCallback()
             // that it is no longer playing. Allow transient route changes a
             // second before replacing the failed unit.
             if (++stalledTicks >= 12)
-                rebuildAudioDevice ("audio device stopped after interruption");
+                rebuildAudioDevice();
         }
         else
         {
@@ -3239,19 +3125,13 @@ void MainComponent::timerCallback()
             // device that is supposed to be running. Long enough that a busy
             // moment on the message thread cannot trigger it.
             if (++stalledTicks >= 12)
-                rebuildAudioDevice (haveDevice ? "no audio callback for a second"
-                                               : "no audio device");
+                rebuildAudioDevice();
         }
     }
    #if JUCE_IOS
     if (resizeSettleTicks > 0 && --resizeSettleTicks == 0)
     {
         auto* device = deviceManager.getCurrentAudioDevice();
-       #if JUCE_DEBUG
-        juce::Logger::outputDebugString ("VPDIAG resize xruns "
-            + juce::String (resizeXrunsBefore) + " -> "
-            + juce::String (device != nullptr ? device->getXRunCount() : -1));
-       #endif
         if (! a2dpResizeRecovered && rebuildCooldownTicks == 0
             && device != nullptr && audioReady
             && internalTrackSelected() && trackTransport.isPlaying()
@@ -3262,8 +3142,6 @@ void MainComponent::timerCallback()
             // A2DP audio after resize xruns. CLOCK/BUFFER fixes it by opening
             // a fresh unit; do that once after the gesture settles, keeping
             // the same rate so the percussion clock is not prepared again.
-            lastRebuildWhy = "AirPods resize xrun";
-            ++deviceRebuilds;
             rebuildCooldownTicks = 30;
             a2dpResizeRecovered = true;
             // Rate 0 makes JUCE reopen the existing device, then choose its
@@ -3312,12 +3190,12 @@ void MainComponent::timerCallback()
     // join its key, or it will only show when something else moves.
     {
         const auto q = [] (float v) { return static_cast<juce::int64> (juce::roundToInt (v * 256.0f)); };
-        const std::array<juce::int64, 6> page {
+        const std::array<juce::int64, 5> page {
             washStep, static_cast<juce::int64> (stateSmooth.getARGB()),
             stateIsHot (snap.followBar) ? 1 : 0, tapFlash > 0 ? 1 : 0,
-            gDarkMode ? 1 : 0, debugOpen ? 1 : 0
+            gDarkMode ? 1 : 0
         };
-        const std::array<juce::int64, 18> stage {
+        const std::array<juce::int64, 20> stage {
             static_cast<juce::int64> (snap.followBar), juce::roundToInt (snap.bpm * 10.0f),
             q (tempoBloomLead), q (tempoBloomAmount), q (heroBloomAmt), q (tapAlignFlash),
             snap.tempoFollow ? 1 : 0, snap.levelSettled ? 1 : 0, snap.tempoRegime,
@@ -3325,10 +3203,10 @@ void MainComponent::timerCallback()
             snap.grooveStyle, q (snap.grooveStyleConfidence),
             engine.settings().grooveAuto.load() ? 1 : 0, static_cast<juce::int64> (trust),
             snap.driftGuarded ? 1 : 0,
+            snap.aiModelFailed ? 1 : 0, snap.percussionAudible ? 1 : 0,
             snap.clapAllowed ? 1 : (engine.settings().clapEnabled.load() ? 2 : 0)
         };
-        // The debug panel prints live numbers over the stage: repaint it all.
-        if (debugOpen || page != lastPageKey)
+        if (page != lastPageKey)
             repaint();
         else if (stage != lastStageKey)
             repaint (stageArea().expanded (24));
@@ -3361,7 +3239,7 @@ void MainComponent::showGuide()
 bool MainComponent::hasAccess() const noexcept
 {
    #if VP_PAYWALL_ENFORCED
-    return subscription.entitled();
+    return subscription.entitledAt (juce::Time::currentTimeMillis() / 1000.0);
    #else
     return true;
    #endif
@@ -3377,21 +3255,36 @@ bool MainComponent::requireAccess()
 
 void MainComponent::showPaywall (bool show)
 {
+    if (! hasAccess())
+        show = true;
     if (show == paywall.isVisible())
         return;
     if (show)
     {
+        juce::PopupMenu::dismissAllActiveMenus();
         styleMenu.dismiss();
         soundMenu.dismiss();
+        if (! hasAccess())
+        {
+            setSettingsOpen (false);
+            faderZoom.setVisible (false);
+            inputInfo.setVisible (false);
+            bpmEdit.setVisible (false);
+        }
         paywall.setBounds (getLocalBounds());
         paywall.setSafeArea (effectiveSafeArea());
         paywall.setNotice (PaywallOverlay::Notice::none);
+        paywall.setAlwaysOnTop (true);
         paywall.setVisible (true);
-        paywall.toFront (false);
-        splash.toFront (false);
+        if (! paywall.isCurrentlyModal())
+            paywall.enterModalState (true);
+        paywall.toFront (true);
     }
     else
+    {
+        paywall.exitModalState (0);
         paywall.setVisible (false);
+    }
     repaint();
 }
 
@@ -3406,21 +3299,21 @@ void MainComponent::onSubscriptionStatus (const vp::store::Status& s)
    #endif
 
    #if VP_PAYWALL_ENFORCED
-    if (s.access == vp::store::Access::locked)
+    const bool allowed = hasAccess();
+    const juce::int64 deadline = ! allowed ? -1 : (s.ownsLifetime() ? 0
+        : static_cast<juce::int64> (s.expiresAt * 1000.0));
+    entitlementAudioDeadline.store (deadline, std::memory_order_release);
+    if (! allowed)
     {
-        // Never in the middle of a song. The status is read again whenever
-        // the app comes back to the foreground (StoreKitBridge.swift), and
-        // a live set is exactly when a locked iPad gets unlocked: a trial
-        // that ended under the band, or a refund, must not cut the part or
-        // cover the console. The part plays on; START and PLAY ask next
-        // time (requireAccess).
-        const bool playing = userWantsArmed || trackTransport.isPlaying();
-        if (! playing && ! paywallAutoShown)
-        {
-            paywallAutoShown = true;
-            showPaywall (true);
-        }
+        userWantsArmed = false;
+        burstArmed = false;
+        engine.requestStop();
+        trackTransport.stop();
+        refreshStartButton();
+        showPaywall (true);
     }
+    else
+        showPaywall (false);
    #endif
 }
 

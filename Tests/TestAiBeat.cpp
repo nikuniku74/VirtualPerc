@@ -2860,6 +2860,8 @@ static void runHeardPhaseLockBench()
         float earlyHalf = 0.0f, lateHalf = 0.0f;
         int   earlyN = 0, lateN = 0;
         int   offLevel = 0;
+        float displayLo = 1000.0f, displayHi = 0.0f;
+        int displaySamples = 0;
         int pos = 0, blocks = 0, samplesInHop = 0;
         bool workerDrained = true;
         vp::EngineSnapshot last;
@@ -2879,6 +2881,13 @@ static void runHeardPhaseLockBench()
                                   && octaves > -0.5f && octaves < 1.5f;
             if (! onOctave && pos > static_cast<int> (sr * 14.0))
                 ++offLevel;
+            if (pos > static_cast<int> (sr * 25.0)
+                && last.state == vp::TrackingState::following && onOctave)
+            {
+                displayLo = std::min (displayLo, last.bpm);
+                displayHi = std::max (displayHi, last.bpm);
+                ++displaySamples;
+            }
             if (last.state == vp::TrackingState::following && onOctave)
             {
                 const float k = std::exp2 (std::round (octaves));
@@ -2928,12 +2937,14 @@ static void runHeardPhaseLockBench()
         const float lead = last.attackLeadMs;
         const float earlyErrMs = meanEarly * beatMs - lead;
         const float lateErrMs = meanLate * beatMs - lead;
+        const float displaySpan = displaySamples > 0 ? displayHi - displayLo : 0.0f;
         std::printf ("phase-lock %5.1f BPM  bpm=%6.2f lead=%5.1fms attack=%5.1fms"
-                     "  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
+                     "  display-span=%.3f  mean %+.3f -> %+.3f beat  (%+.0f -> %+.0f ms)"
                      "  err %+.1f -> %+.1f ms  worst=%.3f  regime=%d  offLevel=%d\n",
                      static_cast<double> (trackBpm), static_cast<double> (last.bpm),
                      static_cast<double> (last.leadMs),
                      static_cast<double> (lead),
+                     static_cast<double> (displaySpan),
                      static_cast<double> (meanEarly), static_cast<double> (meanLate),
                      static_cast<double> (meanEarly * beatMs),
                      static_cast<double> (meanLate * beatMs),
@@ -2943,6 +2954,8 @@ static void runHeardPhaseLockBench()
 
         expect (workerDrained,
                 "ONNX analysis worker completes every paced input hop");
+        expect (displaySamples > 0 && displaySpan < 0.25f,
+                "a click-locked BPM display stays within a quarter BPM after settling");
         // From 14 s to the end every block is on the pulse or on its held
         // half, never a 3:2, and both halves have been measured.
         expect (offLevel == 0 && earlyN > 0 && lateN > 0,
@@ -9957,40 +9970,6 @@ void vpRunEvidenceTrustTest (int& passed, int& failed)
     expect (proven > 100.75f && proven > ordinary + 0.50f,
             "proven motion hint bypasses stale linear-fit glide penalty");
 
-    // A detected long rest preserves the counted grid, not a stale target.
-    {
-        vp::TempoFollower rest;
-        rest.prepare (48000.0);
-        rest.forceTempo (120.0f);
-        rest.setLocked (true);
-        rest.setTargetTempo (121.0f, 1.0f); // A target still settling at the break.
-        rest.glidePhase (0.15f, 2.0f);
-        rest.setBeatGapHold (true);
-        bool held = true;
-        for (int i = 0; i < 5625; ++i) // Thirty seconds, uninterrupted clock.
-        {
-            rest.setTargetTempo ((i & 1) ? 110.0f : 60.0f, 0.9f);
-            rest.setGridPhase (0.2f, 0.1f);
-            const auto tick = rest.advance (256);
-            held = held && std::fabs (rest.currentTempo() - 120.0f) < 1.0e-5f
-                        && std::fabs (tick.soundingTempoBpm - 120.0f) < 1.0e-4f
-                        && ! tick.reanchored;
-        }
-        expect (held && rest.beatsElapsed() >= 59 && rest.beatsElapsed() <= 60,
-                "detected long rest holds BPM and phase travel despite targets and pending glide");
-        rest.setBeatGapHold (false);
-        rest.setTargetTempo (110.0f, 0.9f);
-        for (int i = 0; i < 375; ++i)
-            rest.advance (256);
-        expect (rest.currentTempo() < 111.0f,
-                "fresh tempo targets resume when the detected rest ends");
-        rest.setBeatGapHold (true);
-        rest.beginTempoTransition (132.0f);
-        const auto transition = rest.advance (256);
-        expect (std::fabs (transition.tempoBpm - 132.0f) < 1.0e-4f,
-                "confirmed tempo transition bypasses the detected rest hold");
-    }
-
     auto recoveryAfterTwoBeats = [] (bool armFromDropout)
     {
         vp::TempoFollower follower;
@@ -10507,48 +10486,6 @@ struct BeatDecoderTimingProbe
 
 struct EngineAudioProbe
 {
-    static bool sourceSilenceBoundary (double sr, int block)
-    {
-        VirtualPercussionEngine e;
-        e.sampleRate = sr;
-        e.cfg.tempoFollow.store (true);
-        e.cfg.inputGain.store (1.0f);
-        e.lastBpm.store (120.0f);
-        auto gap = [&] (FollowSource source, float peak, double seconds)
-        {
-            bool restart = false;
-            for (int64_t pos = 0; pos < static_cast<int64_t> (sr * seconds); pos += block)
-                restart |= e.resumedAfterSourceSilence (block, peak, source);
-            return restart;
-        };
-        bool ok = true;
-        for (const auto source : { FollowSource::internalPlayer, FollowSource::kitMic })
-        {
-            e.resetAnalysisLevelState();
-            ok &= ! gap (source, 0.0f, 3.1);
-            ok &= e.resumedAfterSourceSilence (block, 0.1f, source);
-            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
-            ok &= ! gap (source, 0.0f, 1.0);
-            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
-            ok &= ! gap (source, 0.003f, 10.0); // Quiet music, without drums.
-            ok &= ! e.resumedAfterSourceSilence (block, 0.1f, source);
-        }
-        ok &= ! gap (FollowSource::speaker, 0.0f, 4.0);
-        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::speaker);
-        e.cfg.tempoFollow.store (false);
-        ok &= ! gap (FollowSource::internalPlayer, 0.0f, 4.0);
-        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::internalPlayer);
-        e.cfg.tempoFollow.store (true);
-        e.cfg.inputGain.store (0.0f);
-        ok &= ! gap (FollowSource::kitMic, 0.0f, 4.0);
-        e.cfg.inputGain.store (1.0f);
-        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::kitMic);
-        gap (FollowSource::internalPlayer, 0.0f, 4.0);
-        e.resetAnalysisLevelState();
-        ok &= ! e.resumedAfterSourceSilence (block, 0.1f, FollowSource::internalPlayer);
-        return ok;
-    }
-
     static bool entryGuard (double sr, int block)
     {
         VirtualPercussionEngine e;
@@ -10694,6 +10631,52 @@ struct EngineAudioProbe
 
 struct BeatTrackerTimingProbe
 {
+    static bool productionModelFailure()
+    {
+        struct Network final : IBeatModel
+        {
+            explicit Network (bool ok) : prepares (ok) {}
+            bool prepare (int) override { return prepares; }
+            void reset() override {}
+            bool infer (const float*, int, float*) override { return false; }
+            bool usesOnnx() const noexcept override { return true; }
+            bool prepares;
+        };
+        NeuralBeatTracker worker;
+        worker.setModel (std::make_unique<StubBeatModel>());
+        worker.prepareModel (true);
+        bool ok = worker.modelFailed() && ! worker.usingOnnx() && ! worker.model;
+        worker.setModel (std::make_unique<Network> (false));
+        worker.prepareModel (true);
+        ok &= worker.modelFailed() && ! worker.usingOnnx() && ! worker.model;
+        worker.setModel (std::make_unique<Network> (true));
+        worker.prepareModel (true);
+        ok &= ! worker.modelFailed() && worker.usingOnnx();
+        worker.setModel (std::make_unique<Network> (false));
+        worker.prepareModel (false);
+        ok &= ! worker.modelFailed() && ! worker.usingOnnx() && worker.model != nullptr;
+
+        BeatTracker t;
+        t.follower.prepare (48000.0);
+        t.follower.forceTempo (120.0f);
+        t.heldBpm = 120.0f;
+        t.currentState = TrackingState::following;
+        t.armed = true;
+        t.startImmediately = true;
+        t.neural.modelFailedFlag.store (true);
+        float silence[256] {};
+        const auto automatic = t.process (silence, 256);
+        ok &= automatic.aiModelFailed && ! automatic.percussionShouldPlay;
+        t.tapEstablished = true;
+        const auto tapped = t.process (silence, 256);
+        ok &= tapped.aiModelFailed && tapped.percussionShouldPlay && tapped.tempoOwned;
+        t.tapEstablished = false;
+        t.tempoFollow = false;
+        const auto fixed = t.process (silence, 256);
+        ok &= fixed.aiModelFailed && fixed.percussionShouldPlay && fixed.tempoOwned;
+        return ok;
+    }
+
     static bool startRequiresProvenTempo()
     {
         for (int owner = 0; owner < 9; ++owner)
@@ -11480,13 +11463,14 @@ void vpRunDeclareBarHereClockTest (int& passed, int& failed)
 
 void vpRunStateTimingTest (int& passed, int& failed)
 {
+    const bool modelPolicy = vp::BeatTrackerTimingProbe::productionModelFailure();
+    std::printf ("state-timing production AI failure blocks auto/stub, preserves TAP/FIXED %s\n",
+                 modelPolicy ? "PASS" : "FAIL");
+    (modelPolicy ? passed : failed)++;
+
     for (double sr : { 44100.0, 48000.0 })
         for (int block : { 64, 256, 1024 })
         {
-            const bool boundary = vp::EngineAudioProbe::sourceSilenceBoundary (sr, block);
-            std::printf ("state-timing source silence reopens acquisition sr=%.0f block=%d %s\n",
-                         sr, block, boundary ? "PASS" : "FAIL");
-            (boundary ? passed : failed)++;
             const bool entryGuard = vp::EngineAudioProbe::entryGuard (sr, block);
             std::printf ("state-timing output entry guard sr=%.0f block=%d %s\n",
                          sr, block, entryGuard ? "PASS" : "FAIL");

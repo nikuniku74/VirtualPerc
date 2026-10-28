@@ -104,15 +104,19 @@ two direct-worker fixtures do not release held audio, and the worker-wake test
 measures the real polling delay. TODO159's supplemental whole-suite paced run
 adds four failures that pass normally (including a mismatched-tempo canceller
 pair); do not use that total as the production regression result. Latest
-verified ledger: TODO164, default full-wake797/0;325 paired probes lose no
-regression gates.52 actual-output lifecycle pairs remove38 red openings to0.
+verified ledger: TODO168 after withdrawing165/166, default full-wake798/0;
+325/325 paired traces byte-identical to164, no regression gates lost.
+The164 reference has52 actual-output lifecycle pairs removing38 red openings to0.
 Nominal timing alone cannot certify heard startup. See verification.md for
 CPU cost,64-frame stress failures and physical iPad evidence. TODO163 closes
 the earlier5ms fortissimo residual:9 velocities ×3 gains ×16 strokes ×3 RR,
 0ms isolated spread (53/0). Earlier totals/remaining5ms are historical.
 The user hears a cleaner but imperfectly timed Canzone entrance; its tonal
 intro phase remains displaced despite correct BPM. No phase improvement is
-claimed. Final clean build/install pass; final launch was screen-locked.
+claimed. Latest build3 compiles and signature passes; build3 installed/launched on the iPad27Oct. User confirms the logo without a
+black tile, animated dots and locked purchase page; this is visual validation,
+not a new musical or thermal test. See verification.md for48 CPU runs and host
+wall-time outliers; do not claim all callback maxima pass or iPad thermal safety.
 The full suite is slow; buffered silence alone is not a hang.
 
 Scripted bar-reentry fixtures drain already-fed input every eight callbacks

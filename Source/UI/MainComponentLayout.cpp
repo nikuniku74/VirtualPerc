@@ -944,8 +944,8 @@ void MainComponent::layoutSettings (juce::Rectangle<int> area)
             s->setMouseDragSensitivity (juce::jmax (60, s->getWidth() - 30));
     }
 
-    buttonRow (card (take (h[kTests]), vpui::L ("PERCUSSION / TESTS", "PERCUSSIONI / PROVE")),
-               { &themeButton, &clickButton, &latencyButton });
+    buttonRow (card (take (h[kTests]), vpui::L ("APPEARANCE / AUDIO", "ASPETTO / AUDIO")),
+               { &themeButton, &latencyButton });
 
     layoutTrackWaveform();
 }

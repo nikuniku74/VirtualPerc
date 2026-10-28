@@ -17,3 +17,11 @@ The licence allows use in apps as part of a new creative work and forbids
 redistributing the sound by itself or in a sound library. Whether embedding them
 as an app's playable effects is covered is **not settled**: see `docs/APPSTORE.md`
 and `docs/store/samplefocus-email.md`.
+
+
+## Publisher confirmation — 2026-10-26
+
+The publisher explicitly confirms rights to distribute the JUCE-based app and
+the included SampleFocus conga, shaker and effect sounds. Supporting documents
+will be identified by the publisher; they have not yet been examined here.
+This records that confirmation, not a new interpretation of the standard terms.

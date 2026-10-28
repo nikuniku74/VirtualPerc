@@ -68,7 +68,8 @@ import UIKit
             object: nil, queue: .main) { [weak self] _ in
                 Task { await self?.refresh() }
             }
-        Task { await loadProducts(); await refresh() }
+        // Cached signed access must not wait for the network price request.
+        Task { await refresh(); await loadProducts(); await refresh() }
     }
 
     @objc public func reloadProducts() {

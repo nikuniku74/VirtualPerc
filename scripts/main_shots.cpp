@@ -35,6 +35,7 @@ namespace
     }
 
     bool inputChannelTest = false;
+    bool accessTest = false;
     struct NullDevice;
     std::atomic<NullDevice*> gDevice { nullptr };
     // The manager deletes the device on the message thread while the feeder
@@ -175,7 +176,7 @@ namespace
         file.deleteFile();
         juce::FileOutputStream out (file);
         juce::PNGImageFormat png;
-        if (out.openedOk() && png.writeImageToStream (img, out))
+        if (out.openedOk() && png.writeImageToStream (juce::SoftwareImageType().convert (img).convertedToFormat (juce::Image::RGB), out))
             std::printf ("  %s\n", file.getFileName().toRawUTF8());
         else
             std::printf ("  FAILED %s\n", file.getFullPathName().toRawUTF8());
@@ -186,10 +187,32 @@ namespace
 /** Steps through the shots on the message thread, a tick every 50 ms. */
 struct VPShotsAccess final : juce::Timer
 {
+    static int captureSplash (const juce::File& dir)
+    {
+        dir.createDirectory();
+        MainComponent::SplashOverlay splash;
+        if (! splash.logo.isValid())
+            return 1;
+        struct Size { const char* name; int w, h; float scale; };
+        for (const auto size : { Size { "iphone", 440, 956, 3.0f },
+                                 Size { "ipad", 1032, 1376, 2.0f } })
+        {
+            splash.setSize (size.w, size.h);
+            for (const int ms : { 0, 480, 960, 1440, 1920 })
+            {
+                splash.animMs = ms;
+                save (splash.createComponentSnapshot (splash.getLocalBounds(), true, size.scale),
+                      dir.getChildFile (juce::String (size.name) + "-" + juce::String (ms) + ".png"));
+            }
+        }
+        std::printf ("native splash frames written to %s\n", dir.getFullPathName().toRawUTF8());
+        return 0;
+    }
+
     /** What a shot shows: the page playing, or SETUP (its top, its end) or
         the guide over it, with the song still coming in. */
     enum Mode { playing, settings, settingsEnd, guide, fixedTempo };
-    struct Shot { const char* name; int w, h; Mode mode; };
+    struct Shot { const char* name; int w, h; Mode mode; float scale; };
 
     VPShotsAccess (MainComponent& m, const juce::File& d, std::function<void (int)> done)
         : mc (m), dir (d), finished (std::move (done))
@@ -197,18 +220,21 @@ struct VPShotsAccess final : juce::Timer
         // No first-launch popup and no landing: the page as it is once in use.
         mc.inputInfoChecked = true;
         mc.splash.setVisible (false);
+        // Store illustrations use the raw-input choice recommended by the guide.
+        if (! inputChannelTest && ! accessTest)
+            mc.applyInputProcessingChoice (false);
         startTimer (50);
     }
 
     void timerCallback() override
     {
-        if (inputChannelTest)
+        if (inputChannelTest || accessTest)
         {
             elapsed += 0.05;
             if (elapsed < 1.0 || gDevice.load() == nullptr)
                 return;
             stopTimer();
-            finished (checkInputChannels() ? 0 : 1);
+            finished ((accessTest ? checkAudioAccess() : checkInputChannels()) ? 0 : 1);
             return;
         }
         // The page's frame (ball, lit tiles, ring) has no display link offscreen.
@@ -278,7 +304,7 @@ struct VPShotsAccess final : juce::Timer
                 // Shot at once: offscreen the field has no window to keep
                 // its focus and closes again on the next message.
                 mc.bpmEntryButton.onClick();
-                save (mc.createComponentSnapshot (mc.getLocalBounds(), true, 2.0f),
+                save (mc.createComponentSnapshot (mc.getLocalBounds(), true, shots[index].scale),
                       dir.getChildFile (juce::String (s.name) + "-scrivi.png"));
                 mc.bpmEdit.hideEditor (true);
                 // The typed tempo has to stick: type, press return, read the
@@ -355,6 +381,69 @@ struct VPShotsAccess final : juce::Timer
         }
     }
 
+    bool checkAudioAccess()
+    {
+        // No message-loop timer or hardware callback can enforce expiry for this test.
+        mc.stopTimer();
+        gDevice.load()->stop();
+        mc.prepareToPlay (256, 48000.0);
+        mc.hitSamples[0].setSize (1, 1024);
+        juce::FloatVectorOperations::fill (mc.hitSamples[0].getWritePointer (0), 0.25f, 1024);
+        auto& voice = mc.hitVoices[0];
+        voice.selected.store (0);
+        voice.gain.store (1.0f);
+        juce::AudioBuffer<float> audio (2, 256);
+        auto pump = [&]
+        {
+            audio.clear();
+            mc.getNextAudioBlock ({ &audio, 0, 256 });
+            return audio.getMagnitude (0, 256);
+        };
+        int failed = 0;
+        auto check = [&] (bool ok, const char* label)
+        {
+            std::printf ("%s %s\n", ok ? "PASS" : "FAIL", label);
+            if (! ok) ++failed;
+        };
+        vp::store::Status s;
+        mc.onSubscriptionStatus (s);
+        voice.request.fetch_add (1);
+        check (pump() == 0.0f, "checking silences the actual audio callback");
+
+        s.access = vp::store::Access::trial;
+        s.activePlanId = vp::store::kMonthlyId;
+        s.expiresAt = juce::Time::currentTimeMillis() / 1000.0 + 3600.0;
+        mc.onSubscriptionStatus (s);
+        check (pump() == 0.0f, "unlock does not replay a blocked effect request");
+        voice.request.fetch_add (1);
+        check (pump() > 0.2f, "valid trial permits actual audio output");
+
+        s.expiresAt = juce::Time::currentTimeMillis() / 1000.0 + 0.030;
+        mc.onSubscriptionStatus (s);
+        juce::Thread::sleep (40);
+        voice.request.fetch_add (1);
+        check (pump() == 0.0f && ! voice.sounding.load(),
+               "expiry silences audio and effects without any UI timer tick");
+
+        s.access = vp::store::Access::subscribed;
+        s.expiresAt = juce::Time::currentTimeMillis() / 1000.0 + 3600.0;
+        mc.onSubscriptionStatus (s);
+        check (pump() == 0.0f, "renewal does not replay an expired effect request");
+        voice.request.fetch_add (1);
+        check (pump() > 0.2f, "verified renewal permits new audio");
+
+        s.activePlanId = vp::store::kLifetimeId;
+        s.expiresAt = 0.0;
+        mc.onSubscriptionStatus (s);
+        voice.request.fetch_add (1);
+        check (pump() > 0.2f, "lifetime needs no deadline");
+        s.activePlanId = vp::store::kMonthlyId;
+        mc.onSubscriptionStatus (s);
+        check (pump() == 0.0f, "period with missing expiry fails closed");
+        std::fflush (stdout);
+        return failed == 0;
+    }
+
     bool checkInputChannels()
     {
         mc.engine.settings().followSource.store (static_cast<int> (vp::FollowSource::kitMic));
@@ -416,23 +505,25 @@ struct VPShotsAccess final : juce::Timer
     {
         mc.timerCallback();
         mc.updateBeatDots();
-        save (mc.createComponentSnapshot (mc.getLocalBounds(), true, 2.0f), dir.getChildFile (name + ".png"));
+        save (mc.createComponentSnapshot (mc.getLocalBounds(), true, shots[index].scale), dir.getChildFile (name + ".png"));
     }
 
     MainComponent& mc;
     juce::File dir;
     std::function<void (int)> finished;
     static constexpr Shot shots[] = {
-        { "iphone", 393, 852, playing },
-        { "iphone-impostazioni", 393, 852, settings },
-        { "iphone-impostazioni-fine", 393, 852, settingsEnd },
-        { "iphone-guida", 393, 852, guide },
-        { "iphone-fisso", 393, 852, fixedTempo },
-        { "ipad", 834, 1194, playing },
-        { "ipad-impostazioni", 834, 1194, settings },
-        { "ipad-guida", 834, 1194, guide },
-        { "ipad-fisso", 834, 1194, fixedTempo },
-        { "ipad-orizzontale", 1194, 834, playing },
+        { "iphone", 402, 874, playing, 3.0f },
+        { "iphone69", 440, 956, playing, 3.0f },
+        { "iphone69-impostazioni", 440, 956, settings, 3.0f },
+        { "iphone-impostazioni", 402, 874, settings, 3.0f },
+        { "iphone-impostazioni-fine", 402, 874, settingsEnd, 3.0f },
+        { "iphone-guida", 402, 874, guide, 3.0f },
+        { "iphone-fisso", 402, 874, fixedTempo, 3.0f },
+        { "ipad", 1032, 1376, playing, 2.0f },
+        { "ipad-impostazioni", 1032, 1376, settings, 2.0f },
+        { "ipad-guida", 1032, 1376, guide, 2.0f },
+        { "ipad-fisso", 1032, 1376, fixedTempo, 2.0f },
+        { "ipad-orizzontale", 1376, 1032, playing, 2.0f },
     };
     int index = 0, phase = 0;
     double elapsed = 0.0;
@@ -461,13 +552,21 @@ public:
         const auto args = getCommandLineParameterArray();
         if (args.isEmpty())
         {
-            std::printf ("usage: VPShots <out-dir> [song.wav] [it|en] | --input-channels\n");
+            std::printf ("usage: VPShots <out-dir> [song.wav] [it|en] | --input-channels | --access | --splash <dir>\n");
             setApplicationReturnValue (2);
             quit();
             return;
         }
+        if (args[0] == "--splash" && args.size() > 1)
+        {
+            setApplicationReturnValue (VPShotsAccess::captureSplash (
+                juce::File::getCurrentWorkingDirectory().getChildFile (args[1])));
+            quit();
+            return;
+        }
         inputChannelTest = args[0] == "--input-channels";
-        const auto dir = inputChannelTest ? juce::File::getSpecialLocation (juce::File::tempDirectory)
+        accessTest = args[0] == "--access";
+        const auto dir = (inputChannelTest || accessTest) ? juce::File::getSpecialLocation (juce::File::tempDirectory)
                                          : juce::File::getCurrentWorkingDirectory().getChildFile (args[0]);
         dir.createDirectory();
         const auto songFile = args.size() > 1
@@ -476,7 +575,7 @@ public:
                   .getChildFile ("vp-bench/wav/39_I_WANNA_DANCE_44k.wav");
         vpui::languageOverride() = (args.size() > 2 && args[2] == "en") ? 0 : 1;
 
-        if (! inputChannelTest)
+        if (! inputChannelTest && ! accessTest)
         {
             juce::AudioFormatManager formats;
             formats.registerBasicFormats();
@@ -505,7 +604,7 @@ public:
         // comes off the message queue: that open lands on the null device.
         page->deviceManager.addAudioDeviceType (std::make_unique<NullType>());
         page->deviceManager.setCurrentAudioDeviceType ("Null", true);
-        if (! inputChannelTest)
+        if (! inputChannelTest && ! accessTest)
             feeder = std::make_unique<Feeder> (song);
         if (feeder != nullptr) feeder->startTimer (10);   // ~ a 512-frame block; the page sees blocks as they come
         steps = std::make_unique<VPShotsAccess> (*page, dir, [this] (int rc)

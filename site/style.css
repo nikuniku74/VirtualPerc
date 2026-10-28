@@ -1,12 +1,6 @@
-/* The app's faces, in the app's order of preference (Source/UI/MainComponentShared.h:
-   Futura Condensed Medium, Avenir Next Condensed, DIN Condensed, Arial Narrow; Futura
-   Bold for the BPM). They are system fonts on Apple devices; elsewhere the stack
-   falls through to a narrow or heavy sans. */
-@font-face { font-family:"VPCond"; font-weight:400 700;
-  src: local("Futura Condensed Medium"), local("Futura-CondensedMedium"), local("Avenir Next Condensed Medium"),
-       local("AvenirNextCondensed-Medium"), local("DIN Condensed"), local("DINCondensed-Bold"), local("Arial Narrow"), local("ArialNarrow"); }
+/* Avenir Next matches the current app UI; Futura remains the display face. */
 :root {
-  --font-ui:"VPCond","Futura","Avenir Next Condensed","DIN Condensed","Arial Narrow",system-ui,-apple-system,sans-serif;
+  --font-ui:"Avenir Next","Avenir",system-ui,-apple-system,sans-serif;
   --font-display:"Futura","Futura-Bold","Avenir Next","Century Gothic",system-ui,-apple-system,sans-serif;
   --bg:#0f0e12; --bg2:#14131a; --panel:#18171f; --line:#2a2933; --text:#f4f4f7; --mute:#a2a1b0;
   --brand:#ff2ec8; --brand-dim:#a3197f; --violet:#9b6bff; --green:#34d17a;
@@ -24,12 +18,12 @@ img { max-width:100%; height:auto; }
 .wrap { max-width:1040px; margin:0 auto; padding-left:22px; padding-right:22px; }
 
 /* header */
-.top { position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:16px;
+.top { flex-wrap:wrap; position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between; gap:16px;
   padding:14px max(22px,calc((100vw - 1040px)/2)); background:rgba(15,14,18,.72); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
   border-bottom:1px solid rgba(255,255,255,.06); }
 .brand { display:flex; align-items:center; gap:10px; color:var(--text); text-decoration:none; font-weight:700; letter-spacing:.08em; font-size:15px; }
-.brand img { border-radius:50%; box-shadow:0 0 18px rgba(255,46,200,.45); }
-.top nav { display:flex; align-items:center; gap:20px; font-size:16px; }
+.brand img { filter:drop-shadow(0 0 12px rgba(255,46,200,.25)); }
+.top nav { flex-wrap:wrap; display:flex; align-items:center; gap:20px; font-size:16px; }
 .top nav a { color:var(--mute); text-decoration:none; }
 .top nav a:hover { color:var(--text); }
 .lang { display:inline-flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
@@ -40,7 +34,7 @@ img { max-width:100%; height:auto; }
 /* hero */
 .hero { text-align:center; padding:44px 0 28px; position:relative; }
 .logo { width:min(520px,86vw); aspect-ratio:1; margin:0 auto; display:block;
-  -webkit-mask-image:radial-gradient(closest-side,#000 74%,transparent 100%); mask-image:radial-gradient(closest-side,#000 74%,transparent 100%);
+
   animation:breathe 4.5s ease-in-out infinite; }
 @keyframes breathe { 0%,100% { filter:drop-shadow(0 0 34px rgba(255,46,200,.22)); transform:scale(1); }
                      50%     { filter:drop-shadow(0 0 60px rgba(255,46,200,.42)); transform:scale(1.015); } }
@@ -73,6 +67,7 @@ h1 em { font-style:normal; background:linear-gradient(90deg,var(--brand),var(--v
 .store { margin:22px 0 0; text-align:center; }
 .store a { display:inline-block; line-height:0; }
 .store img { height:54px; width:auto; }
+.store .coming-soon { display:inline-block; padding:9px 22px; border:1px solid var(--line); border-radius:999px; color:var(--mute); font-weight:700; }
 .chips { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin:22px 0 0; padding:0; list-style:none; }
 .chips li { padding:6px 16px; border:1px solid var(--line); border-radius:999px; color:var(--mute); font-size:16px; background:rgba(255,255,255,.02); }
 
@@ -135,3 +130,24 @@ html.js .en, html.js .it { display:none; }
 html.js.lang-en .en, html.js.lang-it .it { display:revert; }
 
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; } .beats i:nth-child(1) { background:var(--brand); } }
+
+/* FAQ uses native details for keyboard access without another script. */
+.faq-page { max-width:860px; }
+.faq-page [id] { scroll-margin-top:140px; }
+.faq-intro { padding:22px 24px; margin:24px 0; }
+.faq-intro p, .faq-invite p { margin:0; }
+.faq-limits { padding:0; }
+.faq-limits ul { padding-left:23px; }
+.faq-limits li { margin:13px 0; }
+.faq-toc { display:flex; flex-wrap:wrap; gap:10px; margin:30px 0 6px; }
+.faq-toc a { padding:7px 13px; border:1px solid var(--line); border-radius:999px; text-decoration:none; font-size:16px; }
+.faq-group { padding:0; }
+.faq-item { margin:12px 0; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,.025); }
+.faq-item summary { padding:18px 22px; cursor:pointer; font-weight:650; line-height:1.45; }
+.faq-item summary::marker { color:var(--brand); }
+.faq-item summary:focus-visible { outline:2px solid var(--brand); outline-offset:3px; border-radius:14px; }
+.faq-item[open] { border-color:rgba(255,46,200,.38); }
+.faq-answer { padding:0 22px 18px; }
+.faq-answer p { margin:0; }
+.faq-invite p { color:var(--mute); margin-bottom:14px; }
+.top nav a[aria-current="page"] { color:var(--brand); }

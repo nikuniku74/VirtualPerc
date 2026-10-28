@@ -1,6 +1,37 @@
 # App Store: trial di 7 giorni e abbonamento
 
-Stato al 2026-10-15. Cosa c'è nel codice, cosa va fatto fuori dal codice, cosa
+**VERIFICHE SOFTWARE FINALI CONCLUSE (2026-10-26).** La build Store 1.0.0 (3)
+è stata caricata e inviata in revisione il 27/10/2026; stato registrato in
+`docs/TESTFLIGHT.md`. Controllare App Store Connect per lo stato attuale.
+
+Aggiornamento27/10: segnalate interruzioni troppo frequenti in BRANO su FULL.
+FULL1.0.0(2) è ora riallineata al core stabile e avviata sull’iPad; confronto
+d’ascolto: il titolare conferma «Ora è più continua» (TODO169). Questo non
+certifica la scomparsa di ogni interruzione o falso intervento del controllo. FAQ e limiti IT/EN pubblicati su
+`https://virtualpercussionist.it/faq/`.
+
+I tentativi165/166 sono ritirati su approvazione dell'utente. Versione stabile:
+**798/0** suite completa, accesso callback8/0, paywall26/0, evidence5/0;
+**325/325 confronti audio identici al checkpoint164**, zero gate respinti.
+48 misure CPU alternate: nessun peggioramento sistematico, ma picchi wall-time
+sul Mac anche nella baseline; non sono una certificazione dei tempi su iPad.
+Dettagli e limiti in TODO168 e nella verifica canonica.
+
+Build firmata iPad1.0.0(3) verificata, modello reale incorporato, logo trasparente,
+splash con pallini animati e40 immagini Store IT/EN. Il sito è pubblicato e
+HTTPS verificato. Il27/10 la build3 è stata installata e avviata sull’iPad Air13M3: versione
+1.0.0(3) confermata dal sistema, processo3195 ancora attivo al ricontrollo,
+nessun’altra variante dell’app in esecuzione. Il titolare conferma logo senza riquadro nero,
+pallini animati e pagina acquisti senza pulsante di chiusura. La precedente pagina
+acquisti senza chiusura era stata confermata dal titolare.
+Nessun acquisto reale o verifica dei prodotti pubblicati App Store Connect.
+
+Limiti accettati dall'utente: fase dell'intro «Una canzone per te» tralasciata;
+possibile STOP in alcuni cambi dopo silenzio, conservando la policy stabile.
+Il titolare conferma diritti JUCE/SampleFocus e indicherà i documenti;
+non sono stati esaminati. Il vecchio804/0 appartiene al candidato scartato.
+
+Aggiornato al 2026-10-26; le sezioni datate precedenti restano uno storico. Cosa c'è nel codice, cosa va fatto fuori dal codice, cosa
 manca, cosa è sicuro e cosa no. **Non è mai stato provato un acquisto vero**: il
 codice StoreKit compila ma gira solo con un ID Apple di prova (vedi «Come
 provarlo»).
@@ -27,10 +58,12 @@ provarlo»).
   niente account, niente dati: la scheda privacy resta «Dati non raccolti».
 - **Solo transazioni `.verified`** (firmate da Apple) danno accesso. Un file
   locale o una risposta alterata non bastano.
-- **Soft paywall**: l'app si apre, si vede tutto, START e PLAY aprono l'offerta.
-  Piace a App Review (può vedere l'app) e non perde chi vuole solo guardare.
-  Dopo lo splash l'offerta si apre da sola, una volta per avvio, se non c'è
-  accesso. «Non ora» la chiude.
+- **Accesso obbligatorio** (richiesta26/10): senza prova/acquisto valido, anche
+  durante la verifica iniziale, l'offerta è modale e senza icona di chiusura.
+  La console resta coperta; START, PLAY ed effetti non danno accesso alternativo.
+  Acquisto/ripristino/codici validi sono i percorsi di sblocco; condizioni,
+  privacy e licenze restano consultabili. La scadenza/revoca ferma anche una
+  riproduzione già attiva; non è più prevista la grazia fino a STOP.
 - **Si applica solo alle build Release** (`VP_PAYWALL_ENFORCED`): una Run di
   Debug sull'iPad da banco non passa dal paywall. Per vederlo in Debug va
   passato `-DVP_PAYWALL_DEBUG=ON` a `cmake` (`configure-ios.sh` non lo espone).
@@ -120,13 +153,13 @@ l'informativa **non è stata letta da un legale**.
   Non ancora ascoltato né provato su dispositivo: vedi sotto.
 - [ ] **Prove vere dello StoreKit** (sezione 5): acquisto, prova, ripristino,
   scadenza, rimborso, offline.
-- [~] **Scheda dello store** (2026-10-16): screenshot in inglese e italiano pronti nelle
-  misure giuste (iPhone 6,9" 1320x2868 e iPad 13" 2064x2752): console che segue il
-  brano di prova, offerta con prova, impostazioni, stato abbonato, in
-  `docs/store/screenshots/` (18 MB, **non committati** per non appesantire la
-  storia di git; README nella cartella). Console e impostazioni vengono dal
-  simulatore, offerta e stato sono renderizzati da `VPPaywall --store`: **i
-  prezzi lì sono segnaposto**. Restano testi (pronti in `docs/store/`),
+- [~] **Scheda dello store** (2026-10-26): 32 immagini correnti IT/EN in
+  `docs/store/screenshots/`, iPhone 6,3" 1206x2622, iPhone 6,9" 1320x2868 e
+  iPad 13" 2064x2752, RGB senza alpha. Sono rendering dei componenti JUCE
+  effettivi, non catture di dispositivo o simulatore. Prezzi e stato acquisti
+  sono fixture locali. Le vecchie immagini sono conservate nella cartella
+  release; README e manifest descrivono provenienza e limiti.
+  Le immagini non sono committate. Restano testi (pronti in `docs/store/`),
   parole chiave, URL assistenza e classificazione età in App Store Connect.
 - [x] **Versione** `1.0.0` in CMake; `VP_BUILD_NUMBER` va aumentato a ogni invio.
 - [x] **Icona dell'app** = il logo della splash (2026-10-16). Trovato e risolto:
@@ -286,8 +319,8 @@ App Store → Account sandbox*. In sandbox l'abbonamento mensile dura 5 minuti.
 1. Primo avvio, nessun abbonamento: dopo lo splash si apre l'offerta con
    «Prova gratis per 7 giorni», piano annuale selezionato, prezzo e testo di
    rinnovo visibili. START non parte.
-2. «Non ora»: console visibile; START riapre l'offerta; PLAY su un brano
-   caricato idem.
+2. Senza accesso, nessuna croce/«Non ora» per entrare nella console;
+   tocchi esterni, focus/tastiera ed effetti non devono superare il blocco.
 3. Acquisto con prova: foglio di pagamento Apple che dice «7 giorni gratis»; a
    fine acquisto l'offerta si chiude, START parte, il pulsante nelle impostazioni
    dice **TRIAL** e la pagina mostra i giorni rimasti.
@@ -295,9 +328,9 @@ App Store → Account sandbox*. In sandbox l'abbonamento mensile dura 5 minuti.
    senza «gratis»).
 5. Scadenza (in sandbox il mensile dura 5 minuti): con l'app ferma, metti l'app
    in background e riaprila dopo la scadenza → si apre l'offerta con «Riprendi
-   da dove avevi lasciato». Con la parte che suona: **non si ferma** (dal
-   2026-10-20, mai a metà brano); a STOP la parte tace e il prossimo START apre
-   l'offerta.
+   da dove avevi lasciato». Anche in primo piano, la scadenza interrompe
+   parte, brano ed effetti e copre la console; un rinnovo verificato riapre
+   l'accesso. La vecchia grazia fino a STOP è stata rimossa su richiesta26/10.
 6. Ripristina acquisti su un secondo dispositivo: si sblocca.
 7. Modalità aereo con abbonamento valido: l'app resta sbloccata. Modalità aereo
    senza abbonamento: «App Store non raggiungibile», *Riprova*.
@@ -354,3 +387,15 @@ durata della prova (`daysLeft(..., cap)`, con test).
   Futura Condensed ecc. esistono anche su iOS, ma i margini dell'isola
   dinamica sono simulati con 59 pt).
 - La build iOS firmata, l'Archive e l'installazione su un dispositivo.
+
+### Aggiornamento26/10 — blocco console obbligatorio (non ancora provato)
+
+La richiesta attuale sostituisce il soft paywall e la grazia fino a STOP.
+Il blocco include checking, scadenza in primo piano e revoca; pagina modale
+senza uscita, controllo temporale comune, gate atomico dell'audio ed effetti
+protetti. Il timer UI rileva la scadenza entro il normale intervallo15Hz;
+StoreKit può ripristinare un periodo rinnovato verificato. Nessuna rete o
+verifica StoreKit nel callback audio. I controlli VPPaywall sono aggiornati ma
+non eseguiti; nessuna build/installazione o verifica di pagamento reale.
+La FULL personale rimane esente e non è una build valida per provare il blocco.
+Per dettaglio e limiti: TODO167. Le vecchie schermate sono storiche.

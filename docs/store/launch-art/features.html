@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Virtual Percussionist — Store screenshots</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;overflow:hidden;background:#0c0a0e}
+#poster{position:absolute;overflow:hidden;transform-origin:0 0;color:white;background:#0c0a0e;font-family:"Avenir Next",Avenir,system-ui,sans-serif}
+.art,.shade{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.art{opacity:.62}.shade{background:linear-gradient(180deg,#0c0a0e99,#0c0a0e44 35%,#0c0a0ecc)}
+.brand{position:absolute;left:90px;top:48px;display:flex;align-items:center;gap:22px;font-size:24px;letter-spacing:4px;font-weight:700}.brand img{height:76px;width:76px;object-fit:contain}
+h1{position:absolute;left:90px;right:90px;top:148px;margin:0;font-size:82px;line-height:1.15;letter-spacing:-2px;white-space:nowrap;background:linear-gradient(105deg,#fff 25%,#ffc9ee 65%,#ff55bd);background-clip:text;-webkit-background-clip:text;color:transparent}
+.sub{position:absolute;left:94px;right:90px;top:258px;margin:0;font-size:34px;line-height:1.35;color:#e5dce8}
+.screen{position:absolute;top:360px;left:95px;width:1130px;display:block;border:2px solid #aa628c;border-radius:30px;box-shadow:0 20px 90px #0009,0 0 64px #ff159d26}
+.dots{display:flex;gap:15px;position:absolute;right:96px;top:78px}.dots i{width:13px;height:13px;background:#665460;border-radius:50%}.dots i:nth-child(3){background:#ff33b4;box-shadow:0 0 22px #ff189c}
+.tablet .brand{left:130px;top:64px;font-size:34px;gap:28px}.tablet .brand img{width:96px;height:96px}.tablet .dots{right:140px;top:101px;gap:22px}.tablet .dots i{width:18px;height:18px}
+.tablet h1{left:130px;right:130px;top:194px;font-size:132px;letter-spacing:-3px}.tablet .sub{left:136px;right:130px;top:370px;font-size:47px}.tablet .screen{left:207px;top:490px;width:1650px;border-radius:38px}
+</style>
+<div id="poster"><img class="art" src="rhythm-orbit-v1.png" alt=""><div class="shade"></div><div class="brand"><img src="mark-transparent-master.png" alt=""><span>VIRTUAL PERCUSSIONIST</span></div><div class="dots"><i></i><i></i><i></i><i></i></div><h1></h1><p class="sub"></p><img class="screen" alt=""></div>
+<script>
+const q=new URLSearchParams(location.search),variant=q.get('device')||'phone69',lang=q.get('lang')||'it',shot=q.get('shot')||'1-console';
+const sizes={phone63:[1206,2622],phone69:[1320,2868],tablet:[2064,2752]};
+const copy={
+ '1-console':{it:['IL TUO GROOVE.','Shaker, conga, clap e tamburello nel tuo mix.'],en:['YOUR GROOVE.','Shaker, congas, clap and tambourine in your mix.']},
+ '2-trial-offer':{it:['SCEGLI IL TUO PIANO.','Prova, abbonamento o acquisto lifetime.'],en:['YOUR WAY TO PLAY.','Trial, subscription or lifetime purchase.']},
+ '3-settings':{it:['TUTTO SOTTO CONTROLLO.','Ingressi, ascolto e suono: scegli il tuo setup.'],en:['MAKE IT YOURS.','Inputs, listening and sound. Set up your way.']},
+ '4-subscription-status':{it:['IL TUO ACCESSO PRO.','Stato e gestione del tuo accesso, in un posto.'],en:['YOUR PRO ACCESS.','Your access status and controls in one place.']},
+ '5-guide':{it:['UNA GUIDA, SEMPRE.','Le istruzioni nell’app, quando ti servono.'],en:['HELP, ALWAYS CLOSE.','The guide is in the app, whenever you need it.']},
+ '6-fixed-tempo':{it:['IL TEMPO LO SCEGLI TU.','FISSO: imposta i BPM e premi START.'],en:['SET YOUR OWN TEMPO.','FIXED: set the BPM and tap START.']}
+};
+if(!sizes[variant]||!copy[shot]||!['it','en'].includes(lang))throw Error('Unknown screenshot');
+const [w,h]=sizes[variant],tablet=variant==='tablet',base=tablet?w:1320,scale=w/base,p=document.querySelector('#poster');
+document.documentElement.lang=lang;document.body.style.width=w+'px';document.body.style.height=h+'px';p.style.width=base+'px';p.style.height=h/scale+'px';p.style.transform='scale('+scale+')';p.className=tablet?'tablet':'phone';
+const title=document.querySelector('h1');title.textContent=copy[shot][lang][0];document.querySelector('.sub').textContent=copy[shot][lang][1];
+const device=tablet?'ipad-13in':variant==='phone63'?'iphone-6.3in':'iphone-6.9in';document.querySelector('.screen').src='../native-screenshots/'+lang+'/'+device+'/'+shot+'.png?v=store3';
+Promise.all([...document.images].map(i=>i.decode())).then(()=>document.fonts.ready).then(()=>{let size=tablet?132:82;while(title.scrollWidth>title.clientWidth&&size>55){size-=2;title.style.fontSize=size+'px'}document.documentElement.dataset.ready='true'});
+</script>
+</html>

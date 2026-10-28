@@ -1422,7 +1422,9 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // or bar move below is gated on a hypothesis; the kick and onset paths
     // are gated on tempoFollow already.
     const bool neuralHaveHyp = tempoFollow && neural.tryLoad (hyp);
-    const bool haveHyp = tempoFollow && selectHarmonicSource (hyp, neuralHaveHyp, numSamples);
+    const bool modelUnavailable = neural.modelFailed();
+    const bool haveHyp = tempoFollow && ! modelUnavailable
+                         && selectHarmonicSource (hyp, neuralHaveHyp, numSamples);
     const float nnBpm = (haveHyp && hyp.valid) ? hyp.bpm : 0.0f;
     const float nnConf = haveHyp ? hyp.confidence : 0.0f;
     const bool periodic = haveHyp && hyp.valid && nnBpm >= 50.0f;
@@ -2409,7 +2411,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
         }
     }
 
-    sounding = canPlay && ! waitForQuantize;
+    sounding = canPlay && ! waitForQuantize && (! modelUnavailable || tempoOwned);
     // START SUBITO also plays with nothing coming in: from the moment START is
     // pressed, on whatever tempo the clock holds (the last one, a tapped one,
     // or 120), until the analysis finds the band and the clock moves onto it.
@@ -2420,7 +2422,8 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     // FISSO too: the tempo is the listener's, there is nothing to find before
     // playing it - the part is heard from START (2026-10-23, the listener's
     // request; it used to wait for the grid like a followed tempo).
-    out.percussionShouldPlay = sounding || ((startImmediately || ! tempoFollow) && armed);
+    out.percussionShouldPlay = (sounding || ((startImmediately || ! tempoFollow) && armed))
+                               && (! modelUnavailable || tempoOwned);
     // The decoder holds its own metrical level under a playing part for the
     // same reason `updateAutoOctave` holds the shift above it.
     neural.setSounding (sounding);
@@ -2430,6 +2433,7 @@ BeatTracker::Output BeatTracker::process (const float* mono, int numSamples) noe
     out.tapLocked = tapHold;
     out.tempoOwned = tempoOwned;
     out.aiOnnx = neural.usingOnnx();
+    out.aiModelFailed = modelUnavailable;
     out.hypValid = haveHyp && hyp.valid;
     out.harmonicTempoSource = harmonicSourceActive;
     out.neuralBpm = nnBpm;

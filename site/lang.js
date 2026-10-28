@@ -9,6 +9,14 @@
     d.classList.remove('lang-en', 'lang-it');
     d.classList.add('lang-' + l);
     d.lang = l;
+    var title = document.querySelector('title[data-' + l + ']');
+    var description = document.querySelector('meta[name="description"][data-' + l + ']');
+    if (title) document.title = title.getAttribute('data-' + l);
+    if (description) description.content = description.getAttribute('data-' + l);
+    var ogTitle = document.querySelector('meta[property="og:title"]');
+    var ogDescription = document.querySelector('meta[property="og:description"]');
+    if (title && ogTitle) ogTitle.content = document.title;
+    if (description && ogDescription) ogDescription.content = description.content;
     try { localStorage.setItem('vp-lang', l); } catch (e) {}
   }
   d.classList.add('js');

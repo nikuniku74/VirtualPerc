@@ -124,6 +124,7 @@ public:
 
     bool running() const noexcept { return armed.load (std::memory_order_relaxed); }
     bool usingOnnx() const noexcept { return onnxFlag.load (std::memory_order_relaxed); }
+    bool modelFailed() const noexcept { return modelFailedFlag.load (std::memory_order_relaxed); }
     bool usingCoreMl() const noexcept { return coreMlFlag.load (std::memory_order_relaxed); }
     /** What one network call costs on this device, ms, averaged over about a
         second. The frame budget is 20 ms; CoreML against the CPU was decided
@@ -167,6 +168,7 @@ public:
 
 private:
     void workerLoop();
+    void prepareModel (bool requireOnnx);
     int64_t analysisSampleFor (uint64_t frameIndex) noexcept;
 
     AudioFifo fifo;
@@ -183,6 +185,7 @@ private:
     std::atomic<bool> stopFlag { false };
     std::atomic<bool> armed { false };
     std::atomic<bool> onnxFlag { false };
+    std::atomic<bool> modelFailedFlag { false };
     std::atomic<bool> coreMlFlag { false };
     std::atomic<float> inferMsAvg { 0.0f };
     std::atomic<float> loadPct { 0.0f };

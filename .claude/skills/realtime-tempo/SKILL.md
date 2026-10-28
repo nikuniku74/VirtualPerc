@@ -234,11 +234,24 @@ is not correct phase: tonal intro grid remains displaced~0.2s vs teacher.
 A phase-only prototype has no effect and is removed. No model/phase fix is
 claimed. See verification.md for costs, rejected variants and device limits.
 
-Unverified source changes165/166 (user requested no tests): existing detected
-rest holds the counted rate; direct sources returning after3s actual silence
-reopen acquisition even within one file. Music-bearing rests retain their
-clock; fully silent internal breaks also reacquire. No new measurements,
-build or installation;797/0 applies only to164. See clock/room references.
+Source165's additional rest-rate freeze is withdrawn after the bank rejects
+127/325 combined witnesses. Without165,166 still changes two whole MIXER sets
+and loses formerly correct beats/downbeats despite aggregate gains; a lighter
+analysis-only restart also fails. The user approves excluding BOTH from the
+release. Ordinary target/glide handling and previous silence policy are
+restored, retaining the existing rest phase-steer guard. STOP can still be
+needed in some after-silence song changes. See clock/room/verification records;
+final stable validation:798/0,325/325 pulse traces identical to164, zero gates
+rejected. See verification.md for48 CPU runs and retained host wall-time
+outliers; signed iPad build3 installed/launched27Oct; user confirms transparent logo,
+animated dots and locked purchase page. No new musical/thermal test is claimed.
+
+Store model policy (TODO168): iOS StoreKit builds except personal FULL require
+a real ONNX model. Startup load/prepare failure is explicit, disables automatic
+following and START NOW, and leaves TAP/FIXED available. Test/host stubs remain
+for verification only. Failure reaches the UI via atomic snapshot fields.
+Final default suite798/0; evidence5/0, real-callback access8/0 and paywall26/0.
+See verification.md for CPU limits and physical-device status.
 
 ## 5. Things we refuse to do
 
